@@ -1416,6 +1416,12 @@ def curriculum_view(curriculum: Curriculum) -> dict[str, Any]:
             "entities": projection.entity_count,
             "relationships": projection.relationship_count,
             "passages": projection.co_mention_count,
+            # Both, and not just the flag. `used_embeddings` answers "did this
+            # signal contribute at all", which is what a reader needs to know
+            # before trusting the map; the count is what tells them whether it
+            # contributed *meaningfully* -- eleven edges over four thousand
+            # entities is technically true and practically nothing.
+            "semantic_edges": projection.semantic_count,
             "used_embeddings": projection.used_embeddings,
             "truncated": projection.truncated,
         },

@@ -146,16 +146,24 @@ class AreaProjection:
     not. `entity_count` is what makes "this is thin" visible to a reader
     rather than only to whoever wrote the algorithm.
 
-    `used_embeddings` records which of the two possible runs this is. See
-    `docs/design/learning-areas-and-paths.md` §4: the embedding nudge is
-    bounded so the two runs differ only at the margin, but "only at the
-    margin" is a claim a reader should be able to check rather than trust.
+    `used_embeddings` records which of the two possible runs this is, and
+    `semantic_count` says how much. Both matter because the embedding channel
+    is the one that can be silently absent: embeddings off, a project ingested
+    before they were durable, or a provider whose endpoint was down all produce
+    a projection that renders perfectly and clustered on the graph alone. A
+    reader who cannot tell those from a run that used every signal is being
+    shown a weaker claim than they think.
     """
 
     areas: tuple[LearningArea, ...]
     entity_count: int
     relationship_count: int
     co_mention_count: int
+    semantic_count: int = 0
+    """Embedding-derived edges actually drawn, after the similarity floor.
+
+    Not the number of pairs offered. See `project_areas`.
+    """
     used_embeddings: bool = False
     truncated: bool = False
     """The graph read hit its cap, so these areas are over part of the graph.

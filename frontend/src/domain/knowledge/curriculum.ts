@@ -74,6 +74,14 @@ export interface DerivedFrom {
   readonly entities: number
   readonly relationships: number
   readonly passages: number
+  /** Embedding-derived edges actually drawn, after the similarity floor.
+
+   * Beside `usedEmbeddings` rather than instead of it, because the two answer
+   * different questions. The flag says whether the signal contributed at all,
+   * which is what decides whether the map can be trusted as a whole picture;
+   * the count says whether it contributed *meaningfully*, and eleven edges
+   * across four thousand entities is true and negligible at once. */
+  readonly semanticEdges: number
   readonly usedEmbeddings: boolean
   readonly truncated: boolean
 }
@@ -91,6 +99,7 @@ export const emptyCurriculum: Curriculum = {
     entities: 0,
     relationships: 0,
     passages: 0,
+    semanticEdges: 0,
     usedEmbeddings: false,
     truncated: false,
   },

@@ -90,11 +90,23 @@ const AreaCard = ({
  * from a rich one — or from a feature that never ran at all.
  */
 export const DerivedFromLine = ({ curriculum }: { curriculum: Curriculum }) => {
-  const { entities, relationships, passages, truncated } = curriculum.derivedFrom
+  const { entities, relationships, passages, semanticEdges, usedEmbeddings, truncated } =
+    curriculum.derivedFrom
   return (
     <p className="m-0 text-xs text-fg-dim">
       Projected from {entities} entities, {relationships} stated relationships and {passages} shared
-      passages.
+      passages
+      {/* The embedding channel is named whether or not it ran, and that is
+          the point of saying it at all. Its absence is silent everywhere else:
+          embeddings can be switched off, a project ingested before they were
+          durable has none recorded, and a provider whose endpoint was down
+          leaves them missing — and all three produce a map that draws
+          perfectly. A reader who is not told is looking at a weaker claim
+          than they think they are. */}
+      {usedEmbeddings ? `, and ${semanticEdges} links found by meaning alone.` : '.'}
+      {!usedEmbeddings && (
+        <span> Nothing was joined by meaning — this map is the graph alone.</span>
+      )}
       {truncated && (
         <span className="text-k-failure">
           {' '}

@@ -951,6 +951,15 @@ export const learningPathDto = z.object({
   edges: z.array(prerequisiteEdgeDto).default([]),
 })
 
+/** What `POST /projects/{id}/embeddings` answers with.
+ *
+ * A count and nothing else. Zero is a real answer rather than a failure — it
+ * is what a build with embeddings switched off returns — so the route reports
+ * its refusals as status codes and this shape stays uniform. */
+export const embeddingRefreshDto = z.object({
+  embedded: z.number().default(0),
+})
+
 export const curriculumDto = z.object({
   areas: z.array(learningAreaDto).default([]),
   path: learningPathDto,
@@ -958,6 +967,7 @@ export const curriculumDto = z.object({
     entities: z.number().default(0),
     relationships: z.number().default(0),
     passages: z.number().default(0),
+    semantic_edges: z.number().default(0),
     used_embeddings: z.boolean().default(false),
     truncated: z.boolean().default(false),
   }),

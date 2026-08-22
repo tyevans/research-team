@@ -83,6 +83,7 @@ async def app_and_client(db_path, fake_model):
         curriculum=curriculum,
         course_author=author,
         authoring=authoring,
+        reembed=application.reembed,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -385,3 +386,103 @@ async def test_deleting_a_project_forgets_its_curriculum(app_and_client):
 
     assert deleted.status_code == 200
     assert UUID(project_id) not in app_and_client.curriculum._cache
+
+
+async def _client_with(application, **overrides):
+    """An app over the same application, with these dependencies swapped."""
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        graphs=application.graphs,
+        **overrides,
+    )
+    return AsyncClient(transport=ASGITransport(app=api), base_url="http://test")
+
+
+async def test_re_embedding_reports_how_many_it_wrote(app_and_client):
+    """The envelope, over a stub rather than a provider.
+
+    Deliberately not driven through the real `reembed`: whether anything gets
+    embedded depends on an endpoint being up, which a route test does not
+    control -- the first draft of this asserted a count and failed against a
+    connection error, which was the test discovering it had no business
+    reaching the network. What can only break here is the status and the key.
+    """
+    project_id = await _new_project(app_and_client.client)
+
+    async with await _client_with(
+        app_and_client.application, reembed=lambda _project_id: _seven()
+    ) as client:
+        response = await client.post(f"/api/projects/{project_id}/embeddings")
+
+    assert response.status_code == 202
+    assert response.json() == {"embedded": 7}
+
+
+async def _seven() -> int:
+    return 7
+
+
+async def test_re_embedding_drops_the_cached_curriculum(app_and_client):
+    """Otherwise the run succeeds and changes nothing anybody can see.
+
+    `CurriculumService` keys its cache on entity and relationship counts, and
+    re-embedding moves neither -- so without the `forget` the new vectors sit
+    in the store until the next extraction happens to change a count. The
+    button would appear to work and do nothing, which is worse than an error.
+
+    Proved by *identity*: the service returns the same `Curriculum` object on a
+    cache hit, so a new object is the only evidence the projection re-ran.
+    """
+    project_id = await _new_project(app_and_client.client)
+    await _seed_two_clusters(app_and_client.application, project_id)
+    curriculum = CurriculumService()
+
+    async with await _client_with(
+        app_and_client.application,
+        curriculum=curriculum,
+        reembed=lambda _project_id: _seven(),
+    ) as client:
+        await client.get(f"/api/projects/{project_id}/curriculum")
+        cached = curriculum._cache[UUID(project_id)][1]
+
+        await client.post(f"/api/projects/{project_id}/embeddings")
+        await client.get(f"/api/projects/{project_id}/curriculum")
+
+    assert curriculum._cache[UUID(project_id)][1] is not cached
+
+
+async def test_a_dead_embedding_endpoint_is_reported_rather_than_a_500(app_and_client):
+    """502, and the provider's message with it.
+
+    Three outcomes a browser must be able to tell apart: this build has no
+    embedding wiring (503), embeddings are configured but off or empty (202
+    with `embedded: 0`), and the endpoint is there and refused (502). Collapsed
+    into one status they are indistinguishable, and only the third is worth
+    waking anybody for.
+
+    The real `reembed` is used here on purpose -- there is no embedding server
+    in a test run, so the failure is the genuine one rather than a stubbed
+    stand-in for it.
+    """
+    project_id = await _new_project(app_and_client.client)
+    await _seed_two_clusters(app_and_client.application, project_id)
+
+    async with await _client_with(
+        app_and_client.application, reembed=app_and_client.application.reembed
+    ) as client:
+        response = await client.post(f"/api/projects/{project_id}/embeddings")
+
+    assert response.status_code == 502
+    assert "embed" in response.json()["detail"].lower()
+
+
+async def test_re_embedding_an_unwired_build_says_so(app_and_client):
+    """503 rather than a silent 202 that embedded nothing."""
+    project_id = await _new_project(app_and_client.client)
+
+    async with await _client_with(app_and_client.application) as client:
+        response = await client.post(f"/api/projects/{project_id}/embeddings")
+
+    assert response.status_code == 503

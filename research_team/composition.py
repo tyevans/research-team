@@ -154,12 +154,16 @@ from research_team.infrastructure.agent.workflow_tools import (
 )
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.entity_cards import index_cards
+from research_team.infrastructure.knowledge.entity_embeddings import (
+    refresh_project_embeddings,
+)
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import (
+    build_card_vector_store,
     build_chunk_store,
     build_graph_store,
     build_vector_store,
@@ -383,6 +387,15 @@ class Application:
     topic repository, the queue projection and the turn supervisor -- and both
     front ends want the same one. Two supervisors over one database would each
     believe they held the only run on a project."""
+
+    reembed: "Callable[[UUID], Awaitable[int]]"
+    """Re-embed one project's entities from its current graph; returns how many.
+
+    A field rather than something the web layer builds, because it reaches
+    across four things composition owns and nothing else does: the graph store,
+    the embedding provider, the event log and the per-project card vector
+    store. See `create_app`'s `ReembedProject`.
+    """
 
     course_author: CourseAuthor
     """Writes one learning area's unit and lessons, by Understanding by Design.
@@ -1774,6 +1787,24 @@ def build_application(
             store, feed=repository.store, project_id=target_project_id, **rebuild_kwargs
         ),
         open_vector_store=open_vector_store,
+        # Taken from the provider rather than from `config.embedding_model()`,
+        # so the name the fold filters on is the name the writer stamps on the
+        # event. Two reads of the same setting is how those come to disagree,
+        # and a fold filtering on a name nothing writes is a vector store that
+        # silently stays empty.
+        embedding_model=embedding_provider.model if embedding_provider is not None else None,
+        # In-memory unconditionally, even where the consolidation store is
+        # pgvector. Card embeddings are folded from `EntitiesEmbedded` at open
+        # exactly as chunks are folded from `DocumentChunked`, so the store is
+        # derived and losing it costs a replay rather than data -- which is the
+        # argument `build_chunk_store` already makes for the corpus. A second
+        # pgvector table would buy durability the log already provides and cost
+        # a schema, a DSN and a width to keep in step.
+        build_card_vectors=(
+            (lambda: build_card_vector_store(dimension=embedding_dimension))
+            if embedding_provider is not None
+            else None
+        ),
         # Same `embedding_dimension` read above for the vector store, not a
         # second `config.embedding_dimension()` call: a corpus and the vector
         # store built from two separate reads could disagree if the env
@@ -1794,6 +1825,40 @@ def build_application(
             chunker=SlidingWindowChunker(default_chunk_size=1000, default_overlap=500),
         ),
     )
+
+    async def reembed_project(target_project_id: UUID) -> int:
+        """Re-embed every entity in one project, from the graph as it stands.
+
+        The repair route's engine. Assembles a card per canonical entity,
+        embeds them, appends one `EntitiesEmbedded` and folds it straight into
+        the project's card vector store -- so the effect is visible on the next
+        projection rather than only after the next restart.
+
+        Returns 0 rather than raising when embeddings are off, when the project
+        has no entities, or when the provider declines: the route reports the
+        number, and a build with `AGENT_VECTOR_STORE=none` should answer "0
+        embedded" rather than an error every caller has to special-case.
+
+        The event is appended *before* the store is written. Both orders leave
+        a window, and this is the one whose failure is recoverable: an append
+        that lands with no upsert is corrected by the next project open, while
+        an upsert that lands with no append is a store holding vectors the log
+        cannot reproduce -- which is the exact state this whole change exists
+        to end.
+        """
+        if embedding_provider is None:
+            return 0
+        store = await graphs.open(target_project_id)
+        card_vectors = graphs.card_vectors(target_project_id)
+        if card_vectors is None:
+            return 0
+        return await refresh_project_embeddings(
+            graph=store,
+            provider=embedding_provider,
+            event_store=repository.store,
+            vectors=card_vectors,
+            tenant_id=target_project_id,
+        )
 
     async def open_graph(
         target_project_id: UUID,
@@ -1852,6 +1917,11 @@ def build_application(
             # whose schema was ensured" and "the store this adapter writes to"
             # the same object.
             vector_store=await graphs.vectors(),
+            # Per project, unlike the one above, and folded from the log at
+            # the `graphs.open` two lines up -- so this is the store that
+            # already holds every card embedding this project has recorded,
+            # not a fresh one this ingest would start filling from empty.
+            card_vector_store=graphs.card_vectors(target_project_id),
             concurrency=config.extraction_concurrency(),
             consolidation_batch=config.consolidation_batch_size(),
             # One chunker per project adapter rather than one for the process.
@@ -2474,6 +2544,7 @@ def build_application(
         research=research_supervisor,
         topic_seeder=topic_seeder,
         course_author=course_author,
+        reembed=reembed_project,
         dispatcher=dispatcher,
         stage_runner=stage_runner,
         workers=worker_roster,

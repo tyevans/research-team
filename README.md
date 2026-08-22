@@ -53,13 +53,24 @@ entities the corpus actually connects — orders them into a path by which areas
 the others depend on, and will write each one a course: a UbD unit plan and
 numbered lesson files, in markdown, into the project's own workspace.
 
-**The areas come from the graph, not from the embeddings**, and that went the
-opposite way from the obvious design. Entity vectors do not survive a restart
-on a default install, `VectorStore` cannot be enumerated at all, and redstring
-embeds `entity.name` and nothing else — so clustering them would cluster
-spellings rather than subject matter. The graph is folded from the log, so the
-same log projects the same areas years later. `docs/design/learning-areas-and-paths.md`
-has the full reasoning and the four checks behind it.
+**The graph decides the shape and embeddings close the gaps in it.** A stated
+relationship is the strongest evidence there is that two entities belong
+together; two names in one passage is weaker; and an entity's nearest
+neighbour in embedding space is a hypothesis no document ever made, so it is
+weighted below both and drawn only above a similarity floor. What that last
+channel buys is the case the graph cannot see at all: an entity nothing links
+and nothing co-mentions is simply dropped from a graph-only projection, and a
+semantic edge places it.
+
+What gets embedded is the entity's **card** — its name, type, properties and
+named relations, the same text the lexical index matches — rather than the
+bare name. And the vectors are on the event log, so a project folds them back
+at open along with the graph and the corpus. Neither was true before
+2026-08-22: every vector this system computed was dropped when its process
+ended, which is why a project older than that clusters on the graph alone
+until you press **Embed entities**. `docs/design/learning-areas-and-paths.md`
+§1 records what was fixed and which of the original arguments against
+embeddings was simply wrong.
 
 Nothing about the projection is stored. It is a pure function of a graph that
 is itself folded from the log, and every view shows the entity, relationship

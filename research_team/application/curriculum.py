@@ -20,6 +20,7 @@ from uuid import UUID
 
 from research_team.application.area_projection import (
     CoMentionPort,
+    SemanticPort,
     project_areas,
 )
 from research_team.application.graph_read import MAX_GRAPH_NODES, Graph, GraphReadPort
@@ -80,19 +81,37 @@ class CurriculumService:
         project_id: UUID,
         graph_reader: GraphReadPort,
         co_mentions: CoMentionPort,
+        semantic: SemanticPort | None = None,
         *,
         limit: int = MAX_GRAPH_NODES,
     ) -> Curriculum:
+        """This project's areas and the path through them.
+
+        `semantic` is optional and its absence is not a degraded mode to warn
+        about: embeddings are off on plenty of installs and absent on every
+        project ingested before they were durable. What it must not do is
+        change silently in the *other* direction -- a run that had the channel
+        and drew nothing from it is recorded as `used_embeddings=False` on the
+        projection, so "configured" and "used" stay distinguishable.
+
+        **The cache key does not include whether embeddings were available.**
+        A project whose vectors arrive between two calls keeps its cached
+        graph-only curriculum until an extraction moves the entity or
+        relationship count. That is the same conservative staleness the class
+        docstring describes for consolidation, and it has the same escape
+        hatch: `forget`, which the re-embed route calls for exactly this
+        reason.
+        """
         graph = await graph_reader.whole(limit=limit)
         key = (len(graph.entities), len(graph.relationships))
         cached = self._cache.get(project_id)
         if cached is not None and cached[0] == key:
             return cached[1]
 
-        passages = list(
-            await co_mentions.passages(sorted(e.entity_id for e in graph.entities))
-        )
-        projection = project_areas(graph, passages)
+        ids = sorted(e.entity_id for e in graph.entities)
+        passages = list(await co_mentions.passages(ids))
+        pairs = list(await semantic.neighbours(ids)) if semantic is not None else []
+        projection = project_areas(graph, passages, pairs)
         curriculum = Curriculum(
             projection=projection,
             path=full_path(projection.areas, graph.relationships, passages),
@@ -106,6 +125,7 @@ class CurriculumService:
         destination: str,
         graph_reader: GraphReadPort,
         co_mentions: CoMentionPort,
+        semantic: SemanticPort | None = None,
     ) -> LearningPath | None:
         """The prerequisite closure of one area.
 
@@ -114,7 +134,7 @@ class CurriculumService:
         order the same pair differently, and a learner switching views would
         be told two incompatible things with no way to choose.
         """
-        await self.build(project_id, graph_reader, co_mentions)
+        await self.build(project_id, graph_reader, co_mentions, semantic)
         _, curriculum, graph, passages = self._cache[project_id]
         return path_to(destination, curriculum.projection.areas, graph.relationships, passages)
 

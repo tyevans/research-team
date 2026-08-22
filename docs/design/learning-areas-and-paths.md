@@ -12,49 +12,83 @@ Every design choice below is downstream of taking that literally.
 
 ## 1. What we cluster, and what we deliberately do not
 
-**We cluster the knowledge graph. We do not cluster the embeddings.** This is
-the load-bearing decision and it went the opposite way from the obvious one,
-so the reasoning is recorded in full.
+**We cluster the knowledge graph, and embeddings join what the graph leaves
+apart.** The graph is the substrate; the embedding channel is a second signal
+weighted below it. This section used to argue for the graph *instead of*
+embeddings on four grounds, and the argument has since been revised: one of
+the four was simply wrong, one has been fixed rather than lived with, and one
+was overstated. What is left is a reason for the ordering, not for the
+exclusion.
 
-The obvious design is k-means over entity vectors. Four facts, each checked in
-this repository rather than assumed, rule it out:
+### The one that was wrong
 
-1. **There are no vectors to read back on a default install.**
-   `infrastructure/knowledge/stores.py` says it plainly: "A vector store lost
-   with the process is *gone*: this project never appends `EntitiesEmbedded`,
-   so there is nothing for a replay to fold." The default is `memory`. A
-   feature keyed to vectors would work in the session that extracted and be
-   empty after a restart — the exact silent-empty failure `CLAUDE.md` warns
-   about under *Events*, where nothing raises and the endpoint answers 200
-   with nothing in it.
+The original text said:
 
-2. **`VectorStore` has no enumeration.** Its methods are `get`, `search`,
-   `upsert`, `upsert_many`, `delete`, `delete_by_tenant`, `dimension`
-   (checked against the installed redstring, not the docs). You can ask for
-   one vector by id, or for the k nearest to a probe. There is no "give me
-   every vector", which is what any clustering pass needs. Reconstructing one
-   by `get`-ing per entity id is possible and is a call per entity against a
-   store that may not have the entity at all.
+> **redstring embeds `entity.name` and nothing else.** [...] Clustering those
+> vectors clusters *spellings*.
 
-3. **redstring embeds `entity.name` and nothing else.** `config.vector_store`
-   records this and the measurement behind it: the embedding feature is "a
-   blurrier second measurement of the string the name feature already
-   measured", and under a real model an exact duplicate and `University of
-   York` / `University of Cork` land about 0.011 apart. Clustering those
-   vectors clusters *spellings*. "Battle of Actium" and "Battle of Philippi"
-   would land together because both are battles named alike, while "Actium"
-   and "Octavian" — the same subject matter — would not. For consolidation
-   that blurriness is a feature. For projecting learning areas it is
-   precisely the wrong signal.
+**That is nonsense, and it is worth being blunt about because it is the kind
+of nonsense that sounds like rigour.** An embedding is not a string. Encoding
+meaning is the entire reason embeddings exist: `glass` and `cup` share no
+substring and sit close together in any competent embedding space, which is
+exactly the pairing a curriculum wants and a string comparison can never
+find. The measurement the original quoted — that under a real model an exact
+duplicate and `University of York` / `University of Cork` land about 0.011
+apart — says the *name* is a thin input, not that the *vector* is a spelling.
 
-4. **The graph is derived from the log and the vectors are not.** A graph
-   store is rebuilt by folding at project open, so a projection over it is
-   reproducible years later — which is the property the whole system is built
-   to have. A projection over vectors is reproducible only if the embedding
-   endpoint still exists and still returns the same numbers.
+The real objection is narrower and does survive: a bare name carries no type,
+no properties, no neighbourhood. So the fix is enrichment rather than
+avoidance. This project now embeds each entity's **card** — the same text
+`entity_cards` assembles for BM25, carrying name, type, properties and named
+relations — through `infrastructure/knowledge/entity_embeddings.py`. One
+assembly feeds both, so the text a query matches lexically and the text a
+vector encodes cannot drift apart.
 
-So the signal is the graph, and embeddings become an *optional refinement*
-(§4) rather than the substrate.
+### The one that was true and has been fixed
+
+> **There are no vectors to read back on a default install.**
+
+True when written, and it was a defect rather than a constraint. redstring
+computed a vector per entity on every ingest, folded it into the store, and
+returned a *count* instead of the `EntitiesEmbedded` event it had built; the
+ingest path appended the `DocumentExtracted` beside it and let the rest go.
+Measured against a copy of the real database on 2026-08-22: **zero
+`EntitiesEmbedded` rows in a log holding 8 `DocumentExtracted` and 772
+`EntitiesMerged`.** Every vector the system ever paid for died with its
+process.
+
+Both channels are now on the log and folded at project open by
+`EmbeddingsForModel`, so a vector store is derived from the log exactly as the
+graph and the corpus already were.
+
+### The one that was overstated
+
+> **`VectorStore` has no enumeration.**
+
+Its method list was accurate and the conclusion was not. There is no "give me
+every vector", but every id worth asking about is already in hand — they come
+from the graph — so enumeration by key is a `get` per entity against an
+in-memory dict. `semantic_neighbours.py` does precisely that, and the reason
+it does the k-nearest arithmetic itself is unrelated: `search` per entity is
+quadratic in Python and measured at 13.9s for 500 entities, against 0.056s
+for the same work as one matrix multiply.
+
+### The one that still decides the ordering
+
+**The graph is derived from the log; a re-embedding is not.** A graph store is
+rebuilt by folding at project open, so a projection over it is reproducible
+years later. Vectors are now folded too — but they were *produced* by a model
+call, and nothing re-embeds on the open path, deliberately: `rebuild_graph`
+must not depend on a live endpoint or a project reopened years from now would
+not open. So a vector encodes the neighbourhood its entity had when it was
+extracted, and refreshing it is something a person asks for
+(`POST /projects/{id}/embeddings`).
+
+That is why a semantic edge is weighted below an asserted relationship rather
+than above it, and admitted only above a similarity floor: a relationship is
+something a model read and stated about a document, and a semantic edge is a
+hypothesis no document ever made. The graph decides the shape; embeddings
+close the gaps in it. §4 has the weights.
 
 ## 2. The graph we actually cluster
 
@@ -141,30 +175,50 @@ curriculum wants:**
   splits it into arbitrary halves forever; one pass catches the "two subjects
   got glued" case, which is the one that happens.
 
-## 4. Where embeddings do come in
+## 4. Where embeddings come in
 
-**Not built, and this section is the design for when it is.** `AreaProjection`
-carries `used_embeddings` and the field crosses the wire on every curriculum
-response, so the seam exists and answers `false` honestly. It is deliberately
-*not* rendered: a line on screen saying "no embeddings were used" on every
-projection forever is noise, and the moment it can be `true` is the moment it
-becomes worth a reader's attention. Saying so here rather
-than describing the plan in the present tense: a design document that reads as
-though a feature shipped is the one that stops anyone building it.
+**Built, and not as the tie-break this section used to describe.** The design
+here was a bounded nudge to ΔQ — embeddings adjusting a merge decision
+modularity had already almost made, capped so that "a restart that loses every
+vector changes the areas at the margin and never wholesale". That cap existed
+to survive a specific defect: vectors did not survive a restart (§1). Once
+they do, buying safety by making the signal too weak to matter is paying for
+insurance against a fire that has been put out.
 
-The shape, when it is built: not the substrate — a **tie-break available when
-it is real**. When a live vector store holds vectors for both endpoints of a
-candidate merge, the cosine similarity of the two communities' centroids
-adjusts ΔQ by at most `EMBEDDING_NUDGE`. The bound is the whole design: the
-projection with
-embeddings present and the projection with them absent differ only where
-modularity was already close to indifferent, so **a restart that loses every
-vector changes the areas at the margin and never wholesale**. A person cannot
-be handed a different curriculum because a process bounced.
+So embeddings are a **second kind of edge in the same graph**, not a
+correction applied to the clustering of the first kind. Each entity's k
+nearest neighbours in card-embedding space become weighted edges, and
+modularity runs over relationships, co-mentions and those together.
 
-This is off unless the store both exists and answers, and its presence is
-reported in the projection so a reader can tell which of the two runs they
-are looking at.
+| constant | value | why |
+|---|---|---|
+| `EMBEDDING_WEIGHT` | 0.6 | Below `RELATION_WEIGHT` (1.0), above one passage's whole `CO_MENTION_BUDGET` (0.5). A model asserted a relationship; a passage put two names near each other; an embedding says two things look like one subject and no document ever said so. |
+| `EMBEDDING_NEIGHBOURS` | 5 | Similarity is dense — every entity has a nearest neighbour. Unbounded, 500 entities is 125,000 non-zero edges and modularity over a near-complete graph has no communities to find. Sparsity is the condition the method depends on. |
+| `MIN_EMBEDDING_SCORE` | 0.83 | On redstring's `(1 + cosine) / 2` scale, so a cosine of about 0.66. Without a floor the sparsest corner of a graph gets the same five edges as the densest, which is where k-nearest-neighbour invents structure. |
+
+**The weight is rescaled, not multiplied.** `EMBEDDING_WEIGHT * score` is the
+tempting form and it is nearly flat over the range that occurs: real card
+similarities sit near the top of the scale, so a pair that scraped past the
+floor would get about four fifths the weight of a perfect match. The floor is
+mapped to zero instead, so an edge admitted by a hair contributes by a hair.
+`test_a_pair_at_the_floor_contributes_almost_nothing` is what separates the
+two.
+
+**What this changes that the nudge could not.** An entity with no relationship
+and no co-mention is invisible to the graph — `_absorb_small` drops it,
+correctly, because on the graph alone there is nothing to say about where it
+belongs. A semantic edge places it. That is the `glass`/`cup` case and it is
+the whole reason the channel is worth having: not a better ordering of areas
+the graph already found, but areas that include what the graph could not see.
+
+**Absence stays ordinary.** Embeddings are off on some installs, absent on any
+project ingested before they were durable, and missing when a provider's
+endpoint was down. All three arrive as an empty sequence and the projection is
+correct without them. What must *not* be silent is which of the two runs a
+reader is looking at, so `used_embeddings` and `semantic_count` ride on every
+curriculum response and are rendered — `used_embeddings` follows the edges
+actually drawn, not the configuration, because a run handed a thousand pairs
+that all fell below the floor used embeddings in no sense a reader cares about.
 
 ## 5. From areas to paths
 
@@ -316,6 +370,26 @@ without somebody asking would commit a local model to twenty minutes. Nothing
 re-projects and nothing re-authors on extraction, so a curriculum somebody is
 halfway through is never rewritten underneath them.
 
+
+### The embedding refresh, and why it is a button
+
+`EmbeddingRefresh` sits above the map and says which of the two runs the
+reader is looking at — clustered on the graph alone, or with *n* links found
+by meaning — with the action right beside the diagnosis rather than filed
+under settings.
+
+It is a button and not an automatic pass because of §1's last point: nothing
+re-embeds on the open path, so that a project reopened years from now does not
+need a live endpoint. That makes staleness a permanent, ordinary state rather
+than a transient one, and a permanent state a reader cannot see is the failure
+this whole document keeps circling.
+
+Three outcomes are kept distinct, because collapsing them is how a person
+loses an afternoon: the build has no embedding wiring (503), embeddings are
+configured but off or the project is empty (202, `embedded: 0`, rendered as
+"nothing was embedded" rather than as success), and the endpoint is there and
+refused (502, with the provider's own message). A bare "done" over the middle
+one is a lie.
 
 ## 9. What this does not do
 

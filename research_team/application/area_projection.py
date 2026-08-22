@@ -1,11 +1,25 @@
 """Folding a project's graph into the areas there are to learn in it.
 
-The reasoning for clustering the graph rather than the embeddings is in
-`docs/design/learning-areas-and-paths.md` §1 and is not repeated here. The
-short form, because it is the thing someone will try to "fix": **entity
-vectors are ephemeral on a default install, cannot be enumerated from a
-`VectorStore` at all, and encode `entity.name` rather than subject matter.**
-All three are checked facts about this tree, not caution.
+The graph is the skeleton and embeddings are the tissue: relationships and
+co-mentions say what documents *asserted* about two entities, and a semantic
+edge says two entities are about the same thing when no document happened to
+put them in a sentence together.
+
+**This module's docstring used to argue against embeddings on three grounds,
+and one of them was nonsense.** It said entity vectors "encode `entity.name`
+rather than subject matter", as if embedding a name were a comparison of
+spellings. It is not, and that is the entire reason embeddings exist: `glass`
+and `cup` share no substring and sit close together in any competent space.
+The two grounds that were real have both been dealt with rather than argued
+around -- vectors were ephemeral, and are now folded from `EntitiesEmbedded`
+at project open; and what is embedded is now the entity's *card*, carrying its
+type, properties and named relations, because a bare name is thin rather than
+because it is a string. See `infrastructure/knowledge/entity_embeddings.py`.
+
+What survives of the original argument, and why the graph still leads: a
+semantic edge is a hypothesis nobody stated, so it is weighted below an
+asserted relationship and admitted only above a similarity floor. The graph
+decides the shape; embeddings close the gaps in it.
 
 Everything in this module is pure. It takes a graph and a co-mention map and
 returns areas; it opens nothing, calls no model, and has no clock. That is
@@ -74,6 +88,37 @@ MAX_AREA_FRACTION = 0.4
 #: eight real ones, which is the failure this constant exists against.
 MIN_AREA_SIZE = 3
 
+#: Weight of one semantic edge at the similarity floor, rising to this value
+#: at a perfect match. Below `RELATION_WEIGHT` and above one passage's whole
+#: budget, which is the ordering the evidence deserves: a model read a document
+#: and asserted a relationship; a passage put two names near each other; an
+#: embedding says two entities *look* like the same subject and no document
+#: ever said so. Strong enough to join two clusters nothing co-mentions, never
+#: strong enough to overrule an assertion.
+EMBEDDING_WEIGHT = 0.6
+
+#: How many semantic neighbours each entity may contribute.
+#:
+#: Small on purpose, and it is the guard that matters most here. Similarity is
+#: dense -- every entity has a nearest neighbour, and in a graph of 500
+#: entities an unbounded pass is 125,000 edges, every one of them non-zero.
+#: That does not refine a clustering, it dissolves it: modularity over a
+#: near-complete graph has no communities to find. Keeping only each entity's
+#: closest few leaves the graph sparse, which is the condition the whole
+#: method depends on.
+EMBEDDING_NEIGHBOURS = 5
+
+#: The similarity below which a semantic edge is not drawn at all.
+#:
+#: On redstring's scale, which is `(1 + cosine) / 2` -- so 0.5 is orthogonal
+#: and this is a cosine of about 0.66, not of 0.83. Set where two entity cards
+#: have to genuinely be about the same subject rather than merely both being
+#: prose in the same language, because an embedding's *nearest* neighbour
+#: exists whether or not it is related to anything. Without a floor, the
+#: sparsest corner of a graph gets the same five edges per node as the densest,
+#: which is where a k-nearest-neighbour graph invents structure.
+MIN_EMBEDDING_SCORE = 0.83
+
 
 class CoMentionPort(Protocol):
     """Which entities this project's passages name together.
@@ -95,6 +140,30 @@ class CoMentionPort(Protocol):
         Passages naming fewer than two of `entity_ids` are omitted rather than
         returned empty: they carry no pair and the caller would drop them, so
         returning them is a wire cost with no reader.
+        """
+        ...
+
+
+class SemanticPort(Protocol):
+    """Which entities this project's embeddings put near each other.
+
+    A port for `CoMentionPort`'s reason -- nothing here may name a redstring
+    type -- and asymmetric with it in one way worth stating: this one is
+    allowed to answer with nothing. Embeddings are switched off on plenty of
+    installs, a project ingested before they were durable has none recorded,
+    and a provider whose endpoint is down leaves them absent. All three arrive
+    here as an empty sequence, and the projection is expected to be correct
+    without them rather than degraded in a way a reader has to be told about.
+    """
+
+    async def neighbours(self, entity_ids: Sequence[str]) -> Sequence[tuple[str, str, float]]:
+        """Close pairs among `entity_ids`, as `(left, right, score)`.
+
+        `score` is on redstring's `(1 + cosine) / 2` scale. Pairs are
+        unordered and each is expected at most once with `left < right`; an
+        adapter that yields both directions doubles that pair's weight, which
+        is why the ordering is the port's contract and not the caller's
+        cleanup.
         """
         ...
 
@@ -158,11 +227,54 @@ def _co_mention_edges(
     return edges, counted
 
 
+def _semantic_edges(
+    pairs: Iterable[tuple[str, str, float]],
+    known: frozenset[str],
+) -> dict[tuple[str, str], float]:
+    """Weighted pair contributions from embedding similarity.
+
+    The score is rescaled from `[MIN_EMBEDDING_SCORE, 1.0]` onto
+    `[0, EMBEDDING_WEIGHT]` rather than used as a multiplier directly, and the
+    difference is not cosmetic. Cosine similarities among real entity cards
+    live in a narrow band near the top of the scale -- two unrelated documents
+    of English prose score well above 0.5 -- so `EMBEDDING_WEIGHT * score`
+    gives a pair that barely cleared the floor about four fifths the weight of
+    a pair that is a perfect match, which is not a distinction, it is noise
+    with a number on it. Rescaling makes the floor mean zero, so an edge admitted
+    by a hair contributes by a hair.
+
+    Pairs below the floor are dropped here as well as in the adapter. The
+    adapter has the store and the cheaper filter; this is a pure function and
+    is where the constant's meaning is testable.
+    """
+    span = 1.0 - MIN_EMBEDDING_SCORE
+    edges: dict[tuple[str, str], float] = {}
+    for left, right, score in pairs:
+        if left == right or left not in known or right not in known:
+            continue
+        if score < MIN_EMBEDDING_SCORE:
+            continue
+        key = (left, right) if left < right else (right, left)
+        weight = (
+            EMBEDDING_WEIGHT * (score - MIN_EMBEDDING_SCORE) / span
+            if span
+            else EMBEDDING_WEIGHT
+        )
+        # `max`, not `+`: an adapter yielding a pair twice (both directions,
+        # or once per endpoint's neighbour list) must not make that pair twice
+        # as attractive as one reported once. Idempotent by construction is
+        # worth more here than trusting the port's contract, because the
+        # failure is a silently better-connected pair rather than an error.
+        edges[key] = max(edges.get(key, 0.0), weight)
+    return edges
+
+
 def _adjacency(
     entities: Sequence[GraphEntity],
     relationships: Sequence[GraphRelationship],
     passages: Iterable[frozenset[str]],
-) -> tuple[dict[str, dict[str, float]], int, int]:
+    semantic: Iterable[tuple[str, str, float]] = (),
+) -> tuple[dict[str, dict[str, float]], int, int, int]:
     """The undirected weighted graph the merge runs over.
 
     Self-loops are dropped rather than kept at any weight. redstring can
@@ -189,7 +301,12 @@ def _adjacency(
         adjacency[left][right] = adjacency[left].get(right, 0.0) + weight
         adjacency[right][left] = adjacency[right].get(left, 0.0) + weight
 
-    return adjacency, asserted, counted
+    semantic_edges = _semantic_edges(semantic, known)
+    for (left, right), weight in semantic_edges.items():
+        adjacency[left][right] = adjacency[left].get(right, 0.0) + weight
+        adjacency[right][left] = adjacency[right].get(left, 0.0) + weight
+
+    return adjacency, asserted, counted, len(semantic_edges)
 
 
 def _greedy_modularity(adjacency: Mapping[str, Mapping[str, float]]) -> list[frozenset[str]]:
@@ -393,7 +510,11 @@ class GraphTooLarge(Exception):
     """
 
 
-def project_areas(graph: Graph, passages: Sequence[frozenset[str]]) -> AreaProjection:
+def project_areas(
+    graph: Graph,
+    passages: Sequence[frozenset[str]],
+    semantic: Sequence[tuple[str, str, float]] = (),
+) -> AreaProjection:
     """The areas in one project's graph, deterministically.
 
     A pure function, and taking `passages` as a value rather than calling a
@@ -406,6 +527,13 @@ def project_areas(graph: Graph, passages: Sequence[frozenset[str]]) -> AreaProje
     the same order, with the same slugs, on every machine.
     `test_projection_is_deterministic` is what holds that, and it is not
     decoration -- the slug is a directory name.
+
+    `semantic` is the embedding channel, as `(left, right, score)` triples
+    from `SemanticPort`. Empty is the ordinary case on an install with
+    embeddings off or a project ingested before they were durable, and it must
+    stay ordinary: every count this returns is meaningful without it, and
+    `used_embeddings` on the result is how a reader tells the two runs apart
+    rather than having to infer it from the areas.
     """
     if len(graph.entities) > MAX_CLUSTERED_ENTITIES:
         raise GraphTooLarge(
@@ -414,7 +542,9 @@ def project_areas(graph: Graph, passages: Sequence[frozenset[str]]) -> AreaProje
         )
 
     by_id = {e.entity_id: e for e in graph.entities}
-    adjacency, asserted, counted = _adjacency(graph.entities, graph.relationships, passages)
+    adjacency, asserted, counted, semantic_count = _adjacency(
+        graph.entities, graph.relationships, passages, semantic
+    )
 
     communities = _greedy_modularity(adjacency)
     communities = _split_oversized(communities, adjacency, len(adjacency))
@@ -435,5 +565,11 @@ def project_areas(graph: Graph, passages: Sequence[frozenset[str]]) -> AreaProje
         entity_count=len(graph.entities),
         relationship_count=asserted,
         co_mention_count=counted,
+        semantic_count=semantic_count,
+        # The *drawn* edges, not the offered triples: a run handed a thousand
+        # pairs that all fell below the floor used no embeddings in any sense a
+        # reader cares about, and saying it did would make the flag agree with
+        # the configuration rather than with the result.
+        used_embeddings=semantic_count > 0,
         truncated=graph.truncated,
     )

@@ -145,6 +145,7 @@ from research_team.domain.topic import (
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.co_mention_reader import ChunkCoMentions
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.semantic_neighbours import VectorNeighbours
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
@@ -907,6 +908,16 @@ class AllowAll(BaseModel):
     include_stage_gates: bool = False
 
 
+ReembedProject = Callable[[UUID], Awaitable[int]]
+"""Re-embed one project's entities from its current graph. Returns how many.
+
+A callable rather than the provider and the stores it needs, for the reason
+every other port here is one: this module may not name redstring, and the
+work reaches across the graph store, the embedding provider, the event log
+and the per-project vector store. Composition owns all four.
+"""
+
+
 def create_app(
     service: SessionService,
     feed: LiveFeed,
@@ -948,6 +959,7 @@ def create_app(
     curriculum: CurriculumService | None = None,
     course_author: CourseAuthor | None = None,
     authoring: AuthoringActivity | None = None,
+    reembed: ReembedProject | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -2958,6 +2970,28 @@ def create_app(
             raise HTTPException(status_code=503, detail="no chunk store is configured")
         return ChunkCoMentions(chunk_store, project_id)
 
+    async def _semantic(project_id: UUID) -> VectorNeighbours | None:
+        """This project's `SemanticPort`, or None when there is nothing to read.
+
+        `graphs.open` first, for `_co_mentions`' reason -- the card vector
+        store is folded during `open`, so asking before it has run gets `None`
+        from a project whose vectors are merely not loaded yet, which is the
+        once-per-project failure that reads as flakiness.
+
+        Unlike `_co_mentions` this returns `None` rather than raising a 503
+        when the store is absent. The corpus is a hard requirement for area
+        projection and its absence is a misconfiguration; embeddings are an
+        optional signal, and a build with `AGENT_VECTOR_STORE=none` must serve
+        a curriculum rather than an error.
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        await graphs.open(project_id)
+        vectors = graphs.card_vectors(project_id)
+        if vectors is None:
+            return None
+        return VectorNeighbours(vectors, tenant_id=project_id)
+
     async def _curriculum(project_id: UUID):
         """This project's areas and the path through them.
 
@@ -2972,7 +3006,12 @@ def create_app(
             )
         reader = await _graph_reader(project_id)
         try:
-            return await curriculum.build(project_id, reader, await _co_mentions(project_id))
+            return await curriculum.build(
+                project_id,
+                reader,
+                await _co_mentions(project_id),
+                await _semantic(project_id),
+            )
         except GraphTooLarge as error:
             # 422 rather than 500: the project is fine and the server is fine;
             # the question is one this projection will not answer at this size.
@@ -2991,6 +3030,54 @@ def create_app(
         """
         await _require_project(project_id)
         return curriculum_view(await _curriculum(project_id))
+
+    @app.post("/api/projects/{project_id}/embeddings", status_code=202)
+    async def refresh_embeddings(project_id: UUID):
+        """Re-embed every entity in this project, from the graph as it stands.
+
+        **Why this exists rather than embeddings simply being current.** A
+        vector is written when its entity is extracted, and it encodes the card
+        the entity had *then*. Nothing re-embeds at project open, deliberately:
+        `rebuild_graph` must not depend on a live endpoint, or a session
+        refolded years from now would not open. So an entity that gained six
+        relationships after it was first seen carries a vector that knows about
+        none of them, and this is the button that fixes it.
+
+        It is also the repair for the whole class of projects ingested before
+        embeddings were durable at all, which is every project written before
+        2026-08-22: their logs carry no `EntitiesEmbedded`, so they fold to an
+        empty vector store and cluster on the graph alone until this runs.
+
+        **202 and synchronous, which is a contradiction worth admitting.** The
+        work is one embedding call per 64 entities and returns before the
+        response does; the status is 202 because the *effect* a caller cares
+        about -- a curriculum clustered with the new vectors -- lands on the
+        next projection rather than in this response body. What it costs is a
+        request held open proportional to the graph: about eight calls for a
+        five-hundred-entity project, and a route that is no longer reasonable
+        somewhere north of a few thousand. `BACKLOG.md` B131 has the
+        background-run version; this is deliberately the small one.
+
+        The cached curriculum is forgotten here rather than left to expire,
+        because the cache is keyed on entity and relationship counts and
+        re-embedding moves neither -- so without this, the run would succeed
+        and change nothing anybody could see until the next extraction.
+        """
+        await _require_project(project_id)
+        if reembed is None:
+            raise HTTPException(status_code=503, detail="embeddings are not configured")
+        try:
+            embedded = await reembed(project_id)
+        except KnowledgeError as error:
+            # 502 rather than 500: the fault is upstream and the operator can
+            # act on it. Distinct from the 503 above, which says this build was
+            # never wired for embeddings, and from a 202 carrying `embedded: 0`,
+            # which says the feature is off on purpose. Three different things
+            # a browser would otherwise have to guess at from one status.
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        if curriculum is not None:
+            curriculum.forget(project_id)
+        return {"embedded": embedded}
 
     @app.get("/api/projects/{project_id}/curriculum/areas/{slug}")
     async def read_learning_area(project_id: UUID, slug: str):
@@ -3025,7 +3112,11 @@ def create_app(
                 status_code=503, detail="curriculum projection is not configured"
             )
         cut = await curriculum.path_toward(
-            project_id, slug, await _graph_reader(project_id), await _co_mentions(project_id)
+            project_id,
+            slug,
+            await _graph_reader(project_id),
+            await _co_mentions(project_id),
+            await _semantic(project_id),
         )
         if cut is None:
             raise HTTPException(status_code=404, detail=f"no learning area {slug!r}")

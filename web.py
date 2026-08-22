@@ -111,6 +111,7 @@ def main() -> None:
             seeding=seeding,
             curriculum=curriculum,
             course_author=application.course_author,
+            reembed=application.reembed,
             authoring=authoring,
             dispatcher=application.dispatcher,
             dispatch=dispatch,
