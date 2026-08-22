@@ -21,8 +21,8 @@ from redstring import (
     EntitiesEmbedded,
     GraphProjection,
     GraphStore,
+    TenantId,
 )
-from redstring.domain.ids import TenantId
 from redstring.events.document import DocumentChunked
 from redstring.ports.chunk_store import ChunkWriter
 from redstring.ports.vector_store import VectorWriter

@@ -92,6 +92,26 @@ close the gaps in it. §4 has the weights.
 
 ## 2. The graph we actually cluster
 
+> **This section described a channel that did not run, from #234 until
+> 2026-08-22.** Co-mention edges were always empty: the adapter read entity
+> links off stored chunks, and the only writer of chunks is `index_documents`,
+> which runs before extraction and knows no entities — so every chunk carried
+> `entity_ids: []`. Measured over a real ingest: 36 chunks, 0 linked, 0
+> passages, and a projection byte-identical with the channel present and
+> absent. `docs/design/co-mention-channel-findings.md` has the measurement and
+> `docs/design/co-mention-repair-spec.md` the repair. The table below is now
+> true; it was aspirational for one release.
+>
+> Two things the repair changed that this section had wrong. The links reach
+> the log through `event_store=` alone — `build_graph` records the chunking
+> whether or not it is given a chunk store — so they are folded into a
+> `CoMentionIndex` holding `(source_id, chunk_index) -> entity ids` and no
+> text. And stored links are **pre-consolidation** ids that nothing rewrites,
+> so reading them against a canonical graph silently dropped every merged
+> entity until `RecordedCoMentions` began resolving them through the alias
+> graph.
+
+
 Extracted relationships alone are too sparse. A corpus of 2,000 entities may
 carry a few hundred relationships, leaving most entities isolated — and an
 isolated entity is its own singleton community, which turns the projection
