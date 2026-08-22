@@ -108,6 +108,7 @@ const Mounted = () => (
           onPick={() => {}}
           onReset={() => {}}
           onRemove={() => {}}
+          graphUrl={() => '/api/projects/p/export/graph'}
         />
       </div>
     </ContainerProvider>

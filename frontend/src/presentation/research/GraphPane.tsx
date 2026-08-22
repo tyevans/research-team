@@ -9,6 +9,7 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
 import { GraphDetail } from './GraphDetail.tsx'
+import { GraphExportBar } from './GraphExportBar.tsx'
 import { GraphLegend } from './GraphLegend.tsx'
 
 // `React.lazy`, not a static import: `GraphCanvas` is the only module that
@@ -103,7 +104,7 @@ export const GraphPane = ({
   entity: string | null
   onEntity: (id: string | null) => void
 }) => {
-  const { graphs } = useContainer()
+  const { graphs, exports } = useContainer()
   const [term, setTerm] = useState('')
   const [entityType, setEntityType] = useState('')
 
@@ -243,6 +244,17 @@ export const GraphPane = ({
         store.getState().removeNode(id)
         onEntity(null)
       }}
+      graphUrl={(format, entityId) =>
+        exports.graphUrl(
+          projectId,
+          format,
+          // Depth 1, matching what clicking a node in this pane pulls in. A
+          // deeper export would hand back a drawing the reader has not seen,
+          // and `MAX_NEIGHBORHOOD_DEPTH` is 2 -- so the only other choice is
+          // one the server may refuse.
+          entityId === null ? { kind: 'project' } : { kind: 'entity', entityId, depth: 1 },
+        )
+      }
     />
   )
 }
@@ -280,6 +292,7 @@ export const GraphBrowser = ({
   onPick,
   onReset,
   onRemove,
+  graphUrl,
 }: {
   projectId: ProjectId
   view: GraphView
@@ -308,6 +321,12 @@ export const GraphBrowser = ({
   onPick: (id: string) => void
   onReset: () => void
   onRemove: (id: string) => void
+  /** Where a file of this graph can be downloaded, narrowed to `entity` when
+   *  one is selected. A prop rather than a container read inside the export
+   *  bar, so this component keeps taking everything it needs from its caller —
+   *  which is what lets the browser-mode test render it against a partial
+   *  container. */
+  graphUrl: (format: 'html' | 'json' | 'graphml', entityId: string | null) => string
 }) => {
   return (
     // `relative` is load-bearing rather than decorative: it is the containing
@@ -396,6 +415,17 @@ export const GraphBrowser = ({
             </button>
           ) : null}
         </div>
+
+        {/* Only once there is something to export. An export of an empty graph
+            is a valid file nobody wants, and offering it on a stage that says
+            "this graph is empty" would contradict the stage. */}
+        {view.nodes.length > 0 ? (
+          <GraphExportBar
+            graphUrl={graphUrl}
+            entity={entity}
+            entityName={view.nodes.find((node) => node.id === entity)?.name ?? null}
+          />
+        ) : null}
 
         {/* Bordered in the failure colour rather than merely coloured text:
             this floats over a drawing, so it needs its own box to be legible
