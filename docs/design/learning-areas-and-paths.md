@@ -227,9 +227,14 @@ two.
 **What this changes that the nudge could not.** An entity with no relationship
 and no co-mention is invisible to the graph — `_absorb_small` drops it,
 correctly, because on the graph alone there is nothing to say about where it
-belongs. A semantic edge places it. That is the `glass`/`cup` case and it is
-the whole reason the channel is worth having: not a better ordering of areas
-the graph already found, but areas that include what the graph could not see.
+belongs. A semantic edge places it. That is the `glass`/`cup` case.
+
+**And it is worth six entities, not the fifty-four this section used to
+imply.** §4a has the measurement. Every number quoted for this channel before
+2026-08-22 was taken against a projection with the co-mention channel *dead*
+(§2), which is a baseline no running system has. Against the repaired
+baseline the semantic channel takes 555 placed to 561. It is a real gain and a
+small one, and the sentence above is true of six entities.
 
 **Absence stays ordinary.** Embeddings are off on some installs, absent on any
 project ingested before they were durable, and missing when a provider's
@@ -239,6 +244,65 @@ reader is looking at, so `used_embeddings` and `semantic_count` ride on every
 curriculum response and are rendered — `used_embeddings` follows the edges
 actually drawn, not the configuration, because a run handed a thousand pairs
 that all fell below the floor used embeddings in no sense a reader cares about.
+
+## 4a. What the three channels are actually worth
+
+Measured 2026-08-22 against a real model — `qwen3.8-27b-64k-txt` extracting,
+`qwen3-embedding-0.6b` at 1024 dimensions — over five Wikipedia articles
+(three Roman, two plant-biology), 663 entities extracted, 562 canonical, 43
+co-mention passages, 824 semantic edges at the shipped selector.
+
+| arm | areas | placed | dropped |
+|---|---|---|---|
+| graph alone | 25 | 457 | 105 |
+| graph + co-mentions | 23 | 555 | 7 |
+| graph + semantic | 26 | 518 | 44 |
+| graph + both (ships) | 23 | 561 | 1 |
+
+**Mass is a bad predictor of impact, and this is the number to remember.** By
+adjacency weight the three channels are relations 82.3%, semantic 14.8%,
+co-mentions **2.9%** — and the 2.9% channel rescues 98 entities where the
+14.8% one rescues 61. The arithmetic was predicted correctly beforehand (≤3.7%
+from 43 passages against 564 relationships) and the *inference* drawn from it —
+that so little mass could not move the clustering — was wrong.
+
+The reason is placement, not quantity. An isolated entity needs exactly one
+edge to become placeable, and co-mention weight lands on precisely the
+entities the relationship graph missed. Relation mass piles up between hubs
+that were already connected and changes nothing about who gets an area.
+**Anyone tuning `CO_MENTION_BUDGET` by watching total weight is watching the
+wrong number.**
+
+`MAX_PASSAGE_ENTITIES = 25` is live and close to binding: the median passage
+names 19 entities, the largest names 47, and 3 of 43 passages are excluded.
+That constant could not be known until the channel ran, and now can be.
+
+### Selectors, re-measured against the repaired baseline
+
+With only 7 entities left to place, no selector can win on placement. They are
+separable on damage instead — whether they glue areas together.
+
+| arm | edges | areas | placed | cross-subject |
+|---|---|---|---|---|
+| no semantic | 0 | 23 | 555 | 0.00% |
+| shipped (cosine + floor) | 824 | 23 | 561 | 0.00% |
+| cosine @500 | 500 | 28 | 560 | 0.00% |
+| CSLS @500 | 500 | **32** | 561 | 0.00% |
+| CSLS @1000 | 1000 | 15 | 561 | 0.00% |
+
+CSLS reaches the ceiling with 500 edges where the shipped selector needs 824,
+and holds 32 areas against 23 — less gluing for fewer edges. It is **not**
+adopted here: it buys zero entities, and whether 32 areas beats 23 is a
+question this corpus cannot answer. See `BACKLOG.md`.
+
+**Two metrics that failed to discriminate, recorded so nobody rebuilds them.**
+Area purity against the known two-subject split is 1.000 in every arm. The
+cross-subject edge rate — proposed specifically because purity could not rank
+the arms — is 0.00% in every arm, including 1000-edge CSLS. Rome and plant
+biology are far enough apart that no selector ever crosses, which speaks well
+of the embedding and makes this corpus useless for ranking. **A corpus of
+closely-related subjects is what a future comparison needs**, and building one
+is prerequisite to any further tuning here.
 
 ## 5. From areas to paths
 

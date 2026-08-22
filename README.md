@@ -60,7 +60,10 @@ neighbour in embedding space is a hypothesis no document ever made, so it is
 weighted below both and drawn only above a similarity floor. What that last
 channel buys is the case the graph cannot see at all: an entity nothing links
 and nothing co-mentions is simply dropped from a graph-only projection, and a
-semantic edge places it.
+semantic edge places it. Measured on a five-article corpus, the co-mention
+channel takes entities dropped from 105 to 7 and the semantic channel takes
+that 7 to 1 — so the second is real and small, and §4a of the design document
+has the grid.
 
 What gets embedded is the entity's **card** — its name, type, properties and
 named relations, the same text the lexical index matches — rather than the
