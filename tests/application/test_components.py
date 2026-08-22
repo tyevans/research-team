@@ -1281,3 +1281,135 @@ def test_a_resolved_type_does_not_reach_the_build_prompt_by_existing():
         "cloze",
         "checklist",
     }
+
+
+def test_an_entity_id_written_where_a_name_belongs_is_warned_about():
+    """`compare` has no id field, so an id copied into `entities` renders raw.
+
+    The authoring prompt hands the model entity ids and tells it to copy them
+    exactly. `entities` is the only entity-shaped field `compare` has, and a
+    uuid is a valid string, so this validates with nothing said -- and the
+    browser then searches for an entity *named* by that uuid, finds none, and
+    prints it beside "not in this project's graph".
+
+    Warned, never rejected: the table draws and only the heading is wrong.
+    Red against a registry with no id check -- this body parses clean today
+    with zero errors and zero warnings.
+    """
+    source = (
+        "```component:compare\n"
+        "id: c\n"
+        "entities:\n"
+        '  - "9f2c1a44-0000-4000-8000-000000000000"\n'
+        "  - Constantine\n"
+        "rows:\n"
+        "  - label: Reign\n"
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.errors == ()
+    assert [str(note) for note in block.warnings] == [
+        "entities[0]: looks like an entity id, not a name; this field takes "
+        "names as the sources spell them, and there is nowhere here to put an id"
+    ]
+
+
+def test_a_definition_given_an_id_for_its_name_is_told_which_field_to_use():
+    """The same defect on a type that *does* have somewhere to put it.
+
+    `definition` and `graph` carry `entity_id` beside `entity`, so the fix the
+    model needs is a move rather than a lookup -- and the warning says so.
+    """
+    source = (
+        "```component:definition\nid: d\nentity: 9f2c1a44-0000-4000-8000-000000000000\n```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.errors == ()
+    assert [str(note) for note in block.warnings] == [
+        "entity: looks like an entity id, not a name; `entity` is the name as "
+        "the sources spell it, and the id goes in `entity_id`"
+    ]
+
+
+def test_a_short_hyphenated_value_is_not_mistaken_for_an_id():
+    """`284-305` is a reign, and a compare table is full of them.
+
+    The check is loose about hex grouping and strict about length -- 32 hex
+    digits, a uuid's worth -- precisely so that dates, ranges and hyphenated
+    names do not collect a warning nobody can act on. Red against a check
+    written as "hex and hyphens", which every one of these matches.
+    """
+    source = (
+        "```component:compare\n"
+        "id: c\n"
+        "entities: [Diocletian, Constantine]\n"
+        "rows:\n"
+        '  - label: "284-305"\n'
+        '    cells: ["ab-cd-ef", "AD 284-305"]\n'
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.errors == ()
+    assert block.warnings == ()
+
+
+def test_a_required_text_field_that_is_present_but_empty_is_warned_about():
+    """`required=True` asks whether the key is there, not whether it says anything.
+
+    `text()` accepts `""` on purpose -- it rejects structure, not emptiness --
+    so `prompt: ""` validated as present and nothing anywhere complained. It
+    mattered less while the browser drew a padded grey "(empty file)" in its
+    place; now that `Prose` renders blank text as nothing, this warning is the
+    only thing that says a required field was left empty.
+
+    Red against the build before this hook: zero warnings.
+    """
+    source = (
+        "```component:mcq\n"
+        'id: m\nprompt: ""\n'
+        "options:\n"
+        '  - text: ""\n'
+        "    correct: true\n"
+        '  - text: "The Rhine frontier"\n'
+        "    correct: false\n"
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.errors == ()
+    assert [str(note) for note in block.warnings] == [
+        "prompt: required, and present but empty; it renders as nothing",
+        "options[0].text: required, and present but empty; it renders as nothing",
+    ]
+
+
+def test_a_short_compare_row_is_not_warned_about_for_the_cells_it_omits():
+    """The blank the craft note invites stays free of complaint.
+
+    "A short row is padded, so a dimension one entity has and another does not
+    is fine to leave blank -- that blank is itself the comparison"
+    (`compare`'s craft notes). `cells` is optional and its entries are not
+    required fields, so the blank-field warning must not reach them. Red
+    against a hook that warned on any empty string it found.
+    """
+    source = (
+        "```component:compare\n"
+        "id: c\n"
+        "entities: [Diocletian, Constantine]\n"
+        "rows:\n"
+        "  - label: Religious policy\n"
+        '    cells: ["Persecution"]\n'
+        "```\n"
+    )
+
+    block = parse_document(source, path="lesson.md").components[0]
+
+    assert block.errors == ()
+    assert block.warnings == ()
