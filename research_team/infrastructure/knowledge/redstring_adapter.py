@@ -1080,8 +1080,7 @@ class RedstringKnowledge:
         if not needle:
             # `Retriever.retrieve` raises on a blank query and this returns
             # nothing, which is the older contract and the one the agent tool
-            # depends on. Reported as FUSED rather than SUBSTRING: no channel
-            # was degraded, the question was empty.
+            # depends on.
             return SearchOutcome(matches=(), mode=SearchMode.FUSED)
 
         try:
@@ -1106,25 +1105,22 @@ class RedstringKnowledge:
                     if canonical[entity.id] == entity.id
                 }
 
-                embeddings, vectors = await self._embedding_pair()
-                mode = (
-                    SearchMode.FUSED
-                    if embeddings is not None and vectors is not None
-                    else SearchMode.SUBSTRING
+                # `lexical_only`, so this no longer waits on `_embedding_pair`.
+                # The blocking-key channel reaches no vector, and requiring a
+                # provider to construct a retriever that never calls one is
+                # what used to make a mistyped embedding model silently cost
+                # misspelling-tolerant search. See redstring B163 / ADR 0045.
+                retrieved = await Retriever.lexical_only(graph=self._store).retrieve(
+                    query, self._project_id, k=limit, mode=RetrievalMode.LEXICAL
                 )
-                ordered: list[UUID] = []
-                if embeddings is not None and vectors is not None:
-                    retrieved = await Retriever(
-                        embeddings=embeddings, vectors=vectors, graph=self._store
-                    ).retrieve(query, self._project_id, k=limit, mode=RetrievalMode.LEXICAL)
-                    # A ranked id may name an absorbed entity, which `by_id`
-                    # has already dropped; skipping here rather than resolving
-                    # keeps one rule about what a match is.
-                    ordered = [
-                        scored.entity.id
-                        for scored in retrieved.matches
-                        if scored.entity.id in by_id
-                    ]
+                # A ranked id may name an absorbed entity, which `by_id` has
+                # already dropped; skipping here rather than resolving keeps one
+                # rule about what a match is.
+                ordered: list[UUID] = [
+                    scored.entity.id
+                    for scored in retrieved.matches
+                    if scored.entity.id in by_id
+                ]
 
                 seen = set(ordered)
                 ordered.extend(
@@ -1160,7 +1156,7 @@ class RedstringKnowledge:
                 ]
         except RedstringError as error:
             raise KnowledgeError(str(error)) from error
-        return SearchOutcome(matches=tuple(matches), mode=mode)
+        return SearchOutcome(matches=tuple(matches), mode=SearchMode.FUSED)
 
     async def describe(self, query: str, *, limit: int = 10) -> SearchOutcome:
         """Entities whose *card* matches `query`, best first.

@@ -146,53 +146,6 @@ async def test_graph_search_says_so_when_empty():
 
 
 @pytest.mark.asyncio
-async def test_graph_search_tells_the_model_when_matching_is_degraded():
-    """A degraded search says so **on a hit**, not only on a miss.
-
-    The tempting version of this feature warns only when nothing came back.
-    That is the case where the model can already tell something is off. The
-    dangerous case is a short list of exact-substring hits that looks like a
-    complete answer -- the fuzzy channel changes which entities come back and
-    in what order, so a degraded search succeeding is indistinguishable from
-    a healthy one unless it is labelled.
-
-    Fails with the mode line removed, which is the whole point: without it
-    nothing anywhere tells the model, and the tool's output is identical in
-    both configurations.
-    """
-    matches = [
-        Match(
-            entity_id=uuid4(),
-            name="Ada Lovelace",
-            entity_type="Person",
-            relationship_count=3,
-        )
-    ]
-    tools = tools_by_name(StubKnowledge(matches=matches, search_mode=SearchMode.SUBSTRING))
-
-    result = await tools["graph_search"].ainvoke({"query": "ada"})
-
-    assert "Ada Lovelace" in result, "the hit is still reported"
-    assert "degraded" in result
-    assert "misspelling" in result
-
-
-@pytest.mark.asyncio
-async def test_graph_search_stays_quiet_when_matching_is_healthy():
-    """The note is absent in the ordinary case.
-
-    Guards the other direction: a warning printed on every search is one the
-    model learns to ignore, and would make the degraded case invisible again
-    by drowning it.
-    """
-    tools = tools_by_name(StubKnowledge(matches=[], search_mode=SearchMode.FUSED))
-
-    result = await tools["graph_search"].ainvoke({"query": "nothing"})
-
-    assert "degraded" not in result
-
-
-@pytest.mark.asyncio
 async def test_unmerge_passes_the_id_through():
     knowledge = StubKnowledge()
     tools = tools_by_name(knowledge)

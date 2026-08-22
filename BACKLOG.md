@@ -3907,33 +3907,3 @@ channel scoring token overlap. The middle one is redstring's to decide.
 Worth knowing before choosing: this document's design spec was wrong about
 this case twice in one day, in both directions, and each reading took ten
 seconds to check against the adapter. Check before arguing.
-
-### B-LEXICAL-NEEDS-EMBEDDINGS-1. A purely lexical entity search still requires an embedding provider
-
-`RedstringKnowledge.search` asks `redstring.Retriever` for
-`RetrievalMode.LEXICAL` -- blocking keys over the entity name, scored by
-Jaro-Winkler, with no vector involved. It still cannot run without an
-`EmbeddingProvider` and a `VectorStore`, because `Retriever.__init__` takes
-both and dimension-checks them against each other before any mode is chosen.
-
-So `AGENT_VECTOR_STORE=none`, and any deployment whose embedding probe failed
-and latched `(None, None)`, loses misspelling-tolerant entity search for a
-dependency that search does not use.
-
-The obvious local workaround is unavailable: calling `find_by_blocking_keys`
-and `lexical_score` directly -- exactly what `UsageReader` does with
-redstring's chunk-ranking internals, and for this same reason -- would name
-`redstring.domain.blocking`, and `tests/test_architecture.py` refuses
-`redstring.domain.*`. Neither function is exported from redstring's package
-root.
-
-Two ways out, and the first is upstream's to weigh: make `embeddings` and
-`vectors` optional on `Retriever` when the caller only ever asks for
-`LEXICAL` (it already branches per mode inside `retrieve`), or export the
-blocking-key helpers so a caller can assemble a lexical-only search the way
-`UsageReader` assembles a lexical-only chunk search.
-
-Not urgent: `AGENT_VECTOR_STORE` defaults to `memory`, so the common
-configuration has both. It bites the configuration that switched embeddings
-off deliberately, which is also the one least likely to be watching for a
-quiet loss of capability -- `SearchOutcome.mode` is what makes it visible.

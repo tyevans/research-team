@@ -619,23 +619,20 @@ async def test_search_reads_relationships_once_regardless_of_match_count(
 
 
 @pytest.mark.asyncio
-async def test_search_reports_substring_mode_when_embeddings_are_unavailable(
+async def test_search_still_matches_a_misspelling_without_an_embedding_provider(
     tmp_path, build_adapter
 ):
-    """A dead embedding endpoint degrades entity search, and says so.
+    """The fuzzy channel no longer depends on an embedding endpoint.
 
-    `_embedding_pair` latches `(None, None)` when its probe fails. That is the
-    right trade for consolidation -- losing an optional scoring feature beats
-    discarding a document that has already been fetched and extracted -- and
-    the wrong one for retrieval, where it silently removes the fuzzy channel
-    and leaves plausible substring hits behind.
+    It used to. `Retriever.__init__` required an `EmbeddingProvider` and a
+    `VectorStore` before any mode was chosen, even though
+    `RetrievalMode.LEXICAL` reaches neither -- so a build with
+    `AGENT_VECTOR_STORE=none`, or one whose probe latched `(None, None)`, lost
+    misspelling-tolerant search: a feature with no embedding in it.
 
-    This asserts the degradation is legible from the **result**. With this
-    reverted the only trace was a log line at warning, and a caller could not
-    tell a thin answer from a degraded one.
-
-    Note what it does *not* assert: that the search failed. Degrading is the
-    intended behaviour and `Ada Lovelace` still comes back.
+    `Retriever.lexical_only` (redstring B163, ADR 0045) removes the
+    requirement. This fixture passes no embeddings at all, which is exactly
+    the configuration that used to fall back to a substring scan.
     """
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
@@ -643,19 +640,20 @@ async def test_search_reports_substring_mode_when_embeddings_are_unavailable(
         SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
     )
 
-    outcome = await adapter.search("Ada")
+    outcome = await adapter.search("Adah Lovelace")
 
-    assert outcome.mode is SearchMode.SUBSTRING
     assert [match.name for match in outcome.matches] == ["Ada Lovelace"]
+    assert outcome.mode is SearchMode.FUSED
 
 
 @pytest.mark.asyncio
 async def test_search_reports_fused_mode_when_embeddings_work(tmp_path, build_adapter):
     """The healthy case names itself too.
 
-    Without this, `mode` could be hardcoded to SUBSTRING and the test above
-    would pass -- which is the whole failure shape the field exists to close,
-    reproduced inside its own test.
+    Thin on its own now that `search` has one mode: it was the guard against
+    hardcoding, back when a second mode existed to be confused with. Kept
+    because `describe` still has three, and a `search` that started reporting
+    one of those would be a real defect with no other test on it.
     """
     project_id = uuid4()
     adapter, _, _ = build_adapter(

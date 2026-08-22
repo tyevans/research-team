@@ -78,7 +78,7 @@ dependencies = [
     # `ThemeReport` and `summarize_themes` added, nothing removed), and its
     # `eventsource-py>=0.14.0,<0.15` is identical to ours, so the two libraries
     # do not have to move together this time.
-    "redstring[llm,neo4j,pgvector] @ git+https://github.com/tyevans/redstring.git@8de0cb26dcbbd23abe3fdeb19da3940ea90ee274",
+    "redstring[llm,neo4j,pgvector] @ git+https://github.com/tyevans/redstring.git@dc9ec27f6d872dd3a55659bed6566fe3e320d92d",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.3",
     # The blob store streams to disk with async file handles rather than
