@@ -57,14 +57,13 @@ UNREADABLE_LOG_CHARS = 500
 MAX_NEEDS_PER_TOPIC = 4
 """Stage 1's cap on how many things a topic is allowed to want seen or heard.
 
-A guess, the way `MAX_SEARCHES_PER_TURN` is a guess: no measurement yet says
-how many genuine needs a real topic states, and four is chosen as "more than
-one, few enough that a person reviewing proposals is not reviewing a report."
-It is a constant, not a computed limit, for the same reason `MAX_SEARCHES_PER_TURN`
-gives -- being wrong about it is visible (proposals run thin, or a person
+A guess: no measurement yet says how many genuine needs a real topic states,
+and four is chosen as "more than one, few enough that a person reviewing
+proposals is not reviewing a report." It is a constant rather than a computed
+limit because being wrong about it is visible (proposals run thin, or a person
 scrolls past a wall of them) and cheap to fix, one number in one place, rather
-than the alternative of no cap and an unbounded stage 1 reply setting the
-size of every stage after it.
+than the alternative of no cap and an unbounded stage 1 reply setting the size
+of every stage after it.
 """
 
 MAX_QUERIES_PER_NEED = 2
