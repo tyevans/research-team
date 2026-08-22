@@ -5,7 +5,17 @@ store that keeps it apart from the quotable corpus -- so everything here is
 judged by whether BM25 can find the entity from a description of it.
 """
 
-from research_team.infrastructure.knowledge.entity_cards import Neighbour, card_text
+from uuid import uuid4
+
+import pytest
+from redstring import InMemoryChunkStore, SlidingWindowChunker, rank_chunks, tokenize
+
+from research_team.application.knowledge import SourceRef
+from research_team.infrastructure.knowledge.entity_cards import (
+    Neighbour,
+    card_text,
+    index_cards,
+)
 
 
 def test_a_card_names_its_neighbours_and_their_relationship():
@@ -103,3 +113,96 @@ def test_a_property_whose_value_is_not_a_string_still_reaches_the_text():
 
     assert "1987" in text
     assert "merger" in text
+
+
+@pytest.mark.asyncio
+async def test_an_entity_is_found_by_a_neighbour_name(tmp_path, build_adapter):
+    """A query naming only a neighbour finds the entity. The whole of Stage B.
+
+    `Charles Babbage` is nowhere in the string `Ada Lovelace`, so no channel
+    `search` has can answer this: the substring pass tests containment in the
+    name and the blocking-key pass hashes a prefix and a soundex of it. The
+    edge between them is in the graph, and this is what puts it in the index.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+    cards = InMemoryChunkStore(dimension=8)
+
+    carded = await index_cards(
+        graph=adapter._store, cards=cards, tenant_id=project_id, chunker=SlidingWindowChunker()
+    )
+
+    assert carded == 2, "every entity gets a card, not only ones with edges"
+
+    terms = tokenize("Charles Babbage")
+    ranked = rank_chunks(terms, await cards.lexical_candidates(terms, project_id, 10), 10)
+    named = {chunk.chunk.text.splitlines()[0] for chunk in ranked}
+
+    assert any("Ada Lovelace" in first_line for first_line in named), (
+        "Ada's card must name Babbage -- that edge is the only thing linking them"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_card_chunk_carries_the_entity_it_describes(tmp_path, build_adapter):
+    """`entity_ids` on the chunk, so a hit resolves without parsing a card.
+
+    The alternative is reading the name back off the card's first line, which
+    would make retrieval depend on the text format `card_text` happens to emit
+    -- and would break on the first entity whose name contains a newline.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+    cards = InMemoryChunkStore(dimension=8)
+
+    await index_cards(
+        graph=adapter._store, cards=cards, tenant_id=project_id, chunker=SlidingWindowChunker()
+    )
+
+    terms = tokenize("Charles Babbage")
+    ranked = list(
+        rank_chunks(terms, await cards.lexical_candidates(terms, project_id, 10), 10)
+    )
+
+    assert ranked
+    assert all(chunk.chunk.entity_ids for chunk in ranked), (
+        "every card chunk names the entity it describes"
+    )
+
+
+@pytest.mark.asyncio
+async def test_re_indexing_replaces_a_card_rather_than_adding_one(tmp_path, build_adapter):
+    """Cards are rebuilt at every project open, so this runs constantly.
+
+    Source ids are derived from the entity id, which is what makes
+    `replace_source` land on the right rows. Get that wrong -- a random id, or
+    one derived from the card's text -- and every open doubles the corpus while
+    every individual query still looks correct.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+    cards = InMemoryChunkStore(dimension=8)
+
+    for _ in range(3):
+        await index_cards(
+            graph=adapter._store,
+            cards=cards,
+            tenant_id=project_id,
+            chunker=SlidingWindowChunker(),
+        )
+
+    terms = tokenize("Charles Babbage")
+    found = (await cards.lexical_candidates(terms, project_id, 50)).candidates
+
+    ids = {candidate.chunk.id for candidate in found}
+    assert len(found) == len(ids), "duplicate chunk rows"
+    assert len(found) <= 2, f"three indexings produced {len(found)} chunks"
