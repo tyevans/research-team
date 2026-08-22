@@ -47,6 +47,8 @@ from redstring import (
     build_graph,
     document_stream,
     index_documents,
+    rank_chunks,
+    tokenize,
 )
 
 from research_team.application.knowledge import (
@@ -67,6 +69,7 @@ from research_team.infrastructure.knowledge.domain_schemas import (
     RESEARCH_CORPUS,
     resolve_domain,
 )
+from research_team.infrastructure.knowledge.entity_cards import index_cards
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.temporal_expressions import (
@@ -302,6 +305,7 @@ class RedstringKnowledge:
         concurrency: int = 1,
         chunker: Chunker | None = None,
         chunks: ChunkStore | None = None,
+        cards: ChunkStore | None = None,
         judgements: AggregateRepository[EntityJudgements] | None = None,
     ) -> None:
         self._project_id = project_id
@@ -313,6 +317,10 @@ class RedstringKnowledge:
         # to a no-op rather than every call site having to know whether the
         # feature is configured before it can store a document at all.
         self._chunks = chunks
+        #: The entity-card corpus for this project, or None when cards are off.
+        #: A different store from `_chunks` on purpose -- see `ProjectGraphs`
+        #: for why the separation is structural rather than a convention.
+        self._cards = cards
         # Both default to redstring's own serial behaviour rather than to the
         # configured values, so a test constructing this directly gets the
         # deterministic pipeline unless it asks otherwise. The composition
@@ -514,6 +522,8 @@ class RedstringKnowledge:
         except Exception as error:  # provider transports raise their own types
             announce("failed", detail=f"extraction failed: {error}")
             raise KnowledgeError(f"extraction failed: {error}") from error
+
+        await self._recard()
 
         announce(
             "consolidated",
@@ -743,6 +753,37 @@ class RedstringKnowledge:
                 SlidingWindowChunker(default_chunk_size=1000, default_overlap=500)
             ),
             event_store=self._event_store,
+        )
+
+    async def _recard(self) -> None:
+        """Rebuild every card in this project. No model call, no-op when off.
+
+        **The whole tenant, not the entities this ingest touched**, and that is
+        correctness rather than laziness in the first version. An edge changes
+        *two* neighbourhoods and only one of them is the document's subject, so
+        a subject-only refresh leaves the far endpoint's card describing a graph
+        it no longer matches -- invisibly, because that card is a truthful
+        description of an older neighbourhood and everything it does answer is
+        still right. A consolidation is worse: the absorbed entity keeps the
+        card a previous pass wrote, which answers every query its name used to,
+        so the merge looks undone from the retrieval side while the graph is
+        correct. `index_cards` skipping absorbed entities on write does not
+        remove what an earlier write left.
+
+        The cost is real and is the obvious thing to narrow: O(entities) of
+        assembly per ingest, on top of an ingest that already costs model calls
+        per chunk. Narrowing it needs the two-endpoint rule above plus a way to
+        delete the cards of entities that stopped being canonical, and getting
+        either subtly wrong is silent. `tests/infrastructure/test_entity_cards.py`
+        holds one test per failure mode so a narrowing has something to fail.
+        """
+        if self._cards is None:
+            return
+        await index_cards(
+            graph=self._store,
+            cards=self._cards,
+            tenant_id=self._project_id,
+            chunker=SlidingWindowChunker(default_chunk_size=1000, default_overlap=500),
         )
 
     async def _store_document(self, source: SourceRef) -> None:
@@ -1120,6 +1161,71 @@ class RedstringKnowledge:
         except RedstringError as error:
             raise KnowledgeError(str(error)) from error
         return SearchOutcome(matches=tuple(matches), mode=mode)
+
+    async def describe(self, query: str, *, limit: int = 10) -> SearchOutcome:
+        """Entities whose *card* matches `query`, best first.
+
+        BM25 over the entity-card corpus -- name, type, properties and the
+        names of every neighbour -- which is what lets a query describe an
+        entity instead of spelling it.
+
+        The chunk's `entity_ids` is what maps a hit back, rather than reading
+        the name off the card's first line: parsing would tie this to
+        `card_text`'s formatting and break on the first name containing a
+        newline. A chunk carrying no entity id is skipped rather than guessed
+        at.
+
+        Deduplicated by entity, keeping the best-scoring chunk. A long card is
+        several chunks and a query naming two neighbours can match more than
+        one of them; without this, one entity would fill the answer.
+        """
+        if limit < 1:
+            raise KnowledgeError("limit must be at least 1")
+        if self._cards is None:
+            return SearchOutcome(matches=(), mode=SearchMode.UNAVAILABLE)
+        terms = tokenize(query)
+        if not terms:
+            return SearchOutcome(matches=(), mode=SearchMode.CARDS)
+
+        try:
+            async with tenant_scope(self._project_id):
+                found = await self._cards.lexical_candidates(terms, self._project_id, limit)
+                best: dict[UUID, float] = {}
+                for ranked in rank_chunks(terms, found, limit):
+                    for entity_id in ranked.chunk.entity_ids or ():
+                        if best.get(entity_id, float("-inf")) < ranked.score:
+                            best[entity_id] = ranked.score
+
+                ordered = sorted(best, key=lambda key: -best[key])[:limit]
+                entities = {
+                    entity.id: entity
+                    for entity in await self._store.get_entities(ordered, self._project_id)
+                }
+                edges = (
+                    await self._store.get_relationships_for(ordered, self._project_id)
+                    if ordered
+                    else []
+                )
+                counts: dict[UUID, int] = dict.fromkeys(ordered, 0)
+                for edge in edges:
+                    for endpoint in (edge.source_entity_id, edge.target_entity_id):
+                        if endpoint in counts:
+                            counts[endpoint] += 1
+
+                matches = tuple(
+                    Match(
+                        entity_id=entity_id,
+                        name=entities[entity_id].name,
+                        entity_type=entities[entity_id].entity_type,
+                        relationship_count=counts[entity_id],
+                    )
+                    for entity_id in ordered
+                    if entity_id in entities
+                )
+        except RedstringError as error:
+            raise KnowledgeError(str(error)) from error
+
+        return SearchOutcome(matches=matches, mode=SearchMode.CARDS)
 
     async def undo_merge(self, merge_id: UUID) -> MergeRecord:
         """Reverse a consolidation.

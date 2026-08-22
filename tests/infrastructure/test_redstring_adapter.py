@@ -1478,3 +1478,56 @@ async def test_without_a_judgements_repository_the_same_pair_stays_two_nodes(
 
     assert len((await adapter.search("JFK")).matches) == 1, "still its own node"
     assert len((await adapter.search("Kennedy")).matches) == 1, "and so is the long spelling"
+
+
+@pytest.mark.asyncio
+async def test_describe_finds_an_entity_by_its_neighbour(tmp_path, build_adapter):
+    """`describe` answers what `search` cannot: a query naming no part of the name.
+
+    `Charles Babbage` is nowhere in the string `Ada Lovelace`, so neither
+    channel `search` has can reach it -- the substring pass tests containment
+    in the name and the blocking-key pass hashes a prefix and a soundex of it.
+    The edge between them lives in the graph, and the card corpus is what puts
+    it in an index.
+
+    Both halves are asserted, because only the pair says anything: `describe`
+    finding it proves the card corpus works, and `search` missing it is what
+    makes this a new capability rather than a second spelling of an old one.
+    """
+    project_id = uuid4()
+    cards = InMemoryChunkStore(dimension=8)
+    adapter, _, _ = build_adapter(tmp_path, project_id, cards=cards)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    described = await adapter.describe("who worked with Charles Babbage")
+    searched = await adapter.search("who worked with Charles Babbage")
+
+    assert "Ada Lovelace" in [match.name for match in described.matches]
+    assert "Ada Lovelace" not in [match.name for match in searched.matches], (
+        "if `search` already answered this, `describe` would not be a capability"
+    )
+
+
+@pytest.mark.asyncio
+async def test_describe_without_a_card_corpus_says_so_rather_than_answering_empty(
+    tmp_path, build_adapter
+):
+    """A build with cards off reports it, instead of looking like no match.
+
+    The failure this closes is the one every defect in this feature shares: an
+    unwired card store answers every query with nothing, which is
+    indistinguishable from a project that genuinely holds no such entity. The
+    mode is what separates them, exactly as it does for a degraded `search`.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    await adapter.ingest(
+        SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+    )
+
+    described = await adapter.describe("who worked with Charles Babbage")
+
+    assert described.matches == ()
+    assert described.mode is SearchMode.UNAVAILABLE

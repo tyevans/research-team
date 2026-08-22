@@ -16,11 +16,22 @@ from research_team.infrastructure.agent.recall import PageMemo
 
 
 class StubKnowledge:
-    def __init__(self, *, report=None, matches=(), error=None, search_mode=SearchMode.FUSED):
+    def __init__(
+        self,
+        *,
+        report=None,
+        matches=(),
+        error=None,
+        search_mode=SearchMode.FUSED,
+        described=(),
+        describe_mode=SearchMode.CARDS,
+    ):
         self._report = report
         self._matches = list(matches)
         self._error = error
         self._search_mode = search_mode
+        self._described = list(described)
+        self._describe_mode = describe_mode
         self.undone = []
         self.ingested = []
 
@@ -34,6 +45,11 @@ class StubKnowledge:
         if self._error:
             raise self._error
         return SearchOutcome(matches=tuple(self._matches[:limit]), mode=self._search_mode)
+
+    async def describe(self, query, *, limit=10):
+        if self._error:
+            raise self._error
+        return SearchOutcome(matches=tuple(self._described[:limit]), mode=self._describe_mode)
 
     async def undo_merge(self, merge_id):
         if self._error:
@@ -449,3 +465,47 @@ def test_knowledge_prompt_no_longer_asks_for_transcription():
 
     assert "pass the `url:`, `title:` and `date:` lines" not in KNOWLEDGE_PROMPT
     assert "pass substantial content you have actually read" not in KNOWLEDGE_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_graph_describe_returns_what_the_card_index_matched():
+    """The tool exists and reaches `describe`, not `search`.
+
+    Both tools format identically, so a `graph_describe` accidentally wired to
+    `search` would return plausible output for a name query and nothing for a
+    descriptive one -- which is the failure it exists to fix, dressed as the
+    fix. The stub answers the two methods differently so only correct wiring
+    passes.
+    """
+    described = [
+        Match(
+            entity_id=uuid4(),
+            name="Ada Lovelace",
+            entity_type="Person",
+            relationship_count=1,
+        )
+    ]
+    tools = tools_by_name(StubKnowledge(matches=[], described=described))
+
+    result = await tools["graph_describe"].ainvoke({"query": "who worked with Babbage"})
+
+    assert "Ada Lovelace" in result
+
+
+@pytest.mark.asyncio
+async def test_graph_describe_says_when_there_is_no_card_index():
+    """An unwired card corpus is named, not rendered as "no matches".
+
+    A model told "no matching entities" stops asking; one told the index is
+    missing can fall back to `graph_search` on a name. Every defect this
+    feature can have presents as an empty answer, so the distinction is the
+    only thing separating them.
+    """
+    tools = tools_by_name(
+        StubKnowledge(matches=[], described=[], describe_mode=SearchMode.UNAVAILABLE)
+    )
+
+    result = await tools["graph_describe"].ainvoke({"query": "anything"})
+
+    assert "unavailable" in result.lower()
+    assert "graph_search" in result
