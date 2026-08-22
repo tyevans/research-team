@@ -111,7 +111,6 @@ async def _seed(application, client, *, source_id: str, text: str, entity_id: UU
     await application.graphs.chunks(project_id).upsert_many(
         [
             StoredChunk(
-                id=f"chunk-{source_id}",
                 tenant_id=project_id,
                 source_id=source_id,
                 text=text,
