@@ -4007,24 +4007,24 @@ which the authoring path has yet.
 
 ### B129. The two embedding channels are one model call per entity each
 
-Ingest embeds twice: redstring embeds `entity.name` into the consolidation
-store, and `entity_embeddings` embeds the entity's card into the curriculum
-store. Two calls per entity where one would do.
+Ingest embeds twice: the document channel embeds `entity.name` for
+consolidation and the card channel embeds the entity's card for the
+curriculum. Two calls per entity where one would do.
 
-**Not collapsed into one, and the reason is a measurement nobody here can
-take.** Consolidation's thresholds were tuned against name vectors and are
-written down: an identically-named pair scores 0.7143 on two features and
-0.8000 on three, against a `LOW_SIMILARITY` of 0.75 below which a candidate is
-dropped before the adjudicator ever sees it. Card vectors would move those
-numbers -- a card dilutes the name with type, properties and relations, so a
-true cross-document duplicate could fall *below* 0.75 and stop merging. That
-is a plausible regression against a behaviour worth 772 merges in the real
-log, and it cannot be checked without a real embedding endpoint and a labelled
-pair set.
+**The cost half of this entry was wrong and is now measured.** It argued the
+duplication mattered. On a 14 kB article against a real endpoint: extraction
+227s, document channel ~1s, card channel ~2s for 116 entities. Both channels
+together are **1.3% of ingest**. Whatever the case for collapsing them, cost
+is not it.
 
-So: measure first. If card vectors hold or improve the merge rate, delete the
-document channel and let one vector serve both. If they do not, this stays two
-calls and the entry becomes the reason why.
+What remains is the reason they are separate, unchanged and still unmeasured:
+consolidation's thresholds were tuned against name vectors and are written
+down -- 0.7143 on two features, 0.8000 on three, against a `LOW_SIMILARITY` of
+0.75 below which a candidate never reaches the adjudicator. A card dilutes the
+name with type and relations, so a true cross-document duplicate could fall
+below 0.75 and stop merging. That is a plausible regression against something
+worth 772 merges in a real log, and settling it needs a labelled pair set that
+does not exist. Measure first, then delete a channel.
 
 ### B130. A vector encodes the neighbourhood its entity had when it was extracted
 
@@ -4108,3 +4108,44 @@ lives inside `RecordedCoMentions` (`absorbed_ids`) — the narrowest place it
 could go, and the wrong place for a second consumer. If this is taken up, that
 belongs in a shared reader rather than copied; copied, the next consumer
 inherits the silent under-reporting rather than the fix.
+
+### B136. CSLS selects better semantic edges than cosine, for a prize of zero
+
+Measured 2026-08-22 against the repaired baseline (design doc §4a). At a
+matched 500-edge budget CSLS reaches 561 placed against cosine's 560, and
+holds 32 areas against 28 -- and the shipped cosine+floor selector needs 824
+edges to reach the same 561. Hubness is the mechanism: raw cosine gives one
+entity a k-NN in-degree of 38 against an expected 5 and leaves 26 entities as
+nobody's neighbour; CSLS gives 15 and 0.
+
+Not taken, for three reasons that should be re-read before anyone takes it.
+The prize is **zero entities** -- co-mentions already leave only 7 droppable.
+Whether 32 areas beats 23 is unranked and this corpus cannot rank it. And the
+change is not small: a budget deletes `MIN_EMBEDDING_SCORE`, which
+`_semantic_edges`' weight map is *defined against* (it rescales
+`[MIN_EMBEDDING_SCORE, 1.0]` onto `[0, EMBEDDING_WEIGHT]`, pinned by
+`test_a_pair_at_the_floor_contributes_almost_nothing`), and the three obvious
+replacements are not equivalent -- rescale over the admitted set's own range,
+map rank-within-budget, or clamp the CSLS score. `EMBEDDING_NEIGHBOURS` should
+be removed rather than retuned under a budget; it is already nearly inert.
+
+The separate and stronger argument for doing it eventually: an absolute
+similarity floor is **not portable**. The same 0.83 admits 0.60% of pairs
+corpus-wide, 5.07% within the Roman subset and 6.56% within the biology
+subset -- a 10x density swing from one constant inside one corpus.
+
+### B137. No corpus exists that can rank two clusterings
+
+Both metrics built to compare projection arms failed to discriminate. Purity
+against a known subject split is 1.000 in every arm ever measured. The
+cross-subject edge rate, built specifically because purity could not rank the
+arms, is 0.00% in every arm including a deliberately over-wired one.
+
+The cause is that the only labelled corpus is five Wikipedia articles across
+two unrelated subjects, which every method separates perfectly. **Anything
+that claims one clustering is better than another is currently unfalsifiable**,
+which is why B136 is deferred rather than decided.
+
+What is needed is a corpus of *closely related* subjects with a known
+boundary -- several sub-fields of one discipline, say -- where a wrong join is
+possible. Until it exists, tuning here is guesswork with numbers attached.
