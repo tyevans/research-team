@@ -164,6 +164,7 @@ from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.dispatch import DispatchQueue
+from research_team.interfaces.web.export import ExportDeps, export_router
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.presenters import (
@@ -4818,6 +4819,24 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # The download routes, which live in their own module rather than inline
+    # here. They need three of the closures above rather than the collaborators
+    # underneath them -- `_require_project`, `_graph_reader` and `_curriculum`
+    # already encode what a 404 and a 503 mean on this surface, and a second
+    # derivation of that would be free to disagree with this one about whether
+    # an unwired graph store is a missing project. See `export.py`.
+    app.include_router(
+        export_router(
+            ExportDeps(
+                service=service,
+                require_project=_require_project,
+                graph_reader=_graph_reader,
+                curriculum_of=_curriculum,
+                authoring=authoring,
+            )
+        )
+    )
 
     if STATIC_DIR.is_dir():
         app.mount("/static", _RevalidatedStatics(directory=STATIC_DIR), name="static")

@@ -17,8 +17,28 @@
 #      Same measurement: 214 entities extracted, zero with a temporal extent,
 #      and a timeline endpoint correctly answering with no bands at all.
 #
-# Both halves are needed and neither is sufficient. Removing the entity type
-# only stops the model being *invited* to make date-nodes -- redstring's own
+#   3. There is no `fact` entity type. The bundled schema declares one -- "A
+#      verifiable factual statement the text asserts", whose example is
+#      literally a sentence -- and the model obliges, so propositions land in
+#      the graph as nodes. Measured 2026-08-22 on a 326-entity graph: 11 `fact`
+#      entities, every one of them a sentence, and all of them isolated or
+#      nearly so; one learning area was named
+#      `observation-that-chloroplasts-resemble-cyanobacteria` after one.
+#
+#      The `states` relationship went with it. It read "a work asserts a fact"
+#      and its only surviving target type would have been `concept` -- which is
+#      worse than useless: an edge inviting the model to name the thing a work
+#      asserts, with `fact` unavailable, is an invitation to file the same
+#      sentence under `concept`, where it cannot be deleted. `affects` lost
+#      `fact` from both ends for the same reason and keeps its meaning.
+#
+#      Deleting the type does not stop propositions on its own; nothing in a
+#      schema enforces output. `research_team/application/name_shape.py`
+#      measures whether they actually stopped or merely changed type.
+
+# On the dates, both halves of (1) and (2) are needed and neither is
+# sufficient. Removing the entity type only stops the model being *invited*
+# to make date-nodes -- redstring's own
 # guide is explicit that a schema "shapes prompts but does not enforce output"
 # -- so the prose below has to forbid it outright. And forbidding date-nodes
 # without saying where dates should go instead would simply lose them.
@@ -96,15 +116,6 @@ entity_types:
     examples:
       - Questions and Answers about Collie Eye Anomaly
 
-  - id: fact
-    description: A verifiable factual statement the text asserts
-    properties:
-      - name: source
-        type: string
-        description: Who or what the text credits for it
-    examples:
-      - "Tollers carry a narrow founding gene pool"
-
   - id: category
     description: A classification or grouping
     properties:
@@ -132,8 +143,8 @@ relationship_types:
 
   - id: affects
     description: One thing causes, influences or acts on another
-    valid_source_types: [concept, event, organization, person, fact]
-    valid_target_types: [concept, event, organization, person, fact]
+    valid_source_types: [concept, event, organization, person]
+    valid_target_types: [concept, event, organization, person]
 
   - id: member_of
     description: Membership in an organization
@@ -155,10 +166,6 @@ relationship_types:
     valid_source_types: [person, organization]
     valid_target_types: [event]
 
-  - id: states
-    description: A work asserts a fact
-    valid_source_types: [work, organization, person]
-    valid_target_types: [fact, concept]
 
 extraction_prompt_template: |
   You are extracting a knowledge graph from research material -- articles,

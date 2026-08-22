@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from research_team.application.graph_read import Graph, GraphEntity, GraphRelationship
+from research_team.application.name_shape import clause_shaped
 from research_team.domain.learning_area import AreaMember, AreaProjection, LearningArea
 
 #: Weight of one extracted relationship. The unit the other weights are
@@ -460,6 +461,63 @@ def _absorb_small(
     ]
 
 
+#: How far down the centrality ranking `_naming_anchor` will look for a member
+#: whose name is not a sentence.
+#:
+#: Small deliberately. An area's identity should come from its anchors, and the
+#: twentieth-most-central member is not one -- a tidy name taken from the
+#: periphery describes an area the reader is not looking at, which is worse
+#: than an awkward name taken from its centre. Five is where the measured
+#: graph's two badly-named areas both find a good candidate
+#: (`observation-that-chloroplasts-resemble-cyanobacteria` at rank two,
+#: `conspirators-arrested-in-the-city` at rank two) without reaching past the
+#: members a reader would recognise as what the area is about.
+MAX_ANCHOR_SCAN = 5
+
+
+def _naming_anchor(ranked: Sequence[AreaMember]) -> AreaMember | None:
+    """The member an area should be named after, most central first.
+
+    Not simply `ranked[0]`, which is what produced
+    `observation-that-chloroplasts-resemble-cyanobacteria` -- an eleven-entity
+    area that is genuinely the evidence for endosymbiotic theory, wearing the
+    name of one sentence inside it. Centrality says which member the area is
+    *built around*; it says nothing about whether that member's name is the
+    name of a thing.
+
+    So: the most central member among the first `MAX_ANCHOR_SCAN` whose name is
+    not clause-shaped, and the most central member of all when every one of
+    them is. That fallback is the pre-existing behaviour, which matters --
+    an area of nothing but sentences still gets a deterministic slug and a
+    title, and degrades to exactly what it did before rather than to `area-1`.
+
+    Rejected alternatives, both of which were considered on the measured graph:
+
+    - *Preferring a shorter or nounier name among the top few.* Shortness is
+      not the property in question -- `chlorophyll a` is short and
+      `Andreas Franz Wilhelm Schimper` is long, and the long one is the better
+      area name of the two. Every ordering by length that improved one area
+      made another worse.
+    - *A composite of two anchors* (`cyanobacteria-and-chloroplasts`). It reads
+      well when the two anchors are peers and badly when they are not, which is
+      the ordinary case, and it doubles the slug length against a 60-character
+      truncation that then cuts the second anchor in half.
+    - *Asking a model for a title.* Forbidden, and rightly: this function is
+      pure and has no awaits, which is what makes `test_projection_is_deterministic`
+      a test rather than a hope.
+
+    Purity and determinism are untouched -- `clause_shaped` is a set-membership
+    check over closed vocabularies, so the same graph names the same areas on
+    every machine.
+    """
+    if not ranked:
+        return None
+    for member in ranked[:MAX_ANCHOR_SCAN]:
+        if not clause_shaped(member.name):
+            return member
+    return ranked[0]
+
+
 def _to_area(
     community: frozenset[str],
     adjacency: Mapping[str, Mapping[str, float]],
@@ -485,7 +543,8 @@ def _to_area(
         for node in sorted(community)
     )
     ranked = sorted(members, key=lambda m: (-m.centrality, m.entity_id))
-    base = slugify(ranked[0].name, fallback=ranked[0].entity_id[:8]) if ranked else "area"
+    anchor = _naming_anchor(ranked)
+    base = slugify(anchor.name, fallback=anchor.entity_id[:8]) if anchor else "area"
     slug = base
     # Two areas whose top anchors slug identically -- "Rome" the city and
     # "Rome" the republic, say -- would otherwise share a directory and the
@@ -497,7 +556,13 @@ def _to_area(
         slug = f"{base}-{suffix}"
         suffix += 1
     taken.add(slug)
-    return LearningArea(slug=slug, members=members)
+    # `title` is set here rather than left `None`, and that is half the fix.
+    # `LearningArea.display_name` falls back to `anchors[0].name` -- the *most
+    # central* member -- so choosing a different member for the slug and
+    # leaving the title empty would put a clean name in the URL and go on
+    # showing the sentence everywhere a reader looks. The two have to move
+    # together or the change is cosmetic in the wrong direction.
+    return LearningArea(slug=slug, members=members, title=anchor.name if anchor else None)
 
 
 class GraphTooLarge(Exception):

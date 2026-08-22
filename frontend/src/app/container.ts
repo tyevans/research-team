@@ -18,6 +18,7 @@ import type {
   ResearchRepository,
   SessionRepository,
   CurriculumRepository,
+  ExportRepository,
   TimelineRepository,
   TopicRepository,
   TurnRepository,
@@ -44,6 +45,7 @@ import {
 } from '@infrastructure/http/project-repository.ts'
 import { HttpSessionRepository } from '@infrastructure/http/session-repository.ts'
 import { HttpCurriculumRepository } from '@infrastructure/http/curriculum-repository.ts'
+import { HttpExportRepository } from '@infrastructure/http/export-repository.ts'
 import { HttpTimelineRepository } from '@infrastructure/http/timeline-repository.ts'
 import { HttpTopicRepository } from '@infrastructure/http/topic-repository.ts'
 import { HttpApprovalRepository, HttpTurnRepository } from '@infrastructure/http/turn-repository.ts'
@@ -78,6 +80,9 @@ export interface Container {
   readonly definitions: DefinitionsRepository
   readonly ontology: OntologyRepository
   readonly curricula: CurriculumRepository
+  /** URLs, not bodies. Downloads are handed to the browser rather than
+   *  fetched into the tab; see `HttpExportRepository`. */
+  readonly exports: ExportRepository
   readonly timelines: TimelineRepository
   readonly workers: WorkerRepository
   readonly extractions: ExtractionRepository
@@ -119,6 +124,7 @@ export const createContainer = (baseUrl = ''): Container => {
     definitions: new HttpDefinitionsRepository(http),
     ontology: new HttpOntologyRepository(http),
     curricula: new HttpCurriculumRepository(http),
+    exports: new HttpExportRepository(baseUrl),
     timelines: new HttpTimelineRepository(http),
     workers: new HttpWorkerRepository(http),
     extractions: new HttpExtractionRepository(http),

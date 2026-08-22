@@ -2798,6 +2798,85 @@ split, auto-merging the `#84` duplicate with no model call, and auto-merging on
 a bare name in any deployment without embeddings.
 `test_zeroing_the_graph_weight_would_auto_merge_on_name_alone` pins both.
 
+**Re-measured 2026-08-22 on a real corpus, and the "silent bad merges 0/10"
+column above is wrong.** The table came from twenty hand-built pairs; this is
+361 entities and 19,822 blocked pairs from the two-article ingest in
+`docs/design/curriculum-input-quality.md`, folded from `course.db` and driven
+through a real `CandidateFinder` against `qwen3-embedding-0.6b` (no model call
+-- the vectors are on the log as `EntitiesEmbedded`). Both arms block
+identically; only scoring changes:
+
+| arm | auto-merge | adjudicate | reject |
+|---|---|---|---|
+| **today** (`graph = 0.0` present) | 3 | 117 | 19,702 |
+| graph absent (this entry) | **84** | 592 | 19,146 |
+
+Recall improves as the entry predicts -- 540 pairs move reject -> adjudicate.
+The cost is not 9/10 false pairs reaching a model; it is **81 more auto-merges,
+26 of them from pairs previously rejected outright**, with no model call and no
+`merge_reason` beyond `score >= 0.92`. A present zero compresses the whole
+distribution into a band just under 0.75, so renormalizing lifts it *bodily*
+past `HIGH_SIMILARITY` rather than separating anything. What merges silently:
+
+    Publius Servilius Isauricus / Publius Servilius Vatia   0.9364
+    photosystem II              / Photosystem I             0.9779
+    arsenate                    / arsenite                  0.9549
+    NADP                        / NADPH                     0.9538
+    Gaius Marius                / Gaius Rabirius            0.9324
+    Cassius                     / Crassus                   0.9298
+    Light-independent reactions / light-dependent reactions  0.9255
+    chlorophyll                 / Chlorophyta               0.9237
+
+A negation, a one-letter oxidation state, a pigment against a phylum, and four
+pairs of different Romans. So the entry stands as a recall finding and **its
+fix cannot land alone: `HIGH_SIMILARITY` must move in the same change**, which
+is what B59 already says about the nomic prefix for the same reason.
+
+The occasion was the three Caesars (`caesar`, `julius-caesar`,
+`gaius-julius-caesar` -- three learning areas for one man). Measured, they are
+this entry and nothing else:
+
+    Julius Caesar / Gaius Julius Caesar
+      name 0.8500 (= CONTAINMENT_CEILING)  embedding 0.9786  graph 0.0
+      = 0.7186  REJECT      (graph absent: 0.8982, adjudicated)
+
+**And they are in the same document**, with 15 neighbour names against 8 and an
+empty intersection -- so this entry is filed as a cross-document problem and is
+wider than that. Two mentions of one entity that extraction did not unify have
+disjoint neighbourhoods whether or not a document boundary is involved.
+
+No threshold reaches the pair either. `Gaius Marius`/`Gaius Rabirius` scores
+0.7459 against its 0.7186, above it on both features it carries; dropping
+`low` to 0.70 admits the Caesars along with 210 other pairs including `red
+algae`/`grain dole`. Swept with the graph signal on, `low` at 0.75/0.74/0.72/
+0.71/0.70/0.68/0.65 gives 117/142/214/269/327/449/576 adjudications and 3
+auto-merges throughout.
+
+**The cross-type lead is real, and not by the mechanism it looked like.**
+`blocking_keys_for` is a *union* and `_block` returns everything sharing any
+one key, so the two textual keys ignore the type entirely: two entities with
+one name block together whatever their types, and the log carries ten
+cross-type merges to prove it -- `Caesar`(person) into `Caesar`(concept) at
+0.8000, reason "Identical strings referring to the same concept."
+
+But **when the names differ, `t:` is the only key left**, and there a type
+disagreement is fatal. Measured: `Caesar`(concept) blocks 190 entities and
+`Julius Caesar` is not among them -- `p:caesa`/`p:juliu` and `s:C260`/`s:J422`
+both differ. That pair is never scored at all. It also got worse on merge:
+beforehand `Caesar`(person) blocked with `Julius Caesar` on `t:person` and
+scored 0.6664; afterwards the canonical Caesar is `concept` and that route is
+gone. So consolidation is load-bearing on a type the extractor picks per
+mention, with no constraint that two mentions of one thing agree.
+
+Fixing the typing alone would not merge them either -- 0.6664 (name 0.8500,
+embedding 0.8048, graph 0.0) is rejected on its own. Both barriers are present
+and only the second is this entry.
+`test_the_type_key_gates_only_pairs_whose_names_already_disagree` pins the
+blocking half.
+
+Both measurements are executable in
+`tests/infrastructure/test_embedded_consolidation.py`.
+
 ### B60. Every extraction fixture omits `description`, so the suite tests an adjudicator production never runs
 
 `Adjudicator._one_batch` puts `left_description` and `right_description` into
@@ -4149,3 +4228,76 @@ which is why B136 is deferred rather than decided.
 What is needed is a corpus of *closely related* subjects with a known
 boundary -- several sub-fields of one discipline, say -- where a wrong join is
 possible. Until it exists, tuning here is guesswork with numbers attached.
+
+### B138. The extraction prompt never says what an entity is
+
+`fact` is deleted from `research_corpus.yaml` and `_naming_anchor` stops an
+area being named after a sentence, but neither touches the cause: the prompt
+lists entity *types* and never says that an entity names a thing rather than
+asserts a claim. The schema's own guide is explicit that types shape prompts
+and do not enforce output, so the model that was filing propositions under
+`fact` is free to file them under `concept`, where they cannot be deleted and
+are far harder to see -- `concept` is already 156 of 326 entities.
+
+Measured before the change, with `research_team.application.name_shape`: **17
+of 326 names clause-shaped (5.2%)**, of which 11 were `fact`, 5 `event` and 1
+`category`. So the deletion's ceiling is 17 -> 6, and the test of whether it
+worked is whether the next ingest lands near 6 or back near 17.
+
+The work, when someone takes it: a paragraph in `extraction_prompt_template`
+saying an entity is a thing that can be pointed at and given a name -- a
+person, a place, a concept, an event -- and that a sentence stating something
+about two entities is a *relationship* between them, not a third entity. It is
+deliberately not done here because it changes what every extraction returns
+and wants its own before-and-after measurement rather than riding along with a
+schema deletion.
+
+Deferred behind it, and larger: `name_shape` misses gerund event names
+(`Naming of chloroplastids`), which is why the endosymbiosis area is now named
+after one. That is the next honest improvement to the measure and needs
+something more than closed vocabularies.
+
+### B139. An authored unit already has a better title than any derivation
+
+`area_projection._naming_anchor` sets `LearningArea.title` from a member's
+name, and the first real authoring run wrote a title no such rule can reach:
+
+    # The Chloroplast: A Bacterium That Became an Organelle
+
+So the display title should prefer the authored unit's H1 where one exists and
+fall back to the derived name where it does not. The *slug* is unaffected and
+stays derived, deterministic and model-free -- it is a directory name and a URL
+segment, and it has to exist before anything is authored into it.
+
+Four costs, all measured against the tree on 2026-08-22, and the first is the
+one that makes this a piece of work rather than a patch:
+
+1. **There is no durable index from an area slug to the session that authored
+   it.** Each `author_area` call opens its own session;
+   `interfaces/web/authoring.py` is plain in-process dicts that die on restart,
+   and its `sessions` list is a flat list appended at the end of a run, not
+   keyed by slug. Mid-run the status endpoint carries no session id at all --
+   checked live against the run in flight. Building the index means a new
+   event or read model, which is the "storing a derivation beside its own
+   inputs" this module's own docstring argues against.
+2. **The title is prose, not frontmatter.** `unit.md` is written by the model
+   through `write_file` and never passes through `artifacts.py`;
+   `desired_results_prompt` asks for "a title for the area" and no frontmatter
+   block, so `parse_frontmatter` returns nothing and the join is a regex over
+   the first heading of a file whose shape nothing enforces. Giving `unit.md`
+   real frontmatter with a `title:` key is the sub-task that makes the rest
+   safe, and it is worth doing on its own.
+3. **`AuthoredCourse` refuses to carry file contents**, and its docstring gives
+   the reason -- a second account of the workspace is the one a UI reads and
+   the one that goes stale.
+4. **The projection is recomputed per request and cached on entity and
+   relationship counts.** Authoring moves neither, so a title read back through
+   that cache would not appear until the next extraction. Whatever does the
+   join has to sit *outside* the cached projection.
+
+Where it belongs, once (1) and (2) exist: the **presenter**, not
+`CurriculumService`. `area_view` already assembles the wire shape and is the
+layer allowed to know about session workspaces; putting the join in the service
+would make `LearningArea` -- a pure derivation of the graph -- depend on
+authoring output, and would mean `project_areas` could no longer be driven with
+a literal in a test, which is what `test_projection_is_deterministic` rests on.

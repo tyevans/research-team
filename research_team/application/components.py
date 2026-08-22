@@ -340,6 +340,12 @@ def listing(item: Mapping[str, Spec], minimum: int = 1) -> Checker:
             notes.extend(_check_fields(entry, item, prefix=f"{at}."))
         return notes
 
+    # The item schema, hung on the closure so a whole-body pass can see it.
+    # `_blank_required` has to descend into `options[i].text` and
+    # `cards[i].front`, and a bare `Checker` is opaque -- the alternative was
+    # a second registry of "which fields are listings", which is the kind of
+    # parallel list that goes stale the first time a type is added.
+    check.item = dict(item)  # type: ignore[attr-defined]
     return check
 
 
@@ -372,6 +378,43 @@ def _unknown_keys(
         for key in body
         if key not in known
     ]
+
+
+def _blank_required(
+    body: Mapping[str, Any], fields: Mapping[str, Spec], prefix: str = ""
+) -> list[Note]:
+    """A required text field that is present and empty, warned about.
+
+    `required=True` only asks whether a key is there, and `text()` accepts
+    `""` on purpose -- it rejects structure, not emptiness. So `prompt: ""`
+    validates as present, and until this hook nothing anywhere said otherwise.
+
+    Warned rather than rejected, following `_unknown_keys` and
+    `_compare_collisions`: the block still draws, and refusing would cost an
+    author the whole component over a field they can fill in. The reason it
+    has to say *something* is the other half of this fix -- `Prose` now
+    renders blank text as nothing at all, so an empty `mcq.prompt` used to be
+    a loud wrong state on the page and is now a silent absence. This is where
+    the complaint moved to, and `ComponentFeedback` puts it in front of the
+    model that wrote it.
+
+    Descends into `listing` fields through the item schema `listing` hangs on
+    its checker, so `options[1].text` is named by its own path.
+    """
+    notes: list[Note] = []
+    for name, spec in fields.items():
+        value = body.get(name)
+        path = f"{prefix}{name}"
+        item = getattr(spec.check, "item", None)
+        if item is not None and isinstance(value, list):
+            for index, entry in enumerate(value):
+                if isinstance(entry, Mapping):
+                    notes.extend(_blank_required(entry, item, prefix=f"{path}[{index}]."))
+            continue
+        if not spec.required or not isinstance(value, str) or value.strip():
+            continue
+        notes.append(Note(path, "required, and present but empty; it renders as nothing"))
+    return notes
 
 
 _UNIVERSAL = {"id", "type", "v", "objective"}
@@ -624,6 +667,89 @@ def _explorer_over(data: dict[str, Any]) -> list[Note]:
     return [Note("over", f"only {supported} is supported today, got {over!r}")]
 
 
+_ID_SHAPED = re.compile(r"\A[0-9a-fA-F]+(?:-[0-9a-fA-F]+)+\Z")
+"""Hex groups joined by hyphens -- a UUID, and the near-UUID shapes beside it.
+
+Deliberately loose about grouping and tight about length (see `_looks_like_id`).
+The ids this catches are written by a model copying from a prompt, and a model
+that miscounts a group still produces something no reader wants as a heading.
+"""
+
+
+def _looks_like_id(value: Any) -> bool:
+    text_value = str(value).strip()
+    if not _ID_SHAPED.match(text_value):
+        return False
+    # 32 hex digits is a UUID's worth. Below it the false-positive risk is
+    # real: `284-305` is a reign, `AD 64-68` is a date range, and both are
+    # things an author writes into a compare cell or an entity name.
+    return len(text_value.replace("-", "")) >= 32
+
+
+def _entity_ids_where_names_go(data: dict[str, Any]) -> list[Note]:
+    """An entity *id* written into a field that renders as a *label*.
+
+    The authoring prompt hands the model entity ids and tells it to copy them
+    exactly; two of the types that take an entity have an `entity_id` to put
+    one in, and `compare` has nowhere at all. So the id lands in `entity:` or
+    in `entities[i]:`, which is a valid string, which validates, and which the
+    browser then searches for by name -- finding nothing, because no entity is
+    named by its own id -- and prints raw beside "not in this project's graph".
+
+    Warned and never rejected, following `_compare_collisions` and
+    `_explorer_over`: the block draws, the table is intact, and only the label
+    is wrong. Refusing would cost the reader a whole widget over a heading.
+
+    *Cost, stated:* a project whose entities are genuinely named by long hex
+    strings gets a warning it cannot act on. That is a line of noise in a tool
+    result, against a defect that otherwise reaches a reader's screen.
+    """
+    notes: list[Note] = []
+    entity = data.get("entity")
+    if entity is not None and _looks_like_id(entity):
+        notes.append(
+            Note(
+                "entity",
+                "looks like an entity id, not a name; `entity` is the name as "
+                "the sources spell it, and the id goes in `entity_id`",
+            )
+        )
+    entities = data.get("entities")
+    if isinstance(entities, list):
+        notes += [
+            Note(
+                f"entities[{index}]",
+                "looks like an entity id, not a name; this field takes names "
+                "as the sources spell them, and there is nowhere here to put "
+                "an id",
+            )
+            for index, value in enumerate(entities)
+            if _looks_like_id(value)
+        ]
+    return notes
+
+
+BodyHook = Callable[[dict[str, Any]], list[Note]]
+
+
+def _all_of(*hooks: BodyHook) -> BodyHook:
+    """Run several whole-body hooks and keep every note.
+
+    `ComponentType.warn` is one slot and `compare` now has two things to say
+    about `entities:` -- duplicates and ids. Composing here rather than folding
+    the id check into `_compare_collisions` keeps each hook about one thing,
+    and lets `definition` and `graph` take the id check alone.
+    """
+
+    def run(data: dict[str, Any]) -> list[Note]:
+        notes: list[Note] = []
+        for hook in hooks:
+            notes.extend(hook(data))
+        return notes
+
+    return run
+
+
 REGISTRY: dict[str, ComponentType] = {
     "flashcards": ComponentType(
         name="flashcards",
@@ -813,6 +939,7 @@ REGISTRY: dict[str, ComponentType] = {
             "entity_id": Spec(text),
         },
         resolved=True,
+        warn=_entity_ids_where_names_go,
         craft=(
             "Write the entity name exactly as your prose does, and exactly as "
             "the sources spell it. The lookup is a name search over what "
@@ -900,6 +1027,7 @@ REGISTRY: dict[str, ComponentType] = {
             "depth": Spec(integer_between(1, MAX_NEIGHBORHOOD_DEPTH), default=1),
         },
         resolved=True,
+        warn=_entity_ids_where_names_go,
         craft=(
             "Write the entity name exactly as your prose does, and exactly as "
             "the sources spell it. The lookup is a name search over what "
@@ -1065,7 +1193,7 @@ REGISTRY: dict[str, ComponentType] = {
             ),
         },
         resolved=True,
-        warn=_compare_collisions,
+        warn=_all_of(_compare_collisions, _entity_ids_where_names_go),
         craft=(
             "Write each entity name exactly as your prose does, and exactly as "
             "the sources spell it -- the column heads are looked up by name, "
@@ -1342,6 +1470,7 @@ def _build_component(
     data = dict(loaded)
     errors.extend(_check_fields(data, spec.fields))
     warnings.extend(_unknown_keys(data, spec.fields))
+    warnings.extend(_blank_required(data, spec.fields))
 
     declared = data.get("type")
     if declared is not None and str(declared) != name:
