@@ -200,7 +200,35 @@ async def test_storing_a_document_indexes_it_without_extracting(tmp_path, build_
 
 @pytest.mark.asyncio
 async def test_ingest_appends_the_extraction_to_the_document_stream(tmp_path, build_adapter):
-    """The event is the record; the graph is derived from it."""
+    """The event is the record; the graph is derived from it.
+
+    **Counted by type, and it used to be counted by length.** This asserted
+    `len(envelopes) == 1`, which was true only because the stream happened to
+    carry nothing else: `index` was a no-op with no chunk store configured, and
+    `build_graph` was given no event store so it persisted nothing. Both
+    changed with the co-mention repair, and the length assertion started
+    failing on a `DocumentChunked` that is supposed to be there.
+
+    Counting `DocumentExtracted` is what the docstring above always meant, and
+    it is the assertion that would catch the ripple most likely to be left in
+    by mistake: `build_graph` appends the extraction through its own repository
+    now, so an `ingest` that *also* appends `built.event` by hand -- which is
+    what this adapter did before it was given an event store -- would put two
+    on the stream.
+
+    **Measured on 2026-08-22, and it does not put two on the stream.** With the
+    hand-append restored beside `build_graph`'s own, **38 of 56 tests in this
+    module failed** and this was not the interesting one: `built.event` is the
+    same object, so the second append carries an `event_id` the store already
+    holds and `SQLiteEventStore` raises `DuplicateEventError` on the UNIQUE
+    constraint. Every ingest fails, loudly, with a message about
+    `events.event_id` and nothing about a double append.
+
+    That is worth knowing and it does not make this assertion redundant: an
+    in-memory store, or a variant that rebuilt the event rather than re-using
+    it, would take both -- and then the only surviving symptom is the count
+    this test takes.
+    """
     project_id = uuid4()
     adapter, store, _ = build_adapter(tmp_path, project_id)
 
@@ -210,8 +238,12 @@ async def test_ingest_appends_the_extraction_to_the_document_stream(tmp_path, bu
 
     stream = document_stream(tenant_id=project_id, source_id="notes")
     envelopes = await collect(store.read_stream(stream))
-    assert len(envelopes) == 1
-    assert type(envelopes[0].event).__name__ == "DocumentExtracted"
+    by_type = [type(envelope.event).__name__ for envelope in envelopes]
+    assert by_type.count("DocumentExtracted") == 1, by_type
+    assert "DocumentChunked" in by_type, (
+        "the chunking is what carries the entity links; a stream without it is "
+        "the state the co-mention channel was dead in"
+    )
 
 
 @pytest.mark.asyncio
@@ -1004,18 +1036,110 @@ async def test_re_ingesting_identical_bytes_stores_one_document(tmp_path, build_
 
 @pytest.mark.asyncio
 async def test_re_ingesting_changed_bytes_records_the_revision(tmp_path, build_adapter):
-    """Same id, new text is a revision -- both versions stay in the log."""
+    """Same id, new text is a revision -- both versions stay in the log.
+
+    **The second ingest now raises**, and that is the subject of
+    `test_re_ingesting_changed_text_is_refused_rather_than_reported_as_nothing`
+    below. It is caught rather than avoided here because this test is about the
+    corpus and the corpus half is unchanged: `_store_document` runs before
+    extraction, so the revision is recorded whether or not the graph can be
+    brought up to date with it. That ordering is deliberate and its reasoning is
+    in `_store_document`'s docstring -- the text is the thing that cannot be
+    recovered.
+    """
     project_id = uuid4()
     adapter, store, _ = build_adapter(tmp_path, project_id)
 
     await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace."))
-    await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace and Babbage."))
+    with pytest.raises(KnowledgeError):
+        await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace and Babbage."))
 
     envelopes = await _corpus_events(store, project_id)
     assert [e.event.text for e in envelopes] == [
         "Ada Lovelace.",
         "Ada Lovelace and Babbage.",
     ]
+
+
+@pytest.mark.asyncio
+async def test_re_ingesting_changed_text_is_refused_rather_than_reported_as_nothing(
+    tmp_path, build_adapter
+):
+    """A document whose text moved under a settled extraction is a loud failure.
+
+    `build_graph` is given an `event_store` now -- it has to be, or extraction's
+    entity links never reach the log -- so the aggregate is loaded rather than
+    built fresh and `Document.record_extraction` can refuse. It keys on the
+    **model version alone**, not on the content:
+
+        if model_version in self._current.extraction_model_versions:
+            return None
+
+    So a re-ingest of *changed* text lands in the same branch as a re-ingest of
+    unchanged text. Reported as a zero-entity success -- which is what this
+    adapter did when the branch was first made reachable -- the corpus holds the
+    new revision (`_store_document` ran) while the graph goes on describing the
+    old one, and nothing anywhere says so. A silently wrong graph is the failure
+    this repository is least willing to ship.
+
+    The two cases are told apart by whether anything chunked the document afresh
+    during the call: `record_chunking` keys on a signature carrying a digest of
+    the text, so it refuses a repeat and emits for new bytes. Free, in the sense
+    that the ingest already reads that stream to find the linked chunking.
+
+    *Fails against:* the version that returns `IngestReport(entity_count=0)`
+    here, which is the reading of the spec's ripple 2 and looks entirely
+    reasonable -- "an unchanged document stops costing model calls" is true and
+    is only half of what the branch covers.
+
+    **Proved red on 2026-08-22** by deleting the `if chunking.signatures:` block
+    so the branch falls through to the zero report: 2 failed --
+    `DID NOT RAISE` here, and
+    `test_re_ingesting_changed_bytes_records_the_revision`, which asserts the
+    refusal from the corpus side.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+
+    await adapter.ingest(SourceRef(source_id="notes", text="Ada Lovelace."))
+
+    with pytest.raises(KnowledgeError) as raised:
+        await adapter.ingest(
+            SourceRef(source_id="notes", text="Ada Lovelace corresponded with Babbage.")
+        )
+
+    detail = str(raised.value)
+    assert "notes" in detail, "the message has to name the document to be actionable"
+    assert "source_id" in detail, (
+        "and has to say what to do about it; the repairs are a new source id or "
+        "a cleared project, and neither is guessable from 'already extracted'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_re_ingesting_identical_text_is_still_a_quiet_no_op(tmp_path, build_adapter):
+    """The other half of the branch, which must stay silent.
+
+    Without this the refusal above could be written as "raise whenever
+    `record_extraction` refuses", which would make every re-ingest of an
+    unchanged document a failure -- and re-ingesting unchanged documents is
+    ordinary: `ExtractionQueue` retries, and `remember_page` on a page already
+    remembered is a normal thing for a turn to do.
+
+    **Proved red on 2026-08-22** by refusing on `built.event is None`
+    unconditionally, ignoring the chunking signatures: 3 failed -- this one,
+    `test_a_no_op_re_ingest_still_closes_its_pane`, and
+    `test_ingest_reports_what_it_extracted`'s second call.
+    """
+    project_id = uuid4()
+    adapter, _, _ = build_adapter(tmp_path, project_id)
+    source = SourceRef(source_id="notes", text="Ada Lovelace worked with Charles Babbage.")
+
+    await adapter.ingest(source)
+    report = await adapter.ingest(source)
+
+    assert report.entity_count == 0
+    assert report.relationship_count == 0
 
 
 @pytest.mark.asyncio

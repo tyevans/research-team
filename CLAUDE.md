@@ -363,6 +363,77 @@ and it wasn't: a build with `EntityDefinitionRunner` never constructed in
 the tests that "confirmed the endpoint worked" never noticed, because none of
 them checked for a stored row.
 
+**A port with one adapter and no test between them is two things that were
+never checked against each other.** The co-mention channel shipped in #234 with
+a `CoMentionPort`, a `ChunkCoMentions` adapter, a projection that consumed it,
+two tuned constants and a section of a design document. It produced **nothing**
+from the day it merged. The adapter read entity links off stored chunks; the
+only thing that writes chunks is `index_documents`, which runs before
+extraction and has no entity knowledge, so every chunk carried `entity_ids: []`.
+
+Every piece was tested. The projection's tests passed literal `frozenset`s
+straight to `project_areas`. The adapter had no test at all. So the port was
+verified against a stub and the adapter against nothing, and the question
+"does the real writer produce what the real reader expects" was never asked by
+anything. Measured on 2026-08-22 over a real ingest: 36 chunks, 0 with links, 0
+passages, and an area projection **byte-identical** with the channel present
+and absent.
+
+The general rule: **when a port has exactly one production adapter, the test
+that matters is the one that drives both ends over real data.** A stub on one
+side and a unit test on the other prove the two halves work; they cannot prove
+they meet. Look for this shape wherever a `Protocol` in `application/` has a
+single implementation in `infrastructure/` -- that is the whole population, and
+it is small enough to audit.
+
+**The number was on screen the entire time.** `DerivedFromLine` renders "*N*
+shared passages", and it had been printing **0** on every projection since the
+feature shipped. A surface that displays a health metric nobody reads is not
+observability; it is the same silence with a number in front of it. If a value
+is worth rendering because its absence would be a defect, something has to
+assert on it -- `test_a_curriculum_built_over_a_real_ingest_counts_shared_passages`
+is that assertion, and it postdates the defect by a whole feature.
+
+**A library that hands back a count instead of the event it built has hidden
+a write from your log.** redstring's `build_graph` embeds every entity, folds
+the vectors into the `VectorStore` through `VectorProjection`, and returns
+`GraphBuildReport.embedded` -- an integer. The `EntitiesEmbedded` it
+constructed to do that is reachable only by passing `build_graph` an
+`event_store`, which this project did not. So the vectors were computed, paid
+for, written to an in-memory store, and dropped when the process ended, with
+nothing on the log to replay them. Measured on 2026-08-22 against a copy of
+the real database: **zero `EntitiesEmbedded` rows in a log holding 8
+`DocumentExtracted` and 772 `EntitiesMerged`**, with embeddings on by default
+the whole time.
+
+Nothing about this is visible from the running system. Extraction succeeds,
+the store answers every query, consolidation scores three features, and the
+only symptom is that a restart silently drops to two -- which looks like
+nothing at all. The general form: **when a library writes into a store you own
+*and* returns a summary rather than the event, check which of the two it
+considers the record.** If the event is not in your log, the store is not a
+projection, whatever it is called.
+
+**And a comment explaining an absence will turn a defect into a decision
+nobody questions.** `project_graphs.py` carried this, in the same register as
+every other reasoned comment in the tree:
+
+> It does not live in `rebuild_graph`, which folds the log, because the vector
+> store is not part of that fold -- this project never appends
+> `EntitiesEmbedded`, so a `VectorProjection` would have nothing to replay.
+
+Every clause is true. The conclusion is backwards: "we never append it" is the
+bug, and the comment reads it as the premise. Written down that way it stopped
+being a question -- it was cited in a design document, and then in a `BACKLOG`
+entry, as an established fact about what this system can do. Three documents
+agreeing, all descended from one comment that described a defect in the voice
+of a choice.
+
+The tell, worth looking for elsewhere: a comment that explains why something
+is *absent* by pointing at another absence. "We don't fold X because nothing
+writes X" is a loop, not a reason, and the question it forecloses is whether
+anything *should* write X.
+
 ## The interaction log
 
 **A second event store means no projection can span the two.** `eventsource`

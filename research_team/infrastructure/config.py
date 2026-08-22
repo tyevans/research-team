@@ -471,15 +471,31 @@ def vector_store() -> str:
     be deleted rather than merely narrowed.
 
     **What it does not buy is discrimination.** redstring embeds `entity.name`
-    and nothing else, so the embedding feature is a blurrier second measurement
-    of the string the name feature already measured, and it moves near-misses
-    in step with true duplicates. Under a real model the exact duplicate and
+    and nothing else, so this feature and the name feature are two readings of
+    one thin input, and it moves near-misses in step with true duplicates.
+
+    Not because an embedding is a comparison of spellings -- it is not, and an
+    earlier version of this docstring's phrasing ("a blurrier second
+    measurement of the string") seeded that confusion through three other
+    documents; see `docs/design/learning-areas-and-paths.md` §1. `glass` and
+    `cup` share no substring and embed close together. The point is narrower:
+    a *name on its own* carries no type, no properties and no neighbourhood, so
+    two readings of it agree more than two independent signals would. The
+    curriculum's own channel embeds the entity's card instead, and is a
+    separate store for exactly this reason -- see
+    `infrastructure/knowledge/entity_embeddings.py` and `BACKLOG.md` B129.
+
+    The measurement behind all this: under a real model the exact duplicate and
     `University of York` / `University of Cork` land about 0.011 apart. The
     gain is that 0.75 is defensible; the cost is more traffic in the
     adjudication band.
 
-    **What it costs to run.** One embedding call per extracted entity, batched
-    into one request per document, paid again on re-ingest -- `build_graph`
+    **What it costs to run.** Two embedding calls per extracted entity, not
+    one: this channel embeds the name for consolidation and the curriculum's
+    channel embeds the entity's card, and they are separate stores because
+    collapsing them would move consolidation's measured thresholds with no way
+    to re-measure them here (`BACKLOG.md` B129). Both are batched, and paid
+    again on re-ingest -- `build_graph`
     builds a fresh aggregate per call and re-embeds rather than suppressing a
     repeat. And auto-merge stays out of reach: a perfect name and a perfect
     embedding cap at 0.8 against `graph = 0.0`, below `HIGH_SIMILARITY` 0.92,

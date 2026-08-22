@@ -42,6 +42,7 @@ const curriculum = (over: Partial<Curriculum> = {}): Curriculum => ({
     entities: 300,
     relationships: 40,
     passages: 900,
+    semanticEdges: 0,
     usedEmbeddings: false,
     truncated: false,
   },

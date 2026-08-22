@@ -10,6 +10,7 @@ import { projectHref } from '../routing/routes.ts'
 import { AreaMap } from './AreaMap.tsx'
 import { AreaDetail } from './AreaDetail.tsx'
 import { AuthoringBar } from './AuthoringBar.tsx'
+import { EmbeddingRefresh } from './EmbeddingRefresh.tsx'
 import { PathSteps } from './PathSteps.tsx'
 
 /** How often the authoring status is re-read while a run is in flight.
@@ -82,6 +83,18 @@ export const CurriculumPane = ({
     },
   })
 
+  const refresh = useMutation({
+    mutationFn: () => curricula.refreshEmbeddings(projectId),
+    onSuccess: () => {
+      // The curriculum, unlike authoring above: re-embedding changes the
+      // signal the clustering runs on, and the server has already dropped its
+      // cached projection. Not invalidating here would leave the button
+      // apparently working and visibly changing nothing, because the entity
+      // and relationship counts the cache keys on have not moved.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.curriculum(projectId) })
+    },
+  })
+
   if (query.isPending) return <Loading what="learning areas" />
   if (query.isError) {
     return (
@@ -109,6 +122,13 @@ export const CurriculumPane = ({
         pending={author.isPending}
         error={author.error instanceof Error ? author.error.message : null}
         onAuthor={(request) => author.mutate(request)}
+      />
+      <EmbeddingRefresh
+        derivedFrom={curriculum.derivedFrom}
+        pending={refresh.isPending}
+        embedded={refresh.data ?? null}
+        error={refresh.error instanceof Error ? refresh.error.message : null}
+        onRefresh={() => refresh.mutate()}
       />
       <ReadingToggle reading={reading} onReading={onReading} />
       {reading === 'path' ? (

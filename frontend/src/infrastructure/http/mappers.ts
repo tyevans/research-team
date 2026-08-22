@@ -874,6 +874,7 @@ export const toCurriculum = (raw: Dto<typeof dto.curriculumDto>): Curriculum => 
     entities: raw.derived_from.entities,
     relationships: raw.derived_from.relationships,
     passages: raw.derived_from.passages,
+    semanticEdges: raw.derived_from.semantic_edges,
     usedEmbeddings: raw.derived_from.used_embeddings,
     truncated: raw.derived_from.truncated,
   },

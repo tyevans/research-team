@@ -547,6 +547,19 @@ export interface CurriculumRepository {
    * what it draws does not. */
   area(projectId: ProjectId, slug: string): Promise<LearningArea>
 
+  /** Re-embed every entity in the project. Resolves with how many were written.
+   *
+   * The repair for two states that look identical on screen and are not: a
+   * project ingested before entity vectors were durable has none recorded at
+   * all, and an entity that gained relationships after it was first seen
+   * carries a vector that predates them. Neither is visible except as a
+   * curriculum clustered on less than it could be.
+   *
+   * Not automatic, and deliberately so — folding the log at project open must
+   * never depend on a live embedding endpoint, or a project reopened years
+   * from now would not open. So this is a thing a person asks for. */
+  refreshEmbeddings(projectId: ProjectId): Promise<number>
+
   /** The complete path (`complete`), or the prerequisite closure of one area.
    *
    * Both from one route because they are cuts of one digraph. A destination

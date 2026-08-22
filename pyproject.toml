@@ -21,6 +21,19 @@ dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "langchain-openai>=1.5.1",
+    # Cosine over every pair of a project's entity vectors, for the
+    # curriculum's semantic edges. Measured before it was added, because a
+    # dependency this size wants a number rather than a preference: pure
+    # Python over redstring's in-memory store does 500 entities in 13.9s and
+    # is quadratic, so 2,000 -- the cap the projection already advertises --
+    # is roughly four minutes on a request path budgeted for "a few seconds".
+    # The same work is one `float32` matrix multiply here.
+    #
+    # Capped below 3.0 rather than left open: NumPy's majors are where the
+    # removals land (2.0 dropped a long list of aliases in one release), and
+    # this uses the array API surface that such a release is most likely to
+    # touch.
+    "numpy>=2.0,<3",
     # Course artifacts carry YAML frontmatter, so something has to read it back.
     # Already present transitively (langchain, uvicorn, redstring all pull it),
     # and named here because `application/artifacts.py` imports it directly --

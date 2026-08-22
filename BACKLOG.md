@@ -3944,31 +3944,27 @@ Cost of leaving it: a default that is defensible rather than justified, on a kno
 whose failure mode is silent — a batch too wide does not error, it merges fewer
 things and looks faster while doing it.
 
-### B126. Embedding-nudged clustering, when there are embeddings to nudge with
+### B126. Embedding-nudged clustering — DONE, and differently
 
-`docs/design/learning-areas-and-paths.md` §4 designs it and says plainly that
-it is not built: `AreaProjection.used_embeddings` is carried, rendered on
-every surface, and always `false`.
+Closed on 2026-08-22, but not as written, so the entry is kept rather than
+deleted: it is a record of an argument that was partly wrong.
 
-**The blocker is not the arithmetic, it is that there is nothing to read.**
-Entity vectors do not survive the process on any default install --
-`stores.py`: "a vector store lost with the process is *gone*: this project
-never appends `EntitiesEmbedded`" -- and `VectorStore` has no enumeration
-method, only `get` and `search`. So the work is upstream of the clustering:
-either `pgvector` becomes ordinary rather than exceptional, or an
-`EntitiesEmbedded` event makes vectors foldable like everything else.
+It said the blocker was that "there is nothing to read", which was true, and
+that the feature would still be working around redstring embedding
+`entity.name` because "even with durable vectors the signal is a measurement
+of spellings". **That second half is nonsense** — an embedding encodes
+meaning, which is why it exists; `glass` and `cup` share no substring and sit
+close together in any competent space. A bare name is a *thin* input, not a
+spelling.
 
-The second is the one worth wanting, and it is the larger change. It would
-also close the gap this feature works around rather than solves: redstring
-embeds `entity.name` and nothing else, so even with durable vectors the signal
-is a measurement of spellings. An embedding of an entity's *definition* or its
-strongest passage would be a genuinely second opinion; an embedding of its name
-is a blurrier copy of the name feature.
-
-Bound the nudge when it lands. The design says at most `EMBEDDING_NUDGE`, and
-the reason is not caution: the projection with vectors present and the
-projection without them must differ only where modularity was already
-indifferent, or a process restart hands somebody a different curriculum.
+What shipped: `EntitiesEmbedded` is appended on both channels and folded at
+project open, so vectors are derived from the log like everything else; the
+card — name, type, properties, named relations — is what gets embedded rather
+than the bare name; and the clustering takes semantic edges as a second kind
+of edge rather than as the bounded ΔQ nudge this entry asked for. The bound
+existed to survive vectors vanishing on restart, and once they do not, a
+signal too weak to matter is insurance against a fire that is out. See §1 and
+§4 of the design doc, which record the same correction.
 
 ### B127. A curriculum is invalidated by counts, not by the log
 
@@ -4008,3 +4004,107 @@ needs no model to run.
 Not done here because it is a second feature wearing the first one's clothes:
 a check with a severity, a preset binding and somewhere to report to, none of
 which the authoring path has yet.
+
+### B129. The two embedding channels are one model call per entity each
+
+Ingest embeds twice: redstring embeds `entity.name` into the consolidation
+store, and `entity_embeddings` embeds the entity's card into the curriculum
+store. Two calls per entity where one would do.
+
+**Not collapsed into one, and the reason is a measurement nobody here can
+take.** Consolidation's thresholds were tuned against name vectors and are
+written down: an identically-named pair scores 0.7143 on two features and
+0.8000 on three, against a `LOW_SIMILARITY` of 0.75 below which a candidate is
+dropped before the adjudicator ever sees it. Card vectors would move those
+numbers -- a card dilutes the name with type, properties and relations, so a
+true cross-document duplicate could fall *below* 0.75 and stop merging. That
+is a plausible regression against a behaviour worth 772 merges in the real
+log, and it cannot be checked without a real embedding endpoint and a labelled
+pair set.
+
+So: measure first. If card vectors hold or improve the merge rate, delete the
+document channel and let one vector serve both. If they do not, this stays two
+calls and the entry becomes the reason why.
+
+### B130. A vector encodes the neighbourhood its entity had when it was extracted
+
+Entities are embedded at ingest, from the card as it stands then. An entity
+that gains six relationships later carries a vector that knows about none of
+them, and `POST /projects/{id}/embeddings` is the manual repair.
+
+Re-embedding on the open path is not the fix and must not become it:
+`rebuild_graph` takes no provider on purpose, so that a project reopened years
+from now does not depend on a live endpoint. The shape worth wanting is a
+*background* pass triggered by extraction settling -- one that re-embeds only
+entities whose card actually changed, which needs a card hash on the record
+that nothing stores today.
+
+### B131. Re-embedding holds the request open
+
+`POST /projects/{id}/embeddings` runs the whole pass inline: one call per 64
+entities, so about eight for a five-hundred-entity project and unreasonable
+somewhere north of a few thousand. It answers 202 because the effect lands on
+the next projection, which is honest about the *effect* and misleading about
+the *duration*.
+
+`AuthoringActivity` is the pattern to copy -- a run with an id, a catch-up
+route and a progress frame. Not done here because the small version is
+genuinely enough at the sizes this system runs at today, and the machinery is
+a feature rather than a refactor.
+
+### B132. Extraction's idempotence key should include the content digest
+
+`RedstringKnowledge.ingest` passes `event_store=` to `build_graph` — it has to,
+or extraction's `DocumentChunked` and the entity links it carries never reach
+the log. With a log the aggregate is loaded rather than built fresh, so
+`Document.record_extraction` can refuse — and it keys on the **model version
+alone**, not on the text:
+
+```python
+if model_version in self._current.extraction_model_versions:
+    return None
+```
+
+So a re-ingest of a document whose content has changed lands in the same branch
+as a re-ingest of an unchanged one.
+
+**Detected and refused, not handled.** `ingest` tells the two apart by whether
+anything recorded a new chunking during the call — `record_chunking` keys on a
+signature carrying a digest of the text, so it refuses a repeat and emits for
+new bytes — and raises a `KnowledgeError` naming the document on the changed
+case. That closes the silent half (the corpus recording the new revision while
+the graph describes the old one, with no error anywhere) and leaves the
+functional half open: **there is still no way to re-extract a document in
+place.** The repairs are a new `source_id` or a cleared project, and the error
+message says so.
+
+The real fix is upstream and small: `record_chunking` already keys on
+`f"{chunker_type}:{digest}:{model_version}"`, and `record_extraction` could key
+on `(model_version, content_digest)` the same way. Until it does, this
+repository is paying two reads of a document's stream per ingest to reconstruct
+a fact the aggregate could have kept.
+
+### B133. `get_by_entity` has no caller left, and the better answer is now available
+
+`ChunkStore.get_by_entity` now has **no caller at all**: `RecordedCoMentions`
+was its only one and reads `CoMentionIndex` instead.
+`GraphDetail`'s passage list, `usages` and `entity_definitions`' evidence all
+reach "which passages mention this entity" through BM25 over the entity's
+names, which is a *different question*: it finds passages that spell the name,
+not passages extraction attributed to the entity. Until this change the
+entity-link half of the corpus was empty, so there was no better answer to
+offer them. There is now.
+
+Two cautions for whoever takes it. `CoMentionIndex` holds no text — it is
+`(source_id, chunk_index, entity_ids)` and nothing else — so a surface that
+wants the *passage* has to join back to the retrieval corpus, whose chunking is
+a different split of the same document. The offsets do not line up and there is
+no correspondence to compute; the honest join is by `source_id` and character
+range, which means widening the index or reading the extraction chunking off
+the log.
+
+And the resolution of pre-consolidation ids through the alias graph currently
+lives inside `RecordedCoMentions` (`absorbed_ids`) — the narrowest place it
+could go, and the wrong place for a second consumer. If this is taken up, that
+belongs in a shared reader rather than copied; copied, the next consumer
+inherits the silent under-reporting rather than the fix.
