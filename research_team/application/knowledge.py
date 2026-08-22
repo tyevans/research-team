@@ -24,6 +24,7 @@ from research_team.application.artifacts import slugify
 REMEMBER_TOOL = "remember"
 REMEMBER_PAGE_TOOL = "remember_page"
 GRAPH_SEARCH_TOOL = "graph_search"
+GRAPH_DESCRIBE_TOOL = "graph_describe"
 UNMERGE_TOOL = "unmerge"
 
 
@@ -268,6 +269,19 @@ class SearchMode(StrEnum):
     SUBSTRING = "substring"
     """Substring matching only. No embedding provider, so no fuzzy channel."""
 
+    CARDS = "cards"
+    """BM25 over the entity-card corpus. `describe`'s healthy answer."""
+
+    UNAVAILABLE = "unavailable"
+    """The channel this call needed is not wired at all.
+
+    Distinct from an empty result, and that distinction is the reason this
+    member exists: a build with no card corpus answers every `describe` with
+    nothing, which reads exactly like a project that holds no such entity.
+    Every defect this feature can have looks like that, so the mode is what
+    tells a caller which one it is looking at.
+    """
+
 
 @dataclass(frozen=True)
 class SearchOutcome:
@@ -331,6 +345,21 @@ class KnowledgePort(Protocol):
         configured (`AGENT_CHUNK_STORE=none`): the same "feature is off"
         shape `ProjectGraphs.chunks` uses, rather than a caller having to
         know whether chunking is on before it can call this at all.
+        """
+        ...
+
+    async def describe(self, query: str, *, limit: int = 10) -> SearchOutcome:
+        """Entities matching a *description* -- their type, properties or
+        neighbours -- rather than their name.
+
+        A separate method from `search` rather than a mode on it, because the
+        two answer different questions and fusing them measured worse than
+        either: a model shown entities unrelated to its query scored below one
+        shown none (stark-bench I.2). A caller that knows the name wants
+        `search`; one that knows about the thing wants this.
+
+        `SearchMode.UNAVAILABLE` when no card corpus is wired, which is not the
+        same as no match.
         """
         ...
 

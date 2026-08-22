@@ -47,6 +47,8 @@ from redstring import (
     build_graph,
     document_stream,
     index_documents,
+    rank_chunks,
+    tokenize,
 )
 
 from research_team.application.knowledge import (
@@ -1159,6 +1161,71 @@ class RedstringKnowledge:
         except RedstringError as error:
             raise KnowledgeError(str(error)) from error
         return SearchOutcome(matches=tuple(matches), mode=mode)
+
+    async def describe(self, query: str, *, limit: int = 10) -> SearchOutcome:
+        """Entities whose *card* matches `query`, best first.
+
+        BM25 over the entity-card corpus -- name, type, properties and the
+        names of every neighbour -- which is what lets a query describe an
+        entity instead of spelling it.
+
+        The chunk's `entity_ids` is what maps a hit back, rather than reading
+        the name off the card's first line: parsing would tie this to
+        `card_text`'s formatting and break on the first name containing a
+        newline. A chunk carrying no entity id is skipped rather than guessed
+        at.
+
+        Deduplicated by entity, keeping the best-scoring chunk. A long card is
+        several chunks and a query naming two neighbours can match more than
+        one of them; without this, one entity would fill the answer.
+        """
+        if limit < 1:
+            raise KnowledgeError("limit must be at least 1")
+        if self._cards is None:
+            return SearchOutcome(matches=(), mode=SearchMode.UNAVAILABLE)
+        terms = tokenize(query)
+        if not terms:
+            return SearchOutcome(matches=(), mode=SearchMode.CARDS)
+
+        try:
+            async with tenant_scope(self._project_id):
+                found = await self._cards.lexical_candidates(terms, self._project_id, limit)
+                best: dict[UUID, float] = {}
+                for ranked in rank_chunks(terms, found, limit):
+                    for entity_id in ranked.chunk.entity_ids or ():
+                        if best.get(entity_id, float("-inf")) < ranked.score:
+                            best[entity_id] = ranked.score
+
+                ordered = sorted(best, key=lambda key: -best[key])[:limit]
+                entities = {
+                    entity.id: entity
+                    for entity in await self._store.get_entities(ordered, self._project_id)
+                }
+                edges = (
+                    await self._store.get_relationships_for(ordered, self._project_id)
+                    if ordered
+                    else []
+                )
+                counts: dict[UUID, int] = dict.fromkeys(ordered, 0)
+                for edge in edges:
+                    for endpoint in (edge.source_entity_id, edge.target_entity_id):
+                        if endpoint in counts:
+                            counts[endpoint] += 1
+
+                matches = tuple(
+                    Match(
+                        entity_id=entity_id,
+                        name=entities[entity_id].name,
+                        entity_type=entities[entity_id].entity_type,
+                        relationship_count=counts[entity_id],
+                    )
+                    for entity_id in ordered
+                    if entity_id in entities
+                )
+        except RedstringError as error:
+            raise KnowledgeError(str(error)) from error
+
+        return SearchOutcome(matches=matches, mode=SearchMode.CARDS)
 
     async def undo_merge(self, merge_id: UUID) -> MergeRecord:
         """Reverse a consolidation.

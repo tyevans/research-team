@@ -11,6 +11,7 @@ from uuid import UUID
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application.knowledge import (
+    GRAPH_DESCRIBE_TOOL,
     GRAPH_SEARCH_TOOL,
     REMEMBER_PAGE_TOOL,
     REMEMBER_TOOL,
@@ -205,6 +206,25 @@ def build_knowledge_tools(
             return f"Could not search the graph: {error}"
         return format_matches(outcome)
 
+    @tool(GRAPH_DESCRIBE_TOOL)
+    async def graph_describe(query: str) -> str:
+        """Find entities by describing them -- what they are, or what they relate to."""
+        try:
+            outcome = await knowledge.describe(query, limit=limit)
+        except KnowledgeError as error:
+            return f"Could not search the graph: {error}"
+        if outcome.mode is SearchMode.UNAVAILABLE:
+            # Named rather than answered empty. An unwired card corpus returns
+            # nothing for every query, which reads exactly like a project that
+            # holds no such entity -- and a model told "no matches" will stop
+            # asking, where one told the index is missing can fall back to
+            # `graph_search` on a name.
+            return (
+                "Describing entities is unavailable in this build -- there is no "
+                "entity-card index. Use graph_search with a name instead."
+            )
+        return format_matches(outcome)
+
     @tool(UNMERGE_TOOL)
     async def unmerge(merge_id: str) -> str:
         """Reverse a consolidation that joined two entities that are not the same thing."""
@@ -225,8 +245,8 @@ def build_knowledge_tools(
         # A tool that could never resolve anything is worse than an absent
         # one: the model would spend turns on it and be told to fetch a page
         # it had just fetched.
-        return (remember, graph_search, unmerge)
-    return (remember, remember_page, graph_search, unmerge)
+        return (remember, graph_search, graph_describe, unmerge)
+    return (remember, remember_page, graph_search, graph_describe, unmerge)
 
 
 KNOWLEDGE_PROMPT = (
