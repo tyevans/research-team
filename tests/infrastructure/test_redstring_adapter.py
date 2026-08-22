@@ -401,9 +401,16 @@ async def test_a_consolidation_failure_says_which_entity_and_why(tmp_path, build
     project_id = uuid4()
     adapter, _, _ = build_adapter(tmp_path, project_id)
 
-    async def always_fails(entity, **kwargs):
+    async def always_fails(subjects_or_entity, **kwargs):
         raise LlmProviderError("the adjudicator is rate limited", model="test-model")
 
+    # Both, and the pair is the point. `_consolidate` batches through
+    # `resolve_many` now, and a batch fails as a batch -- which can say only
+    # "some of these did not consolidate". The failed batch is retried entity
+    # by entity through `resolve`, and that retry is the only thing that can
+    # name one. Patching just `resolve_many` would leave the retry succeeding
+    # and report no failure at all.
+    adapter._consolidator.resolve_many = always_fails
     adapter._consolidator.resolve = always_fails
 
     notes = []
@@ -1084,9 +1091,14 @@ async def test_ingest_reports_its_stages_in_order(tmp_path, build_adapter):
     assert stages[1] == "extracting"
     assert "extracted" in stages
     assert stages[-1] == "consolidated"
-    # Consolidation is per entity, and the fake extracts two.
+    # Consolidation is per *batch* since `_consolidate` moved to
+    # `resolve_many`, and the fake's two entities fit in one. So the counter
+    # is announced twice for one batch -- before it, with nothing yet decided,
+    # and after it, having reached `total`. The pane renders `index/total`,
+    # and the trailing announce is what makes it arrive there rather than
+    # stopping short and jumping to `consolidated`.
     consolidating = [note for note in notes if note.stage == "consolidating"]
-    assert [note.index for note in consolidating] == [1, 2]
+    assert [note.index for note in consolidating] == [0, 2]
     assert all(note.total == 2 for note in consolidating)
     assert all(note.source_id == "notes" for note in notes)
 

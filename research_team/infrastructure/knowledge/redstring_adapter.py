@@ -65,6 +65,7 @@ from research_team.application.knowledge import (
 )
 from research_team.application.retry import with_retry
 from research_team.domain import Corpus, EntityJudgements, StoreSourceDocument
+from research_team.infrastructure.config import DEFAULT_CONSOLIDATION_BATCH
 from research_team.infrastructure.knowledge.domain_schemas import (
     RESEARCH_CORPUS,
     resolve_domain,
@@ -235,6 +236,17 @@ def _reporting(report: ExtractionReporter | None, source_id: str):
     return announce
 
 
+def _batches(items, size: int):
+    """Consecutive slices of at most `size`. The last may be short.
+
+    Same shape as redstring's own `_batches`, duplicated rather than imported
+    because it is private there and a four-line generator is a cheaper thing
+    to own than a dependency on another package's underscore.
+    """
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
 def _no_announcement(stage: str, **fields: Any) -> None:
     """The default announcer: says nothing.
 
@@ -303,6 +315,7 @@ class RedstringKnowledge:
         embeddings: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         concurrency: int = 1,
+        consolidation_batch: int = DEFAULT_CONSOLIDATION_BATCH,
         chunker: Chunker | None = None,
         chunks: ChunkStore | None = None,
         cards: ChunkStore | None = None,
@@ -326,6 +339,15 @@ class RedstringKnowledge:
         # deterministic pipeline unless it asks otherwise. The composition
         # root is the one place that reads `config`, and it passes both.
         self._concurrency = concurrency
+        # **Deliberately not defaulted to 1.** Every other knob here defaults
+        # to redstring's serial behaviour so a directly-constructed adapter --
+        # which is every one in the suite -- gets the deterministic pipeline
+        # unless it asks otherwise. This one does not, because `resolve_many`
+        # at a batch of 1 is not the old per-entity loop: it re-resolves
+        # through `_still_mergeable` in a phase the loop had no equivalent of.
+        # A default of 1 would leave the whole suite exercising a path
+        # production never takes, which is worse than the determinism it buys.
+        self._consolidation_batch = consolidation_batch
         self._chunker = chunker
         # Required rather than optional. "After `remember`, the text still
         # exists" is a guarantee, and an optional collaborator that silently
@@ -891,49 +913,147 @@ class RedstringKnowledge:
     async def _consolidate(
         self, entities, *, announce=_no_announcement
     ) -> tuple[list[MergeRecord], int]:
-        """Resolve each extracted entity, one at a time.
+        """Resolve the extracted entities in batches, not one at a time.
 
-        `resolve` is per-entity by design, and it emits its own event, so this
-        collects rather than appends. A failure on one entity does not abandon
-        the rest: the extraction is already recorded and the merges that
-        succeeded are already folded, so stopping here would leave less of the
-        graph consolidated for no gain.
+        `resolve_many` is redstring's decide-then-emit pass: candidates are
+        scored concurrently, the whole batch's ambiguous band goes to the
+        adjudicator in **one** `adjudicate_many` call spanning subjects, and
+        the merges are emitted serially. The serial emit is not a limitation
+        to route around -- `ConsolidationLog` uses optimistic concurrency and
+        the stream *is* the tenant, so two concurrent merges within one
+        project collide by construction.
+
+        What this buys is the number `config.extraction_chunk_size`'s
+        docstring names as the one to watch: adjudicator calls per document.
+        Auto-merge is unreachable across documents (see the note above
+        `_CountingProvider`), so every cross-document duplicate is
+        adjudicated, and `Adjudicator.adjudicate` batches only *within* one
+        subject -- where the band is nearly always one pair. Per entity that
+        was one round trip each.
+        `test_batched_consolidation.py` counts it at the provider seam: three
+        duplicates cost `[1, 1, 1]` through the old loop and `[3]` through
+        this one.
 
         `announce` defaults to silence because `reconsolidate` also calls this
-        and has no watcher; it is announced *before* each `resolve` as well as
-        after a merge lands, so a slow entity is visible while it is slow
-        rather than only once it is done.
+        and has no watcher. The progress it reports is now per *batch* rather
+        than per entity -- the pane renders `index/total`, and the counter
+        advances a batch at a time and then holds while phase 2 waits on the
+        model. That is a real loss of resolution against the per-entity loop
+        and it is the price of the batching: no per-subject callback can exist
+        when the whole point is that the subjects are decided together.
 
-        `low` is redstring's own `LOW_SIMILARITY` again -- there is no override
-        here any more. The module-level note above `_CountingProvider` says what
-        the override was for, why PR #87 was right to keep it, and what the
-        embedding channel changed that made it unnecessary.
+        A batch that raises does not abandon the rest, for the reason it never
+        did: the extraction is already recorded and the merges that succeeded
+        are already folded. It is *retried entity by entity* first -- see
+        `_consolidate_one_by_one` for what that costs and why it is worth it.
         """
         entities = list(entities)
         merges: list[MergeRecord] = []
         failures = 0
         total = len(entities)
         finder = await self._judged_finder()
-        for position, entity in enumerate(entities, start=1):
-            announce("consolidating", index=position, total=total, detail=entity.name)
+        # `subject.id` is what a report names, and `resolve_many` resolves each
+        # subject through aliases before deciding -- so the canonical entity of
+        # a merge is not always the entity that was passed in. Looked up by id
+        # rather than carried alongside, with the id itself as the fallback,
+        # because a `MergeRecord` naming the wrong entity is an audit trail
+        # that lies while looking complete.
+        names = {entity.id: entity.name for entity in entities}
+        done = 0
+        for batch in _batches(entities, self._consolidation_batch):
+            announce(
+                "consolidating",
+                index=done,
+                total=total,
+                detail=f"considering {len(batch)} entities",
+            )
             try:
+                reports = await self._consolidator.resolve_many(
+                    batch,
+                    finder=finder,
+                    adjudicator=self._adjudicator,
+                    concurrency=self._concurrency,
+                )
+            except RedstringError:
+                # Deliberately not counted as `len(batch)` failures here: the
+                # retry below is what decides how many entities actually
+                # failed, and it is also the only thing that can say *which*.
+                logger.warning(
+                    "consolidating a batch of %d failed; retrying it one at a time",
+                    len(batch),
+                    exc_info=True,
+                )
+                batch_merges, batch_failures = await self._consolidate_one_by_one(
+                    batch,
+                    finder=finder,
+                    announce=announce,
+                    done=done,
+                    total=total,
+                    names=names,
+                )
+                merges += batch_merges
+                failures += batch_failures
+                done += len(batch)
+                continue
+            done += len(batch)
+            for report in reports:
+                merges.append(self._merge_record(report, names, announce, done, total))
+            # Announced again after the batch, not only before it. The pane
+            # renders `index/total`, and with only the leading announce the
+            # counter shows what was done *before* this batch and never
+            # reaches `total` -- a bar that stops at 0/2 on a two-entity
+            # document and then jumps straight to `consolidated`.
+            announce(
+                "consolidating",
+                index=done,
+                total=total,
+                detail=f"{len(merges)} merged so far",
+            )
+        return merges, failures
+
+    async def _consolidate_one_by_one(
+        self, entities, *, finder, announce, done: int, total: int, names
+    ) -> tuple[list[MergeRecord], int]:
+        """The per-entity path, kept for the failure case only.
+
+        A batch fails as a batch -- one rate-limited adjudicator call takes
+        every subject in it down together, and the report can then say only
+        "some of these did not consolidate". `format_ingest_report` prints the
+        count, but the count was never the missing half: what a reader needs
+        is which entity and why, which is why
+        `test_a_consolidation_failure_says_which_entity_and_why` exists.
+
+        So a failed batch is re-tried entity by entity, and each entity that
+        fails is named in its own note.
+
+        **The cost, stated plainly:** against an endpoint that is failing for
+        a reason that will not clear -- a rate limit, an open circuit -- this
+        spends one call per entity *after* having already spent the batch's.
+        That is one call worse than the loop this branch replaced, in the case
+        where every call is going to fail anyway. It is accepted because the
+        happy path is where the calls actually are, and because a failure
+        nobody can attribute costs more than a call.
+        """
+        merges: list[MergeRecord] = []
+        failures = 0
+        for position, entity in enumerate(entities, start=1):
+            announce("consolidating", index=done + position, total=total, detail=entity.name)
+            try:
+                # The finder built for the whole run, passed down rather
+                # than rebuilt here: `_judged_finder` is one event-store read
+                # to load an aggregate no entity in this loop can have
+                # changed, and its own docstring says once per run.
                 report = await self._consolidator.resolve(
                     entity, adjudicator=self._adjudicator, finder=finder
                 )
             except RedstringError as error:
-                # The comment that used to be here said this is "typically the
-                # entity was absorbed by a merge earlier in this same loop",
-                # and treated every `RedstringError` as that benign case. Only
-                # `ConsolidationInvariantError` is that case. `RedstringError`
-                # is redstring's base class, so this arm also caught
-                # `CircuitOpen`, `RateLimitExceeded`, `LlmProviderError`,
-                # `MissingEntityError` and `AliasCycleError` -- a rate-limited
-                # adjudicator would consolidate nothing across an entire
-                # ingest, count every entity as a "failure", and say nothing.
-                # Logged rather than raised: a genuine fault on one entity
-                # still must not abandon the rest, for the reason in the
-                # docstring. But it is no longer indistinguishable from an
-                # ordinary absorbed entity.
+                # Only `ConsolidationInvariantError` is the benign
+                # "absorbed earlier in this same pass" case; `RedstringError`
+                # is redstring's base class and also covers `CircuitOpen`,
+                # `RateLimitExceeded`, `LlmProviderError`, `MissingEntityError`
+                # and `AliasCycleError`. Logged rather than raised so one
+                # genuine fault does not abandon the rest, but no longer
+                # indistinguishable from an ordinary absorbed entity.
                 failures += 1
                 logger.warning(
                     "consolidating %r failed; carrying on with the rest",
@@ -942,29 +1062,37 @@ class RedstringKnowledge:
                 )
                 announce(
                     "consolidating",
-                    index=position,
+                    index=done + position,
                     total=total,
                     detail=f"{entity.name} could not be consolidated: {error}",
                 )
                 continue
             if report is None:
                 continue
-            absorbed = tuple(str(i) for i in report.affected_entity_ids)
-            announce(
-                "consolidating",
-                index=position,
-                total=total,
-                detail=f"{entity.name} absorbed {', '.join(absorbed)} -- {report.reason}",
-            )
-            merges.append(
-                MergeRecord(
-                    merge_id=report.event.event_id,
-                    canonical_name=entity.name,
-                    absorbed_names=absorbed,
-                    reason=report.reason,
-                )
-            )
+            merges.append(self._merge_record(report, names, announce, done + position, total))
         return merges, failures
+
+    def _merge_record(self, report, names, announce, index: int, total: int) -> MergeRecord:
+        """One report, announced and recorded. Shared by both paths above.
+
+        `absorbed_names` holds ids rather than names, as it always has -- the
+        field's name predates the report carrying ids and is not worth a
+        rename that would touch the agent-facing surface.
+        """
+        canonical = names.get(report.canonical_entity_id, str(report.canonical_entity_id))
+        absorbed = tuple(str(i) for i in report.affected_entity_ids)
+        announce(
+            "consolidating",
+            index=index,
+            total=total,
+            detail=f"{canonical} absorbed {', '.join(absorbed)} -- {report.reason}",
+        )
+        return MergeRecord(
+            merge_id=report.event.event_id,
+            canonical_name=canonical,
+            absorbed_names=absorbed,
+            reason=report.reason,
+        )
 
     async def reconsolidate(self, source_id: str) -> tuple[tuple[MergeRecord, ...], int]:
         """Re-resolve the entities of one recorded extraction.

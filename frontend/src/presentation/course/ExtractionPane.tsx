@@ -97,8 +97,13 @@ export const ExtractionView = ({
  *
  * A list rather than a percentage: the stages are not equal in length —
  * `extracting` is a model call per chunk and `consolidating` a decision per
- * entity — so any bar drawn over them would be a made-up number. Naming the
- * stage and counting inside it says only what is known.
+ * *batch* of entities — so any bar drawn over them would be a made-up number.
+ * Naming the stage and counting inside it says only what is known.
+ *
+ * The consolidating counter moves a batch at a time and then holds while the
+ * adjudicator is asked about the whole batch at once. It looks stalled and is
+ * not; that is the cost of batching those calls, and it is why the count is
+ * `index/total` over entities rather than a bar that would appear to freeze.
  */
 const Running = ({ extraction }: { extraction: Extraction }) => {
   // `extracted` having *arrived* is what makes the counts real, not the counts
