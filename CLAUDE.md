@@ -363,6 +363,46 @@ and it wasn't: a build with `EntityDefinitionRunner` never constructed in
 the tests that "confirmed the endpoint worked" never noticed, because none of
 them checked for a stored row.
 
+**A library that hands back a count instead of the event it built has hidden
+a write from your log.** redstring's `build_graph` embeds every entity, folds
+the vectors into the `VectorStore` through `VectorProjection`, and returns
+`GraphBuildReport.embedded` -- an integer. The `EntitiesEmbedded` it
+constructed to do that is reachable only by passing `build_graph` an
+`event_store`, which this project did not. So the vectors were computed, paid
+for, written to an in-memory store, and dropped when the process ended, with
+nothing on the log to replay them. Measured on 2026-08-22 against a copy of
+the real database: **zero `EntitiesEmbedded` rows in a log holding 8
+`DocumentExtracted` and 772 `EntitiesMerged`**, with embeddings on by default
+the whole time.
+
+Nothing about this is visible from the running system. Extraction succeeds,
+the store answers every query, consolidation scores three features, and the
+only symptom is that a restart silently drops to two -- which looks like
+nothing at all. The general form: **when a library writes into a store you own
+*and* returns a summary rather than the event, check which of the two it
+considers the record.** If the event is not in your log, the store is not a
+projection, whatever it is called.
+
+**And a comment explaining an absence will turn a defect into a decision
+nobody questions.** `project_graphs.py` carried this, in the same register as
+every other reasoned comment in the tree:
+
+> It does not live in `rebuild_graph`, which folds the log, because the vector
+> store is not part of that fold -- this project never appends
+> `EntitiesEmbedded`, so a `VectorProjection` would have nothing to replay.
+
+Every clause is true. The conclusion is backwards: "we never append it" is the
+bug, and the comment reads it as the premise. Written down that way it stopped
+being a question -- it was cited in a design document, and then in a `BACKLOG`
+entry, as an established fact about what this system can do. Three documents
+agreeing, all descended from one comment that described a defect in the voice
+of a choice.
+
+The tell, worth looking for elsewhere: a comment that explains why something
+is *absent* by pointing at another absence. "We don't fold X because nothing
+writes X" is a loop, not a reason, and the question it forecloses is whether
+anything *should* write X.
+
 ## The interaction log
 
 **A second event store means no projection can span the two.** `eventsource`

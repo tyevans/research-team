@@ -71,6 +71,11 @@ from research_team.infrastructure.knowledge.domain_schemas import (
     resolve_domain,
 )
 from research_team.infrastructure.knowledge.entity_cards import index_cards
+from research_team.infrastructure.knowledge.entity_embeddings import (
+    PROJECT_EMBEDDING_SOURCE,
+    embed_entities,
+    recover_document_embeddings,
+)
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.temporal_expressions import (
@@ -314,6 +319,7 @@ class RedstringKnowledge:
         adjudicate: bool = True,
         embeddings: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
+        card_vector_store: VectorStore | None = None,
         concurrency: int = 1,
         consolidation_batch: int = DEFAULT_CONSOLIDATION_BATCH,
         chunker: Chunker | None = None,
@@ -383,6 +389,10 @@ class RedstringKnowledge:
         # fact here rather than left for `build_graph` to half-honour.
         self._embeddings = embeddings if vector_store is not None else None
         self._vectors = vector_store if embeddings is not None else None
+        #: Where entity-*card* embeddings land, as opposed to redstring's
+        #: name embeddings in `_vectors`. Gated on the same provider: a card
+        #: store with nothing to embed with is never written to.
+        self._card_vectors = card_vector_store if embeddings is not None else None
         #: None until the first ingest probes the endpoint; see
         #: `_embedding_pair`. Not probed in `__init__` because that is not
         #: async and because a project that is opened and never ingested into
@@ -532,6 +542,15 @@ class RedstringKnowledge:
                     [built.event],
                     ExpectedVersion.any_(),
                 )
+                # After the extraction event and before consolidation. Before,
+                # because `_consolidate` scores with the vector store and the
+                # card pass reads the graph `build_graph` has just written --
+                # and after, because an embedding failure must not cost the
+                # extraction that is already folded into the store.
+                await self._record_embeddings(
+                    [entity.id for entity in built.event.entities],
+                    source_id=source.source_id,
+                )
                 merges, failures = await self._consolidate(
                     built.event.entities, announce=announce
                 )
@@ -561,6 +580,86 @@ class RedstringKnowledge:
             merges=tuple(merges),
             consolidation_failures=failures,
         )
+
+    async def _record_embeddings(self, entity_ids: list[UUID], *, source_id: str) -> None:
+        """Append this ingest's embeddings to the log, on both channels.
+
+        **Nothing here raises.** Every call site is downstream of an extraction
+        that has already been folded into the graph store and appended to the
+        log; an embedding endpoint that dies between those two moments must not
+        turn a successful ingest into a failed one. What it costs when it does
+        fail is that these entities have no vectors until something re-embeds,
+        which is exactly the state every project was in before this method
+        existed, so it degrades to the old behaviour rather than to a new one.
+
+        The two channels are independent on purpose -- see
+        `entity_embeddings` -- and the second is skipped when the first found
+        nothing only in the sense that both are guarded by the same provider.
+        A failure in one does not suppress the other.
+        """
+
+        if not entity_ids:
+            return
+
+        embeddings, vectors = await self._embedding_pair()
+        if embeddings is None:
+            return
+
+        # The document channel: redstring's own name vectors, recovered from
+        # the store it just wrote them to so they reach the log and survive a
+        # restart. Before this, every one of them died with the process.
+        if vectors is not None:
+            try:
+                event = await recover_document_embeddings(
+                    vectors=vectors,
+                    entity_ids=entity_ids,
+                    tenant_id=self._project_id,
+                    source_id=source_id,
+                    embedding_model=embeddings.model,
+                )
+                if event is not None:
+                    await self._event_store.append(
+                        document_stream(tenant_id=self._project_id, source_id=source_id),
+                        [event],
+                        ExpectedVersion.any_(),
+                    )
+            except Exception:
+                logger.exception("could not record document embeddings for %s", source_id)
+
+        # The card channel: this project's own richer vectors, over the same
+        # text `entity_cards` gives BM25. Written straight into the per-project
+        # store as well as the log, so this ingest's entities are clusterable
+        # without waiting for the next project open to fold them back.
+        #
+        # Cards are assembled here, *before* `_consolidate` and `_recard` -- so
+        # a vector can describe an entity that this same ingest then absorbs
+        # into another. Harmless rather than merely tolerated: an absorbed
+        # entity is skipped by every graph read, so its vector is orphaned and
+        # never queried, and the surviving entity's own card is re-embedded by
+        # the next pass over it. Moving this after consolidation would fix the
+        # staleness and cost the document channel its ordering, since
+        # `_consolidate` scores against the vectors written above. See
+        # `BACKLOG.md` B130 for the general form of the staleness.
+        if self._card_vectors is not None:
+            try:
+                event = await embed_entities(
+                    graph=self._store,
+                    provider=embeddings,
+                    tenant_id=self._project_id,
+                    only=set(entity_ids),
+                )
+                if event is not None:
+                    await self._event_store.append(
+                        document_stream(
+                            tenant_id=self._project_id,
+                            source_id=PROJECT_EMBEDDING_SOURCE,
+                        ),
+                        [event],
+                        ExpectedVersion.any_(),
+                    )
+                    await self._card_vectors.upsert_many(event.embeddings)
+            except Exception:
+                logger.exception("could not record card embeddings for %s", source_id)
 
     async def _embedding_pair(self) -> tuple[EmbeddingProvider | None, VectorStore | None]:
         """The embedding provider and store to extract with, if they work.

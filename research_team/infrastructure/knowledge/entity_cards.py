@@ -136,22 +136,45 @@ def card_source_id(entity_id: UUID) -> str:
     return f"card:{uuid5(_CARD_NAMESPACE, str(entity_id))}"
 
 
-async def index_cards(
-    *,
-    graph: "GraphStore",
-    cards: "ChunkWriter",
-    tenant_id: UUID,
-    chunker: "Chunker",
-) -> int:
-    """Write a card for every canonical entity in `tenant_id`. No model call.
+@dataclass(frozen=True)
+class Card:
+    """One entity's card: the id it describes, and the text describing it.
 
-    Returns how many entities were carded.
+    Carries the id rather than only the text because both consumers need to
+    get back to the entity -- the chunk index stores it in `entity_ids`, and
+    the embedding pass keys a `VectorRecord` by it. Parsing the id back out of
+    the text is what `StoredChunk.entity_ids` exists to avoid.
+    """
+
+    entity_id: UUID
+    text: str
+
+
+async def assemble_cards(
+    *, graph: "GraphStore", tenant_id: UUID, only: "set[UUID] | None" = None
+) -> list[Card]:
+    """A card per canonical entity in `tenant_id`. No model call.
+
+    Split out of `index_cards` so that the text BM25 matches and the text an
+    embedding encodes are **the same text**, produced by one function rather
+    than two that agree today. `entity_embeddings.embed_entities` is the other
+    caller, and the alternative -- a second assembly written for embedding --
+    is the shape where a card gains a section and the vectors quietly keep
+    encoding the older one.
+
+    `only` narrows the *result* to those entity ids, and deliberately not the
+    reads: neighbour names still come from the whole tenant, because a card
+    restricted to edges among the selected ids would describe a different
+    neighbourhood than the same entity's card assembled in a whole-project
+    pass. The ingest path uses it to card one document's entities against the
+    graph as it now stands; the re-embed pass leaves it `None`. An id in `only`
+    that is absent or absorbed simply yields no card.
 
     **Absorbed entities are skipped**, the same way `RedstringKnowledge.search`
     skips them: a merge is not a delete, so `find_entities` still returns the
     absorbed row, and a card for it would compete in the same index as its
     canonical twin while describing a neighbourhood that has been redirected
-    away. `undo_merge` restores the row, and the next indexing restores its
+    away. `undo_merge` restores the row, and the next assembly restores its
     card with it.
 
     **One relationship read for the whole tenant**, not one per entity. The
@@ -169,8 +192,10 @@ async def index_cards(
     # `==`, not `is`: an adapter may rebuild the UUID for an id that is not an
     # alias, and `is` would filter out everything and card nothing.
     own = [entity for entity in entities if canonical[entity.id] == entity.id]
+    if only is not None:
+        own = [entity for entity in own if entity.id in only]
     if not own:
-        return 0
+        return []
 
     ids = [entity.id for entity in own]
     edges = await graph.get_relationships_for(ids, tenant_id)
@@ -198,15 +223,37 @@ async def index_cards(
                     )
                 )
 
-    for entity in own:
-        text = card_text(
-            name=entity.name,
-            entity_type=entity.entity_type,
-            aliases=[],
-            properties=entity.properties or {},
-            neighbours=neighbours[entity.id],
+    return [
+        Card(
+            entity_id=entity.id,
+            text=card_text(
+                name=entity.name,
+                entity_type=entity.entity_type,
+                aliases=[],
+                properties=entity.properties or {},
+                neighbours=neighbours[entity.id],
+            ),
         )
-        source_id = card_source_id(entity.id)
+        for entity in own
+    ]
+
+
+async def index_cards(
+    *,
+    graph: "GraphStore",
+    cards: "ChunkWriter",
+    tenant_id: UUID,
+    chunker: "Chunker",
+) -> int:
+    """Write a card for every canonical entity in `tenant_id`. No model call.
+
+    Returns how many entities were carded. The assembly is `assemble_cards`;
+    this is the half that writes them into a chunk corpus.
+    """
+    assembled = await assemble_cards(graph=graph, tenant_id=tenant_id)
+
+    for card in assembled:
+        source_id = card_source_id(card.entity_id)
         await cards.replace_source(
             source_id,
             tenant_id,
@@ -222,10 +269,10 @@ async def index_cards(
                     # back out of its own text -- which would tie retrieval to
                     # `card_text`'s formatting and break on a name containing a
                     # newline.
-                    entity_ids=[entity.id],
+                    entity_ids=[card.entity_id],
                 )
-                for chunk in chunker.chunk(text).chunks
+                for chunk in chunker.chunk(card.text).chunks
             ],
         )
 
-    return len(own)
+    return len(assembled)
