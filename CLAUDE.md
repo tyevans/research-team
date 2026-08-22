@@ -37,7 +37,7 @@ named `the committed build matches src/` that fails on a stale bundle. All
 three are gone. What replaced them is a prerequisite: **`cd frontend && npm run
 build` before the server will serve a console at all** — `create_app` mounts
 nothing when `static/` is absent and `/` answers 503 naming the command
-(`tests/interfaces/test_web_missing_console.py`).
+(`tests/interfaces/test_web_console.py`, which holds both states of `/`).
 
 Why the swap: the reason for committing it was that `uv run web.py` then needed
 no Node toolchain. The cost was paid on every merge — two branches that both
