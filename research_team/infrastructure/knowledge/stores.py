@@ -11,13 +11,24 @@ merge on evidence instead of an overridden threshold. It was `none` when this
 module was written and this paragraph said so for one release longer than it
 was true. See `config.vector_store` for what it costs.
 
-The two differ in one way that matters to a caller: **`memory` is not the
-graph's `memory`.** A graph store lost with the process is rebuilt from the log
-at project open, so it costs a fold. A vector store lost with the process is
-*gone*: this project never appends `EntitiesEmbedded`, so there is nothing for
-a replay to fold, and consolidation silently drops to two features for every
-entity extracted before the restart. `pgvector` is currently the only setting
-under which an embedding outlives the process.
+**`memory` used to mean something different here than for the graph, and no
+longer does.** This paragraph said a vector store lost with the process was
+*gone* -- "this project never appends `EntitiesEmbedded`, so there is nothing
+for a replay to fold" -- and named `pgvector` as the only setting under which
+an embedding outlived the process. That was accurate and it was describing a
+defect, not a design: redstring built the event on every ingest and this
+project dropped it. Measured against a copy of the real database on
+2026-08-22, before the fix: zero `EntitiesEmbedded` rows in a log holding 8
+`DocumentExtracted` and 772 `EntitiesMerged`.
+
+Both embedding channels are appended now and folded at project open by
+`EmbeddingsForModel`, so `memory` here means *derived* -- the chunk store's
+sense, below -- rather than *lost*. What it costs is the fold, proportional to
+how many entities have been embedded, paid once per open.
+
+The part that survives: a vector is still only as current as the last time
+something embedded it, because nothing re-embeds on the open path. See
+`entity_embeddings.py`.
 
 The chunk store is the graph's shape, not the vector store's: `memory` here
 means *derived*, not *lost on restart*. Every stored chunk comes from a
@@ -117,6 +128,30 @@ async def build_vector_store(kind: str, *, dimension: int) -> VectorStore | None
     raise ValueError(
         f"unknown AGENT_VECTOR_STORE {kind!r}; expected 'none', 'memory' or 'pgvector'"
     )
+
+
+def build_card_vector_store(*, dimension: int) -> VectorStore:
+    """A store for one project's entity-card embeddings. Always in memory.
+
+    **No `kind` argument, and that is the decision rather than an omission.**
+    This store is derived: it is folded from `EntitiesEmbedded` at project open,
+    the same way the chunk corpus is folded from `DocumentChunked`, so losing it
+    with the process costs a replay and not data. That is the whole argument
+    `build_chunk_store` makes for the corpus, and it applies here unchanged.
+
+    A pgvector-backed second store would buy durability the event log already
+    provides, and cost a DSN, a table whose width has to stay in step with the
+    provider, and a second place for `AGENT_EMBEDDING_DIMENSION` to be wrong.
+    The day that trade flips is the day a project's entity count makes the fold
+    too slow to sit on the open path -- at which point the answer is the same
+    one `MAX_CLUSTERED_ENTITIES` already gives the curriculum, which is to
+    refuse visibly rather than degrade.
+
+    Distinct from `build_vector_store`'s result on purpose; see
+    `infrastructure/knowledge/rebuild.py` for what separates the two channels
+    and why one store holding both would answer plausibly and wrongly.
+    """
+    return InMemoryVectorStore(dimension=dimension)
 
 
 def build_chunk_store(kind: str, *, dimension: int) -> ChunkStore | None:

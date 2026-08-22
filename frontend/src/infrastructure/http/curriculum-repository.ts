@@ -29,6 +29,15 @@ export class HttpCurriculumRepository implements CurriculumRepository {
     )
   }
 
+  async refreshEmbeddings(projectId: ProjectId) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/embeddings`,
+      {},
+      dto.embeddingRefreshDto,
+    )
+    return body.embedded
+  }
+
   async path(projectId: ProjectId, slug: string) {
     const body = await this.http.get(
       `/api/projects/${seg(projectId)}/curriculum/paths/${seg(slug)}`,

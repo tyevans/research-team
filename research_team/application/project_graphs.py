@@ -66,6 +66,19 @@ redstring entities. Composition supplies
 #: not -- see `ProjectGraphs.vectors`.
 OpenVectorStore = Callable[[], Awaitable[Any | None]]
 
+#: Builds a fresh, unopened vector store for *one project's* entity-card
+#: embeddings, or None when embeddings are off.
+#:
+#: Synchronous and per project, unlike `OpenVectorStore` above, and both
+#: differences are the point. The consolidation store is process-wide, scopes
+#: by tenant internally, and may be a real database. This one is the *chunk
+#: store's* shape instead: an in-memory store rebuilt by folding
+#: `EntitiesEmbedded` at open, so it needs no connection to await and is lost
+#: with the process the way a derived read model should be. See
+#: `infrastructure/knowledge/entity_embeddings.py` for why the two channels
+#: are separate stores at all.
+BuildCardVectors = Callable[[], Any | None]
+
 
 class ProjectGraphs:
     """Opens, caches, and closes one `GraphStore` per project.
@@ -86,6 +99,8 @@ class ProjectGraphs:
         build_store: BuildStore,
         rebuild: Rebuild,
         open_vector_store: OpenVectorStore | None = None,
+        build_card_vectors: BuildCardVectors | None = None,
+        embedding_model: str | None = None,
         build_chunk_store: BuildChunkStore | None = None,
         index_cards: IndexCards | None = None,
     ) -> None:
@@ -120,6 +135,11 @@ class ProjectGraphs:
         # `PgVectorStore.connect` is a coroutine that awaits `create_pool` --
         # and `build_application` is not. See `vectors`.
         self._open_vector_store = open_vector_store
+        #: Which model's vectors this store holds, so the fold can skip any
+        #: others. A name rather than a width; see `EmbeddingsForModel`.
+        self._embedding_model = embedding_model
+        self._build_card_vectors = build_card_vectors
+        self._card_vectors: dict[UUID, Any] = {}
         self._vector_store: Any | None = None
         self._vector_ready = False
         # Its own lock, not `_lock_for`'s: the per-project locks deliberately
@@ -155,10 +175,23 @@ class ProjectGraphs:
         had been paid for. Constructible and unusable, twice over.
 
         This lives here because it is the earliest `await` on the path to the
-        store being used: `build_application` is synchronous. It does not live
-        in `rebuild_graph`, which folds the log, because the vector store is
-        not part of that fold -- this project never appends `EntitiesEmbedded`,
-        so a `VectorProjection` would have nothing to replay.
+        store being used: `build_application` is synchronous.
+
+        **It used to say the vector store was not part of `rebuild_graph`'s
+        fold, "because this project never appends `EntitiesEmbedded`, so a
+        `VectorProjection` would have nothing to replay". That was true, and it
+        was the bug rather than the design.** redstring computed a vector per
+        entity on every ingest, folded it into this store, and returned a count
+        instead of the event; the ingest path appended the `DocumentExtracted`
+        beside it and dropped the rest. Measured against a copy of the real
+        database on 2026-08-22: zero `EntitiesEmbedded` in a log holding 8
+        `DocumentExtracted` and 772 `EntitiesMerged`. Every vector the system
+        had ever paid for died with the process.
+
+        The event is appended now -- see
+        `infrastructure/knowledge/entity_embeddings.py` -- and `open` folds it
+        back through `rebuild_graph`, so this store is derived from the log the
+        way the graph and the corpus already were.
 
         `hasattr` rather than a type check, matching how `open` treats the
         graph store: only the pgvector adapter has DDL, and
@@ -205,14 +238,30 @@ class ProjectGraphs:
             # data derived from *this* project's log, not a process-wide
             # index. `None` when chunking is off, matching `build_chunk_store`.
             chunk_store = self._build_chunk_store() if self._build_chunk_store else None
+            # Keywords, and only the ones that apply: a `rebuild` that never
+            # expects chunking (no `build_chunk_store` configured) is never
+            # called with a parameter it doesn't accept, and the same holds for
+            # a build with embeddings switched off.
+            folds: dict[str, Any] = {}
             if chunk_store is not None:
-                # Passed as a keyword so a `rebuild` that never expects
-                # chunking (no `build_chunk_store` configured) is never
-                # called with a parameter it doesn't accept.
-                await self._rebuild(store, project_id, chunks=chunk_store)
+                folds["chunks"] = chunk_store
+            # `self.vectors()` was awaited above, so this is the opened store
+            # rather than a second one. Read through the attribute rather than
+            # awaited again to keep `open` holding one lock at a time.
+            if self._vector_store is not None and self._embedding_model is not None:
+                folds["vectors"] = self._vector_store
+            card_vectors = (
+                self._build_card_vectors() if self._build_card_vectors is not None else None
+            )
+            if card_vectors is not None:
+                folds["card_vectors"] = card_vectors
+            if folds.get("vectors") is not None or card_vectors is not None:
+                folds["embedding_model"] = self._embedding_model
+            await self._rebuild(store, project_id, **folds)
+            if chunk_store is not None:
                 self._chunk_stores[project_id] = chunk_store
-            else:
-                await self._rebuild(store, project_id)
+            if card_vectors is not None:
+                self._card_vectors[project_id] = card_vectors
             # After the replay, not inside it: cards are derived from the
             # *folded* graph, so anything that runs before the last event is
             # applied would card a neighbourhood that is still filling in.
@@ -237,6 +286,19 @@ class ProjectGraphs:
         `build_chunk_store` was never given to this instance (chunking off).
         """
         return self._chunk_stores.get(project_id)
+
+    def card_vectors(self, project_id: UUID) -> Any | None:
+        """This project's entity-card embeddings, if `open` folded any.
+
+        `None` before `open`, when embeddings are off, or -- and this is the
+        case to expect on any project older than 2026-08-22 -- when the log
+        holds no `EntitiesEmbedded` for the card channel because nothing was
+        writing them yet. An empty store and an absent one are different
+        answers and callers should not conflate them: absent means the feature
+        is off, empty means nothing has been embedded *yet*, and only the
+        second is fixed by re-embedding.
+        """
+        return self._card_vectors.get(project_id)
 
     def cards(self, project_id: UUID) -> Any | None:
         """This project's entity-card store, if `open` has built one.
@@ -265,6 +327,9 @@ class ProjectGraphs:
         card_store = self._card_stores.pop(project_id, None)
         if card_store is not None and hasattr(card_store, "close"):
             await card_store.close()
+        card_vectors = self._card_vectors.pop(project_id, None)
+        if card_vectors is not None and hasattr(card_vectors, "close"):
+            await card_vectors.close()
 
     async def close_all(self) -> None:
         """Close every cached store, and the shared vector store. For shutdown.
