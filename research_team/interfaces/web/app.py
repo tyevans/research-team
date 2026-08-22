@@ -52,6 +52,7 @@ from research_team.application import (
     WorkerRoster,
     build_fork_tree,
 )
+from research_team.application.area_projection import GraphTooLarge
 from research_team.application.ask import (
     AskAnswer,
     AskConversationOpened,
@@ -64,6 +65,8 @@ from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
+from research_team.application.course_authoring import CourseAuthor
+from research_team.application.curriculum import CurriculumService
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.entity_definitions import DefinitionService, serve_citations
 from research_team.application.grading import GradingError, grade
@@ -140,6 +143,7 @@ from research_team.domain.topic import (
     TopicStatus,
 )
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
+from research_team.infrastructure.knowledge.co_mention_reader import ChunkCoMentions
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
@@ -157,13 +161,16 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
+from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.presenters import (
+    area_view,
     autonomy_view,
     corpus_change,
     course_view,
+    curriculum_view,
     definition_view,
     dialogue_progress_view,
     dispatch_view,
@@ -176,6 +183,7 @@ from research_team.interfaces.web.presenters import (
     item_view,
     media_change,
     neighborhood_view,
+    path_view,
     preset_view,
     progress_view,
     project_change,
@@ -776,6 +784,25 @@ class NewSeed(BaseModel):
     max_topics: int = 8
 
 
+class NewAuthoring(BaseModel):
+    """Which courses to write, and how long each should be.
+
+    `area` absent means the whole path, which is the ordinary ask and so is
+    the default rather than a flag. Naming one area is the narrower request,
+    and it is the one that has to be spelled out -- the reverse arrangement
+    would make "write everything" the thing a caller reaches by omission from
+    a field they have to know exists.
+
+    `lessons` is capped as well as floored. Three model turns per area is the
+    fixed cost; a request for forty lessons is three turns asked to produce
+    forty files, which no local model does well and which nobody reads. Twelve
+    is where a unit stops being a unit.
+    """
+
+    area: str | None = None
+    lessons: int = Field(default=3, ge=1, le=12)
+
+
 class NewDispatch(BaseModel):
     """What an agent dispatched at one topic is being asked to do.
 
@@ -918,6 +945,9 @@ def create_app(
     curation_text: MediaCurationTextPort | None = None,
     curation_search: MediaSearchPort | None = None,
     interactions: EventStoreInteractionRecorder | None = None,
+    curriculum: CurriculumService | None = None,
+    course_author: CourseAuthor | None = None,
+    authoring: AuthoringActivity | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1074,6 +1104,14 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         if service.attached_project_id == project_id:
             await service.detach_project()
+        if curriculum is not None:
+            # The projection is cached per project and keyed on graph counts,
+            # so a project deleted and a new one created under a recycled id
+            # would otherwise be answered from the first one's areas. Ids are
+            # not recycled today, which is why this is cheap insurance rather
+            # than a fix -- the cache holding a dead project's clusters for the
+            # life of the process is reason enough on its own.
+            curriculum.forget(project_id)
         return {"deleted": True, "project_id": str(project_id)}
 
     async def _require_project(project_id: UUID) -> None:
@@ -2902,6 +2940,180 @@ def create_app(
             raise HTTPException(status_code=503, detail="no graph read model is configured")
         store = await graphs.open(project_id)
         return ProjectTimelineReader(project_id=project_id, store=store)
+
+    async def _co_mentions(project_id: UUID) -> ChunkCoMentions:
+        """This project's `CoMentionPort`, over the chunk store `graphs` owns.
+
+        `graphs.open` first and `graphs.chunks` second, in that order, which
+        is not stylistic: `CLAUDE.md` records a defect where a call site
+        fetched chunks before opening and every first request for a
+        newly-touched project answered 503 while every later one succeeded --
+        once per project, and indistinguishable from flakiness.
+        """
+        if graphs is None:
+            raise HTTPException(status_code=503, detail="no graph read model is configured")
+        await graphs.open(project_id)
+        chunk_store = graphs.chunks(project_id)
+        if chunk_store is None:
+            raise HTTPException(status_code=503, detail="no chunk store is configured")
+        return ChunkCoMentions(chunk_store, project_id)
+
+    async def _curriculum(project_id: UUID):
+        """This project's areas and the path through them.
+
+        503 rather than 404 when unwired, matching `_graph_reader`: a build
+        without a graph read model is a valid thing to serve, and the caller
+        needs to know the *server* cannot answer rather than that the project
+        has nothing to learn.
+        """
+        if curriculum is None:
+            raise HTTPException(
+                status_code=503, detail="curriculum projection is not configured"
+            )
+        reader = await _graph_reader(project_id)
+        try:
+            return await curriculum.build(project_id, reader, await _co_mentions(project_id))
+        except GraphTooLarge as error:
+            # 422 rather than 500: the project is fine and the server is fine;
+            # the question is one this projection will not answer at this size.
+            # The detail names the cap so the answer is actionable.
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/projects/{project_id}/curriculum")
+    async def read_curriculum(project_id: UUID):
+        """What this project turned out to be about, and in what order.
+
+        A GET rather than a POST that stores something, because the projection
+        is a pure function of a graph already folded from the log -- see
+        `domain/learning_area.py` on why none of this is an aggregate. The
+        cost of recomputation is paid by `CurriculumService`'s cache, not by
+        making the reader ask for a projection and then poll for it.
+        """
+        await _require_project(project_id)
+        return curriculum_view(await _curriculum(project_id))
+
+    @app.get("/api/projects/{project_id}/curriculum/areas/{slug}")
+    async def read_learning_area(project_id: UUID, slug: str):
+        """One area with its full membership, not just its anchors.
+
+        404 when the slug names no area, and that is the ordinary case rather
+        than a fault: a browser holding a slug from a projection taken before
+        the graph grew is exactly what a bookmark is.
+        """
+        await _require_project(project_id)
+        area = (await _curriculum(project_id)).area(slug)
+        if area is None:
+            raise HTTPException(status_code=404, detail=f"no learning area {slug!r}")
+        return area_view(area)
+
+    @app.get("/api/projects/{project_id}/curriculum/paths/{slug}")
+    async def read_learning_path(project_id: UUID, slug: str):
+        """The complete path, or the prerequisite closure of one area.
+
+        `complete` is the whole projection in order; any other slug is read as
+        an area id and answered with everything needed to reach it. One route
+        rather than two because they are the same object -- a cut of one
+        digraph -- and two routes would invite two implementations that could
+        disagree about whether A precedes B.
+        """
+        await _require_project(project_id)
+        built = await _curriculum(project_id)
+        if slug == built.path.slug:
+            return path_view(built.path)
+        if curriculum is None:  # pragma: no cover -- `_curriculum` already raised
+            raise HTTPException(
+                status_code=503, detail="curriculum projection is not configured"
+            )
+        cut = await curriculum.path_toward(
+            project_id, slug, await _graph_reader(project_id), await _co_mentions(project_id)
+        )
+        if cut is None:
+            raise HTTPException(status_code=404, detail=f"no learning area {slug!r}")
+        return path_view(cut)
+
+    @app.post("/api/projects/{project_id}/curriculum/author")
+    async def author_courses(project_id: UUID, body: NewAuthoring):
+        """Write the course for one area, or for every area on the path.
+
+        202, matching `seed_topics`: the turns have not finished when this
+        answers. What it hands back is a run that has *begun*, and the files
+        it writes arrive over the log like any other `write_file` -- a client
+        wanting them invalidates its file list on those frames rather than
+        reading this response for them.
+
+        409 when this project already has an authoring run in flight. One at a
+        time, refused up front, for `AuthoringActivity`'s reason: a path is up
+        to three model turns per area and a second run would interleave with
+        the first on the same project.
+        """
+        if course_author is None or authoring is None:
+            raise HTTPException(status_code=503, detail="course authoring is not configured")
+        await _require_project(project_id)
+        built = await _curriculum(project_id)
+
+        if body.area:
+            if built.area(body.area) is None:
+                raise HTTPException(status_code=404, detail=f"no learning area {body.area!r}")
+            targets = [body.area]
+        else:
+            targets = list(built.path.area_slugs)
+        if not targets:
+            # 409 rather than 202-with-nothing-to-do. A run reported as started
+            # over an empty target list settles instantly as "done" and reads,
+            # on every surface, exactly like a run that authored everything.
+            raise HTTPException(
+                status_code=409,
+                detail="this project has no learning areas yet; extract some sources first",
+            )
+
+        # The path's own overview file, authored last and only when the whole
+        # path was asked for. Last because it links every area's `unit.md` and
+        # is the one file that is wrong if an area's course does not exist yet;
+        # only for a path because a single-area run has no order to write up.
+        #
+        # Appended to `targets` rather than run after them, so the one place
+        # that reports progress reports this too -- a final step that ran
+        # outside the target list would leave the panel saying "done" while a
+        # model turn was still going.
+        if not body.area:
+            targets.append(built.path.slug)
+
+        by_slug = built.by_slug
+        # The project's own name is the subject every Stage 1 prompt is framed
+        # against. Read here rather than passed in by the caller: a client that
+        # could name the subject could aim a project's courses at a topic its
+        # corpus knows nothing about, and the resulting unit would assess
+        # material that is not there.
+        subject = (await service.project_state(project_id)).name or str(project_id)
+
+        async def _one(run_id: UUID, target: str):
+            if target == built.path.slug:
+                return await course_author.author_path(
+                    project_id, built.path, by_slug, run_id=run_id
+                )
+            return await course_author.author_area(
+                project_id, by_slug[target], subject, lesson_count=body.lessons, run_id=run_id
+            )
+
+        try:
+            frame = authoring.start(
+                project_id, targets, _one, kind="area" if body.area else "path"
+            )
+        except RunAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=frame)
+
+    @app.get("/api/projects/{project_id}/curriculum/author")
+    async def get_authoring(project_id: UUID):
+        """What the running authoring run has done, and the last one's account.
+
+        200 with both halves `None` when nothing has run, matching `get_seed`:
+        an absent run is a state, not a missing resource.
+        """
+        await _require_project(project_id)
+        if authoring is None:
+            return {"current": None, "last": None}
+        return {"current": authoring.current(project_id), "last": authoring.last(project_id)}
 
     @app.get("/api/projects/{project_id}/timeline")
     async def read_timeline(

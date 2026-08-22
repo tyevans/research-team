@@ -28,6 +28,7 @@ from research_team.application.course import (
     ProvenanceSummary,
     StageProgress,
 )
+from research_team.application.curriculum import Curriculum
 from research_team.application.entity_definitions import Definition, ServedCitation
 from research_team.application.findings import Finding
 from research_team.application.graph_read import (
@@ -57,6 +58,7 @@ from research_team.domain import (
     TurnFailed,
 )
 from research_team.domain.learner import LearnerProgressState
+from research_team.domain.learning_area import LearningArea, LearningPath, PrerequisiteEdge
 from research_team.domain.research_run import ResearchRunState
 from research_team.domain.workflow import Preset, Stage
 
@@ -1333,3 +1335,88 @@ def dialogue_progress_view(state: LearnerProgressState, dialogue_id: str) -> dic
             state, record.path, record.component_id
         )
     return {"scope": "dialogue", "dialogueId": dialogue_id, "items": turns}
+
+
+def area_view(area: LearningArea, *, members: bool = True) -> dict[str, Any]:
+    """One learning area, with its members or only its anchors.
+
+    `members=False` is what the map uses and it is not merely a size
+    optimisation: a card showing sixty entity names is a card nobody reads,
+    and the anchors are the ones the graph says the area is *about*. The full
+    membership belongs on the area's own page, where a reader has asked for
+    it.
+
+    `centrality` crosses the wire rounded rather than raw. It is a weighted
+    degree inside the area, and the fifteenth decimal place of one is not a
+    fact about the project -- shipping it would invite a client to sort on
+    noise and to render two identical entities as differently ranked.
+    """
+    anchors = area.anchors
+    shown = anchors if members else anchors[:ANCHOR_PREVIEW]
+    return {
+        "slug": area.slug,
+        "title": area.display_name(),
+        "summary": area.summary,
+        "size": area.size,
+        "truncated_members": not members and len(anchors) > ANCHOR_PREVIEW,
+        "members": [
+            {
+                "entity_id": m.entity_id,
+                "name": m.name,
+                "entity_type": m.entity_type,
+                "centrality": round(m.centrality, 3),
+                "temporal": m.temporal,
+            }
+            for m in shown
+        ],
+    }
+
+
+#: How many of an area's anchors a map card carries. Small because the card is
+#: a glance, and because §8 of the design gives the map one job -- being
+#: falsifiable at a glance by somebody who knows the subject. Five names do
+#: that; sixty prevent it.
+ANCHOR_PREVIEW = 5
+
+
+def edge_view(edge: PrerequisiteEdge) -> dict[str, Any]:
+    return {
+        "before": edge.before,
+        "after": edge.after,
+        "weight": edge.weight,
+        "reason": edge.reason,
+        "contested": edge.contested,
+    }
+
+
+def path_view(path: LearningPath) -> dict[str, Any]:
+    return {
+        "slug": path.slug,
+        "title": path.title,
+        "destination": path.destination,
+        "areas": list(path.area_slugs),
+        "edges": [edge_view(e) for e in path.edges],
+    }
+
+
+def curriculum_view(curriculum: Curriculum) -> dict[str, Any]:
+    """The area map and the complete path, in one response.
+
+    The three counts ride along on every read rather than living behind a
+    second endpoint, because they are what makes a thin projection legible as
+    thin. An area map over forty entities and one over four thousand render
+    identically otherwise, which is the surface `CLAUDE.md` warns about under
+    *Events*: one that looks the same whether the machinery ran or not.
+    """
+    projection = curriculum.projection
+    return {
+        "areas": [area_view(a, members=False) for a in projection.areas],
+        "path": path_view(curriculum.path),
+        "derived_from": {
+            "entities": projection.entity_count,
+            "relationships": projection.relationship_count,
+            "passages": projection.co_mention_count,
+            "used_embeddings": projection.used_embeddings,
+            "truncated": projection.truncated,
+        },
+    }

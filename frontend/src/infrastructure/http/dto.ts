@@ -908,6 +908,88 @@ export const timelineDto = z.object({
   truncated: z.boolean().default(false),
 })
 
+/** One member of a learning area, as `/curriculum` and `/curriculum/areas/{slug}`
+ *  both carry it. One schema for both because the two responses differ in how
+ *  *many* members they carry, never in the shape of one -- and a second schema
+ *  would be a second place for a rename to be missed. */
+export const areaMemberDto = z.object({
+  entity_id: z.string(),
+  name: z.string(),
+  entity_type: z.string().default(''),
+  centrality: z.number().default(0),
+  temporal: z.string().nullable().default(null),
+})
+
+export const learningAreaDto = z.object({
+  slug: z.string(),
+  title: z.string().default(''),
+  summary: z.string().nullable().default(null),
+  size: z.number().default(0),
+  truncated_members: z.boolean().default(false),
+  members: z.array(areaMemberDto).default([]),
+})
+
+/** `contested` has **no default**, unlike every other flag here.
+ *
+ * A default of `false` would make a server that stopped sending the field read
+ * as "nothing was contested" -- which is the reassuring answer and the one
+ * nobody would investigate. The whole point of the flag is that it interrupts,
+ * so its absence has to be a parse failure rather than a quiet reassurance. */
+export const prerequisiteEdgeDto = z.object({
+  before: z.string(),
+  after: z.string(),
+  weight: z.number().default(0),
+  reason: z.string().default(''),
+  contested: z.boolean(),
+})
+
+export const learningPathDto = z.object({
+  slug: z.string(),
+  title: z.string().default(''),
+  destination: z.string().nullable().default(null),
+  areas: z.array(z.string()).default([]),
+  edges: z.array(prerequisiteEdgeDto).default([]),
+})
+
+export const curriculumDto = z.object({
+  areas: z.array(learningAreaDto).default([]),
+  path: learningPathDto,
+  derived_from: z.object({
+    entities: z.number().default(0),
+    relationships: z.number().default(0),
+    passages: z.number().default(0),
+    used_embeddings: z.boolean().default(false),
+    truncated: z.boolean().default(false),
+  }),
+})
+
+/** One authoring run's frame, as the POST answers it and the catch-up route
+ *  echoes it. `status` is a plain string rather than an enum: a build that
+ *  learned a fourth status should render it rather than refuse the whole
+ *  response, and there is nothing this client branches on that a new value
+ *  would break. */
+export const authoringFrameDto = z.object({
+  run_id: z.string(),
+  status: z.string(),
+  kind: z.string().default(''),
+  targets: z.array(z.string()).default([]),
+  completed: z.array(z.string()).default([]),
+  current: z.string().nullable().default(null),
+  /** One session id per completed target, in the same order as `completed`.
+   *
+   * Parallel arrays rather than a list of pairs because that is the shape the
+   * server already builds, and zipping them here is cheaper than a wire change
+   * -- but it is a shape that can go wrong silently, so `courseLinks` below is
+   * the only thing allowed to read them together. */
+  sessions: z.array(z.string()).default([]),
+  failures: z.array(z.object({ target: z.string(), detail: z.string().default('') })).default([]),
+})
+
+export const authoringStatusDto = z.object({
+  current: authoringFrameDto.nullable().default(null),
+  last: authoringFrameDto.nullable().default(null),
+})
+
 export const idDto = z.object({ id: z.string() })
 export const okDto = z.unknown()
 

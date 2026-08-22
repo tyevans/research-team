@@ -17,6 +17,7 @@ import { useCourse } from '../course/use-course.ts'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
+import { CurriculumPane } from '../curriculum/CurriculumPane.tsx'
 import { OntologyPane } from '../research/OntologyPane.tsx'
 import { EntityTreePane } from '../research/EntityTreePane.tsx'
 import { GraphPane } from '../research/GraphPane.tsx'
@@ -110,6 +111,8 @@ export const regionOf = (facet: Facet): Region => {
     // column is four scrollers in the width of one region.
     case 'file':
       return 'material'
+    case 'area':
+    case 'path':
     case 'entity':
     case 'timeline':
     case 'tree':
@@ -153,6 +156,7 @@ type MaterialFacet =
   | 'tree'
   | 'ontology'
   | 'timeline'
+  | 'area'
 
 /** Exported so `project-tracks.browser.test.tsx` can compare the strip it
  *  measures against the strip that was declared — a count taken from the
@@ -199,6 +203,21 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // reason `artifact` is default -- `TimelineCanvas` is lazy, and a default of
   // `timeline` would pull it on every project page anybody opened.
   { id: 'timeline', label: 'Timeline' },
+  // **One tab for two facets**, and the second one is deliberately not here.
+  //
+  // `area` and `path` are two readings of one response -- what the project is
+  // about, and what order to take it in -- and the pane switches between them
+  // with a toggle of its own. Two tabs was the first arrangement and it broke
+  // the strip: `project-tracks.browser.test.tsx` measured MATERIAL's floor at
+  // 646px against 837px of tabs, and `project-stacked.browser.test.tsx` found
+  // two clipped controls in the narrow band. Eleven tabs is where this strip
+  // stops fitting, which is worth knowing before the twelfth is added.
+  //
+  // Last for the bundle reason the graph tabs are last, and deliberately
+  // *after* Timeline rather than beside Graph: an area is a fold over the same
+  // material the four readings above draw, so a reader who has not looked at
+  // the graph has nothing to check it against.
+  { id: 'area', label: 'Curriculum' },
 ]
 
 /** The tab a bare `#/p/<id>` opens. Exported because `App.tsx`'s
@@ -354,9 +373,15 @@ export const ProjectView = ({
   const materialTab: Facet =
     selection?.facet === 'session' && selection.path !== null
       ? 'file'
-      : selection && regionOf(selection.facet) === 'material'
-        ? selection.facet
-        : DEFAULT_MATERIAL
+      : // `path` is a facet with no tab of its own: it is the Curriculum tab's
+        // second reading, chosen by a toggle inside the pane rather than by the
+        // strip. Mapped here rather than given a tab because eleven tabs is
+        // where the strip stops fitting -- see `MATERIAL_TABS`.
+        selection?.facet === 'path'
+        ? 'area'
+        : selection && regionOf(selection.facet) === 'material'
+          ? selection.facet
+          : DEFAULT_MATERIAL
 
   /** Replaced rather than pushed by default, which is the rule the course
    *  page's stage toggle and the graph's entity selection both already follow:
@@ -680,6 +705,25 @@ export const ProjectView = ({
                 still carries an `id` slot, because the grammar gives every
                 facet one -- it is simply unused here rather than absent. */}
             <OntologyPane projectId={projectId} />
+          </TabPanel>
+
+          <TabPanel value="area" className="flex min-h-0 flex-1 flex-col">
+            {/* One pane in two readings, chosen by the facet rather than by a
+                second tab. The two are views of one response, so a second pane
+                would fetch the projection twice and could be answered from two
+                different ones while a project is extracting. */}
+            <CurriculumPane
+              projectId={projectId}
+              reading={selection?.facet === 'path' ? 'path' : 'areas'}
+              selected={
+                selection?.facet === 'area' || selection?.facet === 'path'
+                  ? (selection.id ?? null)
+                  : null
+              }
+              onReading={(reading) =>
+                select({ facet: reading === 'path' ? 'path' : 'area', id: null })
+              }
+            />
           </TabPanel>
 
           <TabPanel value="timeline" className="flex min-h-0 flex-1 flex-col">

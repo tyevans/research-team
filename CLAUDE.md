@@ -109,6 +109,22 @@ the current build. The other observation has not been re-taken.
 `frontend/src/styles/border-style-default.browser.test.tsx` exists to settle
 it and has not been run.
 
+**And `border-0` beside a non-directional `border` is not the same fix; it is
+a conflict.** The rule above is about a *directional* width: `border-0` zeroes
+the three sides you did not ask for, then `border-t` draws the one you did.
+Applied to an all-sides border it becomes `border-0 border`, which is two
+`border-width` utilities on one element -- 0px on all four sides and 1px on
+all four sides -- and which one wins is decided by their order in the built
+stylesheet rather than by anything in the file you are reading. `border`
+alone is correct there.
+
+Found on the curriculum panes, where six elements carried the pair. Nothing
+caught it: it typechecks, it lints, jsdom returns only what an inline style
+said, and the rendered result happens to be the intended one in this build. It
+surfaced because prettier's Tailwind class sort rewrote `border-0 border
+border-line` as `border border-0 border-line`, which reads as obviously wrong
+in a way the original did not.
+
 **An unlayered rule in `tokens.css` beats any utility, so a utility meant to
 override one is inert — and looks exactly like a utility that worked.** The
 global `:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }`

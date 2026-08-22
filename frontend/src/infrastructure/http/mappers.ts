@@ -15,6 +15,14 @@ import type {
   Usage,
   WholeGraph,
 } from '@domain/knowledge/graph.ts'
+import type {
+  AreaMember,
+  Curriculum,
+  LearningArea,
+  LearningPath,
+  PrerequisiteEdge,
+} from '@domain/knowledge/curriculum.ts'
+import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
@@ -821,4 +829,68 @@ export const toTimeline = (raw: Dto<typeof dto.timelineDto>): Timeline => ({
   bands: raw.bands.map(toTimelineBand),
   undatedCount: raw.undated_count,
   truncated: raw.truncated,
+})
+
+export const toAreaMember = (raw: Dto<typeof dto.areaMemberDto>): AreaMember => ({
+  entityId: raw.entity_id,
+  name: raw.name,
+  entityType: raw.entity_type,
+  centrality: raw.centrality,
+  temporal: raw.temporal,
+})
+
+export const toLearningArea = (raw: Dto<typeof dto.learningAreaDto>): LearningArea => ({
+  slug: raw.slug,
+  title: raw.title,
+  summary: raw.summary,
+  size: raw.size,
+  truncatedMembers: raw.truncated_members,
+  members: raw.members.map(toAreaMember),
+})
+
+export const toPrerequisiteEdge = (raw: Dto<typeof dto.prerequisiteEdgeDto>): PrerequisiteEdge => ({
+  before: raw.before,
+  after: raw.after,
+  weight: raw.weight,
+  reason: raw.reason,
+  contested: raw.contested,
+})
+
+export const toLearningPath = (raw: Dto<typeof dto.learningPathDto>): LearningPath => ({
+  slug: raw.slug,
+  title: raw.title,
+  destination: raw.destination,
+  // `areas` on the wire, `areaSlugs` here. Renamed deliberately: the field
+  // holds slugs, and a client property called `areas` beside `Curriculum.areas`
+  // -- which holds whole areas -- is two different types one letter apart.
+  areaSlugs: raw.areas,
+  edges: raw.edges.map(toPrerequisiteEdge),
+})
+
+export const toCurriculum = (raw: Dto<typeof dto.curriculumDto>): Curriculum => ({
+  areas: raw.areas.map(toLearningArea),
+  path: toLearningPath(raw.path),
+  derivedFrom: {
+    entities: raw.derived_from.entities,
+    relationships: raw.derived_from.relationships,
+    passages: raw.derived_from.passages,
+    usedEmbeddings: raw.derived_from.used_embeddings,
+    truncated: raw.derived_from.truncated,
+  },
+})
+
+export const toAuthoringRun = (raw: Dto<typeof dto.authoringFrameDto>): AuthoringRun => ({
+  runId: raw.run_id,
+  status: raw.status,
+  kind: raw.kind,
+  targets: raw.targets,
+  completed: raw.completed,
+  sessions: raw.sessions,
+  current: raw.current,
+  failures: raw.failures.map((f) => ({ target: f.target, detail: f.detail })),
+})
+
+export const toAuthoringStatus = (raw: Dto<typeof dto.authoringStatusDto>): AuthoringStatus => ({
+  current: raw.current === null ? null : toAuthoringRun(raw.current),
+  last: raw.last === null ? null : toAuthoringRun(raw.last),
 })

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 
+from research_team.application.curriculum import CurriculumService
 from research_team.application.grants import GrantRegistry
 from research_team.composition import build_application
 from research_team.infrastructure import config
@@ -13,6 +14,7 @@ from research_team.interfaces.web import (
     WebApprovals,
     create_app,
 )
+from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.seeding import SeedingActivity
@@ -52,6 +54,15 @@ def main() -> None:
     # `extraction` above already carries the running one's progress. See
     # `extraction_queue.py`.
     extract_queue = ExtractionQueue()
+    # A cache in front of a pure function, not a read model: built here rather
+    # than in the composition root because it composes nothing -- it takes the
+    # graph reader and the chunk store the routes already resolve per request.
+    # One instance so a projection is computed once per graph rather than once
+    # per view.
+    curriculum = CurriculumService()
+    # Web-layer state, matching `seeding`: nothing durable records that an
+    # authoring run started, only the `write_file` calls its turns make.
+    authoring = AuthoringActivity()
     application = build_application(
         approvals=approvals,
         extractions=extraction,
@@ -98,6 +109,9 @@ def main() -> None:
             graphs=application.graphs,
             topic_seeder=application.topic_seeder,
             seeding=seeding,
+            curriculum=curriculum,
+            course_author=application.course_author,
+            authoring=authoring,
             dispatcher=application.dispatcher,
             dispatch=dispatch,
             ask=application.ask,

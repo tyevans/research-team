@@ -130,6 +130,27 @@
 .tabs {
   display: flex;
   gap: 2px;
+  /* Scrolls rather than clipping when the row outgrows its pane.
+     `project-stacked.browser.test.tsx` predicted this edit and named the
+     alternative: "`flex-wrap: wrap` there changes every tab row at every
+     width -- cheap to type, not cheap to justify from one measurement". Wrap
+     was rejected for a reason that survives that objection: a wrapped tab row
+     is *taller*, so the pane below it moves, and every tab strip in the
+     console would change height at some width. `overflow-x: auto` engages
+     only when the content does not fit and is inert everywhere else, which is
+     every existing use of `.tabs`.
+     With MATERIAL's floor raised to fit eleven tabs, this never engages inside
+     the supported band -- it is what the strip does *below* it, instead of
+     clipping labels with no way to reach them. */
+  overflow-x: auto;
+}
+
+/* Tabs keep their measured width inside the scroller.
+   Without this they are flex items that shrink first, so the row squeezes
+   labels to illegibility and never scrolls -- which is the failure
+   `overflow-x` above was added to remove, arrived at a different way. */
+.tabs > * {
+  flex: 0 0 auto;
 }
 /* A kept panel is hidden by *this*, not by Radix, and the difference is the
    whole reason the rule exists. `TabPanel`'s `keepMounted` becomes Radix's

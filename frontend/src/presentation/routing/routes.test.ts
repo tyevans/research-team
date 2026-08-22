@@ -156,6 +156,23 @@ describe('the facet grammar', () => {
       selection: { facet: 'ontology', id: 'c1' },
       hash: '#/p/abc/ontology/c1',
     },
+    {
+      // An area slug, not a uuid: the id is derived from the area's top anchor
+      // and is the same string that names its directory under `/course/areas/`.
+      // Worth a case of its own for that reason -- every other plain facet's id
+      // is opaque, and this one is a value a person may type.
+      facet: 'area',
+      selection: { facet: 'area', id: 'the-principate' },
+      hash: '#/p/abc/area/the-principate',
+    },
+    {
+      // Shares the Curriculum tab with `area` rather than having one of its
+      // own (see `MATERIAL_TABS`), and is still a facet: which reading somebody
+      // is looking at is a linkable state, which is the whole grammar's point.
+      facet: 'path',
+      selection: { facet: 'path', id: 'the-principate' },
+      hash: '#/p/abc/path/the-principate',
+    },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
     { facet: 'media', selection: { facet: 'media', id: 'p1' }, hash: '#/p/abc/media/p1' },
     {

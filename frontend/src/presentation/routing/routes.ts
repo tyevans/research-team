@@ -84,6 +84,14 @@ export const FACETS = [
   // the project with its own selection -- and beside `tree` because both are
   // list readings of the material the canvas draws.
   'ontology',
+  // The two curriculum readings, beside the graph readings above rather than
+  // at the end: an area is a cluster of the same entities `entity`, `tree` and
+  // `timeline` draw, read a fourth way -- by what they turn out to be *about*.
+  // `path` is its own facet rather than a mode of `area` for the reason
+  // `timeline` is not a mode of `entity`: it is a place on the project with
+  // its own selection, which is exactly what the grammar is for.
+  'area',
+  'path',
   'doc',
   // The corpus's other half: a candidate that has not been accepted into it
   // yet. Its own facet rather than folded into `doc` -- `MediaProposalPane`

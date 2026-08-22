@@ -136,6 +136,23 @@ export const queryKeys = {
    *  nothing ever reads on its own. */
   ontology: (project: ProjectId) => ['ontology', project] as const,
 
+  /** A project's areas and the path through them.
+   *
+   * One key for both halves because one request answers both, and because they
+   * are computed from one read of the graph -- two keys would let a cache serve
+   * a map from one projection beside an order from another. */
+  curriculum: (project: ProjectId) => ['curriculum', project] as const,
+
+  /** One area's full membership. Under the curriculum prefix so invalidating
+   *  the projection invalidates every area page opened from it. */
+  learningArea: (project: ProjectId, slug: string) =>
+    ['curriculum', project, 'area', slug] as const,
+
+  /** Whether an authoring run is in flight. Its own prefix, deliberately: it
+   *  is polled while a run is running, and sharing the curriculum's key would
+   *  refetch the clustering pass on every poll. */
+  authoring: (project: ProjectId) => ['authoring', project] as const,
+
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
   fileHistory: (session: SessionId, path: FilePath) =>

@@ -64,6 +64,17 @@ class SessionPurpose(StrEnum):
     TOPIC_DISPATCH = "topic_dispatch"
     """`TopicDispatcher`, writing up what is known about one topic."""
 
+    COURSE_AUTHORING = "course_authoring"
+    """`CourseAuthor`, writing one learning area's unit and lessons.
+
+    A purpose of its own rather than `WORKFLOW_STAGE`, which it superficially
+    resembles: a stage run is driven by the selected preset and its position
+    in it decides what it writes, whereas this is driven by a projection over
+    the graph and writes to a path derived from an area slug. Folding them
+    together would make "which sessions were workflow stages" -- the question
+    the docstring above says is the first one anyone asks -- unanswerable.
+    """
+
 
 class Command(BaseModel):
     """Base for every session command: frozen, and closed to stray fields.
