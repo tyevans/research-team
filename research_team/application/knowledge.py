@@ -264,10 +264,14 @@ class SearchMode(StrEnum):
     """
 
     FUSED = "fused"
-    """Substring matching and redstring's blocking-key channel both ran."""
+    """Substring matching and redstring's blocking-key channel both ran.
 
-    SUBSTRING = "substring"
-    """Substring matching only. No embedding provider, so no fuzzy channel."""
+    The only mode `search` produces. There used to be a `SUBSTRING` member for
+    a build whose embedding probe had failed, because constructing a
+    `Retriever` required a provider that `RetrievalMode.LEXICAL` never calls --
+    so a mistyped model name cost misspelling-tolerant search. redstring's
+    `Retriever.lexical_only` (B163, ADR 0045) removed the requirement, and the
+    member went with it rather than staying as a value nothing can return."""
 
     CARDS = "cards"
     """BM25 over the entity-card corpus. `describe`'s healthy answer."""

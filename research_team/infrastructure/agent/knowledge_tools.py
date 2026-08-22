@@ -69,35 +69,19 @@ def format_ingest(report: IngestReport) -> str:
 
 
 def format_matches(outcome: SearchOutcome) -> str:
-    """The matches, and a line about the search itself when it was degraded.
+    """The matches, one per line.
 
-    **The degraded note is shown on a hit as well as a miss.** It is easy to
-    reason that a caller only needs telling when it got nothing, and wrong:
-    the fuzzy channel changes which entities come back and in what order, so a
-    short list of exact-substring hits is exactly what a degraded search looks
-    like when it succeeds. An agent told nothing would read that list as the
-    whole answer.
-
-    Phrased for a model that has to decide what to do next -- "a misspelling
-    will not be found" is actionable, "the embedding endpoint is unavailable"
-    on its own is not.
+    Takes the whole `SearchOutcome` rather than its `matches`, because
+    `graph_describe` needs the mode to tell "no card index" from "no match" --
+    see its own branch. `search` has one mode and adds nothing here.
     """
-    body = (
-        "No matching entities."
-        if not outcome.matches
-        else "\n".join(
-            f"{match.name} ({match.entity_type}) -- {match.relationship_count} "
-            f"relationship(s) [{match.entity_id}]"
-            for match in outcome.matches
-        )
+    if not outcome.matches:
+        return "No matching entities."
+    return "\n".join(
+        f"{match.name} ({match.entity_type}) -- {match.relationship_count} "
+        f"relationship(s) [{match.entity_id}]"
+        for match in outcome.matches
     )
-    if outcome.mode is SearchMode.SUBSTRING:
-        return (
-            f"{body}\n\n(Name matching is degraded: the embedding endpoint is "
-            f"unavailable, so this searched for entities *containing* your text "
-            f"and a misspelling will not be found.)"
-        )
-    return body
 
 
 def build_knowledge_tools(
