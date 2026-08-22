@@ -4272,14 +4272,18 @@ segment, and it has to exist before anything is authored into it.
 Four costs, all measured against the tree on 2026-08-22, and the first is the
 one that makes this a piece of work rather than a patch:
 
-1. **There is no durable index from an area slug to the session that authored
-   it.** Each `author_area` call opens its own session;
-   `interfaces/web/authoring.py` is plain in-process dicts that die on restart,
-   and its `sessions` list is a flat list appended at the end of a run, not
-   keyed by slug. Mid-run the status endpoint carries no session id at all --
-   checked live against the run in flight. Building the index means a new
-   event or read model, which is the "storing a derivation beside its own
-   inputs" this module's own docstring argues against.
+1. **~~There is no durable index from an area slug to the session that authored
+   it.~~ Mostly paid, on 2026-08-22.** `CourseAuthoringRun` now appends a
+   `CourseAuthored(target, session_id)` per area and `authoring_runs` projects
+   it, so the mapping survives a restart -- and the status endpoint carries a
+   session id per completed target *during* a run, not only at the end. What is
+   still missing for this entry specifically: the read is per *run*
+   (`recent_for_project` answers the latest one), so "which session holds
+   `chloroplast`?" asked about an area authored three runs ago needs a query
+   this store does not have. That is one indexed read over the same table --
+   `authored` is a JSON column today, so it means either a target table or a
+   scan -- and it is small next to (2), which is still the sub-task that makes
+   the rest safe.
 2. **The title is prose, not frontmatter.** `unit.md` is written by the model
    through `write_file` and never passes through `artifacts.py`;
    `desired_results_prompt` asks for "a title for the area" and no frontmatter

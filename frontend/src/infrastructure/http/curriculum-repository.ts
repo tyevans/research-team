@@ -70,4 +70,13 @@ export class HttpCurriculumRepository implements CurriculumRepository {
       ),
     )
   }
+
+  async cancelAuthoring(projectId: ProjectId) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/curriculum/author/cancel`,
+      {},
+      dto.authoringCancelDto,
+    )
+    return body.cancelled
+  }
 }

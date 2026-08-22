@@ -581,6 +581,16 @@ export interface CurriculumRepository {
    * like any other write, so a caller wanting them invalidates its file list on
    * those frames rather than reading this result for them. */
   author(projectId: ProjectId, request: { area?: string; lessons?: number }): Promise<AuthoringRun>
+
+  /** Stop this project's authoring run. Answers how many targets it abandoned.
+   *
+   * Zero when nothing was running, which is not an error — a stop control
+   * pressed twice is a person pressing a button.
+   *
+   * What it does *not* do is discard the courses the run already wrote. Those
+   * exist in sessions whose ids are on the log, and the run is recorded as
+   * cancelled with them still listed. */
+  cancelAuthoring(projectId: ProjectId): Promise<number>
 }
 
 export interface TimelineRepository {

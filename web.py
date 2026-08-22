@@ -60,9 +60,6 @@ def main() -> None:
     # One instance so a projection is computed once per graph rather than once
     # per view.
     curriculum = CurriculumService()
-    # Web-layer state, matching `seeding`: nothing durable records that an
-    # authoring run started, only the `write_file` calls its turns make.
-    authoring = AuthoringActivity()
     application = build_application(
         approvals=approvals,
         extractions=extraction,
@@ -72,6 +69,13 @@ def main() -> None:
         # opens and fills this buffer, the catch-up route below reads it.
         activity=activity,
     )
+
+    # Built *after* `build_application`, unlike every other web-layer channel
+    # above, because it is no longer only web-layer state: an authoring run's
+    # targets and their session ids go on the log, so this needs the
+    # application's repository and its projection. The ordering is the whole
+    # difference between this and `seeding` beside it.
+    authoring = AuthoringActivity(application.authoring_runs, application.authoring)
 
     @asynccontextmanager
     async def lifespan(_app):

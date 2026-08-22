@@ -21,6 +21,10 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 from research_team.application import FeedEntry
 from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.ask_conversation import AskConversation
+from research_team.domain.course_authoring_run import (
+    COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
+    CourseAuthoringRun,
+)
 from research_team.domain.interaction import BROWSER_SESSION_AGGREGATE_TYPE
 from research_team.domain.learner import LearnerProgress
 from research_team.domain.media_proposals import MediaProposals
@@ -80,6 +84,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         AskConversation.aggregate_type,
         SocraticDialogue.aggregate_type,
         BROWSER_SESSION_AGGREGATE_TYPE,
+        COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -143,6 +148,17 @@ this tuple's contents. It is listed anyway so the coverage guard in
 `test_feed_coverage.py`, which walks every registered `DomainEvent` subclass
 in `research_team.domain` without regard to which store it lives in, has
 somewhere to record the decision instead of failing on a type it cannot place.
+
+`CourseAuthoringRun` is off for `ResearchRun`'s reason exactly.
+`AuthoringActivity` already publishes an `Authoring` frame per target over its
+own listeners, carrying which area is in hand and how many are done -- richer
+than anything these events could say, because it knows the target *currently*
+being written and the log deliberately does not. Routing these too would put
+two accounts of one run on one connection, and the way that goes wrong is a
+progress line and a status disagreeing with nothing in either signature to
+catch it. Revisit if that in-memory channel is ever retired in favour of the
+log, which is the change that would make this the only signal rather than a
+second one.
 
 None of the others is a *correctness* argument, and if any grows a pane the
 answer is to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch --
@@ -218,6 +234,26 @@ def build_socratic_dialogue_repository(
     run unattended, which is the change that would make the length unbounded.
     """
     return AggregateRepository(store, SocraticDialogue, event_publisher=publisher)
+
+
+def build_course_authoring_run_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+) -> AggregateRepository[CourseAuthoringRun]:
+    """Authoring runs, over the same log as the sessions their turns write into.
+
+    Published like its neighbours even though `CourseAuthoringRun` is in
+    `UNROUTED_AGGREGATE_TYPES`, for `build_ask_conversation_repository`'s
+    reason: publishing is what `read_since`'s local append flag watches, and
+    the scoping decision is made there rather than by half-wiring the bus here.
+
+    **No snapshots**, and this one is not close to the line. A run appends one
+    event to start, one per target, and one to settle -- a path over eight
+    areas is ten events and then the stream is closed forever, because a
+    settled run refuses every further command. There is no way for one of these
+    to grow long enough for a threshold to matter.
+    """
+    return AggregateRepository(store, CourseAuthoringRun, event_publisher=publisher)
 
 
 def build_research_run_repository(

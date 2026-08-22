@@ -980,6 +980,9 @@ export const curriculumDto = z.object({
  *  would break. */
 export const authoringFrameDto = z.object({
   run_id: z.string(),
+  /** `running`, `done`, `failed`, `cancelled` or `interrupted`. A plain string
+   * for the reason above; `interrupted` is the server's word for a run whose
+   * process died mid-flight, derived on read rather than stored. */
   status: z.string(),
   kind: z.string().default(''),
   targets: z.array(z.string()).default([]),
@@ -994,6 +997,15 @@ export const authoringFrameDto = z.object({
   sessions: z.array(z.string()).default([]),
   failures: z.array(z.object({ target: z.string(), detail: z.string().default('') })).default([]),
 })
+
+/** What the cancel route answers: how many targets it abandoned.
+ *
+ * A count and not the run, matching the extraction queue's cancel and for its
+ * reason — the caller can say "stopped 6" rather than re-reading a status a
+ * moment later and inferring it. The run reaching `cancelled` on the log is
+ * not synchronous with this response, which is the other half of why this is
+ * not the frame. */
+export const authoringCancelDto = z.object({ cancelled: z.number() })
 
 export const authoringStatusDto = z.object({
   current: authoringFrameDto.nullable().default(null),

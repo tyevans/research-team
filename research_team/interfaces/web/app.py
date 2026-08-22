@@ -3196,12 +3196,35 @@ def create_app(
             )
 
         try:
-            frame = authoring.start(
+            frame = await authoring.start(
                 project_id, targets, _one, kind="area" if body.area else "path"
             )
         except RunAlreadyActive as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return JSONResponse(status_code=202, content=frame)
+
+    @app.post("/api/projects/{project_id}/curriculum/author/cancel")
+    async def cancel_authoring(project_id: UUID):
+        """Stop this project's authoring run, keeping what it already wrote.
+
+        Answers how many targets it abandoned, matching
+        `cancel_extraction_queue` and `cancel_dispatch`, so the caller can say
+        "stopped 6" rather than re-reading a status a moment later and
+        inferring it. Zero when nothing was running, which is not an error: a
+        stop control pressed twice is a person pressing a button, not a bad
+        request.
+
+        200 rather than 202, unlike the POST above: cancelling is synchronous
+        here. What is *not* synchronous is the run reaching `cancelled` on the
+        log -- the driving task appends that on its way out, after the model
+        turn it just cancelled unwinds. A caller that re-reads immediately can
+        still see `running`, which is why this answers the count rather than
+        the frame.
+        """
+        if authoring is None:
+            raise HTTPException(status_code=503, detail="course authoring is not configured")
+        await _require_project(project_id)
+        return {"cancelled": authoring.cancel(project_id)}
 
     @app.get("/api/projects/{project_id}/curriculum/author")
     async def get_authoring(project_id: UUID):
@@ -3209,11 +3232,19 @@ def create_app(
 
         200 with both halves `None` when nothing has run, matching `get_seed`:
         an absent run is a state, not a missing resource.
+
+        `last` is read from the log rather than from memory, so a run that a
+        restart interrupted still answers with the targets it authored and the
+        sessions holding them -- reported with status `interrupted`, which is
+        neither `done` nor `failed`. See `AuthoringActivity.last`.
         """
         await _require_project(project_id)
         if authoring is None:
             return {"current": None, "last": None}
-        return {"current": authoring.current(project_id), "last": authoring.last(project_id)}
+        return {
+            "current": authoring.current(project_id),
+            "last": await authoring.last(project_id),
+        }
 
     @app.get("/api/projects/{project_id}/timeline")
     async def read_timeline(
