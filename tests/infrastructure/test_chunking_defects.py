@@ -1,11 +1,15 @@
-"""Defects in redstring's chunking that this repository indexes around.
+"""Chunking properties this repository needs from redstring, pinned here.
 
-Each test here names the upstream change that resolves it. They are
-`xfail(strict=True)` rather than plain failures: strict means the suite goes
-**red when one starts passing**, which is the signal worth having -- it says
-the upstream release landed and this file needs revisiting. A plain failing
-test would say the same thing by staying red, and would also make every
-unrelated run red, which teaches people to ignore it.
+This file arrived holding one `xfail(strict=True)` for a defect that was open
+upstream, on the argument that strict makes the suite go red the day the fix
+lands rather than leaving a plain failure everyone learns to scroll past. That
+worked exactly as intended: the redstring bump in this commit turned it
+`XPASS(strict)`, which is how the fix announced itself.
+
+What is left is an ordinary regression test. Keeping it after the fix is the
+point -- the defect was invisible from every direction (nothing raised, the
+corpus simply held one chunk it did not need), so nothing but this assertion
+would notice it coming back.
 """
 
 from uuid import uuid4
@@ -21,10 +25,6 @@ from research_team.application.knowledge import SourceRef
 LONGER_THAN_THE_WINDOW = "The quick brown fox jumps over the lazy dog. " * 60
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="redstring <= 0.9.2 emits a redundant tail chunk; redstring PR #72 fixes it",
-)
 @pytest.mark.asyncio
 async def test_no_indexed_chunk_is_wholly_contained_in_another(tmp_path, build_adapter):
     """A document longer than the window gets one redundant tail chunk.
@@ -41,11 +41,16 @@ async def test_no_indexed_chunk_is_wholly_contained_in_another(tmp_path, build_a
     BM25 counts the tail's terms in two chunks, giving tail passages a second
     draw that no mid-document passage gets.
 
-    **When this starts failing as XPASS, redstring has released the fix** --
-    delete the `xfail` and keep the assertion, which is then a regression
-    test. redstring PR #72 also fixes a second containment case (a break point
-    reached twice emitting the overlap region alone) that this same assertion
-    covers.
+    **Fixed upstream by redstring PR #72**, which this repository picked up in
+    the same commit that removed this test's `xfail`. That PR fixes a second
+    containment case too -- a break point reached twice emitting the overlap
+    region alone -- which this same assertion covers, and which was found by
+    the property test written for the first one rather than by anyone looking.
+
+    Kept as a regression test rather than deleted with the defect. Both causes
+    were silent: nothing raised, coverage stayed complete, and the only symptom
+    was a corpus holding a chunk whose every character another chunk already
+    carried. Nothing else in either repository would notice it returning.
     """
     project_id = uuid4()
     chunk_store = InMemoryChunkStore(dimension=8)
