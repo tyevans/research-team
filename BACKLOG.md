@@ -4149,3 +4149,76 @@ which is why B136 is deferred rather than decided.
 What is needed is a corpus of *closely related* subjects with a known
 boundary -- several sub-fields of one discipline, say -- where a wrong join is
 possible. Until it exists, tuning here is guesswork with numbers attached.
+
+### B138. The extraction prompt never says what an entity is
+
+`fact` is deleted from `research_corpus.yaml` and `_naming_anchor` stops an
+area being named after a sentence, but neither touches the cause: the prompt
+lists entity *types* and never says that an entity names a thing rather than
+asserts a claim. The schema's own guide is explicit that types shape prompts
+and do not enforce output, so the model that was filing propositions under
+`fact` is free to file them under `concept`, where they cannot be deleted and
+are far harder to see -- `concept` is already 156 of 326 entities.
+
+Measured before the change, with `research_team.application.name_shape`: **17
+of 326 names clause-shaped (5.2%)**, of which 11 were `fact`, 5 `event` and 1
+`category`. So the deletion's ceiling is 17 -> 6, and the test of whether it
+worked is whether the next ingest lands near 6 or back near 17.
+
+The work, when someone takes it: a paragraph in `extraction_prompt_template`
+saying an entity is a thing that can be pointed at and given a name -- a
+person, a place, a concept, an event -- and that a sentence stating something
+about two entities is a *relationship* between them, not a third entity. It is
+deliberately not done here because it changes what every extraction returns
+and wants its own before-and-after measurement rather than riding along with a
+schema deletion.
+
+Deferred behind it, and larger: `name_shape` misses gerund event names
+(`Naming of chloroplastids`), which is why the endosymbiosis area is now named
+after one. That is the next honest improvement to the measure and needs
+something more than closed vocabularies.
+
+### B139. An authored unit already has a better title than any derivation
+
+`area_projection._naming_anchor` sets `LearningArea.title` from a member's
+name, and the first real authoring run wrote a title no such rule can reach:
+
+    # The Chloroplast: A Bacterium That Became an Organelle
+
+So the display title should prefer the authored unit's H1 where one exists and
+fall back to the derived name where it does not. The *slug* is unaffected and
+stays derived, deterministic and model-free -- it is a directory name and a URL
+segment, and it has to exist before anything is authored into it.
+
+Four costs, all measured against the tree on 2026-08-22, and the first is the
+one that makes this a piece of work rather than a patch:
+
+1. **There is no durable index from an area slug to the session that authored
+   it.** Each `author_area` call opens its own session;
+   `interfaces/web/authoring.py` is plain in-process dicts that die on restart,
+   and its `sessions` list is a flat list appended at the end of a run, not
+   keyed by slug. Mid-run the status endpoint carries no session id at all --
+   checked live against the run in flight. Building the index means a new
+   event or read model, which is the "storing a derivation beside its own
+   inputs" this module's own docstring argues against.
+2. **The title is prose, not frontmatter.** `unit.md` is written by the model
+   through `write_file` and never passes through `artifacts.py`;
+   `desired_results_prompt` asks for "a title for the area" and no frontmatter
+   block, so `parse_frontmatter` returns nothing and the join is a regex over
+   the first heading of a file whose shape nothing enforces. Giving `unit.md`
+   real frontmatter with a `title:` key is the sub-task that makes the rest
+   safe, and it is worth doing on its own.
+3. **`AuthoredCourse` refuses to carry file contents**, and its docstring gives
+   the reason -- a second account of the workspace is the one a UI reads and
+   the one that goes stale.
+4. **The projection is recomputed per request and cached on entity and
+   relationship counts.** Authoring moves neither, so a title read back through
+   that cache would not appear until the next extraction. Whatever does the
+   join has to sit *outside* the cached projection.
+
+Where it belongs, once (1) and (2) exist: the **presenter**, not
+`CurriculumService`. `area_view` already assembles the wire shape and is the
+layer allowed to know about session workspaces; putting the join in the service
+would make `LearningArea` -- a pure derivation of the graph -- depend on
+authoring output, and would mean `project_areas` could no longer be driven with
+a literal in a test, which is what `test_projection_is_deterministic` rests on.

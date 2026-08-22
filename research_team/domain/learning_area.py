@@ -50,9 +50,30 @@ class LearningArea:
     repository already learned. A model-chosen id would be unvalidated input
     in a storage key.
 
-    `title` and `summary` are the *only* two fields a model may write, and
-    both are cosmetic -- delete them and the area still identifies, orders and
-    materialises correctly. Everything structural comes from the graph.
+    `title` and `summary` are the only two fields anything but the graph may
+    write, and both are cosmetic -- delete them and the area still identifies,
+    orders and materialises correctly. Everything structural comes from the
+    graph.
+
+    `title` used to be `None` on every area ever produced, which made
+    `display_name` fall through to the most central member's name on every
+    call. `area_projection._naming_anchor` now sets it, to the *same* member
+    the slug was derived from -- so a slug that deliberately skipped a
+    sentence-shaped member is not undone by a title that walks back to it.
+    A model may still overwrite it; the projection's value is a floor, not a
+    claim to the field. That distinction is load-bearing as of 2026-08-22,
+    because a better title demonstrably exists: the first authoring run against
+    a real model opened its unit with
+    `# The Chloroplast: A Bacterium That Became an Organelle`, which no
+    model-free derivation from anchors will ever match.
+
+    Reading that line back was considered and deferred rather than rejected --
+    `BACKLOG.md` B139 has the four costs and what would have to be built first.
+    The short of it: there is no durable index from an area slug to the session
+    that authored it, most areas have no course at all, and an area still needs
+    a name before anything is authored. So the floor has to exist either way,
+    and it should be the best model-free name available rather than a
+    placeholder waiting to be replaced.
     """
 
     slug: str
@@ -81,6 +102,13 @@ class LearningArea:
         The top anchor's name rather than the slug: a slug is lossy on
         purpose (lowercased, punctuation dropped) and showing it to a reader
         as a title advertises the derivation instead of the subject.
+
+        Reached only by an area constructed without a `title`, which the
+        projection no longer does. It stays because the fallback has to be
+        *something* and the top anchor is the least surprising something --
+        but note it is the one path that can still surface a sentence as an
+        area's name, so an area built by hand in a test is not evidence about
+        what the projection shows.
         """
         if self.title:
             return self.title
