@@ -3923,7 +3923,6 @@ async def _project_with_a_usage(application, client) -> tuple[str, UUID]:
     await chunk_store.upsert_many(
         [
             StoredChunk(
-                id="chunk-1",
                 tenant_id=tenant_id,
                 source_id="doc-1",
                 text=text,

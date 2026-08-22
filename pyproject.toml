@@ -58,7 +58,27 @@ dependencies = [
     # runtime break for a narrow duck-typed double -- it type-checks nowhere
     # and fails at the first `resolve`. Nothing here passes one; every store
     # handed to a `Consolidator` is redstring's own.
-    "redstring[llm,neo4j,pgvector]>=0.9.1,<0.10",
+    # Pinned to a commit on `main` rather than a release, because the fix this
+    # needs is merged and unreleased: redstring PR #72 stops
+    # `SlidingWindowChunker` emitting chunks wholly contained in another. That
+    # matters here twice -- the quotable corpus is chunked with it, and so is
+    # extraction.
+    #
+    # **A SHA, not `@main`.** A branch ref resolves to something different on
+    # every `uv lock`, which is exactly what CI's `--locked` exists to prevent;
+    # the lockfile would still pin bytes, but nobody could tell from this file
+    # what they were meant to be. Swap this back to a version range the moment
+    # 0.10.0 is released -- a git dependency also means every install needs to
+    # reach GitHub, which a released wheel does not.
+    #
+    # This crosses the `<0.10` cap the line below used to carry, and the cap's
+    # reasoning still stands -- a minor is where redstring's breaking renames
+    # land. Checked rather than assumed before crossing it: the package root's
+    # public surface at this commit is a superset of 0.9.2's (`Theme`,
+    # `ThemeReport` and `summarize_themes` added, nothing removed), and its
+    # `eventsource-py>=0.14.0,<0.15` is identical to ours, so the two libraries
+    # do not have to move together this time.
+    "redstring[llm,neo4j,pgvector] @ git+https://github.com/tyevans/redstring.git@8de0cb26dcbbd23abe3fdeb19da3940ea90ee274",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.3",
     # The blob store streams to disk with async file handles rather than

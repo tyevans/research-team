@@ -55,9 +55,20 @@ def _alias(canonical_id, alias_id, alias_name: str | None) -> Alias:
     )
 
 
-def _chunk(*, chunk_id: str, source_id: str, text: str, start: int, end: int) -> StoredChunk:
+def _chunk(*, source_id: str, text: str, start: int, end: int) -> StoredChunk:
+    """A stored chunk, with no `id` because redstring no longer accepts one.
+
+    `StoredChunk.id` became a derived property in redstring 0.10.0 (ADR 0044,
+    "a chunk id is derived, not supplied"): it is a hash over `(source_id,
+    text)` and passing one raises rather than being ignored. These fixtures
+    used to pass `chunk_id="c1"`, which is why they were the only thing in the
+    tree that noticed the bump.
+
+    Nothing in production ever supplied an id, so the break was confined to
+    tests -- but it is a real break rather than a rename, which is what the
+    `<0.10` cap in `pyproject.toml` exists to catch.
+    """
     return StoredChunk(
-        id=chunk_id,
         tenant_id=TENANT_ID,
         source_id=source_id,
         text=text,
@@ -87,11 +98,7 @@ async def test_a_passage_naming_the_entity_is_returned_with_its_offsets(graph, c
     acme_id = uuid4()
     await graph.upsert_entity(_entity(acme_id, "Acme"))
     await chunks.upsert_many(
-        [
-            _chunk(
-                chunk_id="c1", source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT)
-            )
-        ]
+        [_chunk(source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT))]
     )
 
     usages = await reader.usages(acme_id)
@@ -110,11 +117,7 @@ async def test_a_passage_matching_two_aliases_appears_once(graph, chunks, reader
     await graph.upsert_entity(_entity(acme_id, "Acme Corporation"))
     await graph.upsert_alias(_alias(acme_id, alias_id, "Acme"))
     await chunks.upsert_many(
-        [
-            _chunk(
-                chunk_id="c1", source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT)
-            )
-        ]
+        [_chunk(source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT))]
     )
 
     usages = await reader.usages(acme_id)
@@ -132,11 +135,7 @@ async def test_an_entity_with_no_mentions_returns_nothing_rather_than_raising(
     # to cover.
     await graph.upsert_entity(_entity(unmentioned_id, "Zzyzx Quombat"))
     await chunks.upsert_many(
-        [
-            _chunk(
-                chunk_id="c1", source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT)
-            )
-        ]
+        [_chunk(source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT))]
     )
 
     assert await reader.usages(unmentioned_id) == []
@@ -153,11 +152,7 @@ async def test_a_blank_name_never_reaches_the_ranker(graph, chunks, reader):
     # `tokenize` strips punctuation and keeps no terms from "!!!".
     await graph.upsert_entity(_entity(blank_named_id, "!!!"))
     await chunks.upsert_many(
-        [
-            _chunk(
-                chunk_id="c1", source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT)
-            )
-        ]
+        [_chunk(source_id="doc-1", text=DOC_1_TEXT, start=0, end=len(DOC_1_TEXT))]
     )
 
     assert await reader.usages(blank_named_id) == []
@@ -182,7 +177,6 @@ async def test_a_repeated_table_header_is_not_counted_into_the_offsets(graph, ch
     await chunks.upsert_many(
         [
             StoredChunk(
-                id="c1",
                 tenant_id=TENANT_ID,
                 source_id="doc-1",
                 text=header + document[row_start:],

@@ -97,11 +97,21 @@ async def test_the_quotable_corpus_is_chunked_small_enough_to_rank(tmp_path, bui
     prepends a header to a chunk of table rows, which this document has none
     of -- the slack is there so a table document does not fail a test about
     window size for a reason that has nothing to do with it.
+
+    **The sentences are varied, and an earlier version's were not.** It used
+    `"The quick brown fox jumps over the lazy dog. " * 60`, where overlapping
+    windows produce byte-identical text -- and chunk ids are content-addressed
+    over `(source_id, text)`, so those rows collapse to one on upsert. The
+    count it asserted was therefore part window size and part deduplication,
+    and it broke on a redstring bump that changed neither: removing the
+    redundant tail chunk took the surviving distinct texts from 4 to 3. A test
+    about how small the windows are must not be readable as a test about how
+    many of them happen to differ.
     """
     project_id = uuid4()
     chunk_store = InMemoryChunkStore(dimension=8)
     knowledge, _, _ = build_adapter(tmp_path, project_id, chunks=chunk_store)
-    text = "The quick brown fox jumps over the lazy dog. " * 60
+    text = "".join(f"Sentence {n} says something entirely of its own. " for n in range(80))
 
     await knowledge.index(SourceRef(source_id="doc-1", text=text))
 
