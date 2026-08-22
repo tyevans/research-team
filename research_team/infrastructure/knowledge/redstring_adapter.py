@@ -31,7 +31,6 @@ from eventsource.ports.snapshots import SnapshotStore
 from eventsource.ports.store import AggregateStore
 from redstring import (
     Adjudicator,
-    BoundaryPreferenceChunker,
     CandidateFinder,
     Chunker,
     ChunkStore,
@@ -42,6 +41,7 @@ from redstring import (
     RedstringError,
     RetrievalMode,
     Retriever,
+    SlidingWindowChunker,
     SourceDocument,
     VectorStore,
     build_graph,
@@ -665,11 +665,36 @@ class RedstringKnowledge:
         what it says. This adapter's real event store is what makes the
         second `index` of an unchanged document free.
 
-        `BoundaryPreferenceChunker` at its own defaults, not
-        `SlidingWindowChunker` (what `ingest` chunks extraction with):
-        redstring documents it as the chunker for passages that will be
-        quoted back to a reader, which is what this corpus is for and
-        extraction's chunking is not.
+        `SlidingWindowChunker` at 1000/500, not `BoundaryPreferenceChunker`.
+        Upstream documents the latter as the chunker for passages that will be
+        quoted back to a reader, which is what this corpus is for -- and it
+        loses on retrieval, consistently. stark-bench found it **last on dense
+        retrieval across three embedding models**, with `sliding-1000-500`
+        ahead of it on every channel in both corpora where both ran (Nemotron
+        dense 0.2125 against 0.1845; qwen-mini hybrid 0.4079 against 0.3883).
+        Three models agreeing points at the chunker rather than at an
+        interaction with one embedding model.
+
+        **The quotability argument is weaker than it reads.** Measured
+        2026-08-21: `SlidingWindowChunker` defaults to
+        `respect_sentence_boundaries=True` and `respect_paragraph_boundaries=
+        True`, and they work -- the first chunk of a 2,700-character document
+        at size 1000 ends at 990, not 1000. Both chunkers snap to sentences.
+        They differ in size and overlap, which is what BM25's length
+        normalisation cares about and what a reader does not notice.
+
+        Why 1000/500 and not the extraction chunker's size: these are two
+        different jobs with two different optima. `extraction_chunk_size` is
+        tuned for how much a model extracts from one call; this is tuned for
+        how a passage ranks. Sharing a number would tie them together for no
+        reason beyond looking tidy.
+
+        **The cost, measured rather than assumed:** a document longer than the
+        window gets one redundant tail chunk, wholly inside the previous one,
+        which `UsageReader`'s offset dedup cannot collapse -- so a reader sees
+        one duplicate passage. `tests/infrastructure/test_chunking_defects.py`
+        holds that as a strict xfail naming redstring PR #72, which fixes it
+        upstream and is unreleased at the time of writing.
 
         Wrapped in `MarkdownTableChunker`, so a quoted passage of table rows
         carries the header naming its columns -- a row whose cells are unnamed
@@ -714,7 +739,9 @@ class RedstringKnowledge:
             [SourceDocument(id=source.source_id, text=source.text)],
             store=self._chunks,
             tenant_id=self._project_id,
-            chunker=MarkdownTableChunker(BoundaryPreferenceChunker()),
+            chunker=MarkdownTableChunker(
+                SlidingWindowChunker(default_chunk_size=1000, default_overlap=500)
+            ),
             event_store=self._event_store,
         )
 
