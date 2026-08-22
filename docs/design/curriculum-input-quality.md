@@ -71,18 +71,35 @@ The entities, with their extracted types:
 "Caesar's election to the praetorship" event
 ```
 
-Two distinct failures hide here and they want different fixes:
+This section proposed two failures. **Measured 2026-08-22 by folding
+`course.db` and driving a real `CandidateFinder` over it, only one of them
+exists**, and it is an instance of BACKLOG B58 rather than anything new. The
+numbers and the revised B58 table are there; the corrections belong here.
 
-- **`Caesar` is typed `concept` while the other two are `person`.** Whether a
-  cross-type pair can merge at all is unchecked; if it cannot, this is an
-  extraction-typing problem wearing a consolidation costume.
-- **`Julius Caesar` and `Gaius Julius Caesar` are both `person` and did not
-  merge.** That is a genuine consolidation miss, on a containment pair, with
-  three-feature scoring and an adjudicator available.
+- **The cross-type lead is right, and not for the reason it gives.** The
+  listing above shows one `Caesar`; there are two, a `person` and a `concept`,
+  and they *did* merge -- at 0.8000, reason "Identical strings referring to
+  the same concept", one of ten cross-type merges in this log. `blocking_keys_for`
+  is a union and the prefix and soundex keys carry no type, so a shared *name*
+  blocks across types and nothing downstream reads a type at all. **The bite
+  is when the names differ**: then `t:` is the only key two entities can share,
+  and `Caesar`(concept) against `Julius Caesar`(person) shares nothing --
+  measured, a 190-entity block with `Julius Caesar` absent from it. Never
+  scored, never adjudicated. And the merge made it worse: beforehand
+  `Caesar`(person) blocked with `Julius Caesar` on `t:person` and scored
+  0.6664, so the surviving canonical is the one that cannot reach them.
+- **The same-type miss is real, and is not about documents.**
+  `Julius Caesar`/`Gaius Julius Caesar` scores name 0.8500 (the containment
+  ceiling), embedding 0.9786, graph 0.0 -- **0.7186**, rejected before the
+  adjudicator by the present zero B58 describes. The two are in the *same*
+  document with 15 neighbour names against 8 and an empty intersection, so
+  B58's framing as a cross-document problem understates it.
 
 `config.vector_store`'s docstring argues the embedding feature exists so that
-identically-named cross-document duplicates clear `LOW_SIMILARITY` 0.75. This
-is that shape, on a real model, and it did not fire.
+identically-named duplicates clear `LOW_SIMILARITY` 0.75. **That claim is
+confirmed, not refuted**: the two `Caesar`s reached exactly 0.8000 on it and
+merged. What the embedding cannot carry is a pair whose *name* is capped at
+0.85 by containment, which is the other two.
 
 ## 4. 16% of the graph is dust
 
