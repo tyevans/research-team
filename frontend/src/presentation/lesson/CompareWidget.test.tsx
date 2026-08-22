@@ -119,15 +119,23 @@ it('keeps the table readable when one head is not in the graph', async () => {
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
-it('pads a short row rather than shifting its cells left', () => {
+it('pads a short row with an empty cell rather than shifting its cells left', () => {
   // "Religious policy" has one cell and two entities. Red against a renderer
   // that maps over `cells`: the single value would land under Diocletian and
   // Constantine would silently lose a column, which reads as data rather
   // than as a gap.
+  //
+  // The second assertion is the one that was missing. Until `Prose` stopped
+  // rendering blank text, this test asserted the cell *count* and nothing
+  // else, so it was green with "(empty file)" sitting in the padded cell and
+  // green with the cell blank -- it could not tell the two apart. Proved red
+  // against the build before that change, with "(empty file)" as the actual.
   renderWidget()
 
   const row = screen.getByRole('row', { name: /Religious policy/ })
-  expect(within(row).getAllByRole('cell')).toHaveLength(2)
+  const cells = within(row).getAllByRole('cell')
+  expect(cells).toHaveLength(2)
+  expect(cells[1]).toBeEmptyDOMElement()
 })
 
 it('links a resolved head into this project’s entity facet', async () => {

@@ -23,10 +23,12 @@ area carries entity ids, the prompts hand those ids to the model, and the
 components it writes resolve against the same project.
 """
 
+import textwrap
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from research_team.application.components import REGISTRY
 from research_team.application.session_service import SessionService
 from research_team.domain import SessionPurpose
 from research_team.domain.learning_area import LearningArea, LearningPath
@@ -103,7 +105,7 @@ def _area_header(area: LearningArea) -> str:
     )
 
 
-COMPONENT_GUIDE = """\
+_COMPONENT_GUIDE_TEMPLATE = """\
 Lessons may carry interactive components. A component is a fenced block whose
 info string names its type, and its body is YAML:
 
@@ -132,7 +134,61 @@ Two rules, and the first is the one that gets broken:
   that item.
 - A resolved component takes **entity ids copied exactly** from the list you
   were given. An id you invented renders as unavailable, and nothing warns you.
+
+Where the id goes, and it is not the same field everywhere:
+
+{id_fields}
+
+An id in a field that expects a name is drawn to the reader as a raw
+`9f2c1a44-...`, because the lookup is a name search and nothing is named by
+its own id.
 """
+
+
+def _id_field_lines() -> str:
+    """Which types take an `entity_id`, derived from the registry rather than typed.
+
+    This paragraph is the whole of defect 1: the guide named neither `entity:`
+    nor `entity_id:`, so a model told to copy ids exactly put them wherever an
+    entity-ish field was -- into `compare.entities`, which has no id field at
+    all and renders straight to the reader.
+
+    Generated for the reason `component_reference()` is generated: a
+    hand-written sentence about the schema stops being true two edits later and
+    nothing says so. `test_the_guide_names_the_id_field_of_every_type_that_has_one`
+    is the second half of that guarantee, and would fail if this were a literal
+    that someone stopped maintaining.
+
+    `component_reference()` itself is deliberately *not* used here. It is the
+    full field schema for every type, it runs to hundreds of lines, and this
+    turn is already carrying two prior stages verbatim -- what is missing is
+    two field names, not a second copy of the reference.
+    """
+    named = sorted(name for name, spec in REGISTRY.items() if "entity_id" in spec.fields)
+    # `evidence` is in neither list and that is not an oversight: it resolves
+    # against *source* ids, which the prompt hands over separately, so telling
+    # this turn it takes no entity id would be true and useless.
+    nameless = sorted(
+        name
+        for name, spec in REGISTRY.items()
+        if spec.resolved and not {"entity_id", "sources"} & set(spec.fields)
+    )
+    types = ", ".join(f"`{name}`" for name in named)
+    others = ", ".join(f"`{name}`" for name in nameless)
+    return "\n".join(
+        textwrap.fill(text, width=76, initial_indent="- ", subsequent_indent="  ")
+        for text in (
+            f"{types} take **two** fields: `entity:` is the name, spelled as "
+            f"the sources spell it, and `entity_id:` is the id, copied "
+            f"exactly. Write both.",
+            f"{others} take **no id at all**. There is no field for one. "
+            f"Where they name entities -- `compare`'s `entities:` -- write "
+            f"the names.",
+        )
+    )
+
+
+COMPONENT_GUIDE = _COMPONENT_GUIDE_TEMPLATE.format(id_fields=_id_field_lines())
 
 
 def desired_results_prompt(area: LearningArea, subject: str) -> str:

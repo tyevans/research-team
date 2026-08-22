@@ -14,8 +14,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from research_team.application.components import REGISTRY
 from research_team.application.course_authoring import (
     AREAS_DIR,
+    COMPONENT_GUIDE,
     PROMPT_ANCHORS,
     CourseAuthor,
     desired_results_prompt,
@@ -192,3 +194,42 @@ def test_the_path_writeup_is_handed_its_reasoning_rather_than_asked_for_it():
     assert "its dated entities come earlier" in prompt
     assert "contested" in prompt
     assert "do not re-order" in prompt
+
+
+def test_the_guide_names_the_id_field_of_every_type_that_has_one():
+    """The prompt-vs-registry agreement nothing was asking for.
+
+    Defect 1 was not a bug in any function: `COMPONENT_GUIDE` told the model to
+    copy entity ids exactly and never named a field to put them in, while the
+    registry it was describing had `entity_id` on two types and no id field at
+    all on three. The model wrote ids into `compare.entities`, which validates
+    as a plain string list and renders raw to the reader.
+
+    This is deliberately an agreement test and not a text assertion. It reads
+    the same registry the guide is generated from, so it fails if a type grows
+    or loses an `entity_id` and the paragraph stops being true -- which is the
+    only failure worth catching. It cannot fail on wording, and would not have
+    been worth writing if it could: a test comparing the guide against a
+    literal copy of itself is a second place to edit, not a check.
+
+    Proved red by generating the guide with the paragraph empty: `entity_id:`
+    appears nowhere else in it, so that assertion is the one that catches a
+    guide which stopped naming the field.
+    """
+    named = {name for name, spec in REGISTRY.items() if "entity_id" in spec.fields}
+    assert named, "the registry has no id field; this test is now about nothing"
+    for name in named:
+        assert f"`{name}`" in COMPONENT_GUIDE
+    assert "`entity_id:`" in COMPONENT_GUIDE
+
+    # And the other half: a resolved type with no id field must be named as
+    # taking none, or the model puts one where there is no home for it.
+    nameless = {
+        name
+        for name, spec in REGISTRY.items()
+        if spec.resolved and not {"entity_id", "sources"} & set(spec.fields)
+    }
+    assert nameless
+    for name in nameless:
+        assert f"`{name}`" in COMPONENT_GUIDE
+    assert "no id at all" in COMPONENT_GUIDE
