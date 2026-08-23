@@ -32,16 +32,14 @@ export interface CourseCandidate {
   readonly category: string
   readonly prominence: number
   readonly size: number
-  /** The area's *current* membership hash. Compared against `blurb`'s own
-   *  hash by `blurbAge` to tell "current" from "stale".
-   *
-   *  Not on the wire today: `candidate_view` in `presenters.py` serializes
-   *  `blurb.membershipHash` but never the candidate's own -- so this field
-   *  reads `""` from every real response until that presenter gains it, and
-   *  `blurbAge` degrades to reporting every blurb as `'stale'` rather than
-   *  ever `null`-for-current. Flagged rather than worked around here: fixing
-   *  a hash server-side is not this task's shape, and hiding the gap behind a
-   *  client-side default would make the missing field invisible again. */
+  /** The area's *current* membership hash, paired with `blurb`'s own hash by
+   *  `blurbAge` to tell "current" from "stale" -- neither hash alone says
+   *  anything; the comparison is the whole reason this field exists. Briefly
+   *  absent from the wire (`candidate_view` sent `blurb.membershipHash` but
+   *  not this one), which made every blurb read as `'stale'` forever with a
+   *  payload that otherwise looked complete. Fixed server-side; see
+   *  `candidate_view` in `presenters.py` and
+   *  `test_a_candidate_carries_its_own_membership_hash_distinct_from_its_blurbs`. */
   readonly membershipHash: string
   readonly anchors: readonly AreaMember[]
   readonly art: CandidateArt

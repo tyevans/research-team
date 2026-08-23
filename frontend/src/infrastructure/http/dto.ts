@@ -1053,14 +1053,13 @@ export const courseCandidateDto = z.object({
   category: z.string(),
   prominence: z.number().default(0),
   size: z.number().default(0),
-  // Not sent today. `CourseCandidate.membership_hash` exists server-side
-  // (`research_team/domain/course_catalog.py`) precisely so a blurb's own
-  // hash has something current to compare against, but `candidate_view`
-  // never puts it on the wire -- only `blurb.membershipHash` crosses. Defaulted
-  // to `''` rather than left required, so a real response still parses; the
-  // consequence lives in `catalog.ts`'s `CourseCandidate.membershipHash` doc
-  // comment; do not treat the default as the fix.
-  membershipHash: z.string().default(''),
+  // No default, unlike `prominence`/`size` above and matching
+  // `prerequisiteEdgeDto.contested`'s reasoning: this field is the only thing
+  // that makes a blurb's own staleness checkable (see `blurbAge` in
+  // `catalog.ts`), so a build that stopped sending it must fail loudly rather
+  // than read as "every blurb is current" -- the reassuring answer nobody
+  // would investigate.
+  membershipHash: z.string(),
   anchors: z.array(areaMemberDto).default([]),
   art: candidateArtDto,
   blurb: candidateBlurbDto.nullable().default(null),
