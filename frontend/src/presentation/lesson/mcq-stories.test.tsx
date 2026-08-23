@@ -28,7 +28,8 @@ import * as stories from './Mcq.stories.tsx'
  * single break that reddened all four would have meant they were all really
  * one assertion.
  */
-const { Unanswered, Correct, GraderFailed, MultipleChoice } = composeStories(stories)
+const { Unanswered, Answered, Correct, Incorrect, GraderFailed, MultipleChoice } =
+  composeStories(stories)
 
 it('renders the prompt and every option', () => {
   render(<Unanswered />)
@@ -64,4 +65,35 @@ it('renders the multiple-answer question with its own options', () => {
   render(<MultipleChoice />)
   expect(screen.getByText(/choose all that apply/)).toBeInTheDocument()
   expect(screen.getByText(/Price edicts/)).toBeInTheDocument()
+})
+
+/** The accent marks the one live action, and never a disabled one.
+ *
+ * Before a verdict, submit is enabled and carries it. After a verdict, submit
+ * is disabled and `try again` carries it. Asserted as a pair, because each
+ * half alone passes on a build that puts the accent everywhere or nowhere.
+ *
+ * The rule is not decoration. `.btn-accent` fills with `--accent`, and a
+ * disabled fill at 45% opacity still outweighs a plain enabled button next to
+ * it -- so an accent that stays put after grading points a learner at the
+ * control they cannot use. `.cmp-btn.primary` drew an outline and hid this;
+ * merging the two buttons carried the difference in, and a screenshot of the
+ * `Incorrect` story is what found it. No assertion existed then. This is it.
+ *
+ * **Proved red** by restoring `primary` unconditionally on submit: the second
+ * expectation fails, because the disabled button is `btn-accent` again.
+ */
+const accented = () =>
+  [...document.body.querySelectorAll('button')]
+    .filter((button) => button.className.includes('btn-accent'))
+    .map((button) => ({ label: button.textContent, disabled: button.disabled }))
+
+it('puts the accent on submit while there is something to submit', () => {
+  render(<Answered />)
+  expect(accented()).toEqual([{ label: 'check answer', disabled: false }])
+})
+
+it('moves the accent to the retry once the answer is graded', () => {
+  render(<Incorrect />)
+  expect(accented()).toEqual([{ label: 'try again', disabled: false }])
 })

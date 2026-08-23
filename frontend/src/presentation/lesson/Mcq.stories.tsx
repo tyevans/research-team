@@ -144,9 +144,18 @@ export const Correct: Story = {
 
 /** Wrong, with the correct option marked and a way back.
  *
- *  `try again` is the second button, and after the button merge both it and
- *  submit are `Button`s — the retry is the plain tone and never the accent.
- *  Two filled buttons in one decision is a pane that has not chosen. */
+ *  **The accent is on `try again` here, and that is the rule.** Once a verdict
+ *  is in, submit is disabled and the retry is the only thing a learner can do,
+ *  so the accent follows the live action rather than staying on whichever
+ *  button is conceptually primary. Exactly one filled button per decision, and
+ *  it is never a disabled one.
+ *
+ *  This story is the reason the rule exists. An earlier draft of the button
+ *  merge left `primary` on submit unconditionally, and screenshotting this
+ *  page showed a 45%-opacity amber block outweighing the live control beside
+ *  it. `.cmp-btn.primary` had drawn an accent *outline*, so a disabled one was
+ *  already quiet; `.btn-accent` fills, and the merge carried that difference
+ *  in without anyone looking. */
 export const Incorrect: Story = {
   render: function Render() {
     const attempts = useStubAttempts({
