@@ -1029,3 +1029,67 @@ export const interactionReceiptDto = z.object({
   accepted: z.number(),
   rejected: z.number(),
 })
+
+/** `candidate_view` in `presenters.py`, verbatim -- including its one
+ *  departure from every other shape here: `blurb`'s inner keys are already
+ *  camelCase on the wire (`membershipHash`, `generatedAt`), because the
+ *  presenter writes them that way itself rather than this module renaming
+ *  snake_case. Everything else on a candidate is a bare word, so there was
+ *  nothing else to spell either way. */
+export const candidateArtDto = z.object({
+  url: z.string(),
+  alt: z.string(),
+})
+
+export const candidateBlurbDto = z.object({
+  text: z.string(),
+  membershipHash: z.string(),
+  generatedAt: z.string(),
+})
+
+export const courseCandidateDto = z.object({
+  slug: z.string(),
+  title: z.string(),
+  category: z.string(),
+  prominence: z.number().default(0),
+  size: z.number().default(0),
+  // Not sent today. `CourseCandidate.membership_hash` exists server-side
+  // (`research_team/domain/course_catalog.py`) precisely so a blurb's own
+  // hash has something current to compare against, but `candidate_view`
+  // never puts it on the wire -- only `blurb.membershipHash` crosses. Defaulted
+  // to `''` rather than left required, so a real response still parses; the
+  // consequence lives in `catalog.ts`'s `CourseCandidate.membershipHash` doc
+  // comment; do not treat the default as the fix.
+  membershipHash: z.string().default(''),
+  anchors: z.array(areaMemberDto).default([]),
+  art: candidateArtDto,
+  blurb: candidateBlurbDto.nullable().default(null),
+  featuredRank: z.number().nullable().default(null),
+})
+
+export const categoryDto = z.object({
+  key: z.string(),
+  label: z.string(),
+  candidates: z.array(courseCandidateDto).default([]),
+})
+
+export const catalogDto = z.object({
+  hero: z.array(courseCandidateDto).default([]),
+  highlights: z.array(courseCandidateDto).default([]),
+  filed: z.array(categoryDto).default([]),
+  categories: z.record(z.string(), z.string()).default({}),
+  unplaceableFeatured: z.array(z.string()).default([]),
+  derived_from: z.object({
+    entities: z.number().default(0),
+    relationships: z.number().default(0),
+  }),
+})
+
+export const catalogFeatureDto = z.object({
+  slug: z.string(),
+  rank: z.number(),
+})
+
+export const catalogUnfeatureDto = z.object({
+  slug: z.string(),
+})

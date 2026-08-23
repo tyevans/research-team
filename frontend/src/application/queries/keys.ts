@@ -157,6 +157,11 @@ export const queryKeys = {
    *  refetch the clustering pass on every poll. */
   authoring: (project: ProjectId) => ['authoring', project] as const,
 
+  /** The whole front page in one key, matching `curriculum`'s reasoning: one
+   *  request answers hero, highlights and every filed category, so a feature
+   *  or unfeature invalidates the one cache entry that shows all three. */
+  catalog: (project: ProjectId) => ['catalog', project] as const,
+
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
   fileHistory: (session: SessionId, path: FilePath) =>
