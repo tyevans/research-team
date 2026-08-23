@@ -588,6 +588,60 @@ Found on 2026-08-23 while writing Storybook coverage for the console's
 highest-traffic components (#245, #248). Each of these is a real gap that was
 deliberately not closed on the spot, with the reason.
 
+### B146. The interaction log's browser-to-store seam has no standing test
+
+**Verified by hand on 2026-08-23 and working**, which is the reason to file it
+rather than a reason not to: the check cannot currently be made by anything
+that runs.
+
+The chain is `InteractionLogProvider` -> `HttpInteractionSink` ->
+`POST /api/interactions` -> `interactions.db`. Both *ends* are well tested --
+`tests/interfaces/test_interaction_routes.py` has twelve cases on the route,
+and `interaction-log-provider.test.tsx` covers the emitter -- and nothing
+drives the two together. That is the shape `CLAUDE.md` describes for the
+co-mention channel: "a port with one adapter and no test between them is two
+things that were never checked against each other".
+
+It is worse here than the general case, because **the client swallows the
+error on purpose.** `HttpInteractionSink.send` catches and discards, and says
+why: collection is off by one env var, and "a console that broke because
+telemetry was disabled would be a far worse defect than a lost batch". Correct
+-- and it means every failure in this chain is silent by design. `CLAUDE.md`
+already records that deleting the provider from `App.tsx` leaves all nineteen
+relevant tests green.
+
+**What was measured**, so the procedure is repeatable rather than a claim:
+
+    AGENT_WEB_PORT=8924 AGENT_DB=/tmp/isess.db \
+    AGENT_INTERACTION_DB=/tmp/ilog.db uv run web.py
+
+Drive the console in a browser -- create a project, open it, go back -- wait
+past the flush interval, then read the store. Result: two batches posted, five
+rows in `events` and five in `interaction_events`, one projection checkpoint.
+
+The rows are right, not merely present:
+
+    ViewEntered  home     params {}
+    ViewExited   home     dwell_ms 49939
+    ViewEntered  session  session_id 8376a565…
+    ViewExited   session  session_id 8376a565…  dwell_ms 742
+    ViewEntered  home     session_id null
+
+Two things that could have been wrong and are not. `dwell_ms` matches the real
+time on each page. And the `session` view's **exit** carries the id of the
+session it left rather than the page it went to -- which is the effect-ordering
+defect `CLAUDE.md` records ("every page's `ViewExited` was stamped with the ids
+of the page the user went to *next*"), confirmed fixed against a running
+server for the first time.
+
+**Why no test is added here.** A standing check needs a browser and a server in
+one process, and neither suite has both: the jsdom suite has no server, the
+browser suite has no backend, and the Python suite has no browser. The cheapest
+honest options are a Playwright test in a new CI job, or a narrower one that
+posts a batch with the *client's own* serialiser and asserts the row -- which
+would at least pin the wire format the two ends agree on. Neither is obviously
+worth a new job, which is why this is an entry rather than a branch.
+
 ### B140. The tab-strip measurement is a browser test, so CI cannot reach it
 
 `MATERIAL_TABS` in `ProjectView.tsx` carries a measured limit -- "eleven tabs
