@@ -56,7 +56,12 @@ export const withHeadings = (shown: readonly ProjectRollup[], now: number): read
   return items
 }
 
-const PROJECT_ROW_HEIGHT = 108
+/** What a closed project row is assumed to be before it has been measured.
+ *
+ *  Exported so `skeleton-height.browser.test.tsx` can hold it against
+ *  `.skeleton-row`'s height in `tree.css`. The two are one fact written twice,
+ *  and they were 108 and 84 until that test existed. */
+export const PROJECT_ROW_HEIGHT = 108
 const HEADING_HEIGHT = 30
 
 /** What identifies a row to React *and* to the virtualizer's measurement cache.

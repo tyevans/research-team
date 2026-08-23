@@ -582,6 +582,80 @@ Unchased on purpose — it was an incidental observation during Plan 1 and no
 production path constructs an application that way. One line here so nobody
 rediscovers it under time pressure and reads the hang as their own change.
 
+## Console gates and coverage
+
+Found on 2026-08-23 while writing Storybook coverage for the console's
+highest-traffic components (#245, #248). Each of these is a real gap that was
+deliberately not closed on the spot, with the reason.
+
+### B140. The tab-strip measurement is a browser test, so CI cannot reach it
+
+`MATERIAL_TABS` in `ProjectView.tsx` carries a measured limit -- "eleven tabs
+is where this strip stops fitting". It is not a preference: `area` and `path`
+are already collapsed into one Curriculum tab because the two-tab arrangement
+measured 837px of tabs against MATERIAL's 646px floor and clipped two controls
+in the narrow band.
+
+`project-tracks.browser.test.tsx` enforces it properly -- it sums every tab's
+width, the column gaps and the strip's padding, requires MATERIAL's floor to
+cover the total, and checks the rendered count against `MATERIAL_TABS.length`
+so a strip that silently lost a tab cannot pass by needing less room. It is in
+the `browser` project, which `CLAUDE.md` states is deliberately outside
+`verify` and outside CI.
+
+Measured: with a twelfth tab added, `typecheck` is clean and **1 of 160 test
+files fails** -- and that one is the length tripwire added in #245. Nothing
+else in the CI-reachable suite has an opinion.
+
+The tripwire makes the twelfth tab a conversation rather than a merge, and it
+is explicitly not the measurement: it cannot tell a twelfth tab from a
+relabelled eleventh, and shorter labels might genuinely fit twelve. **The real
+question this defers is whether the browser suite belongs in CI.** `CLAUDE.md`
+gives the reasons it is out -- a minute against a second, a Chromium download,
+923 jsdom tests competing for the same budget -- and reversing that on the
+strength of one gate is a bigger decision than the finding supports. A middle
+option worth considering: run the browser suite in CI on changes touching
+`src/styles/**` or `presentation/layout/**` only.
+
+### B141. Nothing ranks the material tabs, so a twelfth has nothing to displace
+
+`DEFAULT_MATERIAL` is `'session'` and its first position is argued twice --
+what a reader opening a project is asking, and the bundle cost of defaulting
+to a tab that pulls a lazy canvas. Both arguments are about the *first* tab.
+
+Nothing states what the eleventh is for. `area`/`path` is last "for the bundle
+reason the graph tabs are last", which argues for not being first rather than
+for being eleventh. The order encodes adjacency and laziness; neither ranks
+importance. So when B140's twelfth tab arrives and one has to go, there is no
+recorded basis for choosing it.
+
+Not a defect. It is the question the twelfth tab will ask, and it is cheaper
+to notice now than in the pull request that has to answer it.
+
+### B142. The story gate covers three directories out of thirteen
+
+`scripts/stories.test.ts` has `SCOPE = ['presentation/common',
+'presentation/entity', 'presentation/layout']` and its `ALLOWED` list is empty
+as of #245, so those three are fully covered. The other ten are not gated at
+all.
+
+Counted on 2026-08-23, components with a PascalCase value export against story
+files: `research` 29/3, `lesson` 14/1, `session` 14/2, `course` 12/4, `ask`
+8/5, `tree` 8/0, `curriculum` 6/1, `shell` 5/1, `dialogue` 4/0, `project` 2/0,
+`agents` 1/0.
+
+Widening the scope is the obvious move and is deferred rather than done,
+because widening it by one directory forces either the stories or a batch of
+`ALLOWED` entries in the same commit, and an allowlist entry written to get a
+gate green is the opposite of what that list is for -- its whole value is that
+each entry is an argument. #245 is the worked example of why: the one entry it
+inherited claimed `VirtualList` "has no visual states to enumerate", and that
+turned out to be wrong rather than satisfied.
+
+Suggested order, cheapest first and by how much a story would say: `tree`
+(8 components, the landing page), `dialogue` (4), `shell` (5, of which 3 need
+a container and would need honest entries).
+
 ## Topics and autonomous research
 
 Added alongside the topic tracker and auto-research mode

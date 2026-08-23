@@ -69,14 +69,26 @@ export const Cloze = ({ block, attempts }: { block: ComponentBlock; attempts: At
       </p>
 
       <div className="cmp-controls">
+        {/* The accent follows the one live action rather than sitting on
+            whichever button is conceptually "primary". Once a verdict is in,
+            submit is disabled and `try again` is the only thing a learner can
+            do -- an accent-filled disabled button is then the loudest object
+            on the row and the live control beside it is the quietest.
+
+            This is a defect the button merge introduced and screenshotting
+            found. `.cmp-btn.primary` drew an accent *outline*, so a disabled
+            one at 45% opacity was already quiet; `.btn-accent` fills, and a
+            45%-opacity amber block still outweighs a plain button next to it.
+            The merge was right and this is the half of it that had to be
+            looked at rather than reasoned about. */}
         <CmpButton
-          primary
+          primary={state.verdict === null}
           label={state.busy ? 'checking…' : 'check answers'}
           disabled={state.busy || state.verdict !== null}
           onClick={submit}
         />
         {state.verdict ? (
-          <CmpButton label="try again" onClick={() => attempts.reset(block)} />
+          <CmpButton primary label="try again" onClick={() => attempts.reset(block)} />
         ) : null}
         <span className="cmp-count">
           {blanks.length} {blanks.length === 1 ? 'blank' : 'blanks'}
