@@ -120,7 +120,42 @@ coverage. Then decide with numbers instead of with this document.
 `Chip` is the correct candidate. It is 40 lines, it is rendered by 17 files,
 and its styling is already split into a shape constant and a dress constant.
 
-## What was done tonight instead
+## What was done instead, and what it showed
 
-See the commits on `ui/direction`. The work is Storybook coverage and
-primitive consolidation: the two items above that need no decision from you.
+Storybook coverage and primitive consolidation -- the two items above that
+need no decision. Landed as #245 and #248.
+
+Nine components that had no story now have one, chosen by call-site count
+rather than by convenience: `primitives`, `Drawer`, `Choices`, `VirtualList`,
+`ConnectionBadge`, `DerivedFromLine`, `Mcq`, `ScrubBar`, `SessionForest`.
+
+**Writing them found five defects, which is the evidence for the
+recommendation above.** None needed a new framework:
+
+1. Two button implementations, sharing no substring so no grep found them.
+   `.cmp-btn` differed from `.btn` by 1px of padding, one colour tier, and an
+   accent outline against an accent fill for the primary action. Merged.
+2. The loading skeleton was 84px against a row estimated at 108, so a pending
+   landing page moved about 96px -- the exact jump the skeleton exists
+   instead of.
+3. The material tab strip's real gate lives in the browser suite, which CI
+   does not run, so a twelfth tab merged green. A tripwire now runs in CI.
+4. `main` was red on an unrelated authoring-restart race, blocking every
+   pull request. Fixed in #246.
+5. A story fixture gave five sessions the same id prefix, so the gallery
+   taught that the id column carries nothing. Found by screenshotting the
+   page -- the only one of the five that came from looking rather than
+   measuring.
+
+**And the look was checked rather than assumed.** Buttons, chips, the session
+rows, a three-deep fork lineage and a graded question were screenshotted
+through vitest's browser mode. Nothing needed redrawing. The lineage view
+reads clearly at three levels of nesting, the chips carry state without
+colouring the rows they sit on, and the amber-on-dark palette holds. That is
+worth stating plainly in a document about a UI overhaul: **the console does
+not need one.** It needed the coverage and it needed the skeleton to be the
+right height.
+
+Which is the argument for the leaf experiment above rather than against it.
+If a port is still wanted, `Chip` is where to find out what it costs -- and
+there is now a story to compare the result against.
