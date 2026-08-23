@@ -69,6 +69,39 @@ the same budget), and reversing that on one instance is a bigger call than the
 evidence supports. A middle option is noted — run it only on changes touching
 `src/styles/**` or `presentation/layout/**`.
 
+## The checklist bug, generalised — and the audit that followed
+
+The checklist defect had a shape worth naming, because it is the only kind
+here that a reviewer cannot catch by reading the component: **a UI that states
+a capability without asking whether the capability is present.**
+
+`AttemptsApi.saveChecklist` is optional *on purpose* — `use-attempts.ts`
+leaves it `undefined` rather than a no-op so a widget can tell "the author
+wants this saved" from "this surface can save". The component called it with
+`?.` (correct) and rendered "saved as you go" unconditionally (not). Nothing
+throws, the tick lands, and the label is the only thing that is wrong.
+
+**So the whole console was swept for the same shape, and it is the only
+instance.** Recorded as a negative result so the search is not repeated:
+
+- **Optional members on application ports** — `saveChecklist` is the only
+  capability-shaped one. The rest (`start`, `end`, `limit`, `entityType`,
+  `from`, `to`) are data fields on query objects, not capabilities.
+- **Optional calls in `presentation`** — four sites. Three are plain callbacks
+  with no rendered claim attached (`onRefuse`, `onDismiss`, `onCreated`); the
+  fourth was the checklist.
+- **Optional props that gate a control** — `GraphDetail`'s `onRemove` and
+  `showInGraphHref` are the pattern done right: both are rendered behind a
+  presence check, and both docstrings say which caller supplies them and why
+  the other does not.
+- **Unconditional reassurance strings** — "saved as you go" was the only one.
+  Every other status wording in the console derives from a state value
+  (`status === 'running'`, `queued`, `not saved: …`) rather than asserting.
+
+What that leaves is a rule rather than a fix: **an optional member on a port
+is a question the consumer has to ask.** If a component renders anything that
+would be false when the member is absent, presence is part of the condition.
+
 ## Conventions the pass settled on
 
 Worth knowing before adding to any of this, because they are why the tests
