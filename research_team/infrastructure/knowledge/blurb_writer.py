@@ -35,6 +35,29 @@ report. Making the check cleverer -- stemming, a synonym list, an entity
 linker -- was considered and rejected for this task: every one of those tools
 can itself hallucinate a match, which is the failure this check exists to
 rule out, not reintroduce one layer down.
+
+**Sentence-initial exemption is a closed, maintained list, not "whatever word
+opens a sentence".** An earlier version of this check exempted every
+sentence's first word unconditionally, on the reasoning that capitalisation
+there is a rule of English grammar rather than a claim about an entity. That
+reasoning is only true of *some* first words. A model is free to open its
+second sentence with a bare proper noun ("Kirk later commanded the ship.")
+and a blanket exemption let it straight through -- caught by review, not by a
+test, against exactly the anchors this module's own docstring uses as its
+example (`Warp drive`, `Zefram Cochrane`). `_SENTENCE_OPENERS` is the fix:
+only the specific words the prompt's own phrasing ("Follow...", "Meet...",
+"The...") is likely to produce are exempt, and only when they open a
+sentence. Everything else -- including a name -- is checked like any other
+capitalised run, wherever in the reply it appears.
+
+The list is finite and the cost is stated rather than hidden: a legitimate
+sentence opener this list does not know about is refused, not accepted. That
+is the same direction every other refusal in this module fails in, and it is
+why the list is short rather than padded with guesses -- padding it toward
+"anything that looks like an ordinary word" reopens exactly the hole this
+fix closes, because a proper noun the model invents looks exactly as
+ordinary as a real English sentence opener until you already know which
+anchors exist.
 """
 
 import re
@@ -81,6 +104,46 @@ _CAPITALISED_RUN = re.compile(r"[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*")
 #: it up.
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+#: The only words exempt from the check when they open a sentence.
+#:
+#: Not "whatever word happens to be capitalised at a sentence's start" --
+#: that was the previous version of this check, and it let a bare invented
+#: name straight through whenever it opened the reply's second sentence
+#: ("Kirk later commanded the ship."), because nothing distinguished an
+#: ordinary opener from a name that happened to occupy the same position.
+#:
+#: This list is the words the prompt in `_PROMPT` actually invites -- an
+#: article, a demonstrative, or one of the imperative verbs catalog copy
+#: reaches for ("Follow...", "Meet...", "Discover..."). It is finite and
+#: known to be incomplete: an opener outside it is refused, not accepted,
+#: which is the same direction every other refusal in this module fails in.
+#: Growing the list toward "any word that looks ordinary" would undo the fix,
+#: because an invented proper noun looks exactly as ordinary as a real
+#: opener until the anchors are already known.
+_SENTENCE_OPENERS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "this",
+        "these",
+        "from",
+        "in",
+        "follow",
+        "join",
+        "learn",
+        "discover",
+        "explore",
+        "master",
+        "trace",
+        "meet",
+    }
+)
+
+#: The sentence's first word, so it can be tested against `_SENTENCE_OPENERS`
+#: and stripped only when it is one of them.
+_FIRST_WORD = re.compile(r"[A-Z][\w'-]*")
+
 
 def _anchor_lines(anchors: Sequence[AreaMember]) -> str:
     return "\n".join(f"- {m.name} ({m.entity_type})" for m in anchors[:PROMPT_ANCHORS])
@@ -89,21 +152,24 @@ def _anchor_lines(anchors: Sequence[AreaMember]) -> str:
 def _ungrounded_runs(reply: str, anchors: Sequence[AreaMember]) -> list[str]:
     """Capitalised runs in `reply` that no anchor name contains.
 
-    Sentence-initial words are exempt at the start of *each* sentence, not
-    just the reply's first word -- otherwise every ordinary sentence after
-    the first would flag its own opening word as an invented entity, which
-    would refuse nearly every two-sentence reply regardless of what it said.
+    A sentence's first word is stripped before matching only when it is one
+    of `_SENTENCE_OPENERS` -- an ordinary opener the prompt invites, not any
+    word that happens to be capitalised there. A first word outside that
+    list is left in place and checked like any other run, which is what
+    catches a bare invented name opening a non-first sentence.
     """
     names_lower = [a.name.lower() for a in anchors]
     ungrounded = []
     for sentence in _SENTENCE_SPLIT.split(reply.strip()):
-        # Drop the sentence's own first word before matching runs, rather
-        # than matching over the whole sentence and discarding the first
-        # *run*: a sentence-initial word immediately followed by a real
-        # proper noun ("Join Captain Kirk...") is one contiguous capitalised
-        # run under `_CAPITALISED_RUN`, and discarding that whole run would
-        # exempt "Captain Kirk" along with "Join".
-        _, _, rest = sentence.partition(" ")
+        first = _FIRST_WORD.match(sentence)
+        # Stripping only the matched word (not merging it into the run below)
+        # is what keeps "Join Captain Kirk..." from exempting "Captain Kirk"
+        # along with "Join": the two are exempted and checked separately.
+        rest = (
+            sentence[first.end() :]
+            if first and first.group().lower() in _SENTENCE_OPENERS
+            else sentence
+        )
         for match in _CAPITALISED_RUN.finditer(rest):
             run = match.group()
             if not any(run.lower() in name for name in names_lower):

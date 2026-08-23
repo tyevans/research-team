@@ -61,3 +61,33 @@ async def test_a_legitimate_shortening_the_check_still_refuses():
     writer = _writer("Follow the Inventor as he perfects the Warp drive.")
 
     assert await writer.write("Warp drive", ANCHORS) is None
+
+
+async def test_an_ungrounded_name_opening_a_later_sentence_is_refused():
+    """Regression: a blanket sentence-initial exemption let this straight through.
+
+    An earlier version of `_ungrounded_runs` stripped *every* sentence's
+    first word unconditionally, on the reasoning that capitalisation there is
+    just English grammar. That reasoning does not hold when the model's
+    second sentence opens with a bare invented name rather than an ordinary
+    word -- nothing distinguished the two, so "Kirk" here was silently
+    exempted and the reply was accepted. `_SENTENCE_OPENERS` is what closes
+    this: "Kirk" is not on that list, so it is checked like any other run.
+    """
+    writer = _writer("Zefram Cochrane perfected it. Kirk later commanded the ship.")
+
+    assert await writer.write("Warp drive", ANCHORS) is None
+
+
+async def test_a_legitimate_second_sentence_opener_is_still_accepted():
+    """The other direction of the same fix, so it isn't a one-way ratchet.
+
+    Blurbs are two sentences by design, and English routinely opens a second
+    sentence with an ordinary word rather than a name. If closing the hole
+    above meant refusing this too, the fix would trade a false accept for a
+    false refuse on nearly every real reply -- this is the test that would
+    catch that trade.
+    """
+    writer = _writer("Zefram Cochrane invented it. Follow the story of the Warp drive.")
+
+    assert await writer.write("Warp drive", ANCHORS) is not None
