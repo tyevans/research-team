@@ -78,8 +78,6 @@ def _svg_for(slug: str, category: CategoryKey) -> str:
     """
     digest = sha256(slug.encode("utf-8")).digest()
     base, accent = _palette_for(category)
-    hue = digest[0] / 255
-    accent_tint = _hsl(hue, 0.55, 0.62) if accent.startswith("hsl") else accent
     cx = 16 + (digest[1] % 33)  # 16..48, kept off the tile's edge
     cy = 16 + (digest[2] % 33)
     size = 14 + (digest[3] % 20)  # 14..33
@@ -88,7 +86,7 @@ def _svg_for(slug: str, category: CategoryKey) -> str:
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
         f'<rect width="64" height="64" fill="{base}"/>'
         f'<rect x="{cx - size / 2}" y="{cy - size / 2}" width="{size}" height="{size}" '
-        f'fill="{accent_tint}" transform="rotate({rotation} {cx} {cy})"/>'
+        f'fill="{accent}" transform="rotate({rotation} {cx} {cy})"/>'
         "</svg>"
     )
 
