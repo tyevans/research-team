@@ -112,7 +112,37 @@ const AXE_OPTIONS: axe.RunOptions = {
  * is how a deliberate exception gets recorded, and it should carry the argument
  * for why that one is acceptable.
  */
-const KNOWN_CONTRAST_DEBT: readonly string[] = []
+/** The one exception, with its argument, as this file's docstring requires.
+ *
+ * `.ev.future { opacity: 0.34 }` dims the timeline rows *after* the scrub
+ * point -- events that have not happened from where the reader is standing.
+ * Opacity multiplies every descendant, so each row's text lands between
+ * **1.71 and 2.04** against `--bg` -- seven distinct pairs, because each event
+ * kind dims to its own value and the row has three text elements. Measured on 2026-08-23, the first time a
+ * story rendered a scrubbed timeline; the dimming itself predates this series.
+ *
+ * **Not fixed here, and the reason is the difference from the two opacity
+ * states that were.** `--fg-faint`'s and the compaction pane's both had
+ * something else already carrying their meaning -- a text tier and a fold
+ * label -- so the opacity was redundant as well as harmful. This one is the
+ * *only* signal that a row is in the future. Removing it loses the
+ * distinction; raising it far enough to clear 4.5 stops it reading as dimmed
+ * at all. Either way the answer is a new way to say "not yet", which is a
+ * design decision rather than a contrast fix, and B145 is where it is asked.
+ *
+ * Recorded rather than tolerated silently: these rows stay clickable, so they
+ * are not WCAG's "inactive user interface component" exception, and this list
+ * is exact in both directions -- fixing them without deleting this entry fails
+ * the same assertion. */
+const KNOWN_CONTRAST_DEBT: readonly string[] = [
+  '#274d39 on #0b0d10',
+  '#2a3d46 on #0b0d10',
+  '#323941 on #0b0d10',
+  '#403860 on #0b0d10',
+  '#40454b on #0b0d10',
+  '#505459 on #0b0d10',
+  '#5a302f on #0b0d10',
+]
 
 /** What the sweep saw, so a claim can be made about whether it saw anything.
  *

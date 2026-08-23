@@ -110,6 +110,26 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
 
   const atHead = scrub.kind === 'head'
 
+  /** Where each log entry sits in the grid's row numbering, 0-based.
+   *
+   * Not the array offset: a failed turn with provisional content renders a
+   * detail row beneath itself, so every entry after one is a row further down
+   * than its position in `log`. `aria-rowindex` is 1-based, so the row itself
+   * gets `at[i] + 1` and its detail row `at[i] + 2`.
+   *
+   * Computed here rather than in the row because only the grid can see the
+   * entries before this one -- which is the reason the numbers were wrong for
+   * as long as the detail row was an unwrapped sibling nobody counted. */
+  const rowNumbers = ((): { at: readonly number[]; total: number } => {
+    const at: number[] = []
+    let next = 0
+    for (const entry of log) {
+      at.push(next)
+      next += (discarded.get(entry.index)?.length ?? 0) > 0 ? 2 : 1
+    }
+    return { at, total: next }
+  })()
+
   return (
     /* The grid is not itself a tab stop, and that is correct: this is a roving
        tabindex, so exactly one row carries `tabIndex={0}` and the rest carry
@@ -132,7 +152,10 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
       role="grid"
       id="timeline-grid"
       aria-label="event timeline"
-      aria-rowcount={log.length + 1}
+      // Detail rows count. A failed turn carrying provisional content renders a
+      // full-width row beneath its event, so the total is not `log.length` and
+      // the rows after one are not at their array offset -- see `rowNumbers`.
+      aria-rowcount={rowNumbers.total + 1}
       aria-colcount={2}
       onKeyDown={onKeyDown}
     >
@@ -143,7 +166,8 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
             key={entry.index}
             ref={selected ? selectedRef : undefined}
             entry={entry}
-            position={position}
+            position={rowNumbers.at[position] ?? position}
+            detailRowIndex={(rowNumbers.at[position] ?? position) + 2}
             selected={selected}
             cursor={selected ? column : null}
             future={scrub.kind === 'historical' && entry.index > scrub.at}
@@ -165,7 +189,12 @@ export const Timeline = ({ log, scrub, fresh, discarded, onSelect, onFork }: Tim
         className={clsx('head-marker', atHead && 'selected')}
         role="row"
         id="ev-head"
-        aria-rowindex={log.length + 1}
+        // `rowNumbers.total`, not `log.length`: a failed turn with provisional
+        // content adds a detail row above this one, and this marker is always
+        // last. It read `log.length + 1` until 2026-08-23, which duplicated
+        // the detail row's index on any log that had one -- caught by the
+        // contiguity assertion in `timeline-stories.test.tsx`, not by eye.
+        aria-rowindex={rowNumbers.total + 1}
         aria-selected={atHead}
         tabIndex={atHead ? 0 : -1}
         ref={atHead ? selectedRef : undefined}
@@ -187,6 +216,7 @@ const TimelineRow = ({
   ref,
   entry,
   position,
+  detailRowIndex,
   selected,
   cursor,
   future,
@@ -197,7 +227,12 @@ const TimelineRow = ({
 }: {
   ref?: React.Ref<HTMLDivElement> | undefined
   entry: LogEntry
+  /** This row's 1-based `aria-rowindex`. Passed in rather than derived from the
+   *  array offset, because a failed turn adds a detail row beneath itself and
+   *  every row after it shifts by one. */
   position: number
+  /** The detail row's own index, one past this row's. */
+  detailRowIndex: number
   selected: boolean
   /** Which cell the column cursor is on, or `null` on every row that is not
    *  the selected one. Threaded down rather than left in the grid's state
@@ -290,7 +325,30 @@ const TimelineRow = ({
           </button>
         </div>
       </div>
-      {discarded && discarded.length > 0 ? <Discarded entries={discarded} /> : null}
+      {/* A full-width detail row, and the wrapper is what makes it legal.
+          `role="grid"` requires every child of the grid to be a `row`, and this
+          block is a sibling of the row above rather than a child of it -- so
+          without this it is a stray element inside a grid, which is what
+          `aria-required-children` reports.
+
+          It shipped that way and nothing caught it, because a timeline only
+          grows one of these when a turn has *failed with provisional content*,
+          which no test and no story had ever rendered. Found on 2026-08-23 by
+          giving `Timeline` a story that includes the case; the axe sweep named
+          it immediately.
+
+          Its own row rather than a third cell on the event's row: `.ev` is a
+          flex row, this block is full width beneath it, and a detail row is
+          the pattern grids use for exactly that. `rowIndex` is threaded from
+          the grid so the numbering stays continuous through the interleaved
+          rows, which is the half a reviewer would not think to check. */}
+      {discarded && discarded.length > 0 ? (
+        <div className="ev-detail" role="row" aria-rowindex={detailRowIndex}>
+          <div role="gridcell" aria-colindex={1}>
+            <Discarded entries={discarded} />
+          </div>
+        </div>
+      ) : null}
     </>
   )
 }
