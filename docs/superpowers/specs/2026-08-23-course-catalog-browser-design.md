@@ -176,6 +176,21 @@ the graph's own grouping edges are weak here: 470 `is_a`/`member_of` edges over
 `Rotten Tomatoes` and `Variety`. Those are franchises and review aggregators,
 not classes. Grouping on them today would produce a "Rotten Tomatoes" category.
 
+**Corrected later the same day, and the correction matters more than the
+original.** The sweep was then run. Measured 2026-08-23, after it: 37 of 37
+extracted documents examined across three projects, 15 classes and 97
+memberships in total — but the Star Trek project yielded **3 classes from 11
+documents over 5,462 entities**, two of them the same name ("television series")
+from different sources.
+
+So the conclusion above stands and the reason for it changes. The ontology is
+not unusable because nobody ran it; it is unusable because it is thin, and
+because it would need cross-source class merging before it could group
+anything. Anyone reading the pre-sweep paragraph alone would draw the right
+conclusion from the wrong evidence, which is the failure mode `CLAUDE.md`
+records under *Events* — a comment describing a defect in the voice of a
+decision, cited afterwards as established fact.
+
 So the ontology is a *better* source that is not ready. The port exists so it
 can replace the plurality grouper without the browser changing.
 
