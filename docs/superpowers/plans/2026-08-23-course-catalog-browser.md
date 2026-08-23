@@ -887,7 +887,7 @@ class CategoryGrouper(Protocol):
     So this exists so the ontology can replace the implementation without the
     browser changing. Per CLAUDE.md, a port with exactly one production adapter
     needs a test driving *both ends over real data* -- see
-    `test_a_catalog_over_a_real_ingest_has_more_than_one_category`.
+    `test_a_catalog_over_a_real_ingest_has_cards_in_more_than_one_category`.
     """
 
     def group(self, areas: Sequence[LearningArea]) -> Mapping[str, CategoryKey]:
