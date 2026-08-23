@@ -631,6 +631,51 @@ strength of one gate is a bigger decision than the finding supports. A middle
 option worth considering: run the browser suite in CI on changes touching
 `src/styles/**` or `presentation/layout/**` only.
 
+### B145. Scrubbed-past timeline rows sit at 1.7:1
+
+`.ev.future { opacity: 0.34 }` dims the timeline rows after the scrub point --
+events that have not happened from where the reader is standing. Opacity
+multiplies every descendant, so each row's text lands between **1.71 and
+2.04** against `--bg`. Seven distinct failing pairs, because each event kind
+dims to its own value and a row has three text elements.
+
+Measured on 2026-08-23, the first time any story rendered a scrubbed timeline.
+The dimming predates this series; nothing had looked at it because the case
+had no page.
+
+**They are not WCAG's "inactive user interface component" exception.** A
+future row is still clickable -- scrubbing forward to it is the whole point of
+the column -- so the 4.5 bar applies.
+
+Recorded in `a11y.browser.test.tsx`'s `KNOWN_CONTRAST_DEBT` rather than fixed,
+and the difference from the two opacity states that *were* fixed is the reason:
+
+- `--fg-faint`'s and the compaction pane's both had something else already
+  carrying their meaning -- a text tier and a fold label -- so removing the
+  opacity lost nothing. The compaction one was actively contradicting the
+  sentence above it.
+- This one is the **only** signal that a row is in the future. Remove it and
+  the distinction goes; raise it far enough to clear 4.5 and it stops reading
+  as dimmed at all.
+
+So the answer is a different way to say "not yet", and that is a design
+decision rather than a contrast fix. Options, none obviously right:
+
+- **A left-rail treatment.** The row already has `.ev-rail`; a hollow or
+  dashed rail past the scrub point would carry "future" at full text contrast.
+  Costs a second meaning on an element that currently only shows kind.
+- **A background wash rather than a foreground dim.** Keeps every text colour
+  and moves the signal to the surface. Costs contrast headroom on the
+  *lightest* rows, so it needs the same arithmetic `--fg-faint` got.
+- **Keep the dim and accept the debt**, on the argument that a reader scrubbed
+  into the past is being shown the future as context rather than as content.
+  That is a real position; it should be taken deliberately rather than by
+  default, which is what the entry in `KNOWN_CONTRAST_DEBT` now forces.
+
+The list is exact in both directions, so *fixing* this without deleting the
+entry fails the same assertion -- the inventory cannot rot toward either
+optimism or pessimism.
+
 ### B144. A toast makes the material tabs unclickable
 
 Measured in Chromium at 1265px on 2026-08-23, by driving the real console

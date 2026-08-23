@@ -88,6 +88,24 @@
 }
 /* Overlaid rather than laid out, so the action costs the log no width. The
    grid roles are unaffected -- ARIA structure does not depend on positioning. */
+/* The detail row that carries a failed turn's discarded content.
+   No dressing of its own -- `.discarded` inside it keeps everything it had.
+   This wrapper exists for the accessibility tree rather than for the eye: a
+   `role="grid"` may only contain rows, and this block used to sit inside the
+   grid as a bare sibling of the event row, which is what
+   `aria-required-children` reports.
+
+   A plain block rather than `display: contents`, which was tried first and
+   rejected. `contents` would make the wrapper add no box at all, which is
+   tempting for a purely structural element -- but it has a documented history
+   of dropping elements out of the accessibility tree, and dropping *this* one
+   would delete the row whose only purpose is to be in that tree. The wrapper
+   inherits the timeline's flex column and the block inside it is full width,
+   so the rendered result is what it was regardless. */
+.ev-detail {
+  display: block;
+}
+
 .ev-cell-act {
   position: absolute;
   right: 6px;
