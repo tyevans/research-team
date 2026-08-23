@@ -128,7 +128,11 @@
   --color-k-file: #5ec98a;
   --color-k-turn: #7e8b9b;
   --color-k-failure: #f4736b;
-  --color-k-compaction: #5f7d8c;
+  /* Raised with `--k-compaction` in `tokens.css`, where the arithmetic is.
+     Short version: #5f7d8c was 4.2:1 on the compaction pane and 4.45 on
+     `--bg` -- below AA on every surface -- and the grey-ward lift that fixes
+     it collapses the gap to `--k-turn`. #679aae goes blue-ward instead. */
+  --color-k-compaction: #679aae;
 
   /* Chip and box tints. */
   --color-tint-session: #1a1630;

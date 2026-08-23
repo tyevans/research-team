@@ -95,7 +95,24 @@
   --k-file: #5ec98a;
   --k-turn: #7e8b9b;
   --k-failure: #f4736b;
-  --k-compaction: #5f7d8c;
+  /* #5f7d8c until 2026-08-23, when the axe sweep reached the compaction pane
+     for the first time and reported 4.2:1 -- below AA, and below it on *every*
+     surface rather than an unlucky one: 4.2 on the pane's own #0f1519 and 4.45
+     on `--bg`. `.compaction-title` is `--t-xs` uppercase, so 4.5 is the bar.
+     Same shape as the `--fg-faint` finding this file already records.
+
+     The obvious lift is toward grey and it is the wrong direction. This token's
+     nearest neighbour in the kind palette is `--k-turn` (#7e8b9b), already only
+     37.2 apart in RGB, and every grey-ward candidate that clears AA halves that
+     -- #6d8d9d lands 17.2 away, which is two legend colours a reader cannot
+     tell apart. That is the hierarchy collapse the `--fg-dim` note above
+     describes, arriving in the kind palette instead of the text tiers.
+
+     #679aae moves toward blue instead. Measured: 5.97 on #0f1519, 6.31 on
+     `--bg`, 5.31 on `--bg-raise`, and 33.4 from `--k-turn` -- clear of AA on
+     every surface this console paints, with the separation essentially intact.
+     `a11y.browser.test.tsx` fails if it drifts back. */
+  --k-compaction: #679aae;
 
   /* Chip and box tints. Each of these was written out twice already -- once in
      `tree.css` for a chip and once in `states.css` for the error box -- so the
