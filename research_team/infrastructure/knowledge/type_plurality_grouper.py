@@ -54,6 +54,9 @@ class TypePluralityGrouper:
     def group(self, areas: Sequence[LearningArea]) -> Mapping[str, CategoryKey]:
         return {area.slug: self._key_for(area) for area in areas}
 
+    def label_for(self, key: CategoryKey) -> str:
+        return CATEGORY_LABELS.get(key, key)
+
     @staticmethod
     def _key_for(area: LearningArea) -> CategoryKey:
         anchors = area.anchors

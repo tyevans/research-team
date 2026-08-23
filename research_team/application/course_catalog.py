@@ -12,7 +12,17 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from research_team.domain.course_catalog import ArtRef, CategoryKey
+from research_team.application.curriculum import Curriculum
+from research_team.domain.course_catalog import (
+    ArtRef,
+    Blurb,
+    CatalogSections,
+    Category,
+    CategoryKey,
+    CourseCandidate,
+    membership_hash,
+    prominence_of,
+)
 from research_team.domain.learning_area import AreaMember, LearningArea
 
 
@@ -48,6 +58,20 @@ class CategoryGrouper(Protocol):
     def group(self, areas: Sequence[LearningArea]) -> Mapping[str, CategoryKey]:
         """Every area's slug mapped to its category. Total: an area that comes
         in must come out, or the catalog silently loses courses."""
+        ...
+
+    def label_for(self, key: CategoryKey) -> str:
+        """The display label for one category key.
+
+        Lives on the port rather than in the catalog assembler: the label
+        table is a fact about *this* grouper's vocabulary, and an application
+        layer that imported `type_plurality_grouper.CATEGORY_LABELS` directly
+        to build one would be reaching into `infrastructure`, which
+        `tests/test_architecture.py` forbids. Falling back to the key itself
+        for one it does not recognise is a requirement on every
+        implementation of this port, not just the default one -- an unlisted
+        key is ugly and correct, and a made-up label would be neither.
+        """
         ...
 
 
@@ -123,3 +147,147 @@ class BlurbCachePort(Protocol):
         model: str,
         generated_at: datetime,
     ) -> None: ...
+
+
+@dataclass(frozen=True)
+class Catalog:
+    """The assembled catalog for one project, ready to render.
+
+    `unplaceable_featured` is reported rather than silently dropped -- a slug
+    is derived from an area's top anchor, so re-clustering can move it, and
+    curation work that vanishes without a trace is worse than curation work
+    that is visibly stranded. `derived_from` is the projection's own counts,
+    carried through so a stale catalog is as detectable as a stale
+    curriculum: see `AreaProjection`'s own reasoning for why the counts travel
+    with anything derived from it.
+    """
+
+    sections: CatalogSections
+    categories: Mapping[CategoryKey, str]
+    unplaceable_featured: tuple[str, ...]
+    derived_from: tuple[int, int]
+
+
+HERO_SIZE = 5
+"""How many candidates lead the catalog. A layout choice, not a finding --
+picked to fill one row of hero cards at the console's current width, and
+revisited if the hero component's own sizing changes."""
+
+HIGHLIGHTS_SIZE = 8
+"""How many candidates follow the hero before the rest fall into their
+categories. Also a layout choice: enough for a second band a reader scans
+before descending into `filed`, no more considered than that."""
+
+
+class CatalogService:
+    """Turns a curriculum into three ranked, categorised sections.
+
+    Takes an already-built `Curriculum` rather than the ports that build one
+    -- `CurriculumService` already caches per-graph counts, and rebuilding a
+    projection inside this call would run a clustering pass per catalog view
+    rather than per graph.
+    """
+
+    def __init__(
+        self, *, grouper: CategoryGrouper, art: ArtPort, blurbs: BlurbCachePort
+    ) -> None:
+        self._grouper = grouper
+        self._art = art
+        self._blurbs = blurbs
+
+    async def build(
+        self,
+        project_id: UUID,
+        curriculum: Curriculum,
+        featured: Mapping[str, int],
+    ) -> Catalog:
+        areas = curriculum.projection.areas
+        by_slug = {a.slug: a for a in areas}
+        category_of = self._grouper.group(areas)
+
+        unplaceable = tuple(sorted(slug for slug in featured if slug not in by_slug))
+
+        candidates: dict[str, CourseCandidate] = {}
+        for area in areas:
+            slug = area.slug
+            category = category_of.get(slug, "unclassified")
+            cached = await self._blurbs.get(project_id, slug)
+            blurb = None
+            if cached is not None:
+                blurb = Blurb(
+                    text=cached.text,
+                    membership_hash=cached.membership_hash,
+                    generated_at=cached.generated_at,
+                )
+            candidates[slug] = CourseCandidate(
+                slug=slug,
+                title=area.display_name(),
+                category=category,
+                prominence=prominence_of(area),
+                size=area.size,
+                membership_hash=membership_hash(area),
+                anchors=area.anchors,
+                art=self._art.for_candidate(slug, category),
+                blurb=blurb,
+                featured_rank=featured.get(slug),
+            )
+
+        # Featured candidates are pinned ahead of everything else, ordered by
+        # curator-assigned rank; the remainder falls through to the derived
+        # prominence order. Slug is the tiebreak in both sorts -- two
+        # candidates of equal prominence, or two featured entries of equal
+        # rank, must order identically on every run over an unchanged graph,
+        # or cards move between sections for no reason and it reads as
+        # flakiness.
+        featured_slugs = [
+            slug for slug in candidates if candidates[slug].featured_rank is not None
+        ]
+        featured_slugs.sort(key=lambda slug: (candidates[slug].featured_rank, slug))
+
+        remaining_slugs = [
+            slug for slug in candidates if candidates[slug].featured_rank is None
+        ]
+        remaining_slugs.sort(key=lambda slug: (-candidates[slug].prominence, slug))
+
+        ordered_slugs = featured_slugs + remaining_slugs
+        ordered = [candidates[slug] for slug in ordered_slugs]
+
+        hero = tuple(ordered[:HERO_SIZE])
+        highlights = tuple(ordered[HERO_SIZE : HERO_SIZE + HIGHLIGHTS_SIZE])
+        filed_slugs = ordered_slugs[HERO_SIZE + HIGHLIGHTS_SIZE :]
+
+        # Every area not in hero or highlights lands in exactly one category's
+        # `candidates`, so a candidate is never listed twice. But a category
+        # itself is seeded for *every* key the grouper produced over the
+        # whole curriculum, not only the keys still holding a leftover
+        # candidate -- a small category whose one or two areas both got
+        # promoted to hero would otherwise disappear from the browse list
+        # entirely rather than show up empty, and a reader has no way to
+        # know the difference between "this category does not exist" and
+        # "everything in it is already above the fold".
+        by_category: dict[CategoryKey, list[CourseCandidate]] = {
+            key: [] for key in category_of.values()
+        }
+        for slug in filed_slugs:
+            by_category.setdefault(candidates[slug].category, []).append(candidates[slug])
+
+        filed = tuple(
+            Category(
+                key=key,
+                label=self._grouper.label_for(key),
+                candidates=tuple(members),
+            )
+            for key, members in sorted(by_category.items())
+        )
+        categories = {category.key: category.label for category in filed}
+
+        sections = CatalogSections(hero=hero, highlights=highlights, filed=filed)
+        return Catalog(
+            sections=sections,
+            categories=categories,
+            unplaceable_featured=unplaceable,
+            derived_from=(
+                curriculum.projection.entity_count,
+                curriculum.projection.relationship_count,
+            ),
+        )
