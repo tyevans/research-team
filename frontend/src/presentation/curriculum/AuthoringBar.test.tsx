@@ -241,11 +241,20 @@ describe('AuthoringBar downloads', () => {
     // fewer courses than it was asked for, and those courses exist -- so the
     // download is offered, over exactly what was written. The export refusing
     // mid-run is about a run *in flight*, not about a run that ended early.
+    //
+    // Both formats, named exactly. This assertion was written when the bar
+    // offered one archive and matched on `/download all courses/i`, which
+    // became ambiguous the moment a second format arrived beside it -- the
+    // failure was a duplicate match, not a missing link.
     show(stopped())
 
-    expect(screen.getByRole('link', { name: /download all courses/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /download all courses \(\.zip\)/i })).toHaveAttribute(
       'href',
       '/export/course',
+    )
+    expect(screen.getByRole('link', { name: /download all courses \(\.html\)/i })).toHaveAttribute(
+      'href',
+      '/export/course?format=html',
     )
   })
 })
