@@ -167,15 +167,37 @@ async def test_a_run_interrupted_by_a_restart_reports_interrupted_and_keeps_its_
     forever. It is not `failed` either: the targets it did author exist, and
     this asserts their session ids come back.
 
-    The run is left mid-flight by holding the third target on a gate and then
+    The run is left mid-flight by letting exactly two targets finish and then
     closing the application without waiting, which is what a `kill -9` looks
     like from the log's point of view: a start event, two authored events, and
     no settle.
     """
     first = await _application(db_file)
     author = StubAuthor()
-    author.gate = asyncio.Event()
-    author.gate.set()
+    # Two permits rather than a gate, and this is a fix rather than a style
+    # choice. The gate version set the event, waited for `sessions` to reach 2
+    # and then cleared it -- which leaves a window between the second target
+    # recording its session and the clear taking effect, and the third target
+    # only has to pass `gate.wait()` inside that window to finish. Then the run
+    # settles, and `status` reads `done` where this asserts `interrupted`.
+    #
+    # Observed on CI at 5b08f66 and 0ecfb16 as `assert 'done' == 'interrupted'`,
+    # and *not* reproducible locally: eight runs of the unmodified test on this
+    # machine all passed. That direction is the tell and is why this is a race
+    # rather than a wrong expectation -- the failure needs a wider window than a
+    # quiet machine gives it, which is exactly what `StubAuthor.permits`
+    # documents about the cancel test that tried an event first and "failed on
+    # CI where the window is wider".
+    #
+    # A semaphore has no window. The third target blocks in `acquire()` before
+    # it can do anything, however the scheduler interleaves, so the precondition
+    # is established by construction instead of by observation.
+    #
+    # Still measuring what it says it measures: released to `Semaphore(3)` the
+    # run finishes and this fails at the `interrupted` assertion. So the two is
+    # load-bearing and the test is not green because interruption is the
+    # default answer.
+    author.permits = asyncio.Semaphore(2)
     try:
         project_id = await _project(first)
         activity = _activity(first)
@@ -185,11 +207,10 @@ async def test_a_run_interrupted_by_a_restart_reports_interrupted_and_keeps_its_
             lambda _run_id, target: author._one(target),
             kind="path",
         )
-        # Let the first two through, then shut the gate so the third never
-        # completes and no settle is ever appended.
+        # Waiting for the two that were permitted, not racing to stop a third.
+        # The third cannot proceed regardless of how long this takes.
         while len(author.sessions) < 2:
             await asyncio.sleep(0.01)
-        author.gate.clear()
         await first.authoring.caught_up()
     finally:
         await first.close()
