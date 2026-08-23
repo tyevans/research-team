@@ -45,7 +45,7 @@ Seven defects, none of which needed a new framework.
 | 5 | **The accent stayed on a disabled button.** Introduced by fixing (1): `.btn-accent` fills where `.cmp-btn.primary` outlined, so after grading the loudest control was the dead one. | #248 |
 | 6 | **A story fixture gave five sessions one id prefix**, teaching that the id column carries nothing. | #248 |
 | 7 | **`.toast` was the one animation without a reduced-motion guard** — and it is the console's only *unrequested* motion. | #250 |
-| 8 | **A toast makes five of the eleven material tabs unclickable.** Hit-tested, not eyeballed: `elementFromPoint` returns the toast. Filed as B144 rather than fixed, because the fix is a design choice. | B144 |
+| 8 | **A toast makes five of the eleven material tabs unclickable**, and the ask route's header buttons too. Hit-tested, not eyeballed. Filed as B144: every corner collides with something on some route, so there is no one-line fix. | B144 |
 
 Finding 8 is the one that needed the *running application*. Every toast story
 in the gallery renders the stack over a page; this is the stack over the

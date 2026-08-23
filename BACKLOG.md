@@ -658,19 +658,51 @@ its text.
 the toast still up -- 3800ms for `good`, 7000ms for `bad`. A reader who
 reaches for Graph in that window gets nothing and no explanation.
 
-Not fixed here, because the fix is a design choice and both options give
-something up:
+**Every corner collides with something on some route**, which is the finding
+that turns this from a one-line fix into a decision. Measured at 1265x917 on
+2026-08-23 by walking three routes and listing every interactive element in
+the stack's column:
 
-- **Move the stack to the bottom right.** Removes the whole class of problem
-  -- nothing interactive is bottom-right on any route -- and is what most
-  consoles do for exactly this reason. It costs the top-right placement
-  `states.css` chose, and `Toasts.tsx`'s F6 argument would want re-reading
-  (the key still works; "the end of the document" is still where the region
-  is).
-- **Push the stack below the sub-header.** Keeps the placement. But the tab
-  strip is page content rather than fixed chrome, so the offset would have to
-  be either page-specific or large enough for the tallest sub-header on any
-  route, which wastes the space on every route that has none.
+    route      top-right (y<200)                    bottom-right (y>H-200)
+    landing    search input           128-158       nothing
+    project    5 material tabs         44-66        nothing
+    ask        Project/Ask/New chat    65-95        composer 811-872,
+                                                    Ask button 878-907
+
+So:
+
+- **Top-right at 54 (today)** hits the project tabs *and* the ask route's
+  header buttons. The ask collision is a second instance of this defect that
+  the original report missed.
+- **Top-right at 76**, which clears the project tabs, still hits the ask
+  header (65-95) and makes the landing collision *worse*: two toasts move from
+  overlapping the search input by 5px to overlapping it by 27px.
+- **Bottom-right** is clear on landing and project, and hits the ask route's
+  send button.
+
+The placement itself is not a defended decision, which is worth knowing before
+treating it as one: it dates to #32, the original standalone-console commit,
+and carries no comment in a file where every other choice is argued in place.
+The project page's tab strip did not exist then. So this is a collision
+between an unargued default and surfaces added later, rather than a
+disagreement with anyone.
+
+Three ways out, and the third is the one worth thinking about hardest:
+
+- **Pick the least-bad corner.** Bottom-right collides with one control on one
+  route rather than five on another, and that route's send button is reachable
+  by Enter. Cheap, and leaves a known collision in place.
+- **Offset per route.** Correct everywhere and couples the toast stack to
+  every page's chrome height -- a `--chrome-h` the routes set. That is a new
+  contract for one control.
+- **Stop the toast intercepting clicks at all.** `.toasts` is already
+  `pointer-events: none`; `.toast` sets it back to `auto`. Making the *body*
+  transparent to pointers and keeping `auto` only on the close button removes
+  the entire class of problem at any position. What it costs is hover-to-hold
+  -- `Toasts.tsx` argues the `holds` counter at length, and it exists so a
+  toast does not expire while somebody is reading it -- and text selection.
+  Whether a transient non-modal notice should be blocking clicks in the first
+  place is the real question, and it is the one nobody has been asked.
 
 Whichever wins, the check is cheap and belongs with it: hit-test each tab's
 centre with one toast up. `project-tracks.browser.test.tsx` already measures
