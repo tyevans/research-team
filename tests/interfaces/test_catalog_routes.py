@@ -35,7 +35,7 @@ from eventsource.application.subscriptions import SubscriptionConfig, Subscripti
 from httpx import ASGITransport, AsyncClient
 from redstring import Entity, ExtractionMethod, Provenance, Relationship
 
-from research_team.application.course_catalog import CatalogService
+from research_team.application.course_catalog import CachedBlurb, CatalogService
 from research_team.application.curriculum import CurriculumService
 from research_team.composition import build_application
 from research_team.infrastructure.knowledge.catalog_recorder import (
@@ -60,6 +60,43 @@ class _NoBlurbs:
 
     async def get(self, project_id, slug):
         return None
+
+    async def put(self, *args, **kwargs) -> None:  # pragma: no cover -- never called here
+        raise AssertionError("nothing in this module generates a blurb")
+
+
+STALE_MEMBERSHIP_HASH = "0" * 16
+"""Never a real `membership_hash` -- those are `sha256(...)[:16]` over the
+current membership, and this fixed string is not derived from anything.
+Standing in for "a blurb written from a membership that has since changed",
+without needing to seed one, re-cluster the graph, and cache a real blurb
+against the old state."""
+
+
+class _OneStaleBlurb:
+    """A `BlurbCachePort` that answers one fixed slug with a blurb written
+    from a membership that is not the candidate's current one.
+
+    Exists for exactly one test: proving the candidate's own
+    `membershipHash` and its blurb's `membershipHash` travel on the wire as
+    two independently-readable fields, which is the whole point of carrying
+    both (see `candidate_view`'s comment). A cache that always returned
+    `None`, as `_NoBlurbs` does, cannot exercise that -- there would be no
+    blurb hash on the wire to compare against.
+    """
+
+    def __init__(self, slug: str) -> None:
+        self._slug = slug
+
+    async def get(self, project_id, slug):
+        if slug != self._slug:
+            return None
+        return CachedBlurb(
+            text="a blurb from before",
+            membership_hash=STALE_MEMBERSHIP_HASH,
+            model="test",
+            generated_at=datetime(2020, 1, 1, tzinfo=UTC),
+        )
 
     async def put(self, *args, **kwargs) -> None:  # pragma: no cover -- never called here
         raise AssertionError("nothing in this module generates a blurb")
@@ -229,6 +266,60 @@ async def test_the_catalog_has_a_non_empty_hero_and_a_category(app_and_client):
 
     assert len(body["hero"]) > 0
     assert len(body["categories"]) >= 1
+
+
+async def test_a_candidate_carries_its_own_membership_hash_distinct_from_its_blurbs(
+    app_and_client,
+):
+    """The regression for the dropped field: `candidate_view` once serialised
+    only `blurb.membershipHash` and never the candidate's own, which made
+    staleness uncomputable on the client -- every real blurb reads as
+    permanently stale because there is nothing on the wire to compare it
+    against. Reverting `candidate_view` to omit `"membershipHash"` (leaving
+    only the blurb's) turns this test red with a `KeyError`.
+
+    The stronger assertion this test makes, not merely the field's presence:
+    a candidate's own hash and its cached blurb's hash are independently
+    readable and *differ* here, because the stub blurb below is written from
+    a membership that is not the candidate's current one. That is the exact
+    case the field exists to make visible -- the two hashes travelling as one
+    would still pass a "the field is present" check.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    before = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    slug = before["hero"][0]["slug"]
+
+    # A second app over the same application and the same catalog feature
+    # store, differing only in which `BlurbCachePort` `CatalogService` was
+    # built with -- so this one candidate now has a cached blurb whose hash
+    # is fixed and stale, letting the assertion compare the two hashes rather
+    # than merely check one is a non-empty string.
+    stale_catalog = CatalogService(
+        grouper=TypePluralityGrouper(),
+        art=SeededArtProvider(),
+        blurbs=_OneStaleBlurb(slug),
+    )
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        blob_store=application.blob_store,
+        graphs=application.graphs,
+        curriculum=CurriculumService(),
+        catalog=stale_catalog,
+        catalog_features=app_and_client.features.features,
+        catalog_recorder=app_and_client.features.recorder,
+    )
+    async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as stale:
+        body = (await stale.get(f"/api/projects/{project_id}/catalog")).json()
+
+    (candidate,) = [c for c in body["hero"] if c["slug"] == slug]
+    assert candidate["membershipHash"]
+    assert candidate["blurb"]["membershipHash"] == STALE_MEMBERSHIP_HASH
+    assert candidate["membershipHash"] != candidate["blurb"]["membershipHash"]
 
 
 async def test_an_unwired_catalog_is_503(app_and_client):

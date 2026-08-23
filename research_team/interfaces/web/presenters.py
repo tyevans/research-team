@@ -1442,6 +1442,14 @@ def candidate_view(candidate: CourseCandidate) -> dict[str, Any]:
         "category": candidate.category,
         "prominence": round(candidate.prominence, 3),
         "size": candidate.size,
+        # The cluster's *current* hash, not the blurb's -- kept separate from
+        # `blurb.membershipHash` below on purpose. Staleness is the two read
+        # together: a blurb's hash alone says only what it was written from,
+        # and this field alone says only what the cluster is now. Neither one
+        # by itself lets a client compute anything; the comparison is the
+        # whole reason `CourseCandidate.membership_hash` exists at all (see
+        # its own docstring).
+        "membershipHash": candidate.membership_hash,
         "anchors": [
             {
                 "entity_id": a.entity_id,
