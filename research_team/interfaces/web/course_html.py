@@ -559,9 +559,9 @@ def _absent(what: str, detail: str, href: str | None = None) -> str:
     """A named absence: what is missing, why, and where to see it live.
 
     `presentation/lesson/ExplorerWidget.tsx:81`'s convention, kept
-    deliberately -- name the missing thing, never quote it as empty. An empty box in an exported lesson is
-    indistinguishable from an authoring mistake, and the reader has no way to
-    ask which it was.
+    deliberately -- name the missing thing, never quote it as empty. An empty
+    box in an exported lesson is indistinguishable from an authoring mistake,
+    and the reader has no way to ask which it was.
     """
     link = f' <a href="{esc(href)}">See it on the live project.</a>' if href else ""
     return f'<p class="absent"><strong>{esc(what)}</strong> — {esc(detail)}{link}</p>'
