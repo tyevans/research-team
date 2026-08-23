@@ -208,6 +208,16 @@ class ExtractionQueue:
                     if report is not None:
                         outcome["entities"] = report.entity_count
                         outcome["relationships"] = report.relationship_count
+                        # Reported unconditionally rather than only when
+                        # non-zero. A key that appears only on a bad run is a
+                        # key nobody builds a habit of reading, and the
+                        # baseline is the half of this number that matters:
+                        # `unresolved` alone says nothing, `unresolved`
+                        # against `relationships` says whether the prompt is
+                        # landing.
+                        outcome["unresolved"] = report.unresolved_relationships
+                        outcome["date_nodes"] = report.date_nodes
+                        outcome["lifted_dates"] = report.lifted_dates
 
                 self._finished.setdefault(project_id, {})[pending.source_id] = outcome
                 self._running.pop(project_id, None)

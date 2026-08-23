@@ -242,6 +242,28 @@ class IngestReport:
     merges: tuple[MergeRecord, ...] = ()
     consolidation_failures: int = 0
     """Entities whose consolidation raised. The extraction still stands."""
+    unresolved_relationships: int = 0
+    """Edges the model stated between entities it never listed.
+
+    redstring has computed this since before this project existed and nothing
+    here read it, which made one question unanswerable: an ingest with few
+    edges could be a model proposing few, or a model proposing many whose
+    endpoints did not resolve. Those have opposite fixes -- the first is a
+    prompt that is not asking, the second is a prompt asking for edges between
+    things it never asks to be listed -- and they are indistinguishable from
+    the outside, because the output simply has fewer edges either way.
+
+    A ratio, not an absolute: 40 unresolved against 400 resolved is ordinary,
+    and 40 against 4 is the prompt failing."""
+    lifted_dates: int = 0
+    """Dates recovered from entities the model filed as dates."""
+    date_nodes: int = 0
+    """Entities that were a bare date and were removed before mapping.
+
+    Reported rather than merely fixed because the rate is the only signal that
+    a *new* model has started misfiling dates in some way the shape test does
+    not catch. A run where this drops to zero is either a better model or a
+    broken detector, and the two look identical in the graph."""
 
 
 @dataclass(frozen=True)

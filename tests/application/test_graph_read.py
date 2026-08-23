@@ -832,3 +832,134 @@ async def test_a_reader_with_no_ontology_draws_no_classes_and_does_not_fail():
 
     assert len(graph.entities) == 1
     assert graph.relationships == ()
+
+
+class TestDateNodesAreNotDrawn:
+    """Entities that are a date rather than a thing, kept off every read path.
+
+    redstring stopped producing these at extraction time (PR #75) and that
+    fixes nothing for a store already written: events are never rewritten, so
+    the 356 measured against the real database on 2026-08-23 are still there
+    and will be after any rebuild. 335 of them are isolated, which is 335
+    nodes on the canvas bearing a bare date and touching nothing.
+
+    Every test here would pass with `_drawable` reverted to `_without_aliases`
+    if it asserted only that the *request succeeded*, which is the shape
+    `CLAUDE.md` warns about under "An event no projection handles counts as
+    APPLIED". So each one names the entity that must be absent.
+    """
+
+    @pytest.fixture
+    async def graph_with_a_date_node(self, graph_reader):
+        """A real entity, a date-node, and an edge between them -- the exact
+        shape measured in the real database."""
+        _reader, store = graph_reader
+        real_id, date_id = uuid4(), uuid4()
+        await store.upsert_entities(
+            [
+                _entity(real_id, "Star Trek", entity_type="work"),
+                _entity(date_id, "January 1968", entity_type="temporal_expression"),
+            ]
+        )
+        await store.upsert_relationships(
+            [_relationship(uuid4(), real_id, date_id, "temporal_expression")]
+        )
+        return {"real_id": real_id, "date_id": date_id}
+
+    async def test_the_whole_graph_omits_a_date_node(
+        self, graph_reader, graph_with_a_date_node
+    ):
+        reader, _store = graph_reader
+        graph = await reader.whole()
+
+        assert [e.name for e in graph.entities] == ["Star Trek"]
+
+    async def test_the_edge_to_a_date_node_goes_with_it(
+        self, graph_reader, graph_with_a_date_node
+    ):
+        """Not a separate filter -- the existing both-ends-present rule does
+        it, once the node is gone. Asserted anyway because a future refactor
+        that filtered entities *after* resolving edges would leave a dangling
+        edge and pass every other test in this class."""
+        reader, _store = graph_reader
+        graph = await reader.whole()
+
+        assert graph.relationships == ()
+
+    async def test_a_date_node_does_not_count_toward_the_cap(
+        self, graph_reader, graph_with_a_date_node
+    ):
+        """Filtered before the slice, as aliases are. Filtering after would
+        report a complete graph as truncated because of a node nobody was
+        going to see."""
+        reader, _store = graph_reader
+        graph = await reader.whole(limit=1)
+
+        assert [e.name for e in graph.entities] == ["Star Trek"]
+        assert not graph.truncated
+
+    async def test_find_entities_omits_a_date_node(self, graph_reader, graph_with_a_date_node):
+        reader, _store = graph_reader
+        page = await reader.find_entities()
+
+        assert [e.name for e in page.entities] == ["Star Trek"]
+
+    async def test_a_neighborhood_omits_a_date_node(
+        self, graph_reader, graph_with_a_date_node
+    ):
+        reader, _store = graph_reader
+        neighborhood = await reader.neighborhood(str(graph_with_a_date_node["real_id"]))
+
+        assert neighborhood is not None
+        assert [e.name for e in neighborhood.entities] == []
+
+    async def test_a_date_node_cannot_be_the_root_of_a_neighborhood(
+        self, graph_reader, graph_with_a_date_node
+    ):
+        """The root does not pass through `_drawable`, so this needs its own
+        guard, and without it a stale link answers 200 with a neighbourhood
+        centred on `January 1968`."""
+        reader, _store = graph_reader
+
+        assert await reader.neighborhood(str(graph_with_a_date_node["date_id"])) is None
+
+    async def test_a_real_entity_whose_name_parses_as_a_date_is_kept(self, graph_reader):
+        """The guard on the guard.
+
+        `parse_temporal` reads `Borg`, `MIT` and `Sun` as dates, so a filter
+        without redstring's year-or-month anchor deletes them from the canvas.
+        This is the assertion that fails if that anchor is ever dropped
+        upstream, and it fails naming the Borg.
+
+        **Passes with the filter reverted**, necessarily -- an absent filter
+        keeps everything. It guards the filter getting *broader*, which is the
+        direction the other tests in this class cannot see.
+        """
+        _reader, store = graph_reader
+        for name in ("Borg", "MIT", "Sun", "Seven of Nine"):
+            await store.upsert_entities([_entity(uuid4(), name, entity_type="concept")])
+        reader, _store = graph_reader
+
+        graph = await reader.whole()
+
+        assert sorted(e.name for e in graph.entities) == [
+            "Borg",
+            "MIT",
+            "Seven of Nine",
+            "Sun",
+        ]
+
+    async def test_a_dated_entity_with_a_description_is_kept(self, graph_reader):
+        """92 of 286 `event` entities in the real corpus have names that parse
+        as dates and carry descriptions. Those are events the model named
+        badly, not dates it misfiled, and they stay.
+
+        Passes with the filter reverted, for the reason above."""
+        _reader, store = graph_reader
+        entity = _entity(uuid4(), "December 7, 1979", entity_type="event")
+        await store.upsert_entities([entity.model_copy(update={"description": "A premiere."})])
+        reader, _store = graph_reader
+
+        graph = await reader.whole()
+
+        assert [e.name for e in graph.entities] == ["December 7, 1979"]

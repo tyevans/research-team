@@ -84,6 +84,11 @@ dependencies = [
     # 0.10.0 is released -- a git dependency also means every install needs to
     # reach GitHub, which a released wheel does not.
     #
+    # Now also carries `extraction/date_nodes.py`, which this project needs
+    # rather than merely benefits from: `graph_reader` imports `is_date_node`
+    # from it, so a downgrade below this SHA is an ImportError at startup and
+    # not a subtle behaviour change. redstring PR #75, merged and unreleased.
+    #
     # This crosses the `<0.10` cap the line below used to carry, and the cap's
     # reasoning still stands -- a minor is where redstring's breaking renames
     # land. Checked rather than assumed before crossing it: the package root's
@@ -91,7 +96,7 @@ dependencies = [
     # `ThemeReport` and `summarize_themes` added, nothing removed), and its
     # `eventsource-py>=0.14.0,<0.15` is identical to ours, so the two libraries
     # do not have to move together this time.
-    "redstring[llm,neo4j,pgvector] @ git+https://github.com/tyevans/redstring.git@dc9ec27f6d872dd3a55659bed6566fe3e320d92d",
+    "redstring[llm,neo4j,pgvector] @ git+https://github.com/tyevans/redstring.git@9b1df55085e96b35f0915f80135ad20eed60f3f2",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.3",
     # The blob store streams to disk with async file handles rather than

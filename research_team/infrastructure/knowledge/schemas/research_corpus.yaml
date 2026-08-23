@@ -36,6 +36,31 @@
 #      schema enforces output. `research_team/application/name_shape.py`
 #      measures whether they actually stopped or merely changed type.
 
+#   4. Relationship types carry no endpoint constraints and the list is
+#      declared open. Measured against the real database on 2026-08-23: 3,233
+#      relationships, of which **6** used a name outside the declared eight
+#      (`published_in`, `published_by`, `creates`) -- 0.19%. Extraction is not
+#      enum-constrained here (`constrain_to_domain` is redstring's default
+#      `False` and this project never sets it), so nothing was *stopping* the
+#      model naming a relationship. A list of eight rendered as a list of
+#      eight is simply read as exhaustive.
+#
+#      The endpoint constraints were the sharper half. `prompt_generator`
+#      renders them as "(from: person, organization; to: work)", which makes
+#      `created` unstateable between a work and a concept -- so "Star Trek
+#      created the Borg" has no legal form and is dropped rather than renamed.
+#      With 39% of entities isolated and 0.57 edges per entity, an edge the
+#      model declines to state is the failure mode that matters.
+#
+#      What this costs: a free-form vocabulary fragments. `influenced`,
+#      `influences` and `had_influence_on` will all appear and none of them
+#      will group. That is accepted deliberately -- nothing in
+#      `research_team/` or `frontend/src` branches on a relationship id
+#      (checked, 2026-08-23; `graph_reader` synthesises `instance_of` and
+#      deliberately keeps it distinct from `is_a`), so fragmentation costs
+#      legibility rather than correctness, and it is reversible in a way an
+#      unstated edge is not.
+
 # On the dates, both halves of (1) and (2) are needed and neither is
 # sufficient. Removing the entity type only stops the model being *invited*
 # to make date-nodes -- redstring's own
@@ -128,43 +153,27 @@ entity_types:
 relationship_types:
   - id: is_a
     description: Taxonomic or classification relationship
-    valid_source_types: [concept, category, work]
-    valid_target_types: [concept, category]
 
   - id: part_of
     description: Part-whole relationship
-    valid_source_types: [concept, location, organization]
-    valid_target_types: [concept, location, organization]
 
   - id: located_in
     description: Geographic containment
-    valid_source_types: [location, organization, event]
-    valid_target_types: [location]
 
   - id: affects
     description: One thing causes, influences or acts on another
-    valid_source_types: [concept, event, organization, person]
-    valid_target_types: [concept, event, organization, person]
 
   - id: member_of
     description: Membership in an organization
-    valid_source_types: [person, organization]
-    valid_target_types: [organization]
 
   - id: founded_by
     description: Organization founded by a person
-    valid_source_types: [organization]
-    valid_target_types: [person]
 
   - id: created
     description: A person or organization produced a work
-    valid_source_types: [person, organization]
-    valid_target_types: [work]
 
   - id: participated_in
     description: A person or organization took part in an event
-    valid_source_types: [person, organization]
-    valid_target_types: [event]
 
 
 extraction_prompt_template: |
@@ -174,8 +183,25 @@ extraction_prompt_template: |
   Extract the following types of entities:
   {entity_descriptions}
 
-  Extract the following types of relationships:
+  Relationships:
+
+  These are the relationship types this corpus uses most. They are examples,
+  not a closed list:
+
   {relationship_descriptions}
+
+  Use one of these names when it fits. When none of them fits, **name the
+  relationship yourself** -- a short lowercase verb phrase with underscores,
+  drawn from what the text actually says: `commanded`, `succeeded`,
+  `adapted_from`, `discovered`, `destroyed`, `serves_aboard`. A specific name
+  the text supports is better than forcing the nearest listed one, and far
+  better than leaving the relationship out.
+
+  Relate any kind of entity to any other kind. There are no restrictions on
+  which types may appear at which end.
+
+  Prefer stating a relationship to omitting it. If the text says two things
+  are connected and you can name how, record it.
 
   Dates and times:
 

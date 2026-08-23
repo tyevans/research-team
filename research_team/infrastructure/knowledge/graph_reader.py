@@ -12,6 +12,7 @@ from uuid import UUID
 
 from eventsource.domain.tenant_context import tenant_scope
 from redstring import TemporalRelation, infer_relations
+from redstring.extraction.date_nodes import is_date_node
 
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
@@ -271,6 +272,44 @@ class ProjectGraphReader:
         )
         return [entity for entity in entities if canonical[entity.id] == entity.id]
 
+    async def _drawable(self, entities: list[Any]) -> list[Any]:
+        """`entities` with everything that is not a node on a canvas removed.
+
+        Two filters, and the reason they are one method is that they have been
+        applied in three places and adding a third filter to two of them is
+        how the first one got missed. Every read path calls this; none calls
+        `_without_aliases` directly any more.
+
+        **Aliases** are entities a merge absorbed -- see `_without_aliases`.
+
+        **Date-nodes** are entities that are a date rather than a thing:
+        `September 2016`, `the 1990s`. redstring stopped producing them at
+        extraction time (PR #75), and that fixes nothing here, because a store
+        written before it is full of them and events are never rewritten.
+        Measured against the real database on 2026-08-23: **356 of 5,647
+        entities**, none with a description, none with properties, 335 of them
+        isolated -- so the graph view draws 335 nodes bearing a bare date and
+        touching nothing.
+
+        The predicate is redstring's rather than a local copy, for the reason
+        its `_Nameable` protocol exists: two definitions of "this is a date,
+        not a thing" drift, and the one that drifts is the one nobody is
+        measuring. It reads a shape, not `entity_type` -- the same corpus
+        holds date-named nodes filed under `event`, and `entity_type ==
+        "temporal_expression"` would catch this model's spelling and miss the
+        next one's.
+
+        Applied **before the cap**, exactly as the alias filter is and for the
+        identical reason: an entity that was never going to be drawn must not
+        count toward `limit`, or a complete graph reports itself truncated
+        because of nodes nobody would have seen.
+        """
+        return [
+            entity
+            for entity in await self._without_aliases(entities)
+            if not is_date_node(entity)
+        ]
+
     async def find_entities(
         self,
         *,
@@ -309,7 +348,7 @@ class ProjectGraphReader:
             # Before the `name` filter and before the page slice, so the cursor
             # counts only entities a caller can actually be handed. An alias
             # left in and dropped later would make a full page look short.
-            entities = await self._without_aliases(list(entities))
+            entities = await self._drawable(list(entities))
         if name is not None:
             needle = name.strip().lower()
             entities = [entity for entity in entities if needle in entity.name.lower()]
@@ -337,7 +376,7 @@ class ProjectGraphReader:
             # Aliases go before the cap, not after: they are not nodes, so
             # counting them toward `limit` would report a graph as truncated
             # because of entities that were never going to be drawn.
-            entities = await self._without_aliases(list(entities))
+            entities = await self._drawable(list(entities))
             kept = entities[:capped]
             entity_ids = [entity.id for entity in kept]
             # Skipped entirely for an empty graph: an adapter asked for the
@@ -382,7 +421,13 @@ class ProjectGraphReader:
         capped_depth = min(depth, MAX_NEIGHBORHOOD_DEPTH)
         async with tenant_scope(self._project_id):
             root = await self._store.get_entity(root_id, self._project_id)
-            if root is None:
+            # A date-node root answers 404 rather than drawing itself. The
+            # neighbour filter below cannot cover this: the root does not go
+            # through it, so a reader who reached the id from a stale link or
+            # a search result cached before the filter existed would get a
+            # neighbourhood centred on `September 2016`. "Not a node" has to
+            # mean it at every entry point or it means nothing at either.
+            if root is None or is_date_node(root):
                 return None
             neighbors = await self._store.neighbors(
                 root_id, self._project_id, depth=capped_depth
@@ -390,7 +435,7 @@ class ProjectGraphReader:
             # Absorbed entities dropped here, as `whole` already drops them --
             # see `_without_aliases`. Costs one `resolve_entity_ids` round trip
             # per read, which is what `whole` already pays.
-            neighbors = await self._without_aliases(list(neighbors))
+            neighbors = await self._drawable(list(neighbors))
 
             # Every edge among the entities this call is about to return, in
             # one round trip -- resolved over the *result* set (root plus its
