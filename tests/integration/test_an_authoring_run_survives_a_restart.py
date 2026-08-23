@@ -182,12 +182,20 @@ async def test_a_run_interrupted_by_a_restart_reports_interrupted_and_keeps_its_
     # settles, and `status` reads `done` where this asserts `interrupted`.
     #
     # Observed on CI at 5b08f66 and 0ecfb16 as `assert 'done' == 'interrupted'`,
-    # and *not* reproducible locally: eight runs of the unmodified test on this
-    # machine all passed. That direction is the tell and is why this is a race
-    # rather than a wrong expectation -- the failure needs a wider window than a
-    # quiet machine gives it, which is exactly what `StubAuthor.permits`
-    # documents about the cancel test that tried an event first and "failed on
-    # CI where the window is wider".
+    # and *not* reproducible locally: three consecutive runs of the unmodified
+    # test on this machine passed. (The commit that made this change claimed
+    # eight. That is not supportable and is corrected here rather than left:
+    # the loop producing those runs was still going when the file was edited,
+    # so only the first three are provably of the pre-fix code. All eight
+    # passed, across both variants -- which is consistent with the story and
+    # is not the same as evidence for it.)
+    #
+    # That direction is the tell and is why this is a race rather than a wrong
+    # expectation -- the failure needs a wider window than a quiet machine
+    # gives it, which is exactly what `StubAuthor.permits` documents about the
+    # cancel test that tried an event first and "failed on CI where the window
+    # is wider". Three clean local runs against a red CI is enough to say
+    # which of the two it is; it is not enough to put a bigger number on.
     #
     # A semaphore has no window. The third target blocks in `acquire()` before
     # it can do anything, however the scheduler interleaves, so the precondition
