@@ -18,6 +18,7 @@ import { useCourse } from '../course/use-course.ts'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
+import { CatalogPane } from '../curriculum/CatalogPane.tsx'
 import { CurriculumPane } from '../curriculum/CurriculumPane.tsx'
 import { OntologyPane } from '../research/OntologyPane.tsx'
 import { EntityTreePane } from '../research/EntityTreePane.tsx'
@@ -114,6 +115,7 @@ export const regionOf = (facet: Facet): Region => {
       return 'material'
     case 'area':
     case 'path':
+    case 'catalog':
     case 'entity':
     case 'timeline':
     case 'tree':
@@ -218,6 +220,12 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // *after* Timeline rather than beside Graph: an area is a fold over the same
   // material the four readings above draw, so a reader who has not looked at
   // the graph has nothing to check it against.
+  //
+  // The tab id stayed `area` rather than becoming `catalog` when the catalog
+  // became this tab's default: the id is what `MaterialFacet`, `regionOf` and
+  // the tab strip's `value` compare against, and the catalog is reached by
+  // *not* carrying `area` or `path` on the selection (see `materialTab` in
+  // `ProjectView`) rather than by a tab id of its own.
   { id: 'area', label: 'Curriculum' },
 ]
 
@@ -374,11 +382,12 @@ export const ProjectView = ({
   const materialTab: Facet =
     selection?.facet === 'session' && selection.path !== null
       ? 'file'
-      : // `path` is a facet with no tab of its own: it is the Curriculum tab's
-        // second reading, chosen by a toggle inside the pane rather than by the
-        // strip. Mapped here rather than given a tab because eleven tabs is
-        // where the strip stops fitting -- see `MATERIAL_TABS`.
-        selection?.facet === 'path'
+      : // `path` and `catalog` are facets with no tab of their own: both are
+        // readings of the Curriculum tab, chosen by a toggle inside the pane
+        // rather than by the strip. Mapped here rather than given a tab
+        // because eleven tabs is where the strip stops fitting -- see
+        // `MATERIAL_TABS`.
+        selection?.facet === 'path' || selection?.facet === 'catalog'
         ? 'area'
         : selection && regionOf(selection.facet) === 'material'
           ? selection.facet
@@ -492,6 +501,15 @@ export const ProjectView = ({
             // second such facet is ever added.
             if (next === 'session') {
               select(null)
+              return
+            }
+            // The Curriculum tab opens on the catalog, not the area map --
+            // `catalog` is its default reading (see `routes.ts`'s `FACETS`
+            // comment), and `area`/`path` are reached from inside the pane.
+            // Writing `area` here would reopen the analytic map on every
+            // click of a tab whose declared default has moved.
+            if (next === 'area') {
+              select({ facet: 'catalog', id: null })
               return
             }
             select({ facet: next as Exclude<MaterialFacet, 'session'>, id: null })
@@ -705,22 +723,28 @@ export const ProjectView = ({
           </TabPanel>
 
           <TabPanel value="area" className="flex min-h-0 flex-1 flex-col">
-            {/* One pane in two readings, chosen by the facet rather than by a
-                second tab. The two are views of one response, so a second pane
-                would fetch the projection twice and could be answered from two
-                different ones while a project is extracting. */}
-            <CurriculumPane
-              projectId={projectId}
-              reading={selection?.facet === 'path' ? 'path' : 'areas'}
-              selected={
-                selection?.facet === 'area' || selection?.facet === 'path'
-                  ? (selection.id ?? null)
-                  : null
-              }
-              onReading={(reading) =>
-                select({ facet: reading === 'path' ? 'path' : 'area', id: null })
-              }
-            />
+            {/* Three readings behind one tab, chosen by the facet: the
+                catalog (default), and the two analytic readings `area`/`path`
+                that `CurriculumPane` already draws. `catalog` is its own
+                component and its own fetch -- see `CatalogPane`'s own
+                docstring for why folding a third response shape into
+                `CurriculumPane` would be the wrong seam. */}
+            {selection?.facet === 'area' || selection?.facet === 'path' ? (
+              <CurriculumPane
+                projectId={projectId}
+                reading={selection.facet === 'path' ? 'path' : 'areas'}
+                selected={selection.id ?? null}
+                onReading={(reading) =>
+                  select({ facet: reading === 'path' ? 'path' : 'area', id: null })
+                }
+              />
+            ) : (
+              <CatalogPane
+                projectId={projectId}
+                categoryKey={selection?.facet === 'catalog' ? (selection.id ?? null) : null}
+                onCategory={(key) => select({ facet: 'catalog', id: key })}
+              />
+            )}
           </TabPanel>
 
           <TabPanel value="timeline" className="flex min-h-0 flex-1 flex-col">

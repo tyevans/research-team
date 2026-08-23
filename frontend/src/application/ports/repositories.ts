@@ -14,6 +14,7 @@ import type {
 import type { OntologyClass } from '@domain/knowledge/ontology.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Curriculum, LearningArea, LearningPath } from '@domain/knowledge/curriculum.ts'
+import type { Catalog } from '@domain/knowledge/catalog.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
@@ -640,6 +641,24 @@ export interface CurriculumRepository {
    * exist in sessions whose ids are on the log, and the run is recorded as
    * cancelled with them still listed. */
   cancelAuthoring(projectId: ProjectId): Promise<number>
+}
+
+export interface CatalogRepository {
+  /** The front page: hero, highlights, everything else by category, and what
+   *  it was derived from -- matching `CurriculumRepository.curriculum`'s own
+   *  reasoning, an empty catalog and a rich one must not render identically. */
+  catalog(projectId: ProjectId): Promise<Catalog>
+
+  /** Put one candidate on the front page, at `rank`. No precondition that
+   *  `slug` currently names an area -- re-clustering can move or dissolve one
+   *  out from under a feature, and `Catalog.unplaceableFeatured` is where that
+   *  is reported rather than refused here. */
+  feature(projectId: ProjectId, slug: string, rank: number): Promise<void>
+
+  /** Take one candidate off the front page. Accepted even for a slug never
+   *  featured -- there is no aggregate here to enforce a precondition
+   *  against, and a second click doing nothing is not an error. */
+  unfeature(projectId: ProjectId, slug: string): Promise<void>
 }
 
 export interface TimelineRepository {

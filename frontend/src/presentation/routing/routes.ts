@@ -92,6 +92,13 @@ export const FACETS = [
   // its own selection, which is exactly what the grammar is for.
   'area',
   'path',
+  // The Curriculum tab's default reading: the front page a person browses
+  // rather than the analytic map or the ordered path above. Its own facet
+  // rather than `id: null` on `area` -- a category is worth sending to
+  // somebody, and `id` here is a category key, not an area slug, so folding
+  // it into `area` would make one facet's id mean two different kinds of
+  // thing depending on which reading was on screen.
+  'catalog',
   'doc',
   // The corpus's other half: a candidate that has not been accepted into it
   // yet. Its own facet rather than folded into `doc` -- `MediaProposalPane`

@@ -1,0 +1,314 @@
+"""Ports the course catalog depends on and the domain does not decide.
+
+A port lives here rather than in `domain/course_catalog.py` when the decision
+it wraps has more than one defensible implementation and the domain should not
+have to be edited every time a better one arrives. `CategoryGrouper` is the
+first of these.
+"""
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
+from uuid import UUID
+
+from research_team.application.curriculum import Curriculum
+from research_team.domain.course_catalog import (
+    ArtRef,
+    Blurb,
+    CatalogSections,
+    Category,
+    CategoryKey,
+    CourseCandidate,
+    membership_hash,
+    prominence_of,
+)
+from research_team.domain.learning_area import AreaMember, LearningArea
+
+
+class CategoryGrouper(Protocol):
+    """Decides which category each area belongs to.
+
+    A port with one implementation today and a known better one waiting. The
+    ontology is the better source, and it is not ready to carry the category
+    system yet -- measured 2026-08-23 against the real database, a discovery
+    sweep has now run over all three projects (37 of 37 extracted documents
+    examined) and produced 15 classes and 97 memberships in total. But look at
+    one project rather than the total: the Star Trek project alone holds 5,462
+    entities, and the sweep found it only 3 classes -- "television series"
+    (13 members, no declared count), "television series" *again* from a
+    different source (7 of 7), and "Xindi" (6 of 6, a taxonomy). Two of the
+    three classes share a name because they came from different sources, which
+    means the ontology would need cross-source class merging before it could
+    group anything, on top of simply having more classes than three per
+    project.
+
+    Even setting the ontology aside, this corpus's own graph-level grouping
+    edges are weak -- 470 `is_a`/`member_of` edges over 234 targets whose
+    commonest values are `Star Trek`, `The Original Series`, `Rotten Tomatoes`
+    and `Variety`. Grouping on those today produces a "Rotten Tomatoes"
+    category.
+
+    So this exists so the ontology can replace the implementation without the
+    browser changing. Per CLAUDE.md, a port with exactly one production adapter
+    needs a test driving *both ends over real data* -- see
+    `test_a_catalog_over_a_real_ingest_has_cards_in_more_than_one_category`.
+    """
+
+    def group(self, areas: Sequence[LearningArea]) -> Mapping[str, CategoryKey]:
+        """Every area's slug mapped to its category. Total: an area that comes
+        in must come out, or the catalog silently loses courses."""
+        ...
+
+    def label_for(self, key: CategoryKey) -> str:
+        """The display label for one category key.
+
+        Lives on the port rather than in the catalog assembler: the label
+        table is a fact about *this* grouper's vocabulary, and an application
+        layer that imported `type_plurality_grouper.CATEGORY_LABELS` directly
+        to build one would be reaching into `infrastructure`, which
+        `tests/test_architecture.py` forbids. Falling back to the key itself
+        for one it does not recognise is a requirement on every
+        implementation of this port, not just the default one -- an unlisted
+        key is ugly and correct, and a made-up label would be neither.
+        """
+        ...
+
+
+class ArtPort(Protocol):
+    """Produces a card's illustration.
+
+    A port with one throwaway implementation today (`SeededArtProvider`) and a
+    known replacement waiting -- a searchable art library plus a generator, per
+    the increment-3 note on `ArtRef`. The signature is the contract that swap
+    has to preserve: given a slug and its category, return something to look
+    at and something to say about it. Nothing here promises the art is
+    *generated* rather than *selected*, on purpose, so the throwaway
+    implementation and its replacement can differ completely underneath it.
+    """
+
+    def for_candidate(self, slug: str, category: CategoryKey) -> ArtRef:
+        """The art for one candidate. Deterministic in every implementation
+        this port is expected to have -- a catalog whose illustrations
+        reshuffle between requests is not one a reader can recognise a card
+        in, and that constraint belongs on the port, not just on today's
+        adapter."""
+        ...
+
+
+class BlurbTextPort(Protocol):
+    """Turns a candidate's title and anchors into catalog copy, or refuses.
+
+    `None` is a legitimate answer, not an error: a reply that names an entity
+    the cluster does not hold is refused rather than returned, per
+    `blurb_writer.ModelBlurbWriter`'s own docstring for why that refusal is
+    deliberately the conservative side to fail on.
+    """
+
+    async def write(self, title: str, anchors: Sequence[AreaMember]) -> str | None: ...
+
+
+@dataclass(frozen=True)
+class CachedBlurb:
+    """A previously generated blurb, in this layer's own vocabulary.
+
+    Not `CourseBlurbRow`: that type carries `project_id` and `slug` a caller
+    already supplied to fetch it, and importing it here would put
+    `infrastructure.persistence` in a module `tests/test_architecture.py`
+    keeps free of it -- the same reasoning `entity_definitions.Definition`
+    gives for not being `EntityDefinitionRow`.
+    """
+
+    text: str
+    membership_hash: str
+    model: str
+    generated_at: datetime
+
+
+class BlurbCachePort(Protocol):
+    """The stored blurb for one candidate, if one has been generated.
+
+    Backed by `CourseBlurbStore` at composition time -- there is exactly one
+    blurb cache in this system and this port is a view onto it. `slug` alone
+    identifies the candidate; the project is implicit for the reason
+    `DefinitionCachePort` gives for its own: an instance belongs to one
+    project, so a caller cannot reach another project's row by passing a
+    different slug.
+    """
+
+    async def get(self, project_id: UUID, slug: str) -> CachedBlurb | None: ...
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        text: str,
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class Catalog:
+    """The assembled catalog for one project, ready to render.
+
+    `unplaceable_featured` is reported rather than silently dropped -- a slug
+    is derived from an area's top anchor, so re-clustering can move it, and
+    curation work that vanishes without a trace is worse than curation work
+    that is visibly stranded. `derived_from` is the projection's own counts,
+    carried through so a stale catalog is as detectable as a stale
+    curriculum: see `AreaProjection`'s own reasoning for why the counts travel
+    with anything derived from it.
+
+    `sections.filed` holds only leftover candidates -- a category whose every
+    area was promoted to hero or highlights is not represented there at all,
+    per `CatalogService.build`'s reasoning. A future category *page*, browsing
+    by key rather than by the three home-page bands, must not be built by
+    filtering `sections.filed`: doing so would silently drop that category's
+    most prominent courses, the ones good enough to have been promoted out of
+    it. `all_candidates` is the total population for exactly that caller.
+    """
+
+    sections: CatalogSections
+    categories: Mapping[CategoryKey, str]
+    unplaceable_featured: tuple[str, ...]
+    derived_from: tuple[int, int]
+
+    @property
+    def all_candidates(self) -> tuple[CourseCandidate, ...]:
+        """Every candidate in the catalog, wherever it landed.
+
+        For a category route: grouping `sections.filed` alone would omit any
+        area good enough to have been promoted to hero or highlights, which
+        is exactly the area a category page should lead with.
+        """
+        return (
+            *self.sections.hero,
+            *self.sections.highlights,
+            *(c for cat in self.sections.filed for c in cat.candidates),
+        )
+
+
+HERO_SIZE = 5
+"""How many candidates lead the catalog. A layout choice, not a finding --
+picked to fill one row of hero cards at the console's current width, and
+revisited if the hero component's own sizing changes."""
+
+HIGHLIGHTS_SIZE = 8
+"""How many candidates follow the hero before the rest fall into their
+categories. Also a layout choice: enough for a second band a reader scans
+before descending into `filed`, no more considered than that."""
+
+
+class CatalogService:
+    """Turns a curriculum into three ranked, categorised sections.
+
+    Takes an already-built `Curriculum` rather than the ports that build one
+    -- `CurriculumService` already caches per-graph counts, and rebuilding a
+    projection inside this call would run a clustering pass per catalog view
+    rather than per graph.
+    """
+
+    def __init__(
+        self, *, grouper: CategoryGrouper, art: ArtPort, blurbs: BlurbCachePort
+    ) -> None:
+        self._grouper = grouper
+        self._art = art
+        self._blurbs = blurbs
+
+    async def build(
+        self,
+        project_id: UUID,
+        curriculum: Curriculum,
+        featured: Mapping[str, int],
+    ) -> Catalog:
+        areas = curriculum.projection.areas
+        by_slug = {a.slug: a for a in areas}
+        category_of = self._grouper.group(areas)
+
+        unplaceable = tuple(sorted(slug for slug in featured if slug not in by_slug))
+
+        candidates: dict[str, CourseCandidate] = {}
+        for area in areas:
+            slug = area.slug
+            category = category_of.get(slug, "unclassified")
+            cached = await self._blurbs.get(project_id, slug)
+            blurb = None
+            if cached is not None:
+                blurb = Blurb(
+                    text=cached.text,
+                    membership_hash=cached.membership_hash,
+                    generated_at=cached.generated_at,
+                )
+            candidates[slug] = CourseCandidate(
+                slug=slug,
+                title=area.display_name(),
+                category=category,
+                prominence=prominence_of(area),
+                size=area.size,
+                membership_hash=membership_hash(area),
+                anchors=area.anchors,
+                art=self._art.for_candidate(slug, category),
+                blurb=blurb,
+                featured_rank=featured.get(slug),
+            )
+
+        # Featured candidates are pinned ahead of everything else, ordered by
+        # curator-assigned rank; the remainder falls through to the derived
+        # prominence order. Slug is the tiebreak in both sorts -- two
+        # candidates of equal prominence, or two featured entries of equal
+        # rank, must order identically on every run over an unchanged graph,
+        # or cards move between sections for no reason and it reads as
+        # flakiness.
+        featured_slugs = [
+            slug for slug in candidates if candidates[slug].featured_rank is not None
+        ]
+        featured_slugs.sort(key=lambda slug: (candidates[slug].featured_rank, slug))
+
+        remaining_slugs = [
+            slug for slug in candidates if candidates[slug].featured_rank is None
+        ]
+        remaining_slugs.sort(key=lambda slug: (-candidates[slug].prominence, slug))
+
+        ordered_slugs = featured_slugs + remaining_slugs
+        ordered = [candidates[slug] for slug in ordered_slugs]
+
+        hero = tuple(ordered[:HERO_SIZE])
+        highlights = tuple(ordered[HERO_SIZE : HERO_SIZE + HIGHLIGHTS_SIZE])
+        filed_slugs = ordered_slugs[HERO_SIZE + HIGHLIGHTS_SIZE :]
+
+        # Every area not in hero or highlights lands in exactly one category's
+        # `candidates`, so a candidate is never listed twice. `filed` holds
+        # only categories with at least one leftover candidate -- a category
+        # whose every area got promoted to hero is not seeded here with an
+        # empty `candidates` tuple. An empty `Category` would be a tile the
+        # browser has nothing to draw in, shipped only to make a category
+        # visible that has, by construction, nothing to show in this
+        # section. `Catalog.all_candidates` is where a caller that wants
+        # "every area of this category, wherever it landed" should look
+        # instead -- see the category route note on `Catalog`.
+        by_category: dict[CategoryKey, list[CourseCandidate]] = {}
+        for slug in filed_slugs:
+            by_category.setdefault(candidates[slug].category, []).append(candidates[slug])
+
+        filed = tuple(
+            Category(
+                key=key,
+                label=self._grouper.label_for(key),
+                candidates=tuple(members),
+            )
+            for key, members in sorted(by_category.items())
+        )
+        categories = {category.key: category.label for category in filed}
+
+        sections = CatalogSections(hero=hero, highlights=highlights, filed=filed)
+        return Catalog(
+            sections=sections,
+            categories=categories,
+            unplaceable_featured=unplaceable,
+            derived_from=(
+                curriculum.projection.entity_count,
+                curriculum.projection.relationship_count,
+            ),
+        )

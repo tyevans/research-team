@@ -40,6 +40,7 @@ from research_team.domain import (
     TurnFailed,
     current_stage_of,
 )
+from research_team.domain.catalog_curation import CourseFeatured
 from research_team.domain.judgements import (
     EntitiesHeldDistinct,
     EntitiesHeldSame,
@@ -1228,6 +1229,53 @@ async def test_a_dialogue_written_before_the_opening_prompt_existed_still_loads(
     assert dialogue.state.goal == "understand what the creed settled"
     assert dialogue.state.stopping_condition == ("the reader can state it in their own words")
     assert dialogue.state.is_started
+
+
+async def test_a_course_featured_written_before_rank_existed_defaults_to_zero(store, db_path):
+    """`rank` is a case-1 addition to `CourseFeatured`; absence must mean 0.
+
+    0 is the lowest rank the hero row uses, so a payload written before
+    ranking existed reads as "unranked, sorts first" rather than as an
+    error -- there is no earlier meaning to preserve beyond "this was
+    featured", and 0 is the value that already carried that meaning.
+
+    Writes the payload with the key absent, which is the only shape that
+    proves the default fills in -- constructing the event through today's
+    model would supply it.
+
+    Builds nothing from a repository: `CourseCatalog` has no aggregate, by
+    design (see `domain/catalog_curation.py`), so the event is read straight
+    off its stream, same as the `Ontology` case above.
+    """
+    project_id = uuid4()
+    # Applies the schema lazily, for the media-proposal case's reason: nothing
+    # has written to this database yet, so `events` does not exist to insert
+    # into.
+    await collect(store.read_stream(StreamId(project_id, "CourseCatalog")))
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="CourseFeatured",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "CourseCatalog",
+            "aggregate_version": 1,
+            "project_id": str(project_id),
+            "slug": "warp-drive",
+        },
+        aggregate_type="CourseCatalog",
+    )
+
+    stream = StreamId(project_id, "CourseCatalog")
+    events = [envelope.event for envelope in await collect(store.read_stream(stream))]
+
+    featured = events[0]
+    assert isinstance(featured, CourseFeatured)
+    assert featured.rank == 0
+    # The rest of the payload survives the default filling in, which is what
+    # separates "the field defaulted" from "the whole event failed to parse".
+    assert featured.slug == "warp-drive"
 
 
 async def test_an_observation_written_before_evidence_kinds_existed_reads_as_assessment(

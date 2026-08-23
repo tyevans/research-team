@@ -23,9 +23,15 @@ from uuid import UUID, uuid4
 # nothing else would have pulled redstring in.
 import httpx
 import redstring.events  # noqa: F401
-from eventsource import InMemoryEventBus
+from eventsource import (
+    InMemoryEventBus,
+    SQLCheckpointRepository,
+    SQLDLQRepository,
+    create_async_engine,
+)
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 from eventsource.observability import Tracer
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -62,6 +68,7 @@ from research_team.application.check_telemetry_read import CheckTelemetryReadPor
 from research_team.application.components import component_guidance
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.course_authoring import CourseAuthor
+from research_team.application.course_catalog import CachedBlurb, CatalogService
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
@@ -154,6 +161,10 @@ from research_team.infrastructure.agent.workflow_tools import (
     build_workflow_tools,
 )
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
+from research_team.infrastructure.knowledge.blurb_writer import ModelBlurbWriter
+from research_team.infrastructure.knowledge.catalog_recorder import (
+    EventStoreCatalogFeatureRecorder,
+)
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.entity_cards import index_cards
 from research_team.infrastructure.knowledge.entity_embeddings import (
@@ -164,12 +175,14 @@ from research_team.infrastructure.knowledge.markdown_table_chunker import Markdo
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
+from research_team.infrastructure.knowledge.seeded_art import SeededArtProvider
 from research_team.infrastructure.knowledge.stores import (
     build_card_vector_store,
     build_chunk_store,
     build_graph_store,
     build_vector_store,
 )
+from research_team.infrastructure.knowledge.type_plurality_grouper import TypePluralityGrouper
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.perception.readeverything_adapter import (
     build_perception_adapter,
@@ -202,6 +215,9 @@ from research_team.infrastructure.persistence.project_workflow import ProjectWor
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
     AuthoringRunRunner,
+    CatalogFeatureProjection,
+    CatalogFeatureStore,
+    CourseBlurbStore,
     EntityDefinitionRunner,
     MediaProposalRunner,
     OntologyRunner,
@@ -224,6 +240,130 @@ raises, the stage prompt simply argues with the round prompt and the model
 picks one. A new kind that wrongly *loses* it is a missing stage prompt, which
 whoever added the kind sees on the first turn.
 """
+
+
+class _CatalogFeatureRunner:
+    """Keeps `catalog_features` following the log, over the application's own
+    event store and publisher rather than a second one -- catalog events
+    (`CourseFeatured`/`CourseUnfeatured`) sit on their own aggregate type and
+    stream, so this only ever needs to agree with `catalog_recorder`'s
+    writes over the same file, matching `CatalogFeatureProjection`'s own
+    reasoning.
+
+    Mirrors `OntologyRunner` in shape, but is not one: `Application` exposes
+    `catalog_features` as the `CatalogFeatureStore` itself, not a runner
+    wrapping it, per the contract Task 9's reviewer wrote down -- so this
+    class lives here instead, private, and `catalog_features` below is a
+    property reading through its `features` attribute. `Application` is
+    `frozen=True` (see `_initial_project_id`'s docstring), so `start()`
+    cannot rebind a field to the store once it is open; a property reading
+    through a mutable holder is what the rest of this class already does for
+    exactly that reason.
+    """
+
+    def __init__(self, store: SQLiteEventStore, bus: InMemoryEventBus, db_path: str) -> None:
+        self._store = store
+        self._bus = bus
+        self._db_path = db_path
+        self.features: CatalogFeatureStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+
+    async def start(self) -> None:
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        checkpoints = SQLCheckpointRepository(engine)
+        dlq = SQLDLQRepository(engine)
+        self.features = await CatalogFeatureStore.open(self._db_path)
+        projection = CatalogFeatureProjection(self.features, checkpoints, dlq)
+        self._manager = SubscriptionManager(self._store, self._bus, checkpoints, dlq_repo=dlq)
+        self._subscription = await self._manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the catalog feature projection failed to start: {failures}")
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """A test affordance, matching `definitions_caught_up` and the rest:
+        waits until the projection has replayed everything appended so far,
+        rather than everything that will ever be appended."""
+        if self._manager is None:
+            return
+        target = await self._store.current_position()
+        if target is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if self._subscription.last_processed_position is not None and (
+                self._subscription.last_processed_position >= target
+            ):
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError("the catalog feature projection did not catch up in time")
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+        if self.features is not None:
+            await self.features.close()
+
+
+class _LazyBlurbCache:
+    """`BlurbCachePort` over `CourseBlurbStore`, opened on first use.
+
+    `CatalogService` is built inside `build_application`, before any event
+    loop is running -- `start()`'s own docstring says why nothing here can
+    open an aiosqlite connection until then. Unlike `catalog_features`, which
+    is read through a property because `catalog` itself (not this cache) is
+    what a route holds a reference to, this port is handed directly to
+    `CatalogService` at construction, so it has to defer the open internally
+    rather than being swapped in later. Guarded by a lock so two concurrent
+    card renders do not each open their own connection to the same file.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._store: CourseBlurbStore | None = None
+        self._lock = asyncio.Lock()
+
+    async def _opened(self) -> CourseBlurbStore:
+        if self._store is None:
+            async with self._lock:
+                if self._store is None:
+                    self._store = await CourseBlurbStore.open(self._db_path)
+        return self._store
+
+    async def get(self, project_id: UUID, slug: str) -> CachedBlurb | None:
+        store = await self._opened()
+        row = await store.get(project_id, slug)
+        if row is None:
+            return None
+        return CachedBlurb(
+            text=row.text,
+            membership_hash=row.membership_hash,
+            model=row.model,
+            generated_at=datetime.fromisoformat(row.generated_at),
+        )
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        text: str,
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None:
+        store = await self._opened()
+        await store.put(project_id, slug, text, membership_hash, model, generated_at)
+
+    async def close(self) -> None:
+        if self._store is not None:
+            await self._store.close()
 
 
 @dataclass(frozen=True)
@@ -550,6 +690,45 @@ class Application:
     `InteractionLogRunner.stop()` nor `EventStoreInteractionRecorder` owns the
     connection, since composition is what opened it."""
 
+    catalog: CatalogService
+    """Turns a curriculum into ranked, categorised course cards for one
+    project. Takes an already-built `Curriculum` per call, not a `project_id`
+    at construction -- one instance serves every project, matching
+    `curriculum`'s own statelessness in `web.py`."""
+
+    _catalog_runner: _CatalogFeatureRunner
+    """Owns `catalog_features` and the projection that keeps it level with
+    the log. Private for `_reconciliation`'s reason -- `Application` is
+    frozen, so `catalog_features` below reads through this runner's own
+    mutable `features` attribute rather than being a field `start()` could
+    rebind once the store is open."""
+
+    catalog_recorder: Callable[[UUID], EventStoreCatalogFeatureRecorder]
+    """One project's write side for featuring, built fresh per call --
+    mirrors `ontology_discoverers`: the project is bound at construction, so
+    no caller can append a `CourseFeatured`/`CourseUnfeatured` to a project it
+    was not handed."""
+
+    blurbs: ModelBlurbWriter
+    """Writes catalog copy for a cluster, given its title and anchors.
+
+    Constructed here even though nothing calls it yet -- on-demand blurb
+    generation is a later increment's job, and its caller is what is deferred,
+    not the object graph underneath it. CLAUDE.md's own account of the
+    co-mention channel is why: a port built with no production caller shipped
+    once already, unnoticed for a whole release because every piece of it
+    was individually tested. Building the writer now means that increment
+    adds one call, not a constructor, an adapter and a wiring decision all at
+    once -- and a mistake in *this* wiring fails loudly at start-up rather
+    than silently the first time a reader asks for a blurb."""
+
+    _blurb_cache: _LazyBlurbCache
+    """The `BlurbCachePort` handed to `catalog` at construction. Private
+    for `_catalog_runner`'s reason turned around: this one is not read
+    through a property because `catalog` itself is the field a route holds,
+    not this cache -- it is kept here solely so `close()` can close the
+    connection it lazily opens."""
+
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
 
@@ -665,6 +844,22 @@ class Application:
         """
         return self.service.current_knowledge
 
+    @property
+    def catalog_features(self) -> CatalogFeatureStore | None:
+        """The read side of course featuring, or `None` until `start()` has
+        opened it. `CatalogFeatureStore.open` needs a running event loop --
+        the same reason every other projection's store here is opened in
+        `start()`, not at construction -- so this reads through
+        `_catalog_runner`'s mutable `features` attribute rather than being a
+        field of its own; see `_catalog_runner`'s docstring."""
+        return self._catalog_runner.features
+
+    async def catalog_caught_up(self) -> None:
+        """A test affordance, matching `definitions_caught_up` and the rest:
+        waits until `catalog_features` has replayed every `CourseFeatured`/
+        `CourseUnfeatured` appended so far."""
+        await self._catalog_runner.caught_up()
+
     async def attach_project(self, project_id: UUID) -> None:
         """Open `project_id`'s graph and give the executor its tools.
 
@@ -697,6 +892,7 @@ class Application:
         await self.check_telemetry.start()
         await self.definitions.start()
         await self.ontology.start()
+        await self._catalog_runner.start()
         await self.media_proposals.start()
         # Reconcile proposals a crash left `accepted` -- designed in
         # `docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`.
@@ -903,6 +1099,8 @@ class Application:
         await self.check_telemetry.stop()
         await self.definitions.stop()
         await self.ontology.stop()
+        await self._catalog_runner.stop()
+        await self._blurb_cache.close()
         await self.media_proposals.stop()
         await self.asks.stop()
         await self.authoring.stop()
@@ -2394,6 +2592,47 @@ def build_application(
             ),
         )
 
+    def catalog_recorder(target_project_id: UUID) -> EventStoreCatalogFeatureRecorder:
+        """This project's write side for course featuring, over this
+        instance's own event store and publisher -- built the same way
+        `ontology_discoverer` builds its recorder, for the same reason:
+        catalog events have no aggregate to consult, so the factory closes
+        over the store directly rather than going through
+        `AggregateRepository`."""
+        return EventStoreCatalogFeatureRecorder(
+            repository.store, repository.publisher, target_project_id
+        )
+
+    # `_catalog_runner` follows the log over `repository.store`/`.publisher`
+    # -- the application's own store, not a second one -- which is the piece
+    # `tests/interfaces/test_catalog_routes.py`'s module docstring names as
+    # what Task 10 was left to thread through: that module builds a
+    # standalone `SQLiteEventStore`/`InMemoryEventBus` pair over the same
+    # file only because this wiring did not exist yet. Registered with
+    # `start()`/`close()` below beside every other projection, per
+    # `EntityDefinitionRunner`'s comment on why one built and never started
+    # is a projection nobody starts.
+    catalog_runner = _CatalogFeatureRunner(
+        repository.store, repository.publisher, resolved_path
+    )
+    # `TypePluralityGrouper`/`SeededArtProvider` are the one production
+    # adapter each of `CategoryGrouper`/`ArtPort` has today -- see their own
+    # docstrings for why, and see `test_catalog_wiring.py` for the
+    # both-ends-over-real-data test CLAUDE.md's co-mention section demands
+    # of exactly this shape.
+    blurb_cache = _LazyBlurbCache(resolved_path)
+    catalog_service = CatalogService(
+        grouper=TypePluralityGrouper(),
+        art=SeededArtProvider(),
+        blurbs=blurb_cache,
+    )
+    # R5: constructed even though nothing calls `.write()` yet this
+    # increment -- see `Application.blurbs`'s own docstring for the reasoning
+    # (a caller-less port is the exact shape CLAUDE.md's co-mention section
+    # warns about, and building the object graph now turns the later
+    # increment into adding one call rather than a whole graph).
+    blurb_writer = ModelBlurbWriter(extraction_model)
+
     def check_telemetry_reader(target_project_id: UUID) -> CheckTelemetryReadPort:
         """This project's `CheckTelemetryReadPort`, over the one runner above.
 
@@ -2614,6 +2853,11 @@ def build_application(
         interaction_log=interaction_log,
         interaction_recorder=interaction_recorder,
         _interaction_store=interaction_store,
+        catalog=catalog_service,
+        _catalog_runner=catalog_runner,
+        catalog_recorder=catalog_recorder,
+        blurbs=blurb_writer,
+        _blurb_cache=blurb_cache,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,

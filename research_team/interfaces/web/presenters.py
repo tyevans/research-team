@@ -28,6 +28,7 @@ from research_team.application.course import (
     ProvenanceSummary,
     StageProgress,
 )
+from research_team.application.course_catalog import Catalog
 from research_team.application.curriculum import Curriculum
 from research_team.application.entity_definitions import Definition, ServedCitation
 from research_team.application.findings import Finding
@@ -57,6 +58,7 @@ from research_team.domain import (
     SourceRecord,
     TurnFailed,
 )
+from research_team.domain.course_catalog import Category, CourseCandidate
 from research_team.domain.learner import LearnerProgressState
 from research_team.domain.learning_area import LearningArea, LearningPath, PrerequisiteEdge
 from research_team.domain.research_run import ResearchRunState
@@ -1425,4 +1427,120 @@ def curriculum_view(curriculum: Curriculum) -> dict[str, Any]:
             "used_embeddings": projection.used_embeddings,
             "truncated": projection.truncated,
         },
+    }
+
+
+def candidate_view(candidate: CourseCandidate) -> dict[str, Any]:
+    """One card, wherever it landed -- hero, highlights, a filed category, or
+    a category page. Anchors are shaped exactly as `area_view`'s are, because
+    they are the same object; a client rendering both should not need two
+    readers for one shape.
+    """
+    return {
+        "slug": candidate.slug,
+        "title": candidate.title,
+        "category": candidate.category,
+        "prominence": round(candidate.prominence, 3),
+        "size": candidate.size,
+        # The cluster's *current* hash, not the blurb's -- kept separate from
+        # `blurb.membershipHash` below on purpose. Staleness is the two read
+        # together: a blurb's hash alone says only what it was written from,
+        # and this field alone says only what the cluster is now. Neither one
+        # by itself lets a client compute anything; the comparison is the
+        # whole reason `CourseCandidate.membership_hash` exists at all (see
+        # its own docstring).
+        "membershipHash": candidate.membership_hash,
+        "anchors": [
+            {
+                "entity_id": a.entity_id,
+                "name": a.name,
+                "entity_type": a.entity_type,
+                "centrality": round(a.centrality, 3),
+                "temporal": a.temporal,
+            }
+            for a in candidate.anchors
+        ],
+        "art": {"url": candidate.art.url, "alt": candidate.art.alt},
+        "blurb": (
+            None
+            if candidate.blurb is None
+            else {
+                "text": candidate.blurb.text,
+                "membershipHash": candidate.blurb.membership_hash,
+                "generatedAt": candidate.blurb.generated_at.isoformat(),
+            }
+        ),
+        "featuredRank": candidate.featured_rank,
+    }
+
+
+def category_view(category: Category) -> dict[str, Any]:
+    return {
+        "key": category.key,
+        "label": category.label,
+        "candidates": [candidate_view(c) for c in category.candidates],
+    }
+
+
+def _every_category(catalog: Catalog) -> dict[str, str]:
+    """Every category with at least one candidate anywhere in the catalog.
+
+    Not `catalog.categories`: that map is derived from `sections.filed` alone
+    (see `Catalog`'s own docstring), so a category whose every candidate was
+    promoted to hero or highlights has no entry in it, even though
+    `all_candidates` still holds its members -- ruling R9b. Falling back to
+    the key itself for one `catalog.categories` has no label for matches
+    `CategoryGrouper.label_for`'s own fallback for the same case, for the
+    reason its docstring gives: an unlisted label is ugly and correct, and a
+    made-up one would be neither.
+    """
+    keys = {c.category for c in catalog.all_candidates}
+    return {key: catalog.categories.get(key, key) for key in sorted(keys)}
+
+
+def catalog_view(catalog: Catalog) -> dict[str, Any]:
+    """The whole catalog: three bands, every category, and what it was
+    derived from.
+
+    `derived_from` rides along for `curriculum_view`'s stated reason -- a
+    catalog over 40 entities and one over 4,000 render identically otherwise.
+    `categories` is built from every candidate the catalog holds, not from
+    `catalog.categories` alone, for `_every_category`'s reason (R9b).
+    """
+    return {
+        "hero": [candidate_view(c) for c in catalog.sections.hero],
+        "highlights": [candidate_view(c) for c in catalog.sections.highlights],
+        "filed": [category_view(cat) for cat in catalog.sections.filed],
+        "categories": _every_category(catalog),
+        "unplaceableFeatured": list(catalog.unplaceable_featured),
+        "derived_from": {
+            "entities": catalog.derived_from[0],
+            "relationships": catalog.derived_from[1],
+        },
+    }
+
+
+def catalog_category_view(catalog: Catalog, key: str) -> dict[str, Any] | None:
+    """One category's page, or `None` for a key nothing in this catalog uses.
+
+    Built from `catalog.all_candidates`, never `catalog.sections.filed` --
+    ruling R9: a candidate promoted to hero or highlights still belongs to its
+    category, and a page built by filtering `filed` would silently omit
+    exactly the courses prominent enough to have been promoted out of it.
+    `all_candidates` is the total population for exactly this caller, per
+    `Catalog.all_candidates`'s own docstring.
+
+    Membership is checked against `all_candidates` directly rather than
+    against `catalog.categories`, which is what makes an unknown key (404)
+    distinguishable from a known key every one of whose candidates got
+    promoted (200, non-empty) -- ruling R9b. `catalog.categories` alone
+    cannot tell the two apart, because it omits the second case too.
+    """
+    members = [c for c in catalog.all_candidates if c.category == key]
+    if not members:
+        return None
+    return {
+        "key": key,
+        "label": catalog.categories.get(key, key),
+        "candidates": [candidate_view(c) for c in members],
     }

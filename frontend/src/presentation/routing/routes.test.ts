@@ -173,6 +173,14 @@ describe('the facet grammar', () => {
       selection: { facet: 'path', id: 'the-principate' },
       hash: '#/p/abc/path/the-principate',
     },
+    {
+      // The Curriculum tab's default reading. `id` here is a category key, not
+      // an area slug -- a different namespace from `area` above even though
+      // both are strings a person might type.
+      facet: 'catalog',
+      selection: { facet: 'catalog', id: 'antiquity' },
+      hash: '#/p/abc/catalog/antiquity',
+    },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
     { facet: 'media', selection: { facet: 'media', id: 'p1' }, hash: '#/p/abc/media/p1' },
     {

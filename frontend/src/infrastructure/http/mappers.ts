@@ -23,6 +23,7 @@ import type {
   PrerequisiteEdge,
 } from '@domain/knowledge/curriculum.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
+import type { Blurb, Catalog, Category, CourseCandidate } from '@domain/knowledge/catalog.ts'
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
@@ -894,4 +895,43 @@ export const toAuthoringRun = (raw: Dto<typeof dto.authoringFrameDto>): Authorin
 export const toAuthoringStatus = (raw: Dto<typeof dto.authoringStatusDto>): AuthoringStatus => ({
   current: raw.current === null ? null : toAuthoringRun(raw.current),
   last: raw.last === null ? null : toAuthoringRun(raw.last),
+})
+
+const toCandidateBlurb = (raw: Dto<typeof dto.candidateBlurbDto>): Blurb => ({
+  text: raw.text,
+  membershipHash: raw.membershipHash,
+  generatedAt: raw.generatedAt,
+})
+
+export const toCourseCandidate = (raw: Dto<typeof dto.courseCandidateDto>): CourseCandidate => ({
+  slug: raw.slug,
+  title: raw.title,
+  category: raw.category,
+  prominence: raw.prominence,
+  size: raw.size,
+  membershipHash: raw.membershipHash,
+  anchors: raw.anchors.map(toAreaMember),
+  art: raw.art,
+  blurb: raw.blurb === null ? null : toCandidateBlurb(raw.blurb),
+  featuredRank: raw.featuredRank,
+})
+
+export const toCategory = (raw: Dto<typeof dto.categoryDto>): Category => ({
+  key: raw.key,
+  label: raw.label,
+  candidates: raw.candidates.map(toCourseCandidate),
+})
+
+export const toCatalog = (raw: Dto<typeof dto.catalogDto>): Catalog => ({
+  sections: {
+    hero: raw.hero.map(toCourseCandidate),
+    highlights: raw.highlights.map(toCourseCandidate),
+    filed: raw.filed.map(toCategory),
+  },
+  categories: new Map(Object.entries(raw.categories)),
+  unplaceableFeatured: raw.unplaceableFeatured,
+  derivedFrom: {
+    entities: raw.derived_from.entities,
+    relationships: raw.derived_from.relationships,
+  },
 })

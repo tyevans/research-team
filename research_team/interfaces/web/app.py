@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Protocol
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
@@ -66,6 +66,7 @@ from research_team.application.corpus_editing import CorpusEditor, DocumentExist
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.course_authoring import CourseAuthor
+from research_team.application.course_catalog import Catalog, CatalogService
 from research_team.application.curriculum import CurriculumService
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.entity_definitions import DefinitionService, serve_citations
@@ -154,6 +155,7 @@ from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEG
 from research_team.infrastructure.persistence.interaction_log import ENVELOPE_FIELDS
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
+    CatalogFeatureStore,
     MediaProposalRow,
     MediaProposalRunner,
     OntologyRunner,
@@ -170,6 +172,8 @@ from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.presenters import (
     area_view,
     autonomy_view,
+    catalog_category_view,
+    catalog_view,
     corpus_change,
     course_view,
     curriculum_view,
@@ -429,6 +433,28 @@ store and chunk store, so building one is asynchronous and can fail when
 chunking is off. Discovery needs the document text and a model; neither can be
 absent, so there is no `None` for a route to render as 503.
 """
+
+
+class CatalogFeatureRecorder(Protocol):
+    """What a route needs to record one person's featuring decision.
+
+    A protocol rather than the concrete `EventStoreCatalogFeatureRecorder`
+    directly, matching `OntologyDiscoveryService`'s own port-facing neighbours
+    in this file: the route only ever calls `feature`/`unfeature`, and naming
+    the concrete class here would make this interface layer name a class that
+    belongs to `infrastructure`.
+    """
+
+    async def feature(self, slug: str, rank: int) -> None: ...
+
+    async def unfeature(self, slug: str) -> None: ...
+
+
+CatalogFeatureRecorders = Callable[[UUID], CatalogFeatureRecorder]
+"""One project's `CatalogFeatureRecorder`, built on demand, matching
+`OntologyDiscoverers`'s shape and its reason: the project is bound at
+construction, so no caller can feature a candidate in a project it was not
+handed."""
 
 DefinitionReaders = Callable[[UUID], Awaitable["DefinitionService | None"]]
 """One project's `DefinitionService`, built on demand, or `None` when this
@@ -961,6 +987,9 @@ def create_app(
     course_author: CourseAuthor | None = None,
     authoring: AuthoringActivity | None = None,
     reembed: ReembedProject | None = None,
+    catalog: CatalogService | None = None,
+    catalog_features: CatalogFeatureStore | None = None,
+    catalog_recorder: CatalogFeatureRecorders | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -3078,6 +3107,83 @@ def create_app(
         """
         await _require_project(project_id)
         return curriculum_view(await _curriculum(project_id))
+
+    async def _catalog(project_id: UUID) -> Catalog:
+        """This project's catalog, assembled over its curriculum and its
+        featured overrides.
+
+        503 rather than an empty catalog when `catalog` or `catalog_features`
+        is unwired, matching `_curriculum`'s own reasoning: an empty catalog is
+        the right answer for a project with no graph, and an unwired build
+        answering the same thing would be indistinguishable from that --
+        exactly the failure this feature is arranged against.
+        """
+        if catalog is None or catalog_features is None:
+            raise HTTPException(status_code=503, detail="the course catalog is not configured")
+        built = await _curriculum(project_id)
+        featured = await catalog_features.featured_for(project_id)
+        return await catalog.build(project_id, built, featured)
+
+    @app.get("/api/projects/{project_id}/catalog/categories/{key}")
+    async def read_catalog_category(project_id: UUID, key: str):
+        """One category's page.
+
+        **Registered ahead of the feature/unfeature routes below**, matching
+        the `/sources/extract` block's own comment: a literal segment that
+        could also be read as a path parameter has to be declared first, or
+        FastAPI's declaration-order matching reads it as one. Nothing under
+        `/catalog` currently collides on method *and* segment count with this
+        route, but the ordering is kept defensive rather than relying on that
+        happening to be true today.
+
+        404 for a key nothing in this catalog uses, not an empty category --
+        an empty category and a misspelled key are different answers, and a
+        reader needs to tell them apart.
+        """
+        await _require_project(project_id)
+        page = catalog_category_view(await _catalog(project_id), key)
+        if page is None:
+            raise HTTPException(status_code=404, detail=f"no category {key!r}")
+        return page
+
+    class FeatureCourse(BaseModel):
+        rank: int = 0
+
+    @app.post("/api/projects/{project_id}/catalog/{slug}/feature")
+    async def feature_course(project_id: UUID, slug: str, body: FeatureCourse):
+        """Put one candidate on the front page, at the given rank.
+
+        No check that `slug` names a current area: a slug is derived from an
+        area's top anchor, so re-clustering can move it, and a feature aimed
+        ahead of the graph that will eventually hold it is exactly the case
+        `Catalog.unplaceable_featured` reports rather than refuses.
+        """
+        await _require_project(project_id)
+        if catalog_recorder is None:
+            raise HTTPException(status_code=503, detail="catalog curation is not configured")
+        await catalog_recorder(project_id).feature(slug, body.rank)
+        return {"slug": slug, "rank": body.rank}
+
+    @app.post("/api/projects/{project_id}/catalog/{slug}/unfeature")
+    async def unfeature_course(project_id: UUID, slug: str):
+        """Take one candidate off the front page.
+
+        Unfeaturing a slug that was never featured is accepted rather than
+        refused, matching `CatalogFeatureStore.unfeature`'s own reasoning:
+        there is no aggregate here to enforce a precondition against, and a
+        second click doing nothing is not an error.
+        """
+        await _require_project(project_id)
+        if catalog_recorder is None:
+            raise HTTPException(status_code=503, detail="catalog curation is not configured")
+        await catalog_recorder(project_id).unfeature(slug)
+        return {"slug": slug}
+
+    @app.get("/api/projects/{project_id}/catalog")
+    async def read_catalog(project_id: UUID):
+        """The front page: hero, highlights, and everything else by category."""
+        await _require_project(project_id)
+        return catalog_view(await _catalog(project_id))
 
     @app.post("/api/projects/{project_id}/embeddings", status_code=202)
     async def refresh_embeddings(project_id: UUID):

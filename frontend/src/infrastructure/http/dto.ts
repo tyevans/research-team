@@ -1029,3 +1029,66 @@ export const interactionReceiptDto = z.object({
   accepted: z.number(),
   rejected: z.number(),
 })
+
+/** `candidate_view` in `presenters.py`, verbatim -- including its one
+ *  departure from every other shape here: `blurb`'s inner keys are already
+ *  camelCase on the wire (`membershipHash`, `generatedAt`), because the
+ *  presenter writes them that way itself rather than this module renaming
+ *  snake_case. Everything else on a candidate is a bare word, so there was
+ *  nothing else to spell either way. */
+export const candidateArtDto = z.object({
+  url: z.string(),
+  alt: z.string(),
+})
+
+export const candidateBlurbDto = z.object({
+  text: z.string(),
+  membershipHash: z.string(),
+  generatedAt: z.string(),
+})
+
+export const courseCandidateDto = z.object({
+  slug: z.string(),
+  title: z.string(),
+  category: z.string(),
+  prominence: z.number().default(0),
+  size: z.number().default(0),
+  // No default, unlike `prominence`/`size` above and matching
+  // `prerequisiteEdgeDto.contested`'s reasoning: this field is the only thing
+  // that makes a blurb's own staleness checkable (see `blurbAge` in
+  // `catalog.ts`), so a build that stopped sending it must fail loudly rather
+  // than read as "every blurb is current" -- the reassuring answer nobody
+  // would investigate.
+  membershipHash: z.string(),
+  anchors: z.array(areaMemberDto).default([]),
+  art: candidateArtDto,
+  blurb: candidateBlurbDto.nullable().default(null),
+  featuredRank: z.number().nullable().default(null),
+})
+
+export const categoryDto = z.object({
+  key: z.string(),
+  label: z.string(),
+  candidates: z.array(courseCandidateDto).default([]),
+})
+
+export const catalogDto = z.object({
+  hero: z.array(courseCandidateDto).default([]),
+  highlights: z.array(courseCandidateDto).default([]),
+  filed: z.array(categoryDto).default([]),
+  categories: z.record(z.string(), z.string()).default({}),
+  unplaceableFeatured: z.array(z.string()).default([]),
+  derived_from: z.object({
+    entities: z.number().default(0),
+    relationships: z.number().default(0),
+  }),
+})
+
+export const catalogFeatureDto = z.object({
+  slug: z.string(),
+  rank: z.number(),
+})
+
+export const catalogUnfeatureDto = z.object({
+  slug: z.string(),
+})
