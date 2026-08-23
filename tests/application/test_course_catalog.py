@@ -103,10 +103,42 @@ async def test_every_area_reaches_exactly_one_section():
 
 
 async def test_areas_of_different_anchor_types_land_in_different_categories():
+    """Categorisation, not placement.
+
+    Asserted over every candidate in the catalog rather than over
+    `sections.filed`: with two areas and `HERO_SIZE` at 5, both are promoted
+    to the hero row, so `filed` is empty and an assertion against it would be
+    testing the section cut-points rather than the grouper. An earlier draft
+    did exactly that, and could only pass if the service emitted a `Category`
+    with no candidates in it -- an empty tile shipped to the browser to
+    satisfy a test.
+    """
     catalog = await _service().build(
         uuid4(),
         _curriculum(_area("people", 5, 2.0, "person"), _area("shows", 5, 2.0, "work")),
         featured={},
     )
 
-    assert {c.key for c in catalog.sections.filed} >= {"person", "work"}
+    assert {c.slug: c.category for c in catalog.all_candidates} == {
+        "people": "person",
+        "shows": "work",
+    }
+
+
+async def test_a_category_with_every_area_promoted_does_not_appear_filed_empty():
+    """`sections.filed` means filed, not "every category that exists".
+
+    Both areas here are promoted to hero (two areas, `HERO_SIZE` is 5), so
+    their shared category has nothing left over. This pins that `filed` does
+    not seed an empty `Category` for it -- a category tile with no candidates
+    in it says nothing to a reader and exists only to make a key visible that
+    `all_candidates` (used by `test_areas_of_different_anchor_types_...`
+    above) already exposes without it.
+    """
+    catalog = await _service().build(
+        uuid4(),
+        _curriculum(_area("people", 5, 2.0, "person"), _area("shows", 5, 2.0, "work")),
+        featured={},
+    )
+
+    assert catalog.sections.filed == ()

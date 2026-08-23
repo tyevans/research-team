@@ -160,12 +160,34 @@ class Catalog:
     carried through so a stale catalog is as detectable as a stale
     curriculum: see `AreaProjection`'s own reasoning for why the counts travel
     with anything derived from it.
+
+    `sections.filed` holds only leftover candidates -- a category whose every
+    area was promoted to hero or highlights is not represented there at all,
+    per `CatalogService.build`'s reasoning. A future category *page*, browsing
+    by key rather than by the three home-page bands, must not be built by
+    filtering `sections.filed`: doing so would silently drop that category's
+    most prominent courses, the ones good enough to have been promoted out of
+    it. `all_candidates` is the total population for exactly that caller.
     """
 
     sections: CatalogSections
     categories: Mapping[CategoryKey, str]
     unplaceable_featured: tuple[str, ...]
     derived_from: tuple[int, int]
+
+    @property
+    def all_candidates(self) -> tuple[CourseCandidate, ...]:
+        """Every candidate in the catalog, wherever it landed.
+
+        For a category route: grouping `sections.filed` alone would omit any
+        area good enough to have been promoted to hero or highlights, which
+        is exactly the area a category page should lead with.
+        """
+        return (
+            *self.sections.hero,
+            *self.sections.highlights,
+            *(c for cat in self.sections.filed for c in cat.candidates),
+        )
 
 
 HERO_SIZE = 5
@@ -257,17 +279,16 @@ class CatalogService:
         filed_slugs = ordered_slugs[HERO_SIZE + HIGHLIGHTS_SIZE :]
 
         # Every area not in hero or highlights lands in exactly one category's
-        # `candidates`, so a candidate is never listed twice. But a category
-        # itself is seeded for *every* key the grouper produced over the
-        # whole curriculum, not only the keys still holding a leftover
-        # candidate -- a small category whose one or two areas both got
-        # promoted to hero would otherwise disappear from the browse list
-        # entirely rather than show up empty, and a reader has no way to
-        # know the difference between "this category does not exist" and
-        # "everything in it is already above the fold".
-        by_category: dict[CategoryKey, list[CourseCandidate]] = {
-            key: [] for key in category_of.values()
-        }
+        # `candidates`, so a candidate is never listed twice. `filed` holds
+        # only categories with at least one leftover candidate -- a category
+        # whose every area got promoted to hero is not seeded here with an
+        # empty `candidates` tuple. An empty `Category` would be a tile the
+        # browser has nothing to draw in, shipped only to make a category
+        # visible that has, by construction, nothing to show in this
+        # section. `Catalog.all_candidates` is where a caller that wants
+        # "every area of this category, wherever it landed" should look
+        # instead -- see the category route note on `Catalog`.
+        by_category: dict[CategoryKey, list[CourseCandidate]] = {}
         for slug in filed_slugs:
             by_category.setdefault(candidates[slug].category, []).append(candidates[slug])
 
