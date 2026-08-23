@@ -543,11 +543,20 @@ export type GraphExportScope =
   | { readonly kind: 'area'; readonly slug: string }
   | { readonly kind: 'entity'; readonly entityId: string; readonly depth: number }
 
+/** How a course export is packaged. `zip` is markdown for reading in a
+ *  repository; `html` is one self-contained page for handing to a person —
+ *  see `course_html.py` for what each lesson widget becomes offline. */
+export type CourseExportFormat = 'zip' | 'html'
+
 export interface ExportRepository {
   /** Where the authored course can be downloaded as one archive, or one area
    *  of it. A URL and not a promise — see the adapter for why a download is
-   *  the browser's job rather than this console's. */
-  courseUrl(projectId: ProjectId, area?: string): string
+   *  the browser's job rather than this console's.
+   *
+   *  `format` is last and optional so every existing call site keeps meaning
+   *  the archive. The server refuses an unknown value with a 422 rather than
+   *  defaulting, because the two formats differ in media type. */
+  courseUrl(projectId: ProjectId, area?: string, format?: CourseExportFormat): string
 
   /** Where a drawing of the graph, or a cut of it, can be downloaded. */
   graphUrl(projectId: ProjectId, format: GraphExportFormat, scope?: GraphExportScope): string

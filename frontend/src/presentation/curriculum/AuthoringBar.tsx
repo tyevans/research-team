@@ -43,7 +43,7 @@ export const AuthoringBar = ({
   /** Where the finished courses can be downloaded, for the whole project or
    *  one area. A URL rather than a handler: the browser downloads better than
    *  this console can — see `HttpExportRepository`. */
-  courseUrl: (area?: string) => string
+  courseUrl: (area?: string, format?: 'zip' | 'html') => string
 }) => {
   const running = status !== null && isRunning(status)
   const current = status?.current ?? null
@@ -141,6 +141,16 @@ export const AuthoringBar = ({
             className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
           >
             Download all courses (.zip)
+          </a>
+          {/* The same course as one page. Beside the archive rather than
+              replacing it: the zip is for reading in a repository and this is
+              for sending to a person, and neither is the other's improvement. */}
+          <a
+            href={courseUrl(undefined, 'html')}
+            download
+            className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
+          >
+            Download all courses (.html)
           </a>
           {/* Only when the selected area is one this run actually wrote. A
               link offered for an area with no course is a 404 the person finds

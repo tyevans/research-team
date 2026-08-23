@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 #: Where the authoring turns write, and the third copy of these two strings --
 #: `course_authoring.AREAS_DIR`/`PATHS_DIR` on the server and
@@ -49,6 +49,13 @@ from research_team.application.graph_read import (
     GraphReadPort,
 )
 from research_team.interfaces.web.authoring import AuthoringActivity
+from research_team.interfaces.web.course_html import (
+    CourseArea,
+    CourseReads,
+    build_course_book,
+    read_course_file,
+    render_course_html,
+)
 from research_team.interfaces.web.graph_html import render_html
 
 
@@ -71,6 +78,16 @@ class ExportDeps:
     curriculum_of: Callable[[UUID], Awaitable[Curriculum]]
     authoring: AuthoringActivity | None
 
+    #: The three further reads `format=html` needs, and only it. All three
+    #: default to `None` so every existing construction of this record --
+    #: including the fixtures in `tests/interfaces/` -- keeps working and
+    #: exports a course whose resolved widgets render named absences. That is
+    #: the honest degradation: a build with no corpus genuinely cannot quote a
+    #: passage, and a zip export never could either.
+    corpus_reader: Callable[[UUID], Any] | None = None
+    definitions: Callable[[UUID], Awaitable[Any]] | None = None
+    timeline_reader: Callable[[UUID], Awaitable[Any]] | None = None
+
 
 def export_router(deps: ExportDeps) -> APIRouter:
     """The `/export` routes, ready for `app.include_router`."""
@@ -79,8 +96,24 @@ def export_router(deps: ExportDeps) -> APIRouter:
     # ---- A. the authored course -------------------------------------------
 
     @router.get("/api/projects/{project_id}/export/course")
-    async def export_course(project_id: UUID, area: str | None = None):
-        """Every file the last authoring run wrote, as one zip.
+    async def export_course(
+        request: Request,
+        project_id: UUID,
+        area: str | None = None,
+        format: Literal["zip", "html"] = "zip",
+    ):
+        """Every file the last authoring run wrote, as one zip -- or as one page.
+
+        **`format` is a `Literal`, so a typo is a 422 rather than a zip.** The
+        same hard edge `export_graph` below takes, and here it matters more:
+        the two formats differ in *media type*, so a silent fallback would
+        hand a browser an archive it was told to render.
+
+        `format=html` is the self-contained course -- see `course_html.py` for
+        what each widget becomes and why. It costs several live reads per
+        resolved component (an entity lookup, a definition, a neighbourhood
+        layout) where the zip costs none, which is why it is a second format
+        on a deliberate one-off action rather than the default.
 
         **Read out of `AuthoringActivity`, which is process memory that a
         restart loses.** That is not this route's bug to fix -- it is being
@@ -119,6 +152,9 @@ def export_router(deps: ExportDeps) -> APIRouter:
 
         state = await deps.service.project_state(project_id)
         name = state.name or str(project_id)
+
+        if format == "html":
+            return await _course_page(deps, request, project_id, name, run, links, area)
 
         buffer = io.BytesIO()
         written = 0
@@ -264,6 +300,101 @@ def export_router(deps: ExportDeps) -> APIRouter:
         )
 
     return router
+
+
+async def _course_page(
+    deps: ExportDeps,
+    request: Request,
+    project_id: UUID,
+    name: str,
+    run: dict,
+    links: list[tuple[str, str]],
+    area: str | None,
+) -> Response:
+    """The whole course as one HTML file.
+
+    Gathers the same workspace files the zip does -- through the same
+    `_course_links`/`_is_path_file` pair, so the two formats can never
+    disagree about which session holds which area -- and then hands them to
+    `course_html`, which does the live reads and the rendering.
+
+    `str(request.base_url).rstrip("/")` is what every link in the file points
+    at. It is the address this request arrived on, which is the only origin
+    this process actually knows: a server behind a proxy sees the proxy's
+    forwarded host or its own bind address, and neither is guessable from
+    configuration. The page says what it is rather than pretending, and
+    `localhost` in an exported file is a limitation the header states.
+    """
+    overview = None
+    areas: list[CourseArea] = []
+    for target, session_id in links:
+        session = await deps.service.load(UUID(session_id))
+        files = session.state.files
+        if _is_path_file(session, target):
+            entry = files.get(f"{PATHS_DIR}/{target}.md") or {}
+            overview = read_course_file(f"{PATHS_DIR}/{target}.md", entry.get("content", ""))
+            continue
+        prefix = f"{AREAS_DIR}/{target}/"
+        unit = None
+        lessons = []
+        for path, entry in sorted(files.items()):
+            if not path.startswith(prefix):
+                continue
+            parsed = read_course_file(path, entry.get("content", ""))
+            # `unit.md` is Stages 1 and 2 and everything else is a lesson,
+            # matched on the filename because that is what `course_authoring`
+            # writes -- there is no marker inside the file. A run that wrote
+            # only lessons produces an area with no unit rather than a
+            # missing area, which is the state a reader can act on.
+            if path == f"{prefix}unit.md":
+                unit = parsed
+            else:
+                lessons.append(parsed)
+        # An area whose session held no file under its prefix is skipped
+        # rather than added empty. An empty `<section>` with a heading and
+        # nothing under it reads as an area whose lessons were deleted; and
+        # if *every* area is like that, the 409 below is the honest answer
+        # rather than a page of headings.
+        if unit is not None or lessons:
+            areas.append(
+                CourseArea(
+                    slug=target,
+                    title=unit.title if unit else target,
+                    unit=unit,
+                    lessons=tuple(lessons),
+                )
+            )
+
+    if overview is None and not areas:
+        raise HTTPException(
+            status_code=409,
+            detail="the last authoring run wrote no course files to export",
+        )
+
+    book = await build_course_book(
+        name=name,
+        project_id=project_id,
+        origin=str(request.base_url).rstrip("/"),
+        run=run,
+        overview=overview,
+        areas=areas,
+        reads=CourseReads(
+            graph_reader=deps.graph_reader,
+            corpus_reader=deps.corpus_reader,
+            definitions=deps.definitions,
+            timeline_reader=deps.timeline_reader,
+        ),
+    )
+    stem = _safe(name) if area is None else f"{_safe(name)}-{_safe(area)}"
+    return Response(
+        content=render_course_html(book),
+        media_type="text/html; charset=utf-8",
+        # `attachment`, for the reason the graph export gives: served inline
+        # it renders in the console's own tab as a page that looks like part
+        # of the app and is not, and the whole point is a file that can be
+        # attached to a mail.
+        headers={"content-disposition": f'attachment; filename="{stem}-course.html"'},
+    )
 
 
 async def _area_cut(

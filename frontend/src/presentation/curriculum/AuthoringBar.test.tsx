@@ -30,7 +30,11 @@ const show = (
       pending={false}
       error={null}
       onAuthor={() => {}}
-      courseUrl={(area) => (area ? `/export/course?area=${area}` : '/export/course')}
+      courseUrl={(area, format) =>
+        `/export/course` +
+        (area ? `?area=${area}` : '') +
+        (format && format !== 'zip' ? `${area ? '&' : '?'}format=${format}` : '')
+      }
       {...props}
     />,
   )
@@ -42,9 +46,17 @@ describe('AuthoringBar downloads', () => {
     // rendered with the wrong one looks correct and fetches the wrong project.
     show({ current: null, last: run() })
 
-    const link = screen.getByRole('link', { name: /download all courses/i })
-    expect(link).toHaveAttribute('href', '/export/course')
-    expect(link).toHaveAttribute('download')
+    const zip = screen.getByRole('link', { name: /download all courses \(\.zip\)/i })
+    expect(zip).toHaveAttribute('href', '/export/course')
+    expect(zip).toHaveAttribute('download')
+
+    // The one page, offered beside the archive rather than instead of it.
+    // Asserted by `href` for the reason above: the whole of what this link
+    // does is its URL, and one built without `format=html` downloads a zip
+    // under a name promising a page.
+    const page = screen.getByRole('link', { name: /download all courses \(\.html\)/i })
+    expect(page).toHaveAttribute('href', '/export/course?format=html')
+    expect(page).toHaveAttribute('download')
   })
 
   it('offers the selected area on its own when that area was written', () => {
@@ -69,7 +81,9 @@ describe('AuthoringBar downloads', () => {
     )
 
     expect(screen.queryByRole('link', { name: /download “Beta”/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /download all courses/i })).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: /download all courses \(\.zip\)/i }),
+    ).toBeInTheDocument()
   })
 
   it('offers nothing while a run is in flight', () => {

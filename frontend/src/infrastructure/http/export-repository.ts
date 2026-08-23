@@ -1,4 +1,5 @@
 import type {
+  CourseExportFormat,
   ExportRepository,
   GraphExportFormat,
   GraphExportScope,
@@ -25,9 +26,13 @@ import { query, seg } from './http-client.ts'
 export class HttpExportRepository implements ExportRepository {
   constructor(private readonly baseUrl: string) {}
 
-  courseUrl(projectId: ProjectId, area?: string) {
+  courseUrl(projectId: ProjectId, area?: string, format: CourseExportFormat = 'zip') {
     return (
-      `${this.baseUrl}/api/projects/${seg(projectId)}/export/course` + query({ area: area ?? null })
+      `${this.baseUrl}/api/projects/${seg(projectId)}/export/course` +
+      // `format` omitted when it is the default, so every URL this console
+      // built before the HTML export existed is byte-identical to the one it
+      // builds now — which is what keeps a bookmark working.
+      query({ area: area ?? null, format: format === 'zip' ? null : format })
     )
   }
 
