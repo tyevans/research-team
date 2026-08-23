@@ -1631,6 +1631,44 @@ def create_app(
         await _require_project(project_id)
         return {"indexed": await extractor.reindex(project_id)}
 
+    @app.get("/api/projects/{project_id}/sources/ungrouped")
+    async def ungrouped_sources(project_id: UUID):
+        """Every extracted document no ontology pass has read. 200, it is a read.
+
+        Registered inside the literal-segment block above for that block's
+        reason: `ungrouped` would otherwise be read as a `{source_id}` by
+        `GET /sources/{source_id}`, which is the bug that block records
+        happening twice already.
+
+        **This route is the join `DocumentExtractor.ungrouped` was written
+        for.** That method takes `examined` as a parameter rather than fetching
+        it, deliberately -- it knows the corpus and the graph, and the ontology
+        tables belong to a projection it has no reason to depend on. So the two
+        halves have sat in the tree unconnected, with tests on each and nothing
+        driving both: `ungrouped()` had no production caller at all, and the
+        sweep it describes had never run. That is the `CoMentionPort` shape
+        this repository has met before, caught here before it could ship.
+
+        **503 when either half is unwired, not an empty 200**, for
+        `read_ontology`'s reason and more sharply. An empty list is the correct
+        answer for a corpus that has been fully grouped, so a misconfigured
+        build answering the same thing tells a reader "there is nothing left to
+        do" about a project nothing has ever examined -- and the control this
+        backs would render as finished on exactly the project that needs it
+        most.
+
+        `sourceIds` in camelCase, unlike `source_ids` on the extract-all
+        neighbour below. The two disagree and this one follows the ontology
+        payloads it is read beside; the neighbour is not changed here because
+        its shape is already in a client.
+        """
+        if extractor is None or ontology is None:
+            raise HTTPException(status_code=503, detail="ontology discovery is not configured")
+        await _require_project(project_id)
+        examined = await ontology.sources_with_classes(project_id)
+        pending = await extractor.ungrouped(project_id, examined=examined)
+        return {"sourceIds": list(pending)}
+
     @app.post("/api/projects/{project_id}/sources/{source_id}/extract")
     async def extract_source(project_id: UUID, source_id: str):
         """Queue one stored document for extraction. 202, because it has not run.

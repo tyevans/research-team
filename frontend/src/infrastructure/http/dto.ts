@@ -816,6 +816,14 @@ export const ontologyPassDto = z.object({
   found: z.number().nullable(),
 })
 
+export const ungroupedSourcesDto = z.object({
+  // Defaulted, unlike `found` above: an empty sweep is a real and common
+  // answer -- a corpus every document of which has been examined -- and the
+  // server distinguishes it from an unwired build with a 503 rather than with
+  // a missing key. So there is nothing for a `null` here to mean.
+  sourceIds: z.array(z.string()).default([]),
+})
+
 export const graphEntityPageDto = z.object({
   entities: z.array(graphEntityDto).default([]),
   next_after: maybe(z.string()),

@@ -94,7 +94,30 @@ class Knowledge:
         )
 
 
-def _app(runner: Runner, queue: ExtractionQueue, *, knowledge=None, exists: bool = True):
+class Ontology:
+    """The one method the ungrouped sweep needs off `OntologyStore`.
+
+    Named for the store's own method rather than for what the route calls it,
+    so a rename upstream breaks this rather than quietly leaving the route
+    joined to a set that is always empty -- which is the failure this whole
+    sweep exists to make visible.
+    """
+
+    def __init__(self, *examined: str) -> None:
+        self._examined = set(examined)
+
+    async def sources_with_classes(self, _project_id: UUID) -> set[str]:
+        return set(self._examined)
+
+
+def _app(
+    runner: Runner,
+    queue: ExtractionQueue,
+    *,
+    knowledge=None,
+    exists: bool = True,
+    ontology=None,
+):
     knowledge = knowledge or Knowledge()
 
     async def open_knowledge(_project_id):
@@ -118,6 +141,7 @@ def _app(runner: Runner, queue: ExtractionQueue, *, knowledge=None, exists: bool
             ),
         ),
         extract_queue=queue,
+        ontology=ontology,
     )
 
 
@@ -300,5 +324,74 @@ async def test_reindex_on_an_unknown_project_is_404(queue):
 
     async with await _client(api) as http:
         response = await http.post(f"/api/projects/{PROJECT}/sources/reindex")
+
+    assert response.status_code == 404
+
+
+async def test_the_ungrouped_sweep_lists_extracted_documents_no_pass_has_examined(queue):
+    """The join `DocumentExtractor.ungrouped` was written for and never given.
+
+    Three documents cover the three exclusions in one payload: `s1` is
+    extracted and unexamined and is the only answer, `s2` has no graph for a
+    class's members to resolve against, and `s3` has already been read.
+
+    Proved red against the route's absence -- 404 before it existed.
+    """
+    api = _app(
+        Runner(("s1", True), ("s2", False), ("s3", True)),
+        queue,
+        ontology=Ontology("s3"),
+    )
+
+    async with await _client(api) as http:
+        response = await http.get(f"/api/projects/{PROJECT}/sources/ungrouped")
+
+    assert response.status_code == 200
+    assert response.json() == {"sourceIds": ["s1"]}
+
+
+async def test_a_document_read_and_found_barren_stays_off_the_sweep(queue):
+    """`examined` is not `has classes`, and this is the assertion that says so.
+
+    A pass that read `s1` and found nothing records it as examined with no
+    class rows. If the sweep asked "which sources have classes" instead, this
+    would answer `["s1"]` and every barren document would be re-read at model
+    cost on every press -- which is exactly what `OntologyExaminedRow` exists
+    to prevent, tested here at the layer that could still get it wrong.
+    """
+    api = _app(Runner(("s1", True)), queue, ontology=Ontology("s1"))
+
+    async with await _client(api) as http:
+        response = await http.get(f"/api/projects/{PROJECT}/sources/ungrouped")
+
+    assert response.json() == {"sourceIds": []}
+
+
+async def test_the_sweep_is_503_when_the_ontology_is_unwired(queue):
+    """Not an empty 200, for `read_ontology`'s reason.
+
+    An empty list is the right answer for a corpus that is fully grouped, so a
+    build with no ontology configured answering the same thing would be
+    indistinguishable from a finished one -- and the button would report
+    "nothing to do" on a project that had never been read at all.
+    """
+    api = _app(Runner(("s1", True)), queue, ontology=None)
+
+    async with await _client(api) as http:
+        response = await http.get(f"/api/projects/{PROJECT}/sources/ungrouped")
+
+    assert response.status_code == 503
+
+
+async def test_the_sweep_is_404_for_an_unknown_project(queue):
+    """Weak while the route was absent: a missing route also answers 404, so
+    this was the one new test that passed against the red build. It means
+    something only now that the route exists -- it says the project check runs
+    before the corpus is read, rather than after.
+    """
+    api = _app(Runner(("s1", True)), queue, exists=False, ontology=Ontology())
+
+    async with await _client(api) as http:
+        response = await http.get(f"/api/projects/{PROJECT}/sources/ungrouped")
 
     assert response.status_code == 404
