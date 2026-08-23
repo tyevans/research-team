@@ -91,3 +91,31 @@ async def test_a_legitimate_second_sentence_opener_is_still_accepted():
     writer = _writer("Zefram Cochrane invented it. Follow the story of the Warp drive.")
 
     assert await writer.write("Warp drive", ANCHORS) is not None
+
+
+async def test_a_single_word_opener_identical_to_an_ungrounded_name_is_not_caught():
+    """A known false accept, disclosed rather than left for someone to find.
+
+    `_SENTENCE_OPENERS` strips only the matched opener word before checking
+    the rest of a sentence, so a sentence whose *entire* ungrounded content is
+    one word identical to a list entry has nothing left in it to flag.
+    "Explore" here is stripped as an ordinary imperative opener -- but if it
+    were standing in for an invented name (a ship called Explore, say), this
+    check cannot tell the difference, because doing so means parsing "Explore
+    chronicled the frontier" (a name as the sentence's subject) apart from
+    "Explore the frontier" (an imperative with no subject at all), which this
+    check deliberately does not attempt.
+
+    Tolerated rather than fixed: the four words this design already excludes
+    for being name-like (`discover`, `master`, `trace`, `meet`) are the ones
+    most likely to double as an invented entity, and are already gone. What
+    remains (`follow`, `join`, `learn`, `explore` here) is less likely to
+    stand in for a name, not impossible -- and closing this fully would mean
+    either the parser above, or dropping single-word sentence openers
+    entirely (Option (a), already rejected in this module's history for
+    refusing ordinary two-sentence copy far more often than this accepts
+    an ungrounded name).
+    """
+    writer = _writer("Explore chronicled the frontier. The story features the Warp drive.")
+
+    assert await writer.write("Warp drive", ANCHORS) is not None

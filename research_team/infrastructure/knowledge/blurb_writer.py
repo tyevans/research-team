@@ -50,14 +50,27 @@ only the specific words the prompt's own phrasing ("Follow...", "Meet...",
 sentence. Everything else -- including a name -- is checked like any other
 capitalised run, wherever in the reply it appears.
 
-The list is finite and the cost is stated rather than hidden: a legitimate
-sentence opener this list does not know about is refused, not accepted. That
-is the same direction every other refusal in this module fails in, and it is
-why the list is short rather than padded with guesses -- padding it toward
-"anything that looks like an ordinary word" reopens exactly the hole this
-fix closes, because a proper noun the model invents looks exactly as
-ordinary as a real English sentence opener until you already know which
-anchors exist.
+**Two costs, not one, and the second was found by a second review pass.** A
+legitimate sentence opener the list does not know is refused, not accepted --
+that much *is* the module's usual failure direction. But `_SENTENCE_OPENERS`
+strips only the matched opener word and leaves the rest of the sentence to be
+checked, so a sentence whose *entire* ungrounded content is one word
+identical to a list entry is invisible to this check: "Explore chronicled the
+frontier. It uses the Warp drive." strips "Explore" as an opener, finds
+nothing else capitalised in that sentence to flag, and is accepted --
+even if "Explore" were standing in for an invented ship name. This is a
+genuine false *accept*, not the refusal direction the rest of this module
+claims for itself, and it is not eliminated by this list: eliminating it
+would mean telling "Explore chronicled the frontier" (a name, subject of a
+sentence) apart from "Explore the frontier" (an imperative opener, no
+subject at all) -- a parse this check deliberately does not attempt, because
+the alternative to a short, wrong-in-one-direction list is a longer, wrong-
+in-two-directions parser.
+`tests/infrastructure/test_blurb_writer.py::test_a_single_word_opener_identical_to_an_ungrounded_name_is_not_caught`
+pins this residual rather than leaving it to be rediscovered. The list stays
+short precisely because that residual exists: padding it toward "anything
+that looks like an ordinary word" only grows the set of words this blind
+spot applies to.
 """
 
 import re
@@ -114,12 +127,27 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 #:
 #: This list is the words the prompt in `_PROMPT` actually invites -- an
 #: article, a demonstrative, or one of the imperative verbs catalog copy
-#: reaches for ("Follow...", "Meet...", "Discover..."). It is finite and
-#: known to be incomplete: an opener outside it is refused, not accepted,
-#: which is the same direction every other refusal in this module fails in.
-#: Growing the list toward "any word that looks ordinary" would undo the fix,
-#: because an invented proper noun looks exactly as ordinary as a real
-#: opener until the anchors are already known.
+#: reaches for ("Follow...", "Join..."). It is finite and known to be
+#: incomplete: an opener outside it is refused, not accepted, which is the
+#: usual failure direction in this module.
+#:
+#: **Deliberately excludes `discover`, `master`, `trace` and `meet`.** Those
+#: four read as ordinary imperatives in "Discover the frontier," but they are
+#: also plausible titles or names on their own -- "Discover" as a ship,
+#: "Master" as a rank, "Meet" as a person's name is a stretch but "Trace" and
+#: "Discover" are not. `follow`, `join`, `learn` and `explore` cover the same
+#: rhetorical need (a two-sentence blurb inviting the reader in) without that
+#: overlap, and dropping the riskier four fails toward refusal -- a legitimate
+#: blurb reaching for "Discover..." as its opener is refused here, which is
+#: accepted as the cost of not reopening the false-accept below on words most
+#: likely to double as invented proper nouns.
+#:
+#: Growing this list toward "any word that looks ordinary" would undo the
+#: fix: an invented proper noun looks exactly as ordinary as a real opener
+#: until the anchors are already known. And even at this size the list is
+#: not free of the false-accept it was narrowed to reduce -- see the module
+#: docstring's second cost, and
+#: `test_a_single_word_opener_identical_to_an_ungrounded_name_is_not_caught`.
 _SENTENCE_OPENERS = frozenset(
     {
         "the",
@@ -132,11 +160,7 @@ _SENTENCE_OPENERS = frozenset(
         "follow",
         "join",
         "learn",
-        "discover",
         "explore",
-        "master",
-        "trace",
-        "meet",
     }
 )
 
