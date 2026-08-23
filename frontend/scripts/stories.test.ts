@@ -78,8 +78,25 @@ const SCOPE = ['presentation/common', 'presentation/entity', 'presentation/layou
  * The list is the honest half of this check. Turned on with no allowlist it
  * would have needed 54 stories written first, or three within the scope above;
  * two of those three were written in the commit that added this file because
- * they were cheap and the stories say something jsdom cannot. The third is
- * here because a story for it would be a story about its caller.
+ * they were cheap and the stories say something jsdom cannot. The third was
+ * `VirtualList`, exempted on the argument that a story for it would be a story
+ * about its caller.
+ *
+ * **The list is empty, and the entry that emptied it was wrong rather than
+ * satisfied.** The exemption said the component had "no visual states to
+ * enumerate" and that its three claims -- re-measured `scrollMargin`, per-row
+ * measurement, `getItemKey` -- were measurements a test suite should own. The
+ * second half is right and is why `VirtualList.browser.test.tsx` exists. The
+ * first half is not: all three claims have a *picture*, and it is the picture
+ * that makes them recognisable. A window displaced by a header, a wrapped row
+ * drawn over the row beneath, a list that reserves the right scroll and draws
+ * nothing -- none of those is a caller's markup wearing a different name.
+ *
+ * Keeping the entry costs nothing and is exactly how a good check goes quiet,
+ * so this note stays in place of it: an argument that a component cannot be
+ * shown should be re-read as an argument that nobody has tried, and the
+ * `why` sentence this list demands is what makes that re-reading possible at
+ * all.
  *
  * **Removing an entry is how a story gets recorded as written**, which is the
  * same trade `check-deleted.mjs` makes with its stylesheet manifest and for
@@ -87,21 +104,7 @@ const SCOPE = ['presentation/common', 'presentation/entity', 'presentation/layou
  * sentence and losing one is a line in a diff rather than a silent edit. An
  * entry kept after its story exists fails the second test below, so the list
  * cannot rot in the direction that matters. */
-const ALLOWED: readonly { readonly file: string; readonly why: string }[] = [
-  {
-    file: 'presentation/common/VirtualList.tsx',
-    why:
-      'It has no visual states to enumerate. The component renders a `<ul>` with a' +
-      ' computed height and calls the caller back for every row, so what is on screen is' +
-      " entirely the caller's markup -- a story would be showing `ProjectList` or" +
-      ' `DocumentBrowser` with a different name on the page. Its own claims are the three' +
-      ' its docstring names (re-measured `scrollMargin`, per-row measurement, `getItemKey`)' +
-      ' and all three are measurements against a scroll container the caller owns, which is' +
-      ' what `VirtualList.test.tsx` and the browser suite are for. Write the story if it ever' +
-      ' grows a rendered state of its own -- an empty case, a loading tail -- and delete this' +
-      ' entry with it.',
-  },
-]
+const ALLOWED: readonly { readonly file: string; readonly why: string }[] = []
 
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
