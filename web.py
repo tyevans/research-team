@@ -117,6 +117,27 @@ def main() -> None:
             course_author=application.course_author,
             reembed=application.reembed,
             authoring=authoring,
+            # Three references to fields `Application` does not have yet.
+            # Composition wiring for the catalog -- `CatalogService`, the
+            # `CatalogFeatureStore` read side, and the recorder factory that
+            # appends `CourseFeatured`/`CourseUnfeatured` -- is a separate,
+            # later piece of work (registering `CatalogFeatureProjection`
+            # with the application's projection set, in particular, has to
+            # happen in `composition.py` beside every other projection this
+            # process starts, per its own comment on why one forgotten there
+            # is a projection nobody starts). Left wired here anyway, rather
+            # than omitted or passed as `None`: `test_web_entrypoint.py`
+            # checks this call by parsing this file's source, not by
+            # importing `Application`, so it demands the parameter be
+            # supplied without demanding the attribute already resolve. The
+            # alternative -- leaving these three out until that later change
+            # lands -- is exactly the gap `topic_repository` and `corpus`
+            # shipped through three times before this test existed: routes
+            # added to `create_app` and not to this call answer 503 in the
+            # running server while every test that builds its own app passes.
+            catalog=application.catalog,
+            catalog_features=application.catalog_features,
+            catalog_recorder=application.catalog_recorder,
             dispatcher=application.dispatcher,
             dispatch=dispatch,
             ask=application.ask,
