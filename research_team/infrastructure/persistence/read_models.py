@@ -90,6 +90,7 @@ from research_team.domain.ask_conversation import (
     AskConversationStarted,
     AskTurnRecorded,
 )
+from research_team.domain.catalog_curation import CourseFeatured, CourseUnfeatured
 from research_team.domain.course_authoring_run import (
     COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
     CourseAuthored,
@@ -2210,6 +2211,118 @@ class OntologyProjection(DeclarativeProjection):
         is the project.
         """
         await self._ontology.mark_stale_for_source(event.tenant_id, str(event.source_id))
+
+
+CATALOG_NAMESPACE = UUID("c5e8a017-3d62-5f94-8b21-6a0d4e97c318")
+"""A literal, not a derived `uuid5(NAMESPACE_URL, ...)`, matching every other
+namespace in this file. A computed namespace would silently remap every row
+id the moment its input string is edited; this one is also consumed by the
+blurb cache (Task 4), which builds its own ids as
+`uuid5(CATALOG_NAMESPACE, f"blurb:{project_id}:{slug}")`, so it stays at
+module level rather than nested in a class."""
+
+
+class CatalogFeatureRow(ReadModel):
+    """One candidate somebody put on the front page.
+
+    Keyed by `(project_id, slug)` through `row_id`, so featuring the same slug
+    twice moves its rank rather than adding a second row. That idempotence is
+    what lets the route be a plain POST with no read-modify-write.
+    """
+
+    __table_name__ = "catalog_features"
+
+    project_id: UUID
+    slug: str
+    rank: int = 0
+
+    @staticmethod
+    def row_id(project_id: UUID, slug: str) -> UUID:
+        return uuid5(CATALOG_NAMESPACE, f"{project_id}:{slug}")
+
+
+class CatalogFeatureStore:
+    """The featured table and the connection it owns."""
+
+    def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
+        self._connection = connection
+        self._rows = rows
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "CatalogFeatureStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, CatalogFeatureRow)
+        # `apply_schema` reconciles columns, not indexes -- the same note
+        # `EntityDefinitionStore.open` carries, for the same reason: every
+        # read here is project-scoped.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_catalog_features_project "
+            f"ON {CatalogFeatureRow.table_name()}(project_id)"
+        )
+        await connection.commit()
+        rows = SQLiteReadModelRepository(connection, CatalogFeatureRow, tracer)
+        return cls(connection, rows)
+
+    async def feature(self, project_id: UUID, slug: str, rank: int) -> None:
+        await self._rows.save(
+            CatalogFeatureRow(
+                id=CatalogFeatureRow.row_id(project_id, slug),
+                project_id=project_id,
+                slug=slug,
+                rank=rank,
+            )
+        )
+
+    async def unfeature(self, project_id: UUID, slug: str) -> None:
+        """Deleting something absent is a no-op, not an error.
+
+        This is driven by a projection over a log that may hold an unfeature
+        for a slug whose feature was never projected -- a rebuild from an
+        arbitrary checkpoint does exactly that -- and raising here would put a
+        routine replay in the dead-letter queue.
+        """
+        await self._rows.delete(CatalogFeatureRow.row_id(project_id, slug))
+
+    async def featured_for(self, project_id: UUID) -> dict[str, int]:
+        cursor = await self._connection.execute(
+            f"SELECT slug, rank FROM {CatalogFeatureRow.table_name()} "
+            "WHERE project_id = ? AND deleted_at IS NULL",
+            (str(project_id),),
+        )
+        try:
+            return {row[0]: row[1] for row in await cursor.fetchall()}
+        finally:
+            await cursor.close()
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
+class CatalogFeatureProjection(DeclarativeProjection):
+    """Keeps `catalog_features` level with the curation events."""
+
+    def __init__(
+        self,
+        store: CatalogFeatureStore,
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._store = store
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(CourseFeatured)
+    async def _featured(self, event: CourseFeatured) -> None:
+        await self._store.feature(event.project_id, event.slug, event.rank)
+
+    @handles(CourseUnfeatured)
+    async def _unfeatured(self, event: CourseUnfeatured) -> None:
+        await self._store.unfeature(event.project_id, event.slug)
 
 
 class OntologyRunner:
