@@ -80,27 +80,27 @@ def export_router(deps: ExportDeps) -> APIRouter:
 
     @router.get("/api/projects/{project_id}/export/course")
     async def export_course(project_id: UUID, area: str | None = None):
-        """Every file the last authoring run wrote, as one zip.
+        """Every file the last settled authoring run wrote, as one zip.
 
-        **Read out of `AuthoringActivity`, which is process memory that a
-        restart loses.** That is not this route's bug to fix -- it is being
-        fixed on `authoring-durable` -- but it is this route's problem to be
-        honest about, because the failure is silent from every other angle:
-        the files themselves are safely on the log, and only the *mapping*
-        from an area slug to the session whose workspace holds it lives in
-        RAM. Without that mapping the files are reachable only by walking the
-        fork tree by hand. So a project whose server has restarted since its
-        courses were written gets a 409 naming the reason, never an empty or
-        partial archive.
+        **The rule is that a partial archive must never look complete.** It is
+        not that a partial archive must never exist -- that was the earlier
+        reading, and it was only ever right by accident: back when the
+        area-to-session mapping lived in process memory, the partial cases were
+        unreachable anyway, so refusing them cost nothing. Since #242 the
+        mapping is a table, those runs come back with their session ids intact,
+        and refusing them would mean recovering the work and then declining to
+        hand it over.
 
-        When durability lands this changes in exactly one place: `_run_of`
-        below stops calling `authoring.last` and asks whatever durable read
-        replaces it. Nothing else here knows where the mapping came from.
+        So `done`, `failed`, `cancelled` and `interrupted` all export, and each
+        archive says which it is -- in a README naming what completed, what
+        failed and what was never started, and in the filename for every
+        non-`done` run, which is the only place a reader sees it before opening
+        anything. `_run_of` and `_course_readme` hold the argument in full.
 
-        **409 while a run is in flight**, rather than a snapshot of it. An
-        archive taken mid-run contains whichever areas happened to be finished
-        and looks exactly like a complete one -- which is precisely the
-        "silently partial" outcome this route is required not to produce.
+        **409 while a run is in flight**, and that one is unchanged. A run that
+        is moving would give a different archive a second later, so there is no
+        snapshot to describe accurately -- which is the difference between it
+        and a settled partial run, where there is.
         """
         await deps.require_project(project_id)
         run = await _run_of(project_id, deps.authoring)
@@ -156,16 +156,26 @@ def export_router(deps: ExportDeps) -> APIRouter:
             # Distinguished from the 409 above: the run is known and it wrote
             # nothing this archive could carry. A zip holding only a README
             # reads as a feature that ran and produced an empty course.
+            # The status is named, because "wrote nothing" reads as a defect
+            # for a `done` run and as an explanation for an interrupted one --
+            # and the reader cannot tell which without being told.
             raise HTTPException(
                 status_code=409,
-                detail="the last authoring run wrote no course files to export",
+                detail=(
+                    f"the last authoring run ({run.get('status')}) wrote no course "
+                    f"files to export"
+                ),
             )
 
         stem = _safe(name) if area is None else f"{_safe(name)}-{_safe(area)}"
         return Response(
             content=buffer.getvalue(),
             media_type="application/zip",
-            headers={"content-disposition": f'attachment; filename="{stem}-course.zip"'},
+            headers={
+                "content-disposition": (
+                    f'attachment; filename="{stem}-course{_status_suffix(run)}.zip"'
+                )
+            },
         )
 
     # ---- B. the graph ------------------------------------------------------
@@ -296,29 +306,32 @@ async def _area_cut(
 
 
 async def _run_of(project_id: UUID, authoring: AuthoringActivity | None) -> dict:
-    """The finished authoring run whose files this export is of, or a 409.
+    """The most recent settled authoring run, or a 409 saying why there is none.
 
-    Three refusals rather than one, because they are three different things a
-    person can act on: the build has no authoring wired at all, this server
-    has no memory of a run (which for a restarted server means "the mapping
-    is gone", not "nothing was ever written"), and a run is happening now.
+    **Only two refusals now, and the one that went away is the interesting
+    one.** The build having no authoring wired is a 503; a run *in flight* is a
+    409, because it is moving and a snapshot of it would be a different archive
+    a second later. Everything else exports.
 
-    **Async since the durable-runs merge, and the second refusal below is now
-    wrong in a way this function does not yet fix.** `authoring.last` reads the
-    `authoring_runs` table rather than a dict, so its `None` no longer means
-    "the mapping was lost on restart" -- it means this project has never had a
-    run at all, and the detail string still says otherwise. Worse, the case
-    that used to reach it now returns a run with `status: "interrupted"`, which
-    falls straight through to an archive: a run that was still going when the
-    server died, exported as if it were complete. That is exactly the "silently
-    partial" outcome the route docstring above says it is required not to
-    produce.
+    **A settled run is exported whatever it settled as** -- `done`, `failed`,
+    `cancelled` or `interrupted`. Their courses are real files, their session
+    ids are durable since #242, and the run's status is a fact about the run
+    rather than a verdict on the work. `cancelled` is a person who *knows* the
+    run is partial and stopped it deliberately, and refusing them their own
+    courses would be patronising; `interrupted` is the case durability was
+    built for, and refusing it would mean the feature recovered the mapping and
+    then declined to use it.
 
-    Left as-is on purpose. Making `interrupted` refuse -- and deciding whether
-    `cancelled`, which is a person who *knows* the run is partial, should refuse
-    with it -- is a product decision about this route, not a merge resolution,
-    and the merge that surfaced it should not be the commit that quietly makes
-    it. Whoever takes it changes this function and the detail string together.
+    What the route docstring forbids is a partial archive that *looks*
+    complete, and the answer to that is saying so rather than withholding:
+    every archive carries a README stating the status, what completed, what
+    failed and what was never started, and every non-`done` export names its
+    status in the filename. See `_course_readme` and `_status_suffix`.
+
+    Nothing here branches on the status vocabulary, deliberately. A fifth
+    settled status added later exports like the other four and is described
+    accurately by a README built from `targets`/`completed`/`failures` rather
+    than from a table of known names.
     """
     if authoring is None:
         raise HTTPException(status_code=503, detail="course authoring is not configured")
@@ -329,17 +342,39 @@ async def _run_of(project_id: UUID, authoring: AuthoringActivity | None) -> dict
         )
     run = await authoring.last(project_id)
     if run is None:
+        # No longer "the mapping was lost on restart" -- since #242 the mapping
+        # is a table, and its silence means what silence usually means. A
+        # message still blaming a restart would send somebody looking for a
+        # server problem behind a project nobody has authored yet.
         raise HTTPException(
             status_code=409,
             detail=(
-                "this server has no record of an authoring run for this project. "
-                "Which session holds each area's course is kept in memory and is "
-                "lost on restart, so courses written before the last restart "
-                "cannot be gathered automatically -- re-run the authoring, or open "
-                "the sessions directly."
+                "no authoring run has ever been recorded for this project. "
+                "Write the courses first, then export them."
             ),
         )
     return run
+
+
+def _status_suffix(run: dict) -> str:
+    """`-interrupted`, `-cancelled`, `-failed`, or nothing for a completed run.
+
+    **In the filename, because that is the only place the status is visible
+    before anything is opened.** A README says it too, and a README is one
+    unzip and one click away -- by which point the archive has already been
+    saved, forwarded, or dropped into a folder next to two complete ones. The
+    download bar, the mail attachment and the directory listing all show the
+    name, and this is the version of "it says so" that reaches somebody who
+    never opens it.
+
+    What it costs: a filename is the one part a person can rename, so it is not
+    sufficient on its own. That is why it is *both*, not either.
+
+    Empty for `done` rather than `-done`: an ordinary export should not carry a
+    qualifier, or the qualifiers stop reading as warnings.
+    """
+    status = str(run.get("status") or "")
+    return "" if status in ("", "done") else f"-{_safe(status)}"
 
 
 def _course_links(run: dict) -> list[tuple[str, str]]:
@@ -371,6 +406,43 @@ def _is_path_file(session: Any, target: str) -> bool:
     return f"{PATHS_DIR}/{target}.md" in session.state.files
 
 
+#: What each settled status means, in a sentence somebody who has never read
+#: this code can act on. A lookup rather than prose built by branching, so the
+#: README builder itself stays status-blind -- an unknown status falls back to
+#: the generic line below instead of rendering a paragraph that is wrong.
+_STATUS_SENTENCE = {
+    "done": "This run finished. Every target below that is not listed as failed was written.",
+    "failed": (
+        "This run failed: every target it attempted broke. Anything under `areas/` "
+        "is what survived, and the failures are listed below."
+    ),
+    "cancelled": (
+        "**This run was cancelled part-way through.** Somebody stopped it deliberately, "
+        "so the targets under *Never started* were abandoned rather than attempted. "
+        "What is here is complete in itself; the course as a whole is not."
+    ),
+    "interrupted": (
+        "**This run was interrupted -- the server stopped while it was still writing.** "
+        "The targets under *Never started* were never reached. What is here was fully "
+        "written before the interruption and is safe to read; the course as a whole is "
+        "not finished."
+    ),
+}
+
+
+def _never_started(run: dict) -> list[str]:
+    """Targets the run neither wrote nor failed at.
+
+    Computed from the three lists rather than from the status, so a cancelled
+    run, an interrupted one and any status added later all describe themselves
+    correctly. Empty for an ordinary completed run, which is what keeps the
+    section out of the archives that do not need it.
+    """
+    accounted = {target for target, _ in _course_links(run)}
+    accounted |= {failure["target"] for failure in (run.get("failures") or [])}
+    return [target for target in (run.get("targets") or []) if target not in accounted]
+
+
 def _course_readme(name: str, project_id: UUID, run: dict, area: str | None) -> str:
     """What this archive is, written into it.
 
@@ -378,14 +450,27 @@ def _course_readme(name: str, project_id: UUID, run: dict, area: str | None) -> 
     asks about six months from now. It names the failures too: a run that
     wrote seven of eight areas is reported `done`, and an archive that carried
     seven courses and said nothing would hide the eighth.
+
+    **Since the route began exporting unsettled-looking runs, this file is
+    load-bearing rather than courteous.** A `cancelled` or `interrupted` run
+    produces an archive that is genuinely partial, and the whole argument for
+    handing it over rather than refusing it is that it says so -- here, and in
+    the filename. If this section is ever dropped, the route goes back to
+    producing the "silently partial" archive its own docstring forbids.
     """
+    status = str(run.get("status") or "unknown")
     lines = [
         f"# {name} — course export",
         "",
         f"Exported {datetime.now(UTC).isoformat(timespec='seconds')}"
         f" from project `{project_id}`.",
-        f"Authoring run `{run.get('run_id')}` ({run.get('kind')}),"
-        f" status `{run.get('status')}`.",
+        f"Authoring run `{run.get('run_id')}` ({run.get('kind')}), status `{status}`.",
+        "",
+        _STATUS_SENTENCE.get(
+            status,
+            f"This run settled as `{status}`. Compare the lists below against "
+            f"what you expected before relying on this archive as complete.",
+        ),
         "",
         "Understanding by Design units under `areas/`, one directory per learning",
         "area, each with a `unit.md` and its lessons. The path overview, if this",
@@ -394,6 +479,18 @@ def _course_readme(name: str, project_id: UUID, run: dict, area: str | None) -> 
     ]
     if area is not None:
         lines += [f"This archive holds **one area only**: `{area}`.", ""]
+    completed = [target for target, _ in _course_links(run)]
+    if completed:
+        # Listed rather than counted. "7 of 9 written" tells a reader the
+        # archive is short and not which two to go and write.
+        lines += ["## Written", ""]
+        lines += [f"- `{target}`" for target in completed]
+        lines += [""]
+    never = _never_started(run)
+    if never:
+        lines += ["## Never started", ""]
+        lines += [f"- `{target}`" for target in never]
+        lines += [""]
     failures = run.get("failures") or []
     if failures:
         lines += ["## Not written", ""]
