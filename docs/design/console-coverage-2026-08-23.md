@@ -113,6 +113,36 @@ renders `Resume` plain beside an accent `New session`, or a single accent
 `Open`). The lesson widgets were the only place the condition arose, and it
 arose because this series put it there.
 
+## One surface is unstoryable by design, and that is the right answer
+
+An attempt to give `Approvals` a story was reverted, and the reason is worth
+recording because it looks like a coverage gap and is not one.
+
+`check-deleted.mjs` phase 3 forbids importing `Approvals` from anywhere but
+`DecisionBar`. The rule is not fussiness: approvals used to be rendered per
+session from three call sites -- the conversation footer, the worker drawer,
+and the course page through that drawer -- and each showed only the approvals
+of the session already on screen, so **"is anything waiting on me?" had a
+different answer on every page** and the honest way to find out was to open
+every session in turn. One bar subscribed to the whole feed replaced them.
+
+And `DecisionBar` itself is in the story allowlist, because it renders from
+`useApprovalFeed` and returns `null` when nothing is pending -- a story is
+either a mock of the feed or a blank page.
+
+So the surface has no gallery entry, from both directions at once. **Weakening
+the deletion rule to admit a story was considered and rejected**, on the
+grounds that it would contradict the allowlist argument written earlier in
+this same pass: if a mock-driven `DecisionBar` story is "a story about the
+mock", then a story that reaches around the bar to render its component
+directly is worse -- it is a picture of an arrangement the console is
+forbidden to have.
+
+The general form, since it will come up again: **a deletion rule that forbids
+an import is a statement about the component's only legitimate caller.** A
+story is a caller. Where the two collide, the rule wins, and the absence is
+documented rather than engineered around.
+
 ## Conventions the pass settled on
 
 Worth knowing before adding to any of this, because they are why the tests
