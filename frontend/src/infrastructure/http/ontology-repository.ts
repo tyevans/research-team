@@ -18,6 +18,14 @@ export class HttpOntologyRepository implements OntologyRepository {
     return foldOntology(body)
   }
 
+  async ungrouped(projectId: ProjectId) {
+    const body = await this.http.get(
+      `/api/projects/${seg(projectId)}/sources/ungrouped`,
+      dto.ungroupedSourcesDto,
+    )
+    return body.sourceIds
+  }
+
   async discover(projectId: ProjectId, sourceId: string) {
     const body = await this.http.post(
       `/api/projects/${seg(projectId)}/sources/${seg(sourceId)}/ontology`,

@@ -511,6 +511,18 @@ export interface OntologyRepository {
    * The two are kept apart because only one of them should stop anyone
    * retrying. */
   discover(projectId: ProjectId, sourceId: string): Promise<number | null>
+
+  /** Every extracted document no discovery pass has read yet, in listing order.
+   *
+   * The sweep's work list. Extracted rather than merely stored, because a
+   * document with no graph has no entities for a class's members to resolve
+   * against; and "no pass has read it" rather than "it has no classes",
+   * because a document read and found barren is done -- treating it as pending
+   * would re-read every barren document at model cost on every press.
+   *
+   * Empty means finished, and can be trusted: the server answers 503 rather
+   * than an empty list when discovery is unwired. */
+  ungrouped(projectId: ProjectId): Promise<readonly string[]>
 }
 
 /** A window over the project's timeline. Every part optional: the whole

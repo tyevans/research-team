@@ -135,6 +135,10 @@ export const queryKeys = {
    *  shows all of them at once, and a per-class key would be a cache entry
    *  nothing ever reads on its own. */
   ontology: (project: ProjectId) => ['ontology', project] as const,
+  /** The discovery sweep's work list. A key of its own rather than a slice of
+   *  `ontology`, because the two invalidate on different events: a pass that
+   *  reads a barren document changes this list and adds no class. */
+  ungroupedSources: (project: ProjectId) => ['ontology', 'ungrouped', project] as const,
 
   /** A project's areas and the path through them.
    *
