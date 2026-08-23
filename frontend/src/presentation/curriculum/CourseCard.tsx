@@ -11,9 +11,16 @@ import { blurbAge } from '@domain/knowledge/catalog.ts'
  * names between sizes would prove nothing about what the cascade did with
  * them; this file gives each size its own class and stops there.
  *
- * A plain `<button>` rather than a link with a click handler: the catalog
- * opens a candidate into an in-page detail view (Task 13), not a navigation,
- * and a button is what a screen reader announces correctly for that.
+ * A plain `<button>` rather than a link with a click handler: `onOpen` is the
+ * caller's to interpret, not a navigation this component performs itself, and
+ * a button is what a screen reader announces correctly for an in-page action
+ * rather than a page change.
+ *
+ * There is no candidate-detail view to open into yet -- that is a later
+ * increment of this design, not something this component or its current
+ * caller (`CatalogPane`) provides. `CatalogPane` presently uses `onOpen` as a
+ * placeholder that drills into the candidate's own category; see its own
+ * comment at the call site for why.
  */
 export const CourseCard = ({
   candidate,
