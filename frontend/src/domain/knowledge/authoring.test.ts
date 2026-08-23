@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   courseLinks,
+  endedIncomplete,
+  endingOf,
   isRunning,
   progressOf,
   type AuthoringRun,
@@ -57,6 +59,66 @@ describe('isRunning', () => {
 
   it('is true only while a run says it is running', () => {
     expect(isRunning(status({ current: run({ status: 'running' }) }))).toBe(true)
+  })
+})
+
+describe('isRunning, over the statuses a restart introduced', () => {
+  it.each(['cancelled', 'interrupted', 'failed', 'done'])('is false for %s', (ending) => {
+    // `current` is only ever populated by the process actually driving a run,
+    // so in practice these arrive in `last`. Asserted here anyway: a build that
+    // let `interrupted` read as running would poll the status route forever
+    // against a server that is doing nothing.
+    expect(isRunning(status({ current: run({ status: ending }) }))).toBe(false)
+  })
+})
+
+describe('endingOf', () => {
+  it('has nothing to say about an ordinary finish', () => {
+    // Not 'done'. The panel already prints how many of how many were written,
+    // and a label repeating it on every successful run is noise.
+    expect(endingOf(run({ status: 'done' }))).toBeNull()
+  })
+
+  it('calls a cancellation a stop, not a failure', () => {
+    // Two different facts that leave the same partial set of courses behind.
+    expect(endingOf(run({ status: 'cancelled' }))).toBe('stopped')
+    expect(endingOf(run({ status: 'failed' }))).toBe('failed')
+  })
+
+  it('spells out an interruption rather than shortening it', () => {
+    expect(endingOf(run({ status: 'interrupted' }))).toBe('interrupted by a restart')
+  })
+
+  it('says nothing about a status it has never met', () => {
+    // The status is a plain string on purpose: a build meeting a sixth value
+    // renders the run rather than refusing the response.
+    expect(endingOf(run({ status: 'quiesced' }))).toBeNull()
+  })
+})
+
+describe('endedIncomplete', () => {
+  it('is true for a run that stopped before reaching every target', () => {
+    expect(
+      endedIncomplete(run({ status: 'cancelled', completed: ['one'], sessions: ['s1'] })),
+    ).toBe(true)
+  })
+
+  it('is false for a done run that lost a target to a failure', () => {
+    // It reached the end of its list. The failure is named separately, and
+    // counting it as "never started" would be wrong as well as redundant.
+    expect(
+      endedIncomplete(
+        run({ completed: ['one'], sessions: ['s1'], failures: [{ target: 'two', detail: 'x' }] }),
+      ),
+    ).toBe(false)
+  })
+
+  it('is false while a run is still going', () => {
+    // A run halfway through has not ended at all, and a panel that said so
+    // would report every long run as incomplete for twenty minutes.
+    expect(endedIncomplete(run({ status: 'running', completed: ['one'], sessions: ['s1'] }))).toBe(
+      false,
+    )
   })
 })
 

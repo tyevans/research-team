@@ -1,5 +1,7 @@
 import {
   courseLinks,
+  endedIncomplete,
+  endingOf,
   isRunning,
   progressOf,
   type AuthoringStatus,
@@ -22,6 +24,13 @@ import { sessionHref } from '../routing/routes.ts'
  * three model turns; a path of eight is twenty-four. A button that said only
  * "Write courses" would commit a local model to twenty minutes on one click,
  * and the person who clicked it would find out by waiting.
+ *
+ * **And it can be taken back.** A path run is up to thirty model turns against
+ * a local endpoint; without a stop control the only way out was killing the
+ * server, which used to also lose the mapping from each written course to the
+ * session holding it. The stop appears only while a run is in flight, beside
+ * the buttons that are disabled for exactly that period — so the one control
+ * that is live is the one that does something.
  */
 export const AuthoringBar = ({
   status,
@@ -29,8 +38,10 @@ export const AuthoringBar = ({
   areaTitle,
   pathLength,
   pending,
+  stopping,
   error,
   onAuthor,
+  onCancel,
   courseUrl,
 }: {
   status: AuthoringStatus | null
@@ -38,8 +49,10 @@ export const AuthoringBar = ({
   areaTitle: string | null
   pathLength: number
   pending: boolean
+  stopping: boolean
   error: string | null
   onAuthor: (request: { area?: string }) => void
+  onCancel: () => void
   /** Where the finished courses can be downloaded, for the whole project or
    *  one area. A URL rather than a handler: the browser downloads better than
    *  this console can — see `HttpExportRepository`. */
@@ -74,6 +87,20 @@ export const AuthoringBar = ({
             Write “{areaTitle ?? areaSlug}” (~3 model turns)
           </button>
         )}
+        {running && (
+          <button
+            type="button"
+            disabled={stopping}
+            onClick={onCancel}
+            className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
+          >
+            {/* "Stop writing", not "Cancel". Cancel reads as undoing, and the
+                courses already written are kept -- they exist, in sessions
+                whose ids the run has already recorded, and the links below
+                still reach them. */}
+            {stopping ? 'Stopping…' : 'Stop writing'}
+          </button>
+        )}
       </div>
 
       {/* `aria-live` so a run's progress reaches a screen reader without the
@@ -90,7 +117,24 @@ export const AuthoringBar = ({
         )}
         {!running && last !== null && (
           <p className="m-0">
+            {/* The ending, when there is one worth naming. `null` for an
+                ordinary finish: the count beside it already says how it went,
+                and a "done" label repeated on every successful run is noise.
+                `interrupted` is the one a reader cannot guess -- it is neither
+                something they did nor something the model did. */}
+            {endingOf(last) !== null && <span>Last run {endingOf(last)}. </span>}
             Last run wrote {last.completed.length} of {last.targets.length}.{' '}
+            {/* How many were never attempted, and only when some were not. A
+                cancelled or interrupted run's untried targets are otherwise
+                invisible: the count above says how many were written and the
+                failures below say which broke, and neither accounts for the
+                ones the run never reached. */}
+            {endedIncomplete(last) && (
+              <span>
+                {last.targets.length - last.completed.length - last.failures.length} never
+                started.{' '}
+              </span>
+            )}
             {/* Links, not a count. Each authoring run writes into its **own**
                 session's workspace, so without these the files it produced are
                 reachable only by finding that session in the tree -- which is

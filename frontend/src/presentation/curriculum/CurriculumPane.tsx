@@ -83,6 +83,18 @@ export const CurriculumPane = ({
     },
   })
 
+  const cancel = useMutation({
+    mutationFn: () => curricula.cancelAuthoring(projectId),
+    onSuccess: () => {
+      // The status, like `author` above. Deliberately *only* the status: the
+      // run does not reach `cancelled` on the log synchronously with this
+      // response -- the driving task appends that after the model turn it just
+      // cancelled unwinds -- so this invalidation is what starts the poll
+      // that will eventually see it, not a read of the settled state.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.authoring(projectId) })
+    },
+  })
+
   const refresh = useMutation({
     mutationFn: () => curricula.refreshEmbeddings(projectId),
     onSuccess: () => {
@@ -120,8 +132,19 @@ export const CurriculumPane = ({
         areaTitle={area?.title ?? null}
         pathLength={curriculum.path.areaSlugs.length}
         pending={author.isPending}
-        error={author.error instanceof Error ? author.error.message : null}
+        stopping={cancel.isPending}
+        // Either mutation's error, whichever happened -- one line, because the
+        // two are never in flight together: the stop only exists while a run
+        // is running and the write buttons are disabled for exactly then.
+        error={
+          author.error instanceof Error
+            ? author.error.message
+            : cancel.error instanceof Error
+              ? cancel.error.message
+              : null
+        }
         onAuthor={(request) => author.mutate(request)}
+        onCancel={() => cancel.mutate()}
         courseUrl={(area) => exports.courseUrl(projectId, area)}
       />
       <EmbeddingRefresh

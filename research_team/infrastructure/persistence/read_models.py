@@ -90,6 +90,13 @@ from research_team.domain.ask_conversation import (
     AskConversationStarted,
     AskTurnRecorded,
 )
+from research_team.domain.course_authoring_run import (
+    COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
+    CourseAuthored,
+    CourseAuthoringFailed,
+    CourseAuthoringRunSettled,
+    CourseAuthoringRunStarted,
+)
 from research_team.domain.media_proposals import (
     MediaAssetIgnored,
     MediaAssetUnignored,
@@ -3882,6 +3889,392 @@ class SocraticDialogueRunner:
         if self._dialogues is not None:
             await self._dialogues.close()
             self._dialogues = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+
+
+class AuthoringRunRow(ReadModel):
+    """One course-authoring run. `id` is the run id.
+
+    The aggregate id itself with no `uuid5` over it, for `AskConversationRow`'s
+    reason: the run id is minted by the server and handed straight back on the
+    202, so deriving a second one would give the catch-up route a key nothing
+    ever returned.
+
+    **One table, not two, and `authored` holds pairs.** The neighbouring
+    two-table stores exist because something queries the child rows on their
+    own -- a conversation's turns, a class's members. Nothing queries one
+    authoring target: every read here is "the whole run", because the frame the
+    browser renders is the whole run. So a target table would buy an index for
+    a query nobody issues and cost a second write per target.
+
+    Pairs rather than parallel `completed`/`sessions` lists, even though the
+    wire frame carries them parallel: `courseLinks` in the browser has to
+    defend against a length mismatch between those two, and a store that cannot
+    produce one is better than a store that documents what to do about it. The
+    frame is built by unzipping this, which makes the two arrays equal in
+    length by construction rather than by care.
+
+    **No `current` column, deliberately.** Which area is in hand right now is
+    process state -- see `course_authoring_run.py` -- and a stored one would
+    outlive the process driving it and assert that work is in progress when
+    nothing is doing it.
+
+    **No `settled_at` column either.** `last()` orders by `started_at`, and a
+    nullable datetime that only three of five statuses ever fill would be a
+    column read by nothing. The settling *time* is on the log if it is ever
+    wanted; what a reader needs here is the settling *status*.
+    """
+
+    __table_name__ = "authoring_runs"
+
+    project_id: UUID
+    kind: str = ""
+    status: str = "running"
+    started_at: datetime
+    targets: list[str] = Field(default_factory=list)
+    authored: list[dict] = Field(default_factory=list)
+    """`[{"target": ..., "session_id": ...}]`, in the order the run wrote them.
+
+    `session_id` is the load-bearing half and the reason this table exists: the
+    course markdown lives in that session's event-sourced workspace, and
+    nothing else on the log records which session holds which area."""
+    failures: list[dict] = Field(default_factory=list)
+    """`[{"target": ..., "detail": ...}]`. Per target, because a run that wrote
+    seven of eight is `done` with one failure listed."""
+
+    @field_validator("targets", "authored", "failures", mode="before")
+    @classmethod
+    def _decode_json_list(cls, value: object) -> object:
+        """Accept the JSON text SQLite hands back for a list column -- see
+        `SessionSummaryRow._decode_json_list` on the asymmetry this hides."""
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+
+class AuthoringRunStore:
+    """The `authoring_runs` table and the connection it owns.
+
+    Every column is written from an event payload, so `rebuild()` may truncate
+    -- unlike `EntityDefinitionStore`, nothing else writes here.
+    """
+
+    def __init__(
+        self, connection: aiosqlite.Connection, rows: ReadModelRepository[AuthoringRunRow]
+    ) -> None:
+        self._connection = connection
+        self._rows = rows
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "AuthoringRunStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, AuthoringRunRow)
+        # `apply_schema` reconciles columns and not indexes -- the same note as
+        # on `EntityDefinitionStore.open`. The only read that is not by id is
+        # `latest_for_project`, which runs on every open of the curriculum
+        # pane; unindexed it would scan every run every project has ever made.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_authoring_runs_project "
+            f"ON {AuthoringRunRow.table_name()}(project_id, started_at)"
+        )
+        await connection.commit()
+        return cls(connection, SQLiteReadModelRepository(connection, AuthoringRunRow, tracer))
+
+    async def start(
+        self,
+        run_id: UUID,
+        project_id: UUID,
+        *,
+        kind: str,
+        targets: list[str],
+        started_at: datetime,
+    ) -> None:
+        await self._rows.save(
+            AuthoringRunRow(
+                id=run_id,
+                project_id=project_id,
+                kind=kind,
+                started_at=started_at,
+                targets=targets,
+            )
+        )
+
+    async def record_authored(self, run_id: UUID, target: str, session_id: UUID) -> None:
+        """Append one target's session, unless this target is already recorded.
+
+        The existence check is what makes redelivery safe. A subscription that
+        is restarted from a checkpoint written before its last handler returned
+        replays that event, and an unconditional append would put the same
+        course in the list twice -- which reads, on every surface, as a run that
+        authored more targets than it had.
+        """
+        row = await self._rows.get(run_id)
+        if row is None:
+            return
+        if any(entry.get("target") == target for entry in row.authored):
+            return
+        row.authored = [*row.authored, {"target": target, "session_id": str(session_id)}]
+        await self._rows.save(row)
+
+    async def record_failure(self, run_id: UUID, target: str, detail: str) -> None:
+        """Append one target's failure, unless this target already has one.
+
+        Deduplicated on `target` for `record_authored`'s reason. A target can
+        only fail once per run -- the driving loop moves on after it -- so the
+        target alone is the identity, and the detail of a redelivered event is
+        by construction the same string.
+        """
+        row = await self._rows.get(run_id)
+        if row is None:
+            return
+        if any(entry.get("target") == target for entry in row.failures):
+            return
+        row.failures = [*row.failures, {"target": target, "detail": detail}]
+        await self._rows.save(row)
+
+    async def settle(self, run_id: UUID, status: str) -> None:
+        row = await self._rows.get(run_id)
+        if row is None:
+            return
+        row.status = status
+        await self._rows.save(row)
+
+    async def get(self, run_id: UUID) -> AuthoringRunRow | None:
+        return await self._rows.get(run_id)
+
+    async def recent_for_project(
+        self, project_id: UUID, limit: int = 2
+    ) -> list[AuthoringRunRow]:
+        """This project's runs, most recently started first.
+
+        Ordered by `started_at` and not by insertion order, for
+        `AskTurnRow.position`'s reason: a `rebuild()` truncates and replays and
+        is free to insert rows in a different physical order, so a read that
+        leaned on the table's order would answer correctly until the first
+        rebuild and differently after it.
+
+        The default limit is 2 because that is what the one caller needs:
+        `AuthoringActivity.last` wants the newest run that is *not* the one it
+        is currently driving, and at most one run per project is ever in
+        flight -- so the second row is the deepest it can have to look.
+        """
+        return await self._rows.find(
+            Query(
+                filters=[Filter(field="project_id", operator="eq", value=str(project_id))],
+                order_by="started_at",
+                order_direction="desc",
+                limit=limit,
+            )
+        )
+
+    async def latest_for_project(self, project_id: UUID) -> AuthoringRunRow | None:
+        """This project's most recently started run, or None if it has had none."""
+        found = await self.recent_for_project(project_id, limit=1)
+        return found[0] if found else None
+
+    async def truncate(self) -> None:
+        await self._connection.execute(f"DELETE FROM {AuthoringRunRow.table_name()}")
+        await self._connection.commit()
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
+class AuthoringRunProjection(DeclarativeProjection):
+    """Writes course-authoring runs into the table above.
+
+    Nothing else writes it, which is what lets `rebuild()` truncate.
+    """
+
+    def __init__(
+        self,
+        runs: AuthoringRunStore,
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._runs = runs
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(CourseAuthoringRunStarted)
+    async def _on_started(self, event: CourseAuthoringRunStarted) -> None:
+        await self._runs.start(
+            event.aggregate_id,
+            event.project_id,
+            kind=event.kind,
+            targets=list(event.targets),
+            started_at=event.started_at,
+        )
+
+    @handles(CourseAuthored)
+    async def _on_authored(self, event: CourseAuthored) -> None:
+        await self._runs.record_authored(event.aggregate_id, event.target, event.session_id)
+
+    @handles(CourseAuthoringFailed)
+    async def _on_failed(self, event: CourseAuthoringFailed) -> None:
+        await self._runs.record_failure(event.aggregate_id, event.target, event.detail)
+
+    @handles(CourseAuthoringRunSettled)
+    async def _on_settled(self, event: CourseAuthoringRunSettled) -> None:
+        await self._runs.settle(event.aggregate_id, event.status)
+
+
+class AuthoringRunRunner:
+    """Keeps the authoring-run table following the log, and answers from it.
+
+    A tenth runner, for the reasons `CorpusRunner`'s docstring gives for being
+    a second: a `rebuild()`/`failures()`-shaped surface for this table alone,
+    and a `rebuild()` that cannot truncate a table it does not own.
+
+    Its failure mode if never constructed is `AskConversationRunner`'s and
+    worse: an authoring run appends whether or not anything is following, so a
+    build missing it answers every catch-up read with "no run has ever
+    happened" while the courses sit on the log unfindable -- which is the exact
+    bug this whole aggregate was added to fix, restored by an unwired line.
+    `test_an_authoring_run_survives_a_restart.py` is what fails.
+    """
+
+    def __init__(
+        self,
+        store: SQLiteEventStore,
+        db_path: str,
+        bus: InMemoryEventBus,
+        tracer=None,
+    ):
+        self._store = store
+        self._db_path = db_path
+        self._bus = bus
+        self._tracer = tracer
+        self._runs: AuthoringRunStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+        self._checkpoints: SQLCheckpointRepository | None = None
+        self._dlq: SQLDLQRepository | None = None
+        self._engine: AsyncEngine | None = None
+
+    @property
+    def projection_name(self) -> str:
+        return AuthoringRunProjection.__name__
+
+    async def start(self) -> None:
+        """Open the table and start following the log.
+
+        Same shape as `AskConversationRunner.start`, including touching the
+        event store first so `projection_checkpoints` exists before anything
+        reads it.
+        """
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._engine = engine
+        self._checkpoints = SQLCheckpointRepository(engine)
+        self._dlq = SQLDLQRepository(engine)
+        self._runs = await AuthoringRunStore.open(self._db_path, self._tracer)
+        projection = AuthoringRunProjection(
+            self._runs, self._checkpoints, self._dlq, self._tracer
+        )
+        self._manager = SubscriptionManager(
+            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
+        )
+        self._subscription = await self._manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the authoring projection failed to start: {failures}")
+
+    async def failures(self, limit: int = 100) -> list[DLQEntry]:
+        if self._dlq is None:
+            return []
+        return await self._dlq.get_failed_events(
+            projection_name=self.projection_name, limit=limit
+        )
+
+    def _started(self) -> AuthoringRunStore:
+        if self._runs is None:
+            raise RuntimeError("the authoring projection has not been started")
+        return self._runs
+
+    async def get(self, run_id: UUID) -> AuthoringRunRow | None:
+        return await self._started().get(run_id)
+
+    async def latest_for_project(self, project_id: UUID) -> AuthoringRunRow | None:
+        return await self._started().latest_for_project(project_id)
+
+    async def recent_for_project(
+        self, project_id: UUID, limit: int = 2
+    ) -> list[AuthoringRunRow]:
+        return await self._started().recent_for_project(project_id, limit)
+
+    async def rebuild(self) -> None:
+        """Truncate and replay. Allowed here for `AskConversationRunner`'s
+        reason: every column comes from an event payload."""
+        if self._manager is None:
+            raise RuntimeError("the authoring projection has not been started")
+        await self._manager.stop()
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        await self._started().truncate()
+        self._manager = None
+        self._subscription = None
+        await self._runs.close()
+        self._runs = None
+        await self.start()
+        await self.caught_up()
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """Block until every `CourseAuthoringRun` event appended so far is in
+        the table.
+
+        Scoped by aggregate type and started from what the subscription has
+        already processed, **not** compared against the store's global end --
+        `SessionSummaryRunner.caught_up` documents at length why that
+        comparison runs its full timeout for a scoped subscription, and
+        authoring runs share a store with sessions, the corpus and redstring's
+        documents, any of which moves the end to a position this projection
+        never reaches.
+
+        No event-type filter: this projection handles every event type on its
+        aggregate, so the scope is already exact.
+        """
+        if self._manager is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            remaining = await collect(
+                self._store.read_all(
+                    from_position=self._subscription.last_processed_position,
+                    options=FeedReadOptions(
+                        aggregate_type=COURSE_AUTHORING_RUN_AGGREGATE_TYPE
+                    ),
+                )
+            )
+            if not remaining:
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError(
+            f"the authoring projection did not consume every "
+            f"{COURSE_AUTHORING_RUN_AGGREGATE_TYPE} event within {timeout}s"
+        )
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+            self._manager = None
+            self._subscription = None
+        if self._runs is not None:
+            await self._runs.close()
+            self._runs = None
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None
