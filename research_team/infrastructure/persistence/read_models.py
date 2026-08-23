@@ -2241,6 +2241,108 @@ class CatalogFeatureRow(ReadModel):
         return uuid5(CATALOG_NAMESPACE, f"{project_id}:{slug}")
 
 
+class CourseBlurbRow(ReadModel):
+    """One generated blurb, cached against the cluster it describes.
+
+    A cache and not a projection's own state, exactly like
+    `EntityDefinitionRow`: the catalog service's `put` is the only writer.
+
+    Unlike that row there is no `stale` flag, and the difference is
+    deliberate. A definition is invalidated by graph events this table never
+    reads, so it needs a flag something else can set. A blurb carries
+    `membership_hash`, which answers the same question *by comparison* -- the
+    caller already holds the current hash and can see the disagreement
+    itself. A flag would be a second answer to one question, and the two
+    would drift.
+    """
+
+    __table_name__ = "course_blurbs"
+
+    project_id: UUID
+    slug: str
+    text: str
+    membership_hash: str
+    model: str
+    generated_at: str
+
+    @staticmethod
+    def row_id(project_id: UUID, slug: str) -> UUID:
+        # The `blurb:` prefix keeps this id from colliding with
+        # `CatalogFeatureRow.row_id`, which shares `CATALOG_NAMESPACE` and
+        # hashes the same `{project_id}:{slug}` pair with no prefix of its
+        # own.
+        return uuid5(CATALOG_NAMESPACE, f"blurb:{project_id}:{slug}")
+
+
+class CourseBlurbStore:
+    """The blurb cache table and the connection it owns.
+
+    No projection here, matching `EntityDefinitionStore`: nothing on the
+    event log describes a blurb, so there is nothing for a projection to
+    replay. The catalog service calls `put` directly after generating one.
+    """
+
+    def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
+        self._connection = connection
+        self._rows = rows
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "CourseBlurbStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, CourseBlurbRow)
+        # `apply_schema` reconciles columns, not indexes -- the same note
+        # `EntityDefinitionStore.open` carries, for the same reason: every
+        # read here is project-scoped.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_course_blurbs_project "
+            f"ON {CourseBlurbRow.table_name()}(project_id)"
+        )
+        await connection.commit()
+        rows = SQLiteReadModelRepository(connection, CourseBlurbRow, tracer)
+        return cls(connection, rows)
+
+    async def get(self, project_id: UUID, slug: str) -> CourseBlurbRow | None:
+        """The cached blurb, or None if none has been generated yet.
+
+        `row.project_id != project_id` cannot happen through this class's
+        own `row_id` -- the pair is baked into the id -- but is checked
+        anyway for the same reason `EntityDefinitionStore.get` checks it: a
+        row reached by id alone makes no claim about which project asked.
+        """
+        row = await self._rows.get(CourseBlurbRow.row_id(project_id, slug))
+        if row is None or row.project_id != project_id:
+            return None
+        return row
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        text: str,
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None:
+        """Cache a blurb, superseding whatever was cached before for this
+        slug -- `save` writes by id, and `row_id` is stable per
+        `(project_id, slug)`, so a rewrite replaces rather than duplicates.
+        """
+        await self._rows.save(
+            CourseBlurbRow(
+                id=CourseBlurbRow.row_id(project_id, slug),
+                project_id=project_id,
+                slug=slug,
+                text=text,
+                membership_hash=membership_hash,
+                model=model,
+                generated_at=generated_at.isoformat(),
+            )
+        )
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
 class CatalogFeatureStore:
     """The featured table and the connection it owns."""
 
