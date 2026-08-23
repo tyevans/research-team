@@ -29,7 +29,7 @@ vitest's browser mode. Nothing needed redrawing. The lineage view reads
 clearly at three levels of nesting, chips carry state without colouring the
 rows they sit on, and the amber-on-dark palette holds.
 
-So the work became coverage. 29 stories became 42, chosen by call-site count
+So the work became coverage. 29 stories became 44, chosen by call-site count
 rather than convenience.
 
 ## What that found
