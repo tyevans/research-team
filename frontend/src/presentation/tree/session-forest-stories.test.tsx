@@ -67,3 +67,20 @@ it('marks exactly one row as held', () => {
   render(<Held />)
   expect(screen.getAllByText('held')).toHaveLength(1)
 })
+
+/** The fixture ids are distinguishable in the eight characters the row shows.
+ *
+ *  `SessionRow` renders `shortId`, which is the first eight. The first draft
+ *  of the stories gave every session the same prefix, so the gallery drew five
+ *  rows above one repeated id and taught that the column carries nothing. Real
+ *  ids are random and do not collide there; a fixture that makes a working
+ *  column look useless is worse than no fixture.
+ *
+ *  Caught by screenshotting the story, not by any assertion -- which is the
+ *  argument for this one existing. */
+it('gives every row a distinguishable short id', () => {
+  render(<EveryRowState />)
+  const shown = [...document.body.querySelectorAll('.row-id')].map((each) => each.textContent)
+  expect(new Set(shown).size).toBe(shown.length)
+  expect(shown).toHaveLength(5)
+})

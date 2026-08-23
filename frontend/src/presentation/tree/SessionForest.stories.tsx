@@ -9,6 +9,14 @@ import { SkeletonRows } from './Skeletons.tsx'
 
 /** A project's sessions, and the lineage that is the point of keeping them.
  *
+ * **The ids differ in their first eight characters, and that is deliberate.**
+ * `SessionRow` shows `shortId`, which is exactly those eight, and the first
+ * draft of this file gave every fixture the same prefix -- so the gallery drew
+ * five rows and one repeated id, teaching that the id column carries nothing.
+ * Real ids are random and do not collide there. A fixture that makes a working
+ * column look useless is worse than no fixture, and it was only visible by
+ * screenshotting the page.
+ *
  * `SessionForest` is the one place nesting survives on the landing page.
  * `SessionRow.tsx` argues why: inside one project the nesting is a
  * relationship between a handful of rows a reader can take in, where at the
@@ -84,21 +92,21 @@ export const EveryRowState: Story = {
     <Frame heading="rows">
       <ul className="tree">
         {[
-          session({ id: '7d41e0aa-1111-2222-3333-444444444444' }),
+          session({ id: '7d41e0aa-1111-4111-8111-444444444444' }),
           session({
-            id: '7d41e0aa-1111-2222-3333-555555555555',
+            id: 'b2c93f17-1111-4111-8111-555555555555',
             firstMessage: null,
             turns: 0,
             files: 0,
           }),
           session({
-            id: '7d41e0aa-1111-2222-3333-666666666666',
-            forkedFrom: SessionId('7d41e0aa-1111-2222-3333-444444444444'),
+            id: '4e08ad5c-1111-4111-8111-666666666666',
+            forkedFrom: SessionId('7d41e0aa-1111-4111-8111-444444444444'),
             forkedAt: 42,
           }),
-          session({ id: '7d41e0aa-1111-2222-3333-777777777777', failedTurns: 3 }),
+          session({ id: 'c71b2d90-1111-4111-8111-777777777777', failedTurns: 3 }),
           session({
-            id: '7d41e0aa-1111-2222-3333-888888888888',
+            id: '19f6e4b3-1111-4111-8111-888888888888',
             firstMessage:
               'a first message long enough that the row has to cut it off somewhere sensible rather than letting it push the id off the end of the line, which is what it did before the truncation existed',
           }),
@@ -123,10 +131,10 @@ export const Held: Story = {
     <Frame heading="held against not held">
       <ul className="tree">
         <li>
-          <SessionRow session={session({ id: '7d41e0aa-1111-2222-3333-444444444444' })} held />
+          <SessionRow session={session({ id: '7d41e0aa-1111-4111-8111-444444444444' })} held />
         </li>
         <li>
-          <SessionRow session={session({ id: '7d41e0aa-1111-2222-3333-555555555555' })} />
+          <SessionRow session={session({ id: 'b2c93f17-1111-4111-8111-555555555555' })} />
         </li>
       </ul>
     </Frame>
@@ -145,23 +153,23 @@ export const Lineage: Story = {
         nodes={[
           node(
             session({
-              id: '7d41e0aa-1111-2222-3333-444444444444',
+              id: '7d41e0aa-1111-4111-8111-444444444444',
               firstMessage: 'map the tetrarchy onto the provinces it created',
             }),
             [
               node(
                 session({
-                  id: '7d41e0aa-1111-2222-3333-555555555555',
+                  id: 'b2c93f17-1111-4111-8111-555555555555',
                   firstMessage: 'retry that, but keep Nicomedia separate',
-                  forkedFrom: SessionId('7d41e0aa-1111-2222-3333-444444444444'),
+                  forkedFrom: SessionId('7d41e0aa-1111-4111-8111-444444444444'),
                   forkedAt: 42,
                 }),
                 [
                   node(
                     session({
-                      id: '7d41e0aa-1111-2222-3333-666666666666',
+                      id: '4e08ad5c-1111-4111-8111-666666666666',
                       firstMessage: 'and now trace the Diocese boundaries',
-                      forkedFrom: SessionId('7d41e0aa-1111-2222-3333-555555555555'),
+                      forkedFrom: SessionId('b2c93f17-1111-4111-8111-555555555555'),
                       forkedAt: 61,
                       failedTurns: 1,
                     }),
@@ -170,16 +178,16 @@ export const Lineage: Story = {
               ),
               node(
                 session({
-                  id: '7d41e0aa-1111-2222-3333-777777777777',
+                  id: 'c71b2d90-1111-4111-8111-777777777777',
                   firstMessage: 'a second branch from the same point',
-                  forkedFrom: SessionId('7d41e0aa-1111-2222-3333-444444444444'),
+                  forkedFrom: SessionId('7d41e0aa-1111-4111-8111-444444444444'),
                   forkedAt: 42,
                 }),
               ),
             ],
           ),
         ]}
-        heldBy="7d41e0aa-1111-2222-3333-555555555555"
+        heldBy="b2c93f17-1111-4111-8111-555555555555"
       />
     </Frame>
   ),
