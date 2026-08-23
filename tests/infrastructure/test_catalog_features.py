@@ -37,17 +37,18 @@ async def test_a_featured_slug_is_readable_with_its_rank(store):
 
 
 async def test_unfeaturing_removes_it(store):
-    """Not proof that `@handles(CourseFeatured)` is wired: with that decorator
-    removed the feature call above is silently dropped, `featured_for` was
-    already `{}`, and this assertion passes unchanged. Verified by removing
-    the decorator on 2026-08-23 -- this was one of two tests (of four) that
-    stayed green. Its own coverage is the unfeature handler, which the two
-    tests above cannot exercise."""
+    """Asserts the precondition before unfeaturing, not just the outcome: with
+    `@handles(CourseFeatured)` removed, `featured_for` would already read `{}`
+    before the unfeature ever ran, and a test that only checked the final `{}`
+    would pass whether or not either handler did anything. The mid-test
+    assertion rules that out -- it fails if the feature never lands -- so this
+    test now exercises both handlers together."""
     project = uuid4()
     projection = CatalogFeatureProjection(store)
     await projection.handle(
         CourseFeatured(aggregate_id=project, project_id=project, slug="warp", rank=2)
     )
+    assert await store.featured_for(project) == {"warp": 2}
 
     await projection.handle(
         CourseUnfeatured(aggregate_id=project, project_id=project, slug="warp")
