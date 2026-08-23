@@ -3004,6 +3004,57 @@ for. None is a correctness bug on the happy path.
   question is possible; the scroll column is unasserted and would need a
   browser test; and nothing manages focus after send.
 
+## Workflows
+
+### B147. Remove the workflow system entirely; the curriculum path replaces it
+
+**A direction, not a defect.** The workflow/preset system -- `hybrid.default`,
+`ubd.pure`, `addie.pure`, their stages, stage artifacts, stage exits and the
+review-findings surface hanging off them -- is judged a failure in practice by
+the person who built it (2026-08-23). The future is the
+curriculum -> course-building path: cluster the graph into learning areas,
+offer them as a catalog, and realise a course from a candidate on demand.
+
+**The trigger for filing this** was the Findings tab, which never loaded. The
+root cause was presentational (see the commit that fixed it), but the
+*measurement* taken to find it is the argument for this entry: all three real
+projects -- Star Trek, Skilljar, Intro to Fiction -- report `workflow: null`,
+so `GET /api/projects/{id}/course` answers 409 for every one of them, and every
+surface built on the course/stage model has been dead on real data. The Findings
+tab, the Artifacts tab and the Queue pane are all reading from a model nothing
+in the corpus uses.
+
+**What makes this hard, and why it is a backlog entry rather than a task.** The
+workflow model is not confined to one module. Reachable from a single sweep:
+`domain/workflow.py`, `workflows/` (the presets), `application/course.py`,
+`application/stage_runner.py`, `application/stage_exit.py`,
+`application/artifacts.py`, `application/findings.py`, `application/checks.py`,
+`application/coverage.py`, `interfaces/web/course_html.py`, the course/stage/
+artifact/finding routes in `interfaces/web/app.py`, the `stage`, `artifact` and
+`finding` facets in the console's routing grammar, and most of
+`frontend/src/presentation/course/`. `SessionStarted` and the session aggregate
+also carry workflow identity, which puts part of this on the event log.
+
+**The log is the part to think about first.** Existing sessions carry a workflow
+in their events, and events already written are not rewritten. Removing the
+field is a deliberate schema break of the kind `domain/events.py` documents --
+allowed pre-release, but it must be written down in the field's docstring and
+`tests/infrastructure/test_schema_evolution.py` must be changed to assert the
+*refusal* rather than having the case deleted. That is the same treatment
+`SessionStarted.project_id` already had.
+
+**What must not be lost with it.** `course_authoring.py` drives the UbD three-
+turn authoring run and is the thing the catalog's "make this course real" step
+calls. It reads `workflows/ubd.py` for nothing -- its module docstring says the
+preset is untouched and nothing below it reads the preset -- so it should
+survive the removal intact. Confirm that before deleting, rather than after.
+
+**Sequencing.** Do not start this while the course-catalog increments are in
+flight; increment 2 is what makes the replacement real, and removing the old
+path before the new one can author a course leaves the product with neither.
+The honest order is: finish the catalog, prove a course can be realised from a
+candidate end to end, then delete.
+
 ## Waiting on redstring
 
 ### B58. `graph = 0.0` across a document boundary is absence of evidence read as disagreement
