@@ -137,8 +137,21 @@
   gap: 8px;
   padding-top: 4px;
 }
+/* No `opacity` here, and its removal is the second half of the contrast fix
+   this file's neighbours record. It was 0.62, to say "these are not sent to
+   the model" -- and opacity multiplies every descendant, so it dragged each
+   message head from a comfortable 7.07:1 down to 3.49:1 (user) and 4.0:1
+   (assistant). `a11y.browser.test.tsx` already states the rule from the last
+   round: opacity states are removed rather than retuned, because no foreground
+   value survives one.
+
+   What carries the meaning instead is the fold these sit inside, whose label
+   is `N superseded messages — still in the log, not sent to the model`. That
+   is the more honest signal anyway: the pane's whole argument is that nothing
+   was deleted, and dimming the evidence to 62% undercut the sentence directly
+   above it. */
 .compaction-msgs .msg {
-  opacity: 0.62;
+  border-color: var(--line-soft);
 }
 .compaction-boundary {
   display: flex;
