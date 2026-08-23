@@ -607,6 +607,20 @@ Measured: with a twelfth tab added, `typecheck` is clean and **1 of 160 test
 files fails** -- and that one is the length tripwire added in #245. Nothing
 else in the CI-reachable suite has an opinion.
 
+**It has now happened, on this entry's own branch.** #249 added `Toasts`
+stories, passed all four CI gates, merged -- and left `a11y.browser.test.tsx`
+red with eight `.toast-message` contrast violations. Nobody would have known
+until the next person ran `npm run test:browser` by hand, which is a thing
+that happens weeks apart. The violations turned out to be phantoms (axe
+sampling a toast mid-fade; fixed in #250 by disabling animation for the
+sweep), and that is not the point: the suite was red for four merged commits
+and every gate said green.
+
+So this entry is no longer a prediction. The cost of the browser suite being
+outside CI is one merged-green red suite per feature that touches an animated
+or measured surface, and the person who pays it is whoever next runs the
+suite and has to work out which of several merges did it.
+
 The tripwire makes the twelfth tab a conversation rather than a merge, and it
 is explicitly not the measurement: it cannot tell a twelfth tab from a
 relabelled eleventh, and shorter labels might genuinely fit twelve. **The real
