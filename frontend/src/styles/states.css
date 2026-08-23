@@ -108,3 +108,22 @@
     transform: translateY(-5px);
   }
 }
+/* The same guard `.skeleton-row` in `tree.css` and the component animations in
+   `components.css` already carry, and this was the one animation in the
+   console without it -- found while working out why the axe sweep was reading
+   a toast's colour mid-fade.
+
+   It matters more here than on a skeleton. A toast is the console's only
+   unrequested motion: it appears without the reader doing anything, at the
+   edge of vision, while they are reading something else. That is precisely the
+   motion a reduced-motion preference is about. The toast still arrives and
+   still holds its full lifetime; it simply does not slide.
+
+   This does not fix the sweep -- the browser it runs in reports no preference,
+   which is why `a11y.browser.test.tsx` disables animation itself. Two separate
+   things that were found together. */
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

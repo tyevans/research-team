@@ -129,7 +129,50 @@ interface Sweep {
   otherViolations: string[]
 }
 
+/** Animations off for the duration of the sweep.
+ *
+ * **Measured on 2026-08-23, after this suite went red on eight phantom
+ * violations.** `.toast` carries `animation: toast-in 0.16s ease-out`, the
+ * sweep waits 60ms after mounting, and axe therefore sampled every toast
+ * *mid-fade* -- reading a partially composited colour and reporting
+ * `.toast-message` as failing AA eight times over. The tell was that the
+ * reported pairs drifted between runs (`#5a4748` one run, `#5a4648` the next),
+ * which a static stylesheet cannot produce. At rest the same element is `--fg`
+ * on `--bg-raise`, which passes comfortably.
+ *
+ * Two other fixes were tried and rejected, both worth recording because the
+ * obvious one is the bad one:
+ *
+ * - **Waiting longer.** 300ms makes the sweep pass and takes it from 17s to
+ *   **63s** -- 3.6x, on the single most expensive test in a suite nobody is
+ *   forced to run. Buying correctness with the one currency this suite cannot
+ *   spend is how it stops being run at all.
+ * - **Honouring `prefers-reduced-motion`.** `.skeleton-row` already does and
+ *   `.toast` does not, which is a real inconsistency and is filed separately.
+ *   It would not fix this: the sweep's browser reports no such preference.
+ *
+ * Disabling animation is also the more *correct* measurement rather than a
+ * workaround. A contrast rule is about what a reader can read, and nobody
+ * reads a toast in its first 160ms. The resting state is the state that has to
+ * pass; an intermediate frame of a fade has never been the claim.
+ *
+ * What this does not cover, stated so it is not mistaken for more than it is:
+ * an element whose *resting* state is a transition end-point it never reaches
+ * would now be measured at its start. Nothing here is such an element, and a
+ * component that was would be a component whose paint depends on an animation
+ * having run -- which is its own defect. */
+const STILL = `*, *::before, *::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}`
+
 const sweep = async (): Promise<Sweep> => {
+  const still = document.createElement('style')
+  still.textContent = STILL
+  document.head.append(still)
+
   const result: Sweep = {
     stories: 0,
     contrastPairs: new Set(),
@@ -185,6 +228,7 @@ const sweep = async (): Promise<Sweep> => {
     }
   }
 
+  still.remove()
   return result
 }
 
