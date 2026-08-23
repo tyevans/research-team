@@ -221,8 +221,26 @@
   flex-direction: column;
   gap: var(--space-2);
 }
+/* 108px, and it is `PROJECT_ROW_HEIGHT` from `ProjectRows.tsx` rather than a
+   number chosen here. It was 84px, which matched nothing: measured in Chromium
+   on 2026-08-23, a bare `ProjectCard` is 67px, the landing page's arrangement
+   with its preview open is 147px, and the virtualizer's own estimate for the
+   row this stands in for is 108. Three numbers for one fact, in three files,
+   none of them citing another.
+
+   84 was the worst of the four to keep, because `Skeletons.tsx` states the
+   claim this violates outright -- "a block of the right size does not move when
+   it is replaced" -- and `ProjectList` draws four of them, so a page settling
+   dropped roughly 96px on every pending state, which is exactly the layout jump
+   the skeleton exists instead of.
+
+   108 rather than 147: the landing page's rows are collapsed until a reader
+   opens one, and 147 is the open measurement. 108 is what the code already
+   believes a closed row to be, so this makes the skeleton agree with the
+   estimate rather than introducing a fifth opinion.
+   `skeleton-height.browser.test.tsx` fails if the two drift apart again. */
 .skeleton-row {
-  height: 84px;
+  height: 108px;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   background: linear-gradient(90deg, var(--bg-panel), var(--bg-panel-2), var(--bg-panel));
