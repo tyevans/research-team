@@ -14,6 +14,7 @@ Follows `test_timeline_route.py`'s `app_and_client`, duplicated module-locally
 for that module's stated reason.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -44,14 +45,39 @@ class StubAuthor:
 
     def __init__(self) -> None:
         self.asked: list[str] = []
+        self.sessions: dict[str, UUID] = {}
+        #: Held open by the cancel tests so a run can be stopped mid-target.
+        #: `None` -- the default -- means every target returns at once, which
+        #: is what every other test in this module wants.
+        self.gate: asyncio.Event | None = None
+        #: One permit per target allowed to finish, for the cancel tests.
+        #:
+        #: An `asyncio.Event` cannot express "let exactly one through". A test
+        #: that sets the event, waits for the first session and then clears it
+        #: has a window: the driver starts the *second* target and passes the
+        #: still-open event before `clear()` runs. Both cancel tests were
+        #: written that way and both passed locally and failed on CI, where a
+        #: loaded runner widened the window -- 2 targets finished where the
+        #: assertion expected 1, so the abandoned count came back one short.
+        #: A semaphore has no such window: with no permits left, the next
+        #: target blocks whatever the scheduler does.
+        self.permits: asyncio.Semaphore | None = None
+
+    async def _one(self, target: str):
+        self.asked.append(target)
+        if self.permits is not None:
+            await self.permits.acquire()
+        if self.gate is not None:
+            await self.gate.wait()
+        session_id = uuid4()
+        self.sessions[target] = session_id
+        return SimpleNamespace(session_id=session_id)
 
     async def author_area(self, project_id, area, subject, *, lesson_count=3, run_id=None):
-        self.asked.append(area.slug)
-        return SimpleNamespace(session_id=uuid4())
+        return await self._one(area.slug)
 
     async def author_path(self, project_id, path, areas, *, run_id=None):
-        self.asked.append(path.slug)
-        return SimpleNamespace(session_id=uuid4())
+        return await self._one(path.slug)
 
 
 @pytest.fixture
@@ -60,7 +86,7 @@ async def app_and_client(db_path, fake_model):
     await application.start()
     extraction = ExtractionActivity()
     author = StubAuthor()
-    authoring = AuthoringActivity()
+    authoring = AuthoringActivity(application.authoring_runs, application.authoring)
     curriculum = CurriculumService()
     api = create_app(
         application.service,
@@ -368,6 +394,73 @@ async def test_the_authoring_catch_up_route_answers_before_anything_has_run(
 
     assert response.status_code == 200
     assert response.json() == {"current": None, "last": None}
+
+
+async def test_cancelling_with_nothing_running_answers_zero_rather_than_refusing(
+    app_and_client,
+):
+    """A stop control pressed twice is a person pressing a button.
+
+    200 with a count, matching `cancel_extraction_queue`, rather than a 409 --
+    the second press has nothing to stop and that is not a bad request.
+    """
+    _application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+
+    response = await client.post(f"/api/projects/{project_id}/curriculum/author/cancel")
+
+    assert response.status_code == 200
+    assert response.json() == {"cancelled": 0}
+
+
+async def test_cancelling_an_unknown_project_is_a_404(app_and_client):
+    """`_require_project` first, like every other route in this file."""
+    client = app_and_client.client
+
+    response = await client.post(f"/api/projects/{uuid4()}/curriculum/author/cancel")
+
+    assert response.status_code == 404
+
+
+async def test_a_cancelled_run_keeps_the_courses_it_already_wrote(app_and_client):
+    """The point of cancelling rather than killing the process.
+
+    The assertion is on the *session id* of the target that finished before
+    the stop, not on the status alone: those courses exist, in that session's
+    workspace, and a cancel that dropped the mapping would leave them exactly
+    as unreachable as a crash did.
+
+    Read back through the catch-up route, which reads the log -- so this also
+    covers the route awaiting `last` rather than the dict it used to read.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    author = app_and_client.author
+    author.permits = asyncio.Semaphore(0)
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    started = await client.post(f"/api/projects/{project_id}/curriculum/author", json={})
+    assert started.status_code == 202
+    first_target = started.json()["targets"][0]
+    # Exactly one permit, so exactly one target can finish however the
+    # scheduler interleaves. Every later target blocks on `acquire`.
+    author.permits.release()
+    while first_target not in author.sessions:
+        await asyncio.sleep(0.01)
+
+    cancelled = await client.post(f"/api/projects/{project_id}/curriculum/author/cancel")
+    assert cancelled.status_code == 200
+    # Three targets, one written: two abandoned.
+    assert cancelled.json() == {"cancelled": 2}
+
+    await app_and_client.authoring.wait(UUID(project_id))
+    await application.authoring.caught_up()
+
+    status = (await client.get(f"/api/projects/{project_id}/curriculum/author")).json()
+    assert status["current"] is None
+    assert status["last"]["status"] == "cancelled"
+    assert status["last"]["completed"] == [first_target]
+    assert status["last"]["sessions"] == [str(author.sessions[first_target])]
 
 
 async def test_deleting_a_project_forgets_its_curriculum(app_and_client):

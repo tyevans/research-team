@@ -136,7 +136,7 @@ def export_router(deps: ExportDeps) -> APIRouter:
         "silently partial" outcome this route is required not to produce.
         """
         await deps.require_project(project_id)
-        run = _run_of(project_id, deps.authoring)
+        run = await _run_of(project_id, deps.authoring)
 
         links = _course_links(run)
         if area is not None:
@@ -426,13 +426,30 @@ async def _area_cut(
     return entities, relationships, found.display_name(), len(entities) < len(members)
 
 
-def _run_of(project_id: UUID, authoring: AuthoringActivity | None) -> dict:
+async def _run_of(project_id: UUID, authoring: AuthoringActivity | None) -> dict:
     """The finished authoring run whose files this export is of, or a 409.
 
     Three refusals rather than one, because they are three different things a
     person can act on: the build has no authoring wired at all, this server
     has no memory of a run (which for a restarted server means "the mapping
     is gone", not "nothing was ever written"), and a run is happening now.
+
+    **Async since the durable-runs merge, and the second refusal below is now
+    wrong in a way this function does not yet fix.** `authoring.last` reads the
+    `authoring_runs` table rather than a dict, so its `None` no longer means
+    "the mapping was lost on restart" -- it means this project has never had a
+    run at all, and the detail string still says otherwise. Worse, the case
+    that used to reach it now returns a run with `status: "interrupted"`, which
+    falls straight through to an archive: a run that was still going when the
+    server died, exported as if it were complete. That is exactly the "silently
+    partial" outcome the route docstring above says it is required not to
+    produce.
+
+    Left as-is on purpose. Making `interrupted` refuse -- and deciding whether
+    `cancelled`, which is a person who *knows* the run is partial, should refuse
+    with it -- is a product decision about this route, not a merge resolution,
+    and the merge that surfaced it should not be the commit that quietly makes
+    it. Whoever takes it changes this function and the detail string together.
     """
     if authoring is None:
         raise HTTPException(status_code=503, detail="course authoring is not configured")
@@ -441,7 +458,7 @@ def _run_of(project_id: UUID, authoring: AuthoringActivity | None) -> dict:
             status_code=409,
             detail="an authoring run is in flight; wait for it to finish and export then",
         )
-    run = authoring.last(project_id)
+    run = await authoring.last(project_id)
     if run is None:
         raise HTTPException(
             status_code=409,

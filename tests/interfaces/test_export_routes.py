@@ -40,7 +40,7 @@ async def app_and_client(db_path, fake_model):
     application = build_application(model=fake_model, db_path=db_path)
     await application.start()
     extraction = ExtractionActivity()
-    authoring = AuthoringActivity()
+    authoring = AuthoringActivity(application.authoring_runs, application.authoring)
     curriculum = CurriculumService()
     api = create_app(
         application.service,
@@ -152,7 +152,7 @@ async def _authored(application, authoring, project_id: str, files: dict[str, di
     async def _one(run_id, target):
         return SimpleNamespace(session_id=written[target])
 
-    authoring.start(UUID(project_id), list(files), _one, kind="path")
+    await authoring.start(UUID(project_id), list(files), _one, kind="path")
     await authoring.wait(UUID(project_id))
     return written
 
@@ -295,7 +295,7 @@ async def test_an_export_taken_during_a_run_is_refused(app_and_client):
         await asyncio.sleep(0.2)
         return SimpleNamespace(session_id=uuid4())
 
-    app_and_client.authoring.start(UUID(project_id), ["alpha"], _slow, kind="area")
+    await app_and_client.authoring.start(UUID(project_id), ["alpha"], _slow, kind="area")
     response = await client.get(f"/api/projects/{project_id}/export/course")
     await app_and_client.authoring.wait(UUID(project_id))
 

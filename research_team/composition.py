@@ -95,6 +95,7 @@ from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import ProjectState, Session, SessionPurpose, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
+from research_team.domain.course_authoring_run import CourseAuthoringRun
 from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import Topic
@@ -193,12 +194,14 @@ from research_team.infrastructure.persistence.check_telemetry_reader import (
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.event_store import (
+    build_course_authoring_run_repository,
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
+    AuthoringRunRunner,
     EntityDefinitionRunner,
     MediaProposalRunner,
     OntologyRunner,
@@ -512,6 +515,26 @@ class Application:
     `socratic` above reads *through* this when the live registry has dropped a
     dialogue, so this is not only the history surface but the whole of
     resumption. The two must never be collapsed into one object."""
+    authoring_runs: AggregateRepository[CourseAuthoringRun]
+    """The write side of course-authoring runs: what a run wrote, and where.
+
+    A field beside `course_author` rather than something reached through it,
+    because it is not the authoring *work* -- it is the record that the work
+    happened, appended by the web layer's `AuthoringActivity` around calls into
+    `course_author`. Collapsing the two would make "the course was written" and
+    "which session holds it" one assertion, and the second is the one that used
+    to be lost on every restart."""
+
+    authoring: AuthoringRunRunner
+    """The read side of the same feature: this project's last run, its targets,
+    and one session id per authored area. Idle until `start()`.
+
+    A field for `asks`'s reason -- a projection nobody would otherwise start --
+    and read-only. Its failure mode when unwired is the worst of the ten:
+    authoring appends whether or not anything follows, so a build missing it
+    answers "no run has ever happened" for every project while the courses sit
+    on the log unfindable, which is the original bug restored by omission."""
+
     interaction_log: InteractionLogRunner
     """Keeps `interaction_events` following the interaction log. Idle until
     `start()`. Its own store, so nothing here can be ordered against the
@@ -708,6 +731,7 @@ class Application:
         # land on a projection still mid-replay either.
         self._sweep.append(asyncio.create_task(self._sweep_reconciliation()))
         await self.asks.start()
+        await self.authoring.start()
         await self.dialogues.start()
         await self.interaction_log.start()
         if self._initial_project_id is not None:
@@ -881,6 +905,7 @@ class Application:
         await self.ontology.stop()
         await self.media_proposals.stop()
         await self.asks.stop()
+        await self.authoring.stop()
         await self.dialogues.stop()
         await self.interaction_log.stop()
         await self._interaction_store.close()
@@ -1209,6 +1234,17 @@ def build_application(
     # resumed dialogue start over with a blank goal while telling the reader it
     # continued. `test_a_dialogue_survives_a_restart.py` is what fails.
     dialogues = SocraticDialogueRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # The tenth, built here with the other nine and for the same reason, with
+    # the same failure mode as the ask's and a longer-lived consequence: an
+    # authoring run appends whether or not anything is following, so a build
+    # missing this line loses the area-to-session mapping for every course
+    # anyone ever wrote -- permanently, because the files stay on the log with
+    # nothing saying which session holds which area.
+    # `tests/integration/test_an_authoring_run_survives_a_restart.py` is what
+    # fails.
+    authoring = AuthoringRunRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
 
@@ -2569,6 +2605,10 @@ def build_application(
         grants=resolved_grants,
         ask=ask_service,
         asks=asks,
+        authoring_runs=build_course_authoring_run_repository(
+            repository.store, repository.publisher
+        ),
+        authoring=authoring,
         socratic=socratic_service,
         dialogues=dialogues,
         interaction_log=interaction_log,
