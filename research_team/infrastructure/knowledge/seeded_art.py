@@ -21,26 +21,45 @@ from urllib.parse import quote
 
 from research_team.domain.course_catalog import ArtRef, CategoryKey
 
-# One palette per known category, so a category page reads as one family
-# rather than a grab-bag. Deliberately a small closed set rather than
-# generating a palette per category key: an unbounded category vocabulary
-# (CategoryGrouper's docstring notes categories can arrive from ontology
-# discovery) must still produce art, so anything not in here falls through to
-# a palette derived from the category string itself -- see `_palette_for`.
-_KNOWN_PALETTES: dict[str, tuple[str, str]] = {
+# One palette per key the default grouper (type_plurality_grouper.CATEGORY_LABELS)
+# actually emits, so a category page reads as one family rather than a
+# grab-bag. This table is checked against that one, in
+# test_every_category_the_default_grouper_emits_has_its_own_palette --
+# nothing else keeps the two in agreement, because they live in different
+# modules and neither imports the other. An earlier draft had "place" here
+# instead of "location" (a guess, not a read of the grouper), which meant a
+# key nothing emits had a palette while a key the grouper does emit fell
+# through to grey; the test exists so that class of drift fails loudly.
+#
+# "unclassified" is deliberately NOT in this table -- see the comment on
+# `_UNCATEGORISED_BASE` for why grey is the right rendering for it, not an
+# oversight the fallback happens to paper over.
+_PALETTES: dict[str, tuple[str, str]] = {
     "work": ("#2b4c7e", "#f2a541"),
     "person": ("#5b3a63", "#e07a5f"),
-    "place": ("#2f5d50", "#8fbf9f"),
+    "location": ("#2f5d50", "#8fbf9f"),
+    "organization": ("#4a5568", "#63b3ed"),
     "concept": ("#3b3b58", "#c9a0dc"),
     "event": ("#7a2e2e", "#e8c07d"),
+    "category": ("#5c4a1e", "#d9b45e"),
 }
 
 _UNCATEGORISED_BASE = ("#3a3a3a", "#9a9a9a")
-"""Palette for a category this table has never heard of. Distinguishable from
-the known palettes at a glance (desaturated, unlike every hand-picked one
-above) so an unrecognised category never silently impersonates a real one --
-and still tinted by the category string below it, so two unknown categories
-do not collapse onto one look."""
+"""Palette for anything not in `_PALETTES` -- both a category this table has
+never heard of (the ontology-derived vocabulary `CategoryGrouper`'s docstring
+describes as still growing), and the grouper's own `unclassified` key.
+
+For `unclassified` specifically, this is a choice and not a fallback catching
+a gap: grey communicating "we could not classify this" is honest, where
+inventing a confident-looking colour for it would not be. It reaches this
+same code path as any other unrecognised key rather than a second grey
+mechanism, so there is exactly one place that produces grey and one place to
+change if that choice is ever revisited.
+
+Desaturated relative to every hand-picked entry in `_PALETTES`, so an
+unrecognised category never silently impersonates a real one, and still
+tinted by the category string below it, so two unknown categories do not
+collapse onto one look."""
 
 
 def _palette_for(category: CategoryKey) -> tuple[str, str]:
@@ -52,8 +71,8 @@ def _palette_for(category: CategoryKey) -> tuple[str, str]:
     hashing the category string itself, so "unknown" is not one look -- two
     different unrecognised categories still read as different families.
     """
-    if category in _KNOWN_PALETTES:
-        return _KNOWN_PALETTES[category]
+    if category in _PALETTES:
+        return _PALETTES[category]
     digest = sha256(category.encode("utf-8")).digest()
     hue = digest[0] / 255
     return _UNCATEGORISED_BASE[0], _hsl(hue, 0.35, 0.55)

@@ -1,6 +1,10 @@
 """Deterministic placeholder art. Increment 3 replaces the implementation."""
 
-from research_team.infrastructure.knowledge.seeded_art import SeededArtProvider
+from research_team.infrastructure.knowledge.seeded_art import _PALETTES, SeededArtProvider
+from research_team.infrastructure.knowledge.type_plurality_grouper import (
+    CATEGORY_LABELS,
+    UNCLASSIFIED,
+)
 
 
 def test_the_same_slug_gets_the_same_art_every_time():
@@ -45,3 +49,20 @@ def test_the_art_is_stable_across_processes_not_just_within_one():
 
     assert first.stdout == second.stdout
     assert first.stdout.strip() == SeededArtProvider().for_candidate("warp", "work").url
+
+
+def test_every_category_the_default_grouper_emits_has_its_own_palette():
+    """The two tables live in different modules and nothing but this test makes
+    them agree. Before it existed, `place` was a palette for a key no grouper
+    emits, while `location`, `organization` and `category` all fell through to
+    the uncategorised grey -- three of eight categories rendering as "we don't
+    know what this is" on a surface whose whole job is grouping.
+
+    `unclassified` is excluded on purpose, not to weaken this assertion: grey
+    is the deliberate rendering for it (see `_UNCATEGORISED_BASE`'s docstring
+    in `seeded_art.py`), so it is correctly absent from `_PALETTES` and would
+    otherwise make this test fail for a choice, not a gap.
+    """
+    unpalettedkeys = [k for k in CATEGORY_LABELS if k not in _PALETTES and k != UNCLASSIFIED]
+
+    assert unpalettedkeys == []
