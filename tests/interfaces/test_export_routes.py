@@ -28,6 +28,10 @@ from research_team.application import SummaryProjects, WorkerRoster
 from research_team.application.curriculum import CurriculumService
 from research_team.composition import build_application
 from research_team.domain import SessionPurpose
+from research_team.domain.course_authoring_run import (
+    RecordAuthoredCourse,
+    StartCourseAuthoringRun,
+)
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.extraction import ExtractionActivity
@@ -152,6 +156,63 @@ async def _authored(application, authoring, project_id: str, files: dict[str, di
     return written
 
 
+async def _interrupted(application, project_id: str, targets: list[str], written: dict):
+    """The wreckage a process that died mid-run leaves behind.
+
+    Start plus one `RecordAuthoredCourse` per finished target and **no settle**
+    -- which is precisely the row `AuthoringActivity.last` reports as
+    `interrupted`, since it derives that from a row saying `running` that no
+    live task is driving. Built by appending the same commands the driver
+    appends rather than by writing a row: a fixture that wrote the read model
+    directly would keep passing if the projection stopped being fed, which is
+    the failure `CLAUDE.md` records under *Events*.
+    """
+    run_id = uuid4()
+    aggregate = application.authoring_runs.create_new(run_id)
+    aggregate.execute(
+        StartCourseAuthoringRun(
+            run_id=run_id,
+            project_id=UUID(project_id),
+            kind="path",
+            targets=tuple(targets),
+            started_at=datetime.now(UTC),
+        )
+    )
+    await application.authoring_runs.save(aggregate)
+    for target, session_id in written.items():
+        stored = await application.authoring_runs.load(run_id)
+        stored.execute(
+            RecordAuthoredCourse(run_id=run_id, target=target, session_id=session_id)
+        )
+        await application.authoring_runs.save(stored)
+    return run_id
+
+
+async def _sessions_holding(application, project_id: str, files: dict) -> dict:
+    """Real sessions holding real course files, without driving a run.
+
+    Split out of `_authored` so the interrupted and cancelled cases can put
+    genuine workspaces behind a run this process did not complete.
+    """
+    written: dict[str, UUID] = {}
+    for target, contents in files.items():
+        session_id = await application.service.start_in_project(
+            UUID(project_id), SessionPurpose.CHAT
+        )
+        for path, content in contents.items():
+            await application.service.write_file(session_id, path, content)
+        await application.service.release_project(session_id)
+        written[target] = session_id
+    return written
+
+
+def _readme_of(response) -> str:
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    return archive.read(
+        next(name for name in archive.namelist() if name.endswith("README.md"))
+    ).decode()
+
+
 # ---- A. the course archive ------------------------------------------------
 
 
@@ -263,13 +324,16 @@ async def test_an_area_the_run_did_not_write_is_a_404_naming_what_it_did(app_and
     assert "alpha" in response.json()["detail"]
 
 
-async def test_a_project_with_no_remembered_run_is_refused_rather_than_emptied(app_and_client):
-    """The failure this route is required not to hide.
+async def test_a_project_that_never_authored_is_told_that_and_not_about_a_restart(
+    app_and_client,
+):
+    """`last` returning `None` changed meaning when the mapping became a table.
 
-    Which session holds each area's course is in process memory, so a server
-    that restarted since the courses were written cannot find them. Answering
-    that with an archive containing only a README would say the courses do not
-    exist, when they are on the log and merely unreachable from here.
+    Before #242 it meant "this process has forgotten"; now it means "nothing
+    was ever recorded". The old message blamed a restart, which would send
+    somebody hunting for a server fault behind a project nobody has authored.
+    Asserts on the absence of the old wording as well as the presence of the
+    new: a message that said both would pass a presence-only check.
     """
     client = app_and_client.client
     project_id = await _new_project(client)
@@ -277,7 +341,9 @@ async def test_a_project_with_no_remembered_run_is_refused_rather_than_emptied(a
     response = await client.get(f"/api/projects/{project_id}/export/course")
 
     assert response.status_code == 409
-    assert "lost on restart" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "no authoring run has ever been recorded" in detail
+    assert "restart" not in detail
 
 
 async def test_an_export_taken_during_a_run_is_refused(app_and_client):
@@ -416,3 +482,132 @@ async def test_scope_area_without_an_area_is_refused(app_and_client):
 
     assert response.status_code == 422
     assert "area" in response.json()["detail"]
+
+
+async def test_an_interrupted_run_is_exported_rather_than_refused(app_and_client):
+    """The case durability was built for.
+
+    A run that was still going when the server died comes back with its
+    completed targets and their session ids intact. Refusing it would mean the
+    feature recovered the mapping and then declined to use it -- so the archive
+    is handed over, and the README and the filename are what stop it reading as
+    complete.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    written = await _sessions_holding(
+        application, project_id, {"alpha": {"/course/areas/alpha/unit.md": "# Alpha"}}
+    )
+    await _interrupted(application, project_id, ["alpha", "beta", "gamma"], written)
+
+    response = await client.get(f"/api/projects/{project_id}/export/course")
+
+    assert response.status_code == 200
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    assert any(name.endswith("areas/alpha/unit.md") for name in archive.namelist())
+
+
+async def test_an_interrupted_archive_says_so_before_it_is_opened(app_and_client):
+    """The filename, which is the only place the status reaches somebody who
+    saves the file and forwards it without unzipping it."""
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    written = await _sessions_holding(
+        application, project_id, {"alpha": {"/course/areas/alpha/unit.md": "# Alpha"}}
+    )
+    await _interrupted(application, project_id, ["alpha", "beta"], written)
+
+    response = await client.get(f"/api/projects/{project_id}/export/course")
+
+    assert "-interrupted.zip" in response.headers["content-disposition"]
+
+
+async def test_an_interrupted_readme_names_what_was_never_started(app_and_client):
+    """The half of "it says so" that survives a rename.
+
+    Names the missing targets rather than counting them: "1 of 3 written" tells
+    a reader the archive is short and not which two to go and write.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    written = await _sessions_holding(
+        application, project_id, {"alpha": {"/course/areas/alpha/unit.md": "# Alpha"}}
+    )
+    await _interrupted(application, project_id, ["alpha", "beta", "gamma"], written)
+
+    readme = _readme_of(await client.get(f"/api/projects/{project_id}/export/course"))
+
+    # A phrase out of the explanatory sentence, not the word "interrupted" --
+    # which also appears in the terse `status ` + backtick line above it. Proved
+    # by deleting `_STATUS_SENTENCE` from the builder: the word-only assertion
+    # stayed green, so it was testing nothing. Pinning prose is brittle on
+    # purpose here; the sentence is the product surface, and a rewrite that
+    # loses "never reached" should have to look at this test.
+    assert "were never reached" in readme
+    assert "## Never started" in readme
+    assert "`beta`" in readme and "`gamma`" in readme
+    assert "## Written" in readme
+
+
+async def test_a_completed_run_carries_no_status_qualifier(app_and_client):
+    """The other side of the marker.
+
+    A qualifier on every archive would stop the qualifiers reading as warnings,
+    so `done` gets a plain name and no *Never started* section. Would pass with
+    `_status_suffix` returning `-done`, which is why the filename is asserted
+    literally.
+    """
+    client = app_and_client.client
+    project_id = await _new_project(client)
+    await _authored(
+        app_and_client.application,
+        app_and_client.authoring,
+        project_id,
+        {"alpha": {"/course/areas/alpha/unit.md": "# Alpha"}},
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/export/course")
+
+    disposition = response.headers["content-disposition"]
+    assert disposition.endswith('-course.zip"')
+    assert "interrupted" not in disposition and "-done" not in disposition
+    assert "## Never started" not in _readme_of(response)
+
+
+async def test_a_cancelled_run_is_exported_and_says_it_was_cancelled(app_and_client):
+    """A person who stopped the run knows it is partial.
+
+    Refusing them their own courses would be patronising, and they would have
+    no route to files the console is already linking to.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    written = await _sessions_holding(
+        application, project_id, {"alpha": {"/course/areas/alpha/unit.md": "# Alpha"}}
+    )
+    started = asyncio.Event()
+
+    async def _one(run_id, target):
+        if target == "alpha":
+            return SimpleNamespace(session_id=written["alpha"])
+        started.set()
+        await asyncio.sleep(5)
+        raise AssertionError("cancelled before this returns")
+
+    await app_and_client.authoring.start(
+        UUID(project_id), ["alpha", "beta"], _one, kind="path"
+    )
+    await asyncio.wait_for(started.wait(), timeout=5)
+    app_and_client.authoring.cancel(UUID(project_id))
+    await app_and_client.authoring.wait(UUID(project_id))
+
+    response = await client.get(f"/api/projects/{project_id}/export/course")
+
+    assert response.status_code == 200
+    assert "-cancelled.zip" in response.headers["content-disposition"]
+    readme = _readme_of(response)
+    assert "stopped it deliberately" in readme
+    # Under that heading, not merely somewhere in the file: `beta` also appears
+    # in a failures list and in a written list, and an assertion that could not
+    # tell those apart would pass on an archive claiming it wrote beta.
+    assert "`beta`" in readme.split("## Never started", 1)[1]
