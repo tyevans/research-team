@@ -1896,7 +1896,7 @@ vision = [
 [[package]]
 name = "redstring"
 version = "0.10.0"
-source = { git = "https://github.com/tyevans/redstring.git?rev=dc9ec27f6d872dd3a55659bed6566fe3e320d92d#dc9ec27f6d872dd3a55659bed6566fe3e320d92d" }
+source = { git = "https://github.com/tyevans/redstring.git?rev=9b1df55085e96b35f0915f80135ad20eed60f3f2#9b1df55085e96b35f0915f80135ad20eed60f3f2" }
 dependencies = [
     { name = "dateparser" },
     { name = "eventsource-py" },
@@ -2066,7 +2066,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "readeverything", extras = ["documents", "images", "remote-transcription", "vision"], specifier = ">=0.3.0,<0.4" },
-    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], git = "https://github.com/tyevans/redstring.git?rev=dc9ec27f6d872dd3a55659bed6566fe3e320d92d" },
+    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], git = "https://github.com/tyevans/redstring.git?rev=9b1df55085e96b35f0915f80135ad20eed60f3f2" },
     { name = "trafilatura", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
 ]

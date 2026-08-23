@@ -678,6 +678,14 @@ class RedstringKnowledge:
             domain_confidence=built.domain_confidence,
             merges=tuple(merges),
             consolidation_failures=failures,
+            # Straight off `GraphBuildReport`. redstring has computed all three
+            # for longer than this project has existed and nothing here read
+            # them, which is how `docs/design/co-mention-channel-findings.md`
+            # describes its own defect: a number computed, returned, and
+            # dropped is the same silence as a number nobody computes.
+            unresolved_relationships=built.unresolved_relationships,
+            lifted_dates=built.lifted_dates,
+            date_nodes=built.date_nodes,
         )
 
     @dataclass(frozen=True, slots=True)

@@ -144,3 +144,76 @@ def test_every_schema_in_the_directory_loads():
     """
     for path in sorted(SCHEMA_DIR.glob("*.yaml")):
         assert isinstance(resolve_domain(Path(path).stem), DomainSchema)
+
+
+class TestTheRelationshipVocabularyIsOpen:
+    """The eight declared types are examples, not a closed set.
+
+    Measured against the real database on 2026-08-23: 3,233 relationships, of
+    which **6** used a name outside the declared eight -- 0.19%. Extraction
+    was never enum-constrained, so nothing was stopping the model naming a
+    relationship. A list of eight rendered as a list of eight simply reads as
+    exhaustive.
+
+    With 39% of entities isolated and 0.57 edges per entity, an edge the model
+    declines to state is the failure mode that matters, so the schema now says
+    what it means.
+    """
+
+    def test_no_relationship_type_constrains_its_endpoints(self):
+        """`prompt_generator` renders these as "(from: person; to: work)",
+        which makes `created` unstateable between a work and a concept -- so
+        "Star Trek created the Borg" has no legal form and is dropped rather
+        than renamed. This is the sharper half of the constraint and the
+        reason the change is not only prose."""
+        schema = resolve_domain(RESEARCH_CORPUS)
+
+        for relationship_type in schema.relationship_types:
+            assert not relationship_type.valid_source_types, relationship_type.id
+            assert not relationship_type.valid_target_types, relationship_type.id
+
+    def test_the_prompt_invites_a_name_the_list_does_not_have(self):
+        """Deleting the constraints is not enough on its own: redstring's own
+        guide is explicit that a schema "shapes prompts but does not enforce
+        output", so the invitation has to be stated outright -- the same
+        two-halves argument the date rules in this file's header make."""
+        # Whitespace-normalised, and the markdown emphasis stripped. The
+        # source is a YAML block scalar, so where a phrase wraps is a
+        # consequence of the column it started in -- an assertion that pinned
+        # the wrap would fail on a reflow that changed nothing the model sees.
+        prompt = " ".join(domain_system_prompt(resolve_domain(RESEARCH_CORPUS)).split())
+        prompt = prompt.replace("**", "")
+
+        assert "not a closed list" in prompt
+        assert "name the relationship yourself" in prompt
+        assert "Relate any kind of entity to any other kind" in prompt
+
+    def test_the_rendered_prompt_carries_no_endpoint_clause(self):
+        """The assertion that would catch redstring changing how it renders a
+        constraint, which the two above cannot see: they read the schema
+        object, and the model reads this string."""
+        prompt = domain_system_prompt(resolve_domain(RESEARCH_CORPUS))
+
+        assert "(from:" not in prompt
+        assert "to: work)" not in prompt
+
+    def test_extraction_is_not_constrained_to_the_declared_vocabulary(self):
+        """`constrain_to_domain` turns the type list into a decoding-time
+        `Literal`, at which point every free-form name this change invites
+        becomes undecodable and the model returns the nearest listed one
+        instead.
+
+        Nothing here sets it and redstring's default is `False`, so this test
+        passes today for a reason unrelated to the argument -- it is here to
+        fail loudly on the day someone reaches for consistency without
+        noticing that the schema has been deliberately opened.
+        """
+        source = (
+            Path(__file__).parents[2]
+            / "research_team"
+            / "infrastructure"
+            / "knowledge"
+            / "redstring_adapter.py"
+        ).read_text()
+
+        assert "constrain_to_domain" not in source
