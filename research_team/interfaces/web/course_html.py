@@ -266,6 +266,12 @@ class CourseBook:
     origin: str
     exported_at: str
     run: Mapping[str, Any]
+    #: One plain sentence about how this run settled, and the targets it never
+    #: started. Passed in rather than derived here: `export.py` owns the
+    #: status vocabulary for both formats, and a page that worked it out
+    #: separately could describe the same run differently from the zip.
+    status_sentence: str = ""
+    never_started: tuple[str, ...] = ()
     overview: CourseFile | None = None
     areas: tuple[CourseArea, ...] = ()
     resolutions: Mapping[str, Resolution] = field(default_factory=dict)
@@ -1137,6 +1143,27 @@ def render_course_html(book: CourseBook) -> str:
         parts.append("</section>")
         sections.append("".join(parts))
 
+    # A partial course must not look complete, which is the rule the zip
+    # already follows (`export.py:_status_suffix`). A single page is *more*
+    # exposed to it, not less: there is nothing to unzip, so a reader who was
+    # forwarded the file sees only what the page itself says.
+    # Through `_Inline`, not `esc`: the sentence is the same string the zip's
+    # README carries, and it is markdown -- `**This run was interrupted**`
+    # escaped rather than rendered puts literal asterisks in front of the
+    # reader on the one line that has to be read as written.
+    settled = (
+        f'<p class="settled">{_Inline(book).render(book.status_sentence)}</p>'
+        if book.status_sentence
+        else ""
+    )
+    never = (
+        "<h3>Never started</h3><ul>"
+        + "".join(f"<li><code>{esc(t)}</code></li>" for t in book.never_started)
+        + "</ul>"
+        if book.never_started
+        else ""
+    )
+
     failures = book.run.get("failures") or []
     not_written = (
         "<h3>Not written</h3><ul>"
@@ -1154,6 +1181,8 @@ def render_course_html(book: CourseBook) -> str:
         .replace("__PROJECT__", esc(str(book.project_id)))
         .replace("__EXPORTED__", esc(book.exported_at))
         .replace("__RUN__", esc(str(book.run.get("run_id", "unknown"))))
+        .replace("__SETTLED__", settled)
+        .replace("__NEVERSTARTED__", never)
         .replace("__NOTWRITTEN__", not_written)
         .replace("__NAV__", _nav(book))
         .replace("__BODY__", "".join(sections))
@@ -1469,6 +1498,8 @@ async def build_course_book(
     project_id: UUID,
     origin: str,
     run: Mapping[str, Any],
+    status_sentence: str = "",
+    never_started: tuple[str, ...] = (),
     overview: CourseFile | None,
     areas: Sequence[CourseArea],
     reads: CourseReads,
@@ -1500,6 +1531,8 @@ async def build_course_book(
         origin=origin,
         exported_at=datetime.now(UTC).isoformat(timespec="seconds"),
         run=run,
+        status_sentence=status_sentence,
+        never_started=never_started,
         overview=overview,
         areas=tuple(areas),
         sources=titles,
@@ -1523,6 +1556,8 @@ async def build_course_book(
         origin=book.origin,
         exported_at=book.exported_at,
         run=book.run,
+        status_sentence=book.status_sentence,
+        never_started=book.never_started,
         overview=book.overview,
         areas=book.areas,
         resolutions=resolutions,
@@ -1581,6 +1616,8 @@ _TEMPLATE = r"""<!doctype html>
   blockquote { border-left: 3px solid var(--line); margin-left: 0; padding-left: .9rem;
                color: var(--fg-dim); }
   hr { border: 0; border-top: 1px solid var(--line); margin: 1.6rem 0; }
+  .settled { margin: .75rem 0 0; border-left: 3px solid var(--accent);
+             padding-left: .6rem; font-size: .9rem; }
   .meta { color: var(--fg-dim); font-size: .85rem; margin: 0 0 .2rem; }
   .quiet { color: var(--fg-dim); font-size: .82rem; margin: .4rem 0 0; }
   nav { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
@@ -1658,6 +1695,8 @@ _TEMPLATE = r"""<!doctype html>
      only work for someone who can reach it.</p>
   <p class="meta">A teaching copy: the questions grade themselves here, which means the
      answers are in the file. Do not use it as an exam paper.</p>
+  __SETTLED__
+  __NEVERSTARTED__
   __NOTWRITTEN__
 </header>
 __NAV__
