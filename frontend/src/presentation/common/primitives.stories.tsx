@@ -105,14 +105,16 @@ export const ButtonStates: Story = {
   ),
 }
 
-/** **A finding, not a demonstration.** The console has two button
- *  implementations and this is the only place they meet.
+/** **A finding, and now its resolution.** These were two button
+ *  implementations. They are one.
  *
- *  `Button` (`.btn`, `shell.css`) is used everywhere. `CmpButton` (`.cmp-btn`,
- *  `components.css`) is used by six call sites, all of them lesson widgets:
- *  `Mcq`, `Cloze` and `Flashcards`.
+ *  `Button` renders `.btn` (`shell.css`) and is used across the console.
+ *  `CmpButton` rendered `.cmp-btn` (`components.css`) and was used by six
+ *  lesson-widget call sites — `Mcq`, `Cloze`, `Flashcards`. The two names
+ *  share no substring, so no grep found them together; this story is what put
+ *  them side by side, and is the reason the duplication was noticed at all.
  *
- *  They differ by more than a name. Measured from the two stylesheets:
+ *  Measured from the two stylesheets before the merge:
  *
  *  | | `.btn` | `.cmp-btn` |
  *  |---|---|---|
@@ -121,15 +123,23 @@ export const ButtonStates: Story = {
  *  | primary | accent **fill** | accent **outline**, fill on hover |
  *  | focus offset | via the global rule | `2px`, declared again |
  *
- *  So a lesson's buttons are one pixel shorter and one tier dimmer than every
- *  other button in the console, and its primary action is an outline where
+ *  So a lesson's buttons were a pixel shorter and a tier dimmer than every
+ *  other button in the console, and its primary action was an outline where
  *  every other primary action is a fill.
  *
- *  Consolidating is not a rename. `Button` has no accent-outline tone —
- *  `.btn[aria-pressed='true']` is the nearest thing and it means "pressed",
- *  not "primary". So the merge needs a decision about what a lesson's submit
- *  button should look like, and that decision is yours rather than a
- *  refactor's. This story is here so it can be made by looking. */
+ *  `CmpButton` renders `Button` now, and `primary` maps to `tone="accent"`.
+ *  That mapping was a decision, not a translation: `Button` has no
+ *  accent-outline tone, and `.btn[aria-pressed='true']` already *is* the
+ *  accent-outline treatment and means "pressed". Adding a second meaning for
+ *  that picture was the worst option available, so the lessons moved to the
+ *  console's fill. The visible cost is that a lesson's submit button is filled
+ *  amber where it was outlined, and 1px taller.
+ *
+ *  **The rows below should now be identical**, and that is what this story is
+ *  for going forward. `check-deleted.mjs` phase C4 forbids `.cmp-btn` coming
+ *  back — an unlayered rule would beat `.btn` outright and restore the split
+ *  silently — but nothing stops a second divergence being introduced some
+ *  other way. Two rows that stop matching is what that looks like. */
 export const TwoButtons: Story = {
   render: () => (
     <>

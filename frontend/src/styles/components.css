@@ -105,35 +105,8 @@
   color: var(--fg-faint);
 }
 
-.cmp-btn {
-  font: inherit;
-  font-size: var(--t-sm);
-  padding: 4px 11px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: var(--bg-raise);
-  color: var(--fg-dim);
-  cursor: pointer;
-}
-.cmp-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--fg);
-}
-.cmp-btn.primary {
-  border-color: var(--accent-dim);
-  color: var(--accent);
-}
-.cmp-btn.primary:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-.cmp-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
 /* Focus is never removed anywhere here: every one of these is operable from
    the keyboard, and a flashcard you can tab to but not see is not operable. */
-.cmp-btn:focus-visible,
 .flash-card:focus-visible,
 .cloze-input:focus-visible,
 .cmp input:focus-visible {

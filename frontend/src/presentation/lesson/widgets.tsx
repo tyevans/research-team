@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import type { AttemptState, Verdict } from '@domain/lesson/attempt.ts'
 
 import { Markdown } from '../common/content.tsx'
+import { Button } from '../common/primitives.tsx'
 
 /** The three shapes every widget builds from.
  *
@@ -29,6 +30,35 @@ import { Markdown } from '../common/content.tsx'
 export const Prose = ({ text, className }: { text: string | null; className?: string }) =>
   text && text.trim() ? <Markdown source={text} className={clsx('cmp-prose', className)} /> : null
 
+/** A widget's button, which is now the console's button.
+ *
+ * **It used to be a second implementation and that was the whole defect.**
+ * `.cmp-btn` in `components.css` and `.btn` in `shell.css` were two spellings
+ * of one control with no substring in common, so no grep found them together;
+ * `primitives.stories.tsx`'s `TwoButtons` is what put them side by side.
+ * Measured from the two stylesheets, they differed by `5px 11px` against
+ * `4px 11px`, `--fg` against `--fg-dim`, and -- the one that mattered -- an
+ * accent **fill** for a primary action against an accent **outline**. A
+ * lesson's submit button was a pixel shorter, a tier dimmer and a different
+ * shape from every other primary action in the console.
+ *
+ * **`primary` maps to `tone="accent"`, which is a decision rather than a
+ * translation.** `Button` has no accent-outline tone. Adding one would have
+ * kept the lesson's look and made the console's vocabulary two answers to
+ * "this is the main action"; `.btn[aria-pressed='true']` is already the
+ * accent-outline treatment and it means *pressed*, so a third meaning for the
+ * same picture was the worst option available. So the lessons move to the
+ * console's fill.
+ *
+ * What that costs, stated because it is a visible change and not a refactor:
+ * a lesson's submit button is now filled amber where it was outlined, and it
+ * is 1px taller. `Mcq`, `Cloze` and `Flashcards` are the six call sites.
+ * `primitives.stories.tsx` is where to look at the result.
+ *
+ * The wrapper survives the merge rather than the call sites being rewritten to
+ * `Button` directly. It takes `label` where `Button` takes children, and the
+ * six call sites read `label="try again"`; collapsing that is a second change
+ * and belongs in its own commit if anyone wants it. */
 export const CmpButton = ({
   label,
   onClick,
@@ -40,14 +70,9 @@ export const CmpButton = ({
   primary?: boolean
   disabled?: boolean
 }) => (
-  <button
-    type="button"
-    className={clsx('cmp-btn', primary && 'primary')}
-    disabled={disabled}
-    onClick={onClick}
-  >
+  <Button tone={primary ? 'accent' : 'default'} disabled={disabled} onClick={onClick}>
     {label}
-  </button>
+  </Button>
 )
 
 /** What the server said, or — before any submission — what the record already
