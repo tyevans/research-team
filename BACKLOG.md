@@ -656,6 +656,26 @@ Suggested order, cheapest first and by how much a story would say: `tree`
 (8 components, the landing page), `dialogue` (4), `shell` (5, of which 3 need
 a container and would need honest entries).
 
+**`shell` is done and in `SCOPE` as of 2026-08-23.** It went in the order
+this entry asks for -- three of its five files got a story first
+(`ConnectionBadge`, `Breadcrumbs`, `Toasts`), and only then was the scope
+widened, with two entries that are arguments rather than gaps: `DecisionBar`
+renders from a query hook and returns `null` when nothing is pending, so a
+story is a mock or a blank page; `StreamProvider` renders `children` and has
+no visual output at all. Both name the change that would earn them a story.
+
+`Toasts` was the one worth having. A toast is the only surface in the console
+a reader cannot go and look at -- it arrives on an event and expires in 3.8
+seconds -- so its wording, contrast and stacking had never been judged
+side by side. The story holds the stack open with the store's own `hold()`,
+which is what a pointer resting on it does, rather than faking timers.
+
+`tree` and `dialogue` now have stories too but are **not** in `SCOPE`: each
+has components left that fetch (`TreeView`, `ProjectList`, `DriftBanner`,
+`NewProjectForm`, `DialoguePage`), and widening to them would mean four or
+five allowlist entries at once -- which is the trade this entry exists to
+warn about.
+
 ## Topics and autonomous research
 
 Added alongside the topic tracker and auto-research mode

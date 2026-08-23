@@ -71,7 +71,16 @@ const SRC = fileURLToPath(new URL('../src', import.meta.url))
  *  single `presentation/` because the argument above is about which files the
  *  rule can be true of, and that distinction lives in the directory names this
  *  project already sorted its components into. */
-const SCOPE = ['presentation/common', 'presentation/entity', 'presentation/layout']
+const SCOPE = [
+  'presentation/common',
+  'presentation/entity',
+  'presentation/layout',
+  // Added once three of its five files had a story and the remaining two had
+  // an argument rather than a gap -- which is the order B142 asks for.
+  // Widening a scope and filling it in the same commit is what turns an
+  // allowlist of arguments into an allowlist of excuses.
+  'presentation/shell',
+]
 
 /** Reusable components that have no story, each with the argument for why not.
  *
@@ -104,7 +113,27 @@ const SCOPE = ['presentation/common', 'presentation/entity', 'presentation/layou
  * sentence and losing one is a line in a diff rather than a silent edit. An
  * entry kept after its story exists fails the second test below, so the list
  * cannot rot in the direction that matters. */
-const ALLOWED: readonly { readonly file: string; readonly why: string }[] = []
+const ALLOWED: readonly { readonly file: string; readonly why: string }[] = [
+  {
+    file: 'presentation/shell/DecisionBar.tsx',
+    why:
+      'It renders from `useApprovalFeed`, which is a query hook over live approvals, and it' +
+      ' returns `null` whenever nothing is pending -- so a story is either a mock of the feed' +
+      ' or a blank page. A story about a mock is a story about the mock, which is the' +
+      ' argument `ProjectCard.stories.tsx` makes for slots: the components that were' +
+      ' extractable were extracted, and what is left here fetches. Write the story if the' +
+      ' pending approvals ever arrive as a prop, and delete this entry with it.',
+  },
+  {
+    file: 'presentation/shell/StreamProvider.tsx',
+    why:
+      'It renders `children` and nothing else. There is no visual state to enumerate,' +
+      ' because there is no visual output -- it exists to put the event stream in context' +
+      ' and to reconnect. `ConnectionBadge`, in the file beside it, is the surface that has' +
+      ' a picture, and it takes its state as a prop precisely so it can have one. If this' +
+      ' ever draws something, that is the change that also earns it a story.',
+  },
+]
 
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((entry) => {
