@@ -102,6 +102,17 @@ What that leaves is a rule rather than a fix: **an optional member on a port
 is a question the consumer has to ask.** If a component renders anything that
 would be false when the member is absent, presence is part of the condition.
 
+The other defect in the table generalises too, and that sweep is also clean.
+The accent-on-a-disabled-button bug was not "an accent button is disabled" --
+that is ordinary and correct, and most primaries in the console are disabled
+while busy or until a form is valid, because a reader still needs to see where
+the action is. It was **an accent on a dead control while a different control
+was the live one.** Every `tone="accent"` in `presentation` was checked against
+that: each is either the sole action of its form or one-per-row (`ProjectList`
+renders `Resume` plain beside an accent `New session`, or a single accent
+`Open`). The lesson widgets were the only place the condition arose, and it
+arose because this series put it there.
+
 ## Conventions the pass settled on
 
 Worth knowing before adding to any of this, because they are why the tests
