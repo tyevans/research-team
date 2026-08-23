@@ -55,7 +55,7 @@ export const CurriculumPane = ({
    *  shares a tab. */
   onReading: (reading: 'areas' | 'path') => void
 }) => {
-  const { curricula } = useContainer()
+  const { curricula, exports } = useContainer()
   const queryClient = useQueryClient()
 
   const query = useQuery({
@@ -145,6 +145,7 @@ export const CurriculumPane = ({
         }
         onAuthor={(request) => author.mutate(request)}
         onCancel={() => cancel.mutate()}
+        courseUrl={(area) => exports.courseUrl(projectId, area)}
       />
       <EmbeddingRefresh
         derivedFrom={curriculum.derivedFrom}

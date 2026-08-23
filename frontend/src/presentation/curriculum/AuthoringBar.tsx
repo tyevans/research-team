@@ -42,6 +42,7 @@ export const AuthoringBar = ({
   error,
   onAuthor,
   onCancel,
+  courseUrl,
 }: {
   status: AuthoringStatus | null
   areaSlug: string | null
@@ -52,6 +53,10 @@ export const AuthoringBar = ({
   error: string | null
   onAuthor: (request: { area?: string }) => void
   onCancel: () => void
+  /** Where the finished courses can be downloaded, for the whole project or
+   *  one area. A URL rather than a handler: the browser downloads better than
+   *  this console can — see `HttpExportRepository`. */
+  courseUrl: (area?: string) => string
 }) => {
   const running = status !== null && isRunning(status)
   const current = status?.current ?? null
@@ -165,6 +170,36 @@ export const AuthoringBar = ({
           </p>
         )}
       </div>
+
+      {/* Offered only once a run has finished, because the archive is
+          assembled from that run's per-target session ids — the export answers
+          409 while a run is in flight and 409 again when the server has
+          restarted since, and a download route's error is a page the browser
+          navigates to rather than something this pane can render. Hiding the
+          link is how a person is kept out of that. */}
+      {!running && last !== null && courseLinks(last).length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={courseUrl()}
+            download
+            className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
+          >
+            Download all courses (.zip)
+          </a>
+          {/* Only when the selected area is one this run actually wrote. A
+              link offered for an area with no course is a 404 the person finds
+              out about by leaving the page. */}
+          {areaSlug !== null && courseLinks(last).some((link) => link.target === areaSlug) && (
+            <a
+              href={courseUrl(areaSlug)}
+              download
+              className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
+            >
+              Download “{areaTitle ?? areaSlug}” (.zip)
+            </a>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -11,10 +11,23 @@ import { Markdown } from '../common/content.tsx'
  * is about documents. */
 
 /** Prose inside a component field, through the same renderer as everything
- *  else. Shared by all four widgets rather than re-derived in each. */
-export const Prose = ({ text, className }: { text: string | null; className?: string }) => (
-  <Markdown source={text ?? ''} className={clsx('cmp-prose', className)} />
-)
+ *  else. Shared by all four widgets rather than re-derived in each.
+ *
+ *  Blank text draws nothing, and that is the whole of a defect: `Markdown`
+ *  prints a padded grey mono "(empty file)" for empty input, which is right
+ *  for a *file* and wrong inside a widget. A `compare` row shorter than its
+ *  entity list is padded here with `''`, and the registry's craft note
+ *  explicitly invites short rows -- so the commonest way to see "(empty file)"
+ *  needed no authoring mistake at all. `Markdown` keeps the notice for
+ *  `FileView` and `TopicDocuments`, where an empty file should say so.
+ *
+ *  What this costs: a required field the model wrote as `""` -- `mcq.prompt`
+ *  -- now renders as an absence rather than as a visible complaint. The
+ *  complaint moved server-side to `_blank_required`, which warns the model
+ *  that wrote it through `ComponentFeedback`. Nothing tells a *reader*, and
+ *  nothing can: the renderer does not know which blank was meant. */
+export const Prose = ({ text, className }: { text: string | null; className?: string }) =>
+  text && text.trim() ? <Markdown source={text} className={clsx('cmp-prose', className)} /> : null
 
 export const CmpButton = ({
   label,

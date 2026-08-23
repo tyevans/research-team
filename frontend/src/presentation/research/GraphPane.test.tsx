@@ -109,12 +109,29 @@ const fakeUsages = (over: Partial<UsagesRepository> = {}): UsagesRepository => (
   ...over,
 })
 
+/** Only what the pane calls. The real one builds URLs and fetches nothing, so
+ *  there is no response to fake -- just a string the links can carry. */
+const fakeExports = () => ({
+  courseUrl: vi.fn(() => '/api/projects/p/export/course'),
+  graphUrl: vi.fn(() => '/api/projects/p/export/graph'),
+})
+
 const renderWithContainer = (
   ui: ReactElement,
   parts: Partial<AppContainer>,
   stream: EventStream = fakeStream().stream,
 ) => {
-  const container = { stream, usages: fakeUsages(), ...parts } as unknown as AppContainer
+  const container = {
+    stream,
+    usages: fakeUsages(),
+    // Named here rather than left to the cast. `GraphPane` destructures
+    // `exports` off the container to build the download links, and an absent
+    // key survives `as unknown as Container` to fail at the first render with
+    // "Cannot read properties of undefined" -- which reads as a bug in the
+    // pane rather than a gap in this harness.
+    exports: fakeExports(),
+    ...parts,
+  } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
