@@ -45,7 +45,7 @@ second sentence with a bare proper noun ("Kirk later commanded the ship.")
 and a blanket exemption let it straight through -- caught by review, not by a
 test, against exactly the anchors this module's own docstring uses as its
 example (`Warp drive`, `Zefram Cochrane`). `_SENTENCE_OPENERS` is the fix:
-only the specific words the prompt's own phrasing ("Follow...", "Meet...",
+only the specific words the prompt's own phrasing ("Follow...", "Join...",
 "The...") is likely to produce are exempt, and only when they open a
 sentence. Everything else -- including a name -- is checked like any other
 capitalised run, wherever in the reply it appears.
