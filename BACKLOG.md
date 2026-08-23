@@ -631,6 +631,56 @@ strength of one gate is a bigger decision than the finding supports. A middle
 option worth considering: run the browser suite in CI on changes touching
 `src/styles/**` or `presentation/layout/**` only.
 
+### B144. A toast makes the material tabs unclickable
+
+Measured in Chromium at 1265px on 2026-08-23, by driving the real console
+rather than a story -- which is why it had not been found: every toast story
+in the gallery renders the stack over a *page*, and this is the stack over the
+project page's **navigation**.
+
+`.toasts` is `position: fixed; top: calc(var(--topbar-h) + 10px)`, which puts
+its first toast at y=54. `ProjectView`'s material tab strip spans y=44-66. So
+a toast always lands on the strip, and `.toast` has `pointer-events: auto`.
+
+Hit-tested with `document.elementFromPoint` at each tab's centre:
+
+    0 toasts   nothing blocked
+    1 toast    Timeline, Curriculum          (toast box 1007..1251)
+    2 toasts   Graph, Tree, Classes, Timeline, Curriculum
+
+`blockedBy` reports `toast bad` for each. They are not merely obscured; the
+click does not reach them. How many are swallowed depends on the message
+length, because the stack is `max-width: min(420px, 80vw)` and shrinks to fit
+its text.
+
+**It is on the ordinary path, not an edge case.** Creating a project fires a
+`good` toast and the obvious next click is that project, whose page opens with
+the toast still up -- 3800ms for `good`, 7000ms for `bad`. A reader who
+reaches for Graph in that window gets nothing and no explanation.
+
+Not fixed here, because the fix is a design choice and both options give
+something up:
+
+- **Move the stack to the bottom right.** Removes the whole class of problem
+  -- nothing interactive is bottom-right on any route -- and is what most
+  consoles do for exactly this reason. It costs the top-right placement
+  `states.css` chose, and `Toasts.tsx`'s F6 argument would want re-reading
+  (the key still works; "the end of the document" is still where the region
+  is).
+- **Push the stack below the sub-header.** Keeps the placement. But the tab
+  strip is page content rather than fixed chrome, so the offset would have to
+  be either page-specific or large enough for the tallest sub-header on any
+  route, which wastes the space on every route that has none.
+
+Whichever wins, the check is cheap and belongs with it: hit-test each tab's
+centre with one toast up. `project-tracks.browser.test.tsx` already measures
+this strip and is the natural home, though note it is in the browser suite --
+see [[B140]].
+
+Related, and deliberately not filed separately: on the landing page the same
+stack covers the right end of the search input. Same cause, same fix, and one
+entry is enough.
+
 ### B141. Nothing ranks the material tabs, so a twelfth has nothing to displace
 
 `DEFAULT_MATERIAL` is `'session'` and its first position is argued twice --
