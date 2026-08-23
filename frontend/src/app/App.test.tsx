@@ -6,6 +6,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import { ApiError } from '@application/ports/errors.ts'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import type { MediaSummary } from '@domain/research/document.ts'
@@ -760,4 +761,49 @@ it.each([
   [`#/p/${ATLAS}/wat`, 'home'],
 ])('names the view for %s', (hash, expected) => {
   expect(viewNameOf(parseRoute(hash))).toBe(expected)
+})
+
+/** The Findings tab, on a project that runs no workflow.
+ *
+ * Measured against the running console on 2026-08-23: `/api/projects/<Star
+ * Trek>/course` answers **409** ("this project runs no workflow, so there is
+ * no course to show"), the course query is `retry: false`, and the Findings
+ * panel branched on `course.data` alone -- so it rendered `loading findings…`
+ * for as long as the tab stayed open. The query had already settled; nothing
+ * was in flight and nothing ever would be.
+ *
+ * Asserted on the rendered *message* rather than on "the panel is not
+ * loading": a panel that renders nothing at all would pass the negative and is
+ * the same defect wearing a different face. The Queue pane beside it already
+ * said "No course to show." the whole time, which is why this was only ever
+ * visible one tab at a time.
+ */
+it('says why the Findings tab has nothing, rather than loading forever', async () => {
+  window.location.hash = `#/p/${ATLAS}/finding`
+  renderApp(
+    containerWith({
+      projects: {
+        ...(containerWith().projects as object),
+        course: vi.fn().mockRejectedValue(new ApiError('this project runs no workflow', 409)),
+      },
+    }),
+  )
+
+  // Scoped to the tab panel, not to the page: the Queue pane beside it renders
+  // the very same server message under "No course to show.", so an unscoped
+  // `findByText` passes with this panel still stuck on `loading findings…`.
+  // The first draft of this test did exactly that.
+  // Re-queried inside `waitFor` rather than held: the panel mounts before the
+  // course query settles, so a handle taken at the first render is a handle on
+  // `loading findings…` and asserting against it is a race the fix loses.
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole('tabpanel', { name: 'Findings' })).getByText(
+        /this project runs no workflow/,
+      ),
+    ).toBeInTheDocument(),
+  )
+  expect(
+    within(screen.getByRole('tabpanel', { name: 'Findings' })).queryByText(/loading findings/),
+  ).not.toBeInTheDocument()
 })
