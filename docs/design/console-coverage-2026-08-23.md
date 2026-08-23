@@ -201,6 +201,41 @@ component — and both came back clean under axe and under their own rules.
 that no token holds, and all four clear AA. That is a real result about the
 console's colour discipline rather than an absence of one.
 
+## What this collides with, for whoever resumes a UI branch
+
+Checked rather than assumed, because `CLAUDE.md`'s parallel-work section is
+about exactly this and the repository had five UI branches in flight when this
+started. 66 files under `frontend/src` and `frontend/scripts` changed here.
+Against each in-flight branch, the overlap is:
+
+| branch | overlapping files |
+|---|---|
+| `ui/floating-layer` | `check-deleted.mjs`, `Cloze.tsx`, `Timeline.tsx`, `tokens.css`, `tree.css` |
+| `ui/decision-bar` | `check-deleted.mjs`, `conversation.css` |
+| `ui/route-grammar` | none |
+| `redraw-the-ask-page` | none |
+| `timeline-view` | none (no frontend changes) |
+
+None of the overlaps is a rewrite, and each is small enough to describe:
+
+- **`check-deleted.mjs`** — one added rule (phase C4, forbidding `.cmp-btn`).
+  A branch that also adds a rule conflicts on the array, and the resolution is
+  to keep both entries.
+- **`Timeline.tsx`** — the detail-row wrapper and the row-numbering helper,
+  62 lines. This is the largest and the one to rebase carefully: a branch that
+  also touches `TimelineRow`'s return will conflict inside the fragment.
+- **`tokens.css`** — one token value (`--k-compaction`) plus its comment.
+  `theme.css` carries the same value and `theme.test.ts` fails if a rebase
+  takes one and not the other.
+- **`tree.css`** — `.skeleton-row`'s height, one number and a comment.
+- **`conversation.css`** — the `.compaction-msgs .msg` opacity, removed.
+- **`Cloze.tsx`** — `primary` becomes conditional, two lines.
+
+The two branches with no overlap at all are the two that rewrite routing and
+the ask page, which is worth knowing: this pass deliberately stayed out of the
+route grammar after finding it already well-argued, and that decision is
+visible here as an absence of conflict rather than only as a paragraph.
+
 ## What is left, and where
 
 B140 (browser suite in CI), B141 (nothing ranks the material tabs, so a
