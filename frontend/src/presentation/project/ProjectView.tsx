@@ -1,4 +1,5 @@
-import { useCallback } from 'react'
+import type { UseQueryResult } from '@tanstack/react-query'
+import { useCallback, type ReactNode } from 'react'
 
 import { errorMessage } from '@application/ports/errors.ts'
 import type { SessionStore } from '@application/session/session-store.ts'
@@ -617,11 +618,9 @@ export const ProjectView = ({
           </TabPanel>
 
           <TabPanel value="artifact" className="min-h-0 flex-1 overflow-auto">
-            {course.data ? (
-              <ArtifactList course={course.data} open={openArtifact} />
-            ) : (
-              <Loading what="artifacts" />
-            )}
+            <CourseTab course={course} what="artifacts">
+              {(loaded) => <ArtifactList course={loaded} open={openArtifact} />}
+            </CourseTab>
           </TabPanel>
 
           {/* No `overflow-auto`, for the same reason the document list has
@@ -647,11 +646,9 @@ export const ProjectView = ({
           </TabPanel>
 
           <TabPanel value="finding" className="min-h-0 flex-1 overflow-auto">
-            {course.data ? (
-              <ProjectFindings course={course.data} open={openFinding} />
-            ) : (
-              <Loading what="findings" />
-            )}
+            <CourseTab course={course} what="findings">
+              {(loaded) => <ProjectFindings course={loaded} open={openFinding} />}
+            </CourseTab>
           </TabPanel>
 
           {/* No `overflow-auto`: the document list owns a virtualizer, which
@@ -757,6 +754,43 @@ const SectionHead = ({ label, meta }: { label: string; meta: string | undefined 
     {meta === undefined ? null : <span className="text-fg-faint">{meta}</span>}
   </div>
 )
+
+/** The three states of the course query, wherever a panel draws off it.
+ *
+ * The error branch is the reason this exists. Both panels used to be
+ * `course.data ? <list/> : <Loading/>`, which reads as a load in progress and
+ * is not one: the course query is `retry: false`, so a failure settles once and
+ * `data` stays `undefined` forever. Measured against the running console on
+ * 2026-08-23 -- a project with no workflow selected answers **409** on
+ * `/api/projects/<id>/course`, and the Findings tab printed `loading findings…`
+ * indefinitely while the Queue pane beside it correctly said "No course to
+ * show." That split is why it survived: the two halves of the same page
+ * disagreed, and only one of them was ever on screen at a time.
+ *
+ * Same heading and same message as the Queue pane, on purpose. The server's
+ * 409 detail names which of the two failures it is -- no workflow, or one this
+ * build does not ship -- and a reader who opened this tab first should not have
+ * to find the other pane to be told.
+ *
+ * A render prop rather than a third copy of the ternary: the next panel to read
+ * the course is the case this is protecting against, not these two.
+ */
+const CourseTab = ({
+  course,
+  what,
+  children,
+}: {
+  course: UseQueryResult<Course>
+  what: string
+  children: (course: Course) => ReactNode
+}) =>
+  course.isError ? (
+    <EmptyState heading="No course to show." detail={errorMessage(course.error)} />
+  ) : course.data === undefined ? (
+    <Loading what={what} />
+  ) : (
+    children(course.data)
+  )
 
 /** `Findings` renders `null` when a stage has nothing to report, which is right
  *  inside a page with other content on it and wrong as the whole of a tab: an
