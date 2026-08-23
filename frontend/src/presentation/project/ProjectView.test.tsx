@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 
 import { FACETS } from '../routing/routes.ts'
-import { regionOf, type Region } from './ProjectView.tsx'
+import { MATERIAL_TABS, regionOf, type Region } from './ProjectView.tsx'
 
 /** The region map, held where a JSX tree cannot be.
  *
@@ -66,4 +66,52 @@ it('puts the holding session in MATERIAL, where its tab is', () => {
 it('puts a stage and a topic in the same region, which the old routes did not', () => {
   expect(regionOf('stage')).toBe(regionOf('topic'))
   expect(regionOf('stage')).toBe<Region>('queue')
+})
+
+/** **A tripwire, not a measurement.** Eleven is where the material strip was
+ *  measured to stop fitting.
+ *
+ * `MATERIAL_TABS` says it in the array's own comment: "Eleven tabs is where
+ * this strip stops fitting, which is worth knowing before the twelfth is
+ * added." That is not a style preference. Two tabs are already collapsed into
+ * one because of it -- `area` and `path` share the Curriculum tab and the pane
+ * toggles between them -- after the two-tab arrangement measured 837px of tabs
+ * against MATERIAL's 646px floor and produced two clipped controls in the
+ * narrow band.
+ *
+ * **The real assertion exists and CI does not reach it.**
+ * `project-tracks.browser.test.tsx` sums every tab's width, the column gaps and
+ * the strip's padding, and requires MATERIAL's floor to be at least that wide.
+ * It is in the `browser` project, which `CLAUDE.md` states is "deliberately
+ * outside `verify` and outside CI, so nothing forces you to run it". So a
+ * twelfth tab merges green today: every gate passes and the strip overflows for
+ * a reader on a narrow window.
+ *
+ * This line is what makes that a conversation instead of a merge. It runs in
+ * the `app` project, which CI does run.
+ *
+ * **What it cannot do**, stated so nobody mistakes it for the measurement it
+ * stands in for: it cannot tell a twelfth tab from a relabelled eleventh, and a
+ * set of shorter labels might genuinely fit twelve. If this fails, the answer is
+ * not to raise the number -- it is to run `npm run test:browser` and let the
+ * assertion that measures pixels say whether the strip still fits, then update
+ * both this count and the sentence in `MATERIAL_TABS` together.
+ *
+ * **Measured on 2026-08-23** rather than argued. A twelfth tab was added --
+ * `path` split back out of the Curriculum tab, which is the exact change that
+ * broke the strip the first time -- and the whole CI-reachable suite was run
+ * against it:
+ *
+ * - `npm run typecheck`: clean. `MaterialFacet` is a union and `path` is
+ *   already in it, so the compiler has nothing to say.
+ * - `--project app --project build`: **1 failed of 160 files**, and the one is
+ *   this file.
+ *
+ * So without this line a twelfth tab passes every gate CI runs. That is the
+ * state it exists to end, and it is why the assertion is a bare number rather
+ * than something more clever: the thing being defended is a pixel measurement
+ * in another suite, and a cleverer proxy here would invite belief it cannot
+ * support. */
+it('keeps the material strip at the eleven tabs it was measured to fit', () => {
+  expect(MATERIAL_TABS).toHaveLength(11)
 })
