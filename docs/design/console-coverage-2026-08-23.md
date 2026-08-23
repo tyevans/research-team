@@ -29,8 +29,9 @@ vitest's browser mode. Nothing needed redrawing. The lineage view reads
 clearly at three levels of nesting, chips carry state without colouring the
 rows they sit on, and the amber-on-dark palette holds.
 
-So the work became coverage. 29 stories became 44, chosen by call-site count
-rather than convenience.
+So the work became coverage. 29 story files became 53 and the test count went
+from about 187 files to 216, chosen by call-site count first and later by
+which components had states nothing had ever constructed.
 
 ## What that found
 
@@ -47,11 +48,26 @@ Seven defects, none of which needed a new framework.
 | 7 | **`.toast` was the one animation without a reduced-motion guard** — and it is the console's only *unrequested* motion. | #250 |
 | 8 | **A toast makes five of the eleven material tabs unclickable**, and the ask route's header buttons too. Hit-tested, not eyeballed. Filed as B144: every corner collides with something on some route, so there is no one-line fix. | B144 |
 
-Finding 8 is the one that needed the *running application*. Every toast story
-in the gallery renders the stack over a page; this is the stack over the
-project page's navigation, and no story arrangement would have produced it.
-It was found by creating a project through the browser and clicking the
-obvious next thing.
+| 9 | **A checklist told readers their ticks were saved on surfaces that save nothing.** `persist` is the author's request; `AttemptsApi.saveChecklist` is the surface's capability, left `undefined` on purpose so a widget can tell them apart. The widget read only the first. | #252 |
+| 10 | **The compaction pane had three AA contrast failures**, two of them caused by an `opacity` that also contradicted the pane's own sentence about nothing being deleted. | #258 |
+| 11 | **The timeline was an invalid grid** whenever a turn failed with content — the discarded block sat inside `role="grid"` as a bare sibling of the row. | #259 |
+| 12 | **Scrubbed-past timeline rows sit at 1.7:1.** Recorded as debt rather than fixed: it is the only signal a row is in the future. B145. | B145 |
+
+Findings 8 and 12 are the ones that needed something a gallery cannot give.
+8 needed the *running application*: every toast story renders the stack over a
+page, and this is the stack over the project page's **navigation** — no story
+arrangement would have produced it. It was found by creating a project through
+the browser and clicking the obvious next thing.
+
+12 needed a *state* no test had ever constructed. So did 10 and 11: the
+compaction pane and a failed turn's discarded content are both conditional
+branches nothing had rendered, and each held a real defect the moment a story
+reached it.
+
+**That is the pattern worth carrying, and it is narrower than "write more
+stories".** The yield came from reaching states nothing had constructed, not
+from coverage as such — two of the last four components picked purely for
+having many branches turned out clean.
 
 Two of those — (5) and (6) — were found by *looking at the page*, not by any
 assertion. That is the argument for the gallery, made against the gallery's
@@ -174,11 +190,31 @@ cannot detect is worse than no test.
 **Run the browser suite before pushing.** Not after merging. That is (4) and
 the #249 incident, learnt twice.
 
+## What a clean sweep looked like, twice
+
+Worth recording because it is the half nobody writes down. `FileList` and
+`Artifacts` were both picked as likely defect-bearers — one for its ARIA
+claim, one for having the most unexercised branches of any props-only
+component — and both came back clean under axe and under their own rules.
+
+`Artifacts` in particular has four bespoke chip dresses with arbitrary hexes
+that no token holds, and all four clear AA. That is a real result about the
+console's colour discipline rather than an absence of one.
+
 ## What is left, and where
 
 B140 (browser suite in CI), B141 (nothing ranks the material tabs, so a
 twelfth has nothing to displace), B142 (the story gate covers four of thirteen
-directories, with counts and a suggested order).
+directories, with counts and a suggested order), B144 (a toast makes five
+material tabs unclickable; every corner collides with something on some
+route), B145 (scrubbed-past rows at 1.7:1).
+
+**Three of those want a decision rather than an implementation**, and they are
+the reason this document exists rather than a longer branch: B140 trades CI
+time against a suite that caught two real defects CI did not; B144 has three
+fixes that each give something up; B145's dimming is the only signal a row is
+in the future. Each has a documented rationale on the other side, which is
+what makes them somebody's call rather than mine.
 
 One shape behind B142 worth naming: **`presentation/research` has 29
 components and only 9 take props alone.** The rest fetch. That is the
