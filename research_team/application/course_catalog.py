@@ -7,10 +7,13 @@ first of these.
 """
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
+from uuid import UUID
 
 from research_team.domain.course_catalog import ArtRef, CategoryKey
-from research_team.domain.learning_area import LearningArea
+from research_team.domain.learning_area import AreaMember, LearningArea
 
 
 class CategoryGrouper(Protocol):
@@ -67,3 +70,56 @@ class ArtPort(Protocol):
         in, and that constraint belongs on the port, not just on today's
         adapter."""
         ...
+
+
+class BlurbTextPort(Protocol):
+    """Turns a candidate's title and anchors into catalog copy, or refuses.
+
+    `None` is a legitimate answer, not an error: a reply that names an entity
+    the cluster does not hold is refused rather than returned, per
+    `blurb_writer.ModelBlurbWriter`'s own docstring for why that refusal is
+    deliberately the conservative side to fail on.
+    """
+
+    async def write(self, title: str, anchors: Sequence[AreaMember]) -> str | None: ...
+
+
+@dataclass(frozen=True)
+class CachedBlurb:
+    """A previously generated blurb, in this layer's own vocabulary.
+
+    Not `CourseBlurbRow`: that type carries `project_id` and `slug` a caller
+    already supplied to fetch it, and importing it here would put
+    `infrastructure.persistence` in a module `tests/test_architecture.py`
+    keeps free of it -- the same reasoning `entity_definitions.Definition`
+    gives for not being `EntityDefinitionRow`.
+    """
+
+    text: str
+    membership_hash: str
+    model: str
+    generated_at: datetime
+
+
+class BlurbCachePort(Protocol):
+    """The stored blurb for one candidate, if one has been generated.
+
+    Backed by `CourseBlurbStore` at composition time -- there is exactly one
+    blurb cache in this system and this port is a view onto it. `slug` alone
+    identifies the candidate; the project is implicit for the reason
+    `DefinitionCachePort` gives for its own: an instance belongs to one
+    project, so a caller cannot reach another project's row by passing a
+    different slug.
+    """
+
+    async def get(self, project_id: UUID, slug: str) -> CachedBlurb | None: ...
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        text: str,
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None: ...
