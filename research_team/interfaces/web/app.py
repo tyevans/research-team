@@ -4865,6 +4865,13 @@ def create_app(
                 graph_reader=_graph_reader,
                 curriculum_of=_curriculum,
                 authoring=authoring,
+                # Three more closures, for `format=html` only. Same reasoning
+                # as the three above: each already encodes what a 503 means
+                # here, and re-deriving them in `export.py` would be a second
+                # opinion about whether an unwired corpus is a missing project.
+                corpus_reader=_reader,
+                definitions=definitions,
+                timeline_reader=_timeline_reader,
             )
         )
     )

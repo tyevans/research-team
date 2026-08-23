@@ -145,7 +145,7 @@ export const CurriculumPane = ({
         }
         onAuthor={(request) => author.mutate(request)}
         onCancel={() => cancel.mutate()}
-        courseUrl={(area) => exports.courseUrl(projectId, area)}
+        courseUrl={(area, format) => exports.courseUrl(projectId, area, format)}
       />
       <EmbeddingRefresh
         derivedFrom={curriculum.derivedFrom}

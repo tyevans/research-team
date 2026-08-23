@@ -52,6 +52,11 @@ async def app_and_client(db_path, fake_model):
         application.turns,
         corpus=application.corpus,
         blob_store=application.blob_store,
+        # The corpus's *write* side, so a test can store a source to be cited.
+        # The export itself only reads -- but a citation test that stubbed the
+        # store would be testing the renderer again rather than the reader, and
+        # the reader is the half with no other coverage.
+        editor=application.editor,
         workers=WorkerRoster(
             application.service,
             turns=application.turns,
@@ -364,6 +369,171 @@ async def test_an_export_taken_during_a_run_is_refused(app_and_client):
     assert "in flight" in response.json()["detail"]
 
 
+# ---- A2. the course as one page -------------------------------------------
+#
+# The freeze decisions live in `test_course_html.py`, which drives the renderer
+# directly. What can only break here is the wiring: which files the page is
+# built from, and whether the format is a real choice rather than a fallback.
+
+
+async def test_the_page_holds_every_area_and_lesson_the_run_wrote(app_and_client):
+    """One file, no archive, and the lesson prose actually in it.
+
+    A 200 of `text/html` is what this route returns when the page it built
+    was empty, which is the same "valid but empty" failure the archive test
+    above guards against -- so the assertion is on the rendered prose of each
+    file, not on the response.
+    """
+    client = app_and_client.client
+    project_id = await _new_project(client)
+    await _authored(
+        app_and_client.application,
+        app_and_client.authoring,
+        project_id,
+        {
+            "alpha": {
+                "/course/areas/alpha/unit.md": "# Alpha unit\n\nStage 1 desired results.\n",
+                "/course/areas/alpha/lesson-01.md": "# Alpha lesson one\n\nFirst.\n",
+                "/course/areas/alpha/lesson-02.md": "# Alpha lesson two\n\nSecond.\n",
+            },
+            "complete": {"/course/paths/complete.md": "# The path\n\nOverview prose.\n"},
+        },
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/export/course?format=html")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert ".html" in response.headers["content-disposition"]
+    page = response.text
+    for prose in ("Stage 1 desired results.", "First.", "Second.", "Overview prose."):
+        assert prose in page
+    # Teaching order, which is the order the lesson filenames give.
+    assert page.index("Alpha lesson one") < page.index("Alpha lesson two")
+
+
+async def test_the_page_pulls_in_nothing_from_outside_itself(app_and_client):
+    """Asserted over a real export rather than a fixture-built one.
+
+    `test_course_html.py` makes the same check against a hand-built book; this
+    one is over the whole route, where a wrapper, a template change or a
+    future banner could add a fetch that the pure test would never see.
+    """
+    client = app_and_client.client
+    project_id = await _new_project(client)
+    await _authored(
+        app_and_client.application,
+        app_and_client.authoring,
+        project_id,
+        {"alpha": {"/course/areas/alpha/unit.md": "# Alpha unit\n"}},
+    )
+
+    page = (await client.get(f"/api/projects/{project_id}/export/course?format=html")).text
+
+    assert "<script src" not in page
+    assert "<link" not in page
+    assert "<img" not in page
+
+
+async def test_a_widget_whose_entity_this_project_lacks_is_named_not_emptied(app_and_client):
+    """The route's own resolution path, over a project whose graph is empty.
+
+    This is the case a fixture cannot fake: `_resolve_definition` asks the
+    real reader, gets nothing, and has to produce a sentence. A build where
+    that path raised instead would fail the whole export, and one where it
+    returned an empty `Resolution` would render a widget with nothing in it
+    -- both look like "the export worked" from the status code.
+    """
+    client = app_and_client.client
+    project_id = await _new_project(client)
+    await _authored(
+        app_and_client.application,
+        app_and_client.authoring,
+        project_id,
+        {
+            "alpha": {
+                "/course/areas/alpha/lesson-01.md": (
+                    "# Lesson\n\n"
+                    "```component:definition\nid: nowhere\nentity: Nowhere At All\n```\n"
+                )
+            }
+        },
+    )
+
+    response = await client.get(f"/api/projects/{project_id}/export/course?format=html")
+
+    assert response.status_code == 200
+    assert "Nowhere At All" in response.text
+    assert "no entity by that name" in response.text
+
+
+async def test_a_cited_passage_is_quoted_out_of_the_real_corpus(app_and_client):
+    """The one test that drives both ends of the citation path over real data.
+
+    `CLAUDE.md`'s rule about a port with one adapter: every other assertion
+    about provenance in this feature hands `render_course_html` a `Passage`
+    that a fixture built, which proves the renderer works and cannot prove
+    that the reader produces what the renderer expects. So this one stores a
+    real source through the real route, cites a real range of it, and asserts
+    the *bytes between those offsets* come out in the page.
+
+    The offsets are chosen to cut mid-document rather than to span the whole
+    of it -- a widget that ignored `start`/`end` and quoted everything would
+    pass a whole-document assertion and would be wrong about every citation.
+    """
+    client = app_and_client.client
+    project_id = await _new_project(client)
+    stored = await client.post(
+        f"/api/projects/{project_id}/sources",
+        json={
+            "source_id": "edict",
+            "title": "Edict of Thessalonica",
+            "text": "PREAMBLE. It is our will that all peoples follow that religion. THE END.",
+        },
+    )
+    assert stored.status_code == 201
+    await _authored(
+        app_and_client.application,
+        app_and_client.authoring,
+        project_id,
+        {
+            "alpha": {
+                "/course/areas/alpha/lesson-01.md": (
+                    "# Lesson\n\n"
+                    "```component:evidence\n"
+                    "id: will\n"
+                    "claim: The edict states an imperial will.\n"
+                    "sources:\n"
+                    "  - source: edict\n"
+                    "    start: 10\n"
+                    "    end: 63\n"
+                    "```\n"
+                )
+            }
+        },
+    )
+
+    page = (await client.get(f"/api/projects/{project_id}/export/course?format=html")).text
+
+    assert "It is our will that all peoples follow that religion." in page
+    # Attributed by title, not by id -- a citation that degraded to `edict`
+    # is one the reader cannot resolve, having left this system.
+    assert "Edict of Thessalonica" in page
+    assert "PREAMBLE" not in page
+    assert "THE END" not in page
+
+
+async def test_an_unknown_course_format_is_refused_rather_than_defaulted(app_and_client):
+    """The two formats differ in media type, so a silent fallback would hand
+    a browser an archive it was told to render."""
+    client = app_and_client.client
+    project_id = await _new_project(client)
+
+    response = await client.get(f"/api/projects/{project_id}/export/course?format=pdf")
+
+    assert response.status_code == 422
+
+
 # ---- B. the graph ---------------------------------------------------------
 
 
@@ -611,3 +781,41 @@ async def test_a_cancelled_run_is_exported_and_says_it_was_cancelled(app_and_cli
     # in a failures list and in a written list, and an assertion that could not
     # tell those apart would pass on an archive claiming it wrote beta.
     assert "`beta`" in readme.split("## Never started", 1)[1]
+
+
+async def test_an_interrupted_page_says_so_in_the_file_and_in_its_name(app_and_client):
+    """The HTML export's half of "a partial course must not look complete".
+
+    Both halves, because a single page is *more* exposed to this than the zip,
+    not less: there is nothing to unzip, so a reader who was forwarded the file
+    sees the filename and then the page, and nothing else. The zip's own
+    version of this is `test_an_interrupted_archive_says_so_before_it_is_opened`
+    and `test_an_interrupted_readme_names_what_was_never_started`.
+
+    Proved red before it was trusted green: against the build that merged the
+    HTML export and the partial-archive rule together, the page carried neither
+    the sentence nor the never-started list and the filename carried no status
+    -- three assertions, all failing, on a route whose own tests were green.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    written = await _sessions_holding(
+        application, project_id, {"alpha": {"/course/areas/alpha/unit.md": "# Alpha"}}
+    )
+    await _interrupted(application, project_id, ["alpha", "beta"], written)
+
+    response = await client.get(f"/api/projects/{project_id}/export/course?format=html")
+
+    assert response.status_code == 200
+    assert "-interrupted.html" in response.headers["content-disposition"]
+    body = response.text
+    # The sentence, not merely the word: "interrupted" also appears in the
+    # filename this same response carries, so matching the word alone would
+    # pass with the sentence deleted.
+    assert "the server stopped while it was still writing" in body
+    # Rendered as markdown, not escaped: the sentence is the zip README's, and
+    # its emphasis must not reach the reader as literal asterisks.
+    assert "<strong>" in body and "**This run was interrupted" not in body
+    # Named, not counted -- `beta` is what a reader would go and author.
+    assert "Never started" in body
+    assert "beta" in body

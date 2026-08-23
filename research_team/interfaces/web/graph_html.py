@@ -34,6 +34,30 @@ import json
 
 from research_team.application.graph_export import ExportGraph, to_payload
 
+#: The console's `--k-*` kind tokens, copied. See this module's docstring for
+#: why a copy rather than a read of `tokens.css`.
+PALETTE = ("#a78bfa", "#6ba7f5", "#5ec98a", "#e2a457", "#5f7d8c", "#7e8b9b")
+
+
+def color_for_type(entity_type: str) -> str:
+    """Byte-for-byte the hash in `entity-colors.ts`, and in the viewer below.
+
+    Two implementations of one hash in one file, which is a real cost and the
+    cheaper of the two options: the canvas viewer computes colours in the
+    browser from a payload that does not carry them, so its copy cannot be
+    removed, and `course_html.py` renders SVG on the server and cannot reach
+    the browser's. What holds them together is that all three -- here, the
+    `<script>` below, and `entity-colors.ts` -- produce the same colour for
+    the same type, which is what `tests/interfaces/test_course_html.py`
+    asserts against a literal.
+    """
+    digest = 0
+    for character in entity_type:
+        digest = (digest * 31 + ord(character)) & 0xFFFFFFFF
+        if digest >= 0x80000000:
+            digest -= 0x100000000
+    return PALETTE[abs(digest) % len(PALETTE)]
+
 
 def render_html(graph: ExportGraph) -> str:
     """The whole viewer, with this graph's data inline.

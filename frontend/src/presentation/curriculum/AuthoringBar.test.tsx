@@ -66,7 +66,11 @@ const show = (
       error={null}
       onAuthor={() => {}}
       onCancel={() => {}}
-      courseUrl={(area) => (area ? `/export/course?area=${area}` : '/export/course')}
+      courseUrl={(area, format) =>
+        `/export/course` +
+        (area ? `?area=${area}` : '') +
+        (format && format !== 'zip' ? `${area ? '&' : '?'}format=${format}` : '')
+      }
       {...props}
     />,
   )
@@ -178,9 +182,17 @@ describe('AuthoringBar downloads', () => {
     // rendered with the wrong one looks correct and fetches the wrong project.
     show({ current: null, last: run() })
 
-    const link = screen.getByRole('link', { name: /download all courses/i })
-    expect(link).toHaveAttribute('href', '/export/course')
-    expect(link).toHaveAttribute('download')
+    const zip = screen.getByRole('link', { name: /download all courses \(\.zip\)/i })
+    expect(zip).toHaveAttribute('href', '/export/course')
+    expect(zip).toHaveAttribute('download')
+
+    // The one page, offered beside the archive rather than instead of it.
+    // Asserted by `href` for the reason above: the whole of what this link
+    // does is its URL, and one built without `format=html` downloads a zip
+    // under a name promising a page.
+    const page = screen.getByRole('link', { name: /download all courses \(\.html\)/i })
+    expect(page).toHaveAttribute('href', '/export/course?format=html')
+    expect(page).toHaveAttribute('download')
   })
 
   it('offers the selected area on its own when that area was written', () => {
@@ -202,7 +214,9 @@ describe('AuthoringBar downloads', () => {
     )
 
     expect(screen.queryByRole('link', { name: /download “Beta”/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /download all courses/i })).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: /download all courses \(\.zip\)/i }),
+    ).toBeInTheDocument()
   })
 
   it('offers nothing while a run is in flight', () => {
@@ -227,11 +241,20 @@ describe('AuthoringBar downloads', () => {
     // fewer courses than it was asked for, and those courses exist -- so the
     // download is offered, over exactly what was written. The export refusing
     // mid-run is about a run *in flight*, not about a run that ended early.
+    //
+    // Both formats, named exactly. This assertion was written when the bar
+    // offered one archive and matched on `/download all courses/i`, which
+    // became ambiguous the moment a second format arrived beside it -- the
+    // failure was a duplicate match, not a missing link.
     show(stopped())
 
-    expect(screen.getByRole('link', { name: /download all courses/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /download all courses \(\.zip\)/i })).toHaveAttribute(
       'href',
       '/export/course',
+    )
+    expect(screen.getByRole('link', { name: /download all courses \(\.html\)/i })).toHaveAttribute(
+      'href',
+      '/export/course?format=html',
     )
   })
 })
