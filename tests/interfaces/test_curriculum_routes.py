@@ -50,9 +50,23 @@ class StubAuthor:
         #: `None` -- the default -- means every target returns at once, which
         #: is what every other test in this module wants.
         self.gate: asyncio.Event | None = None
+        #: One permit per target allowed to finish, for the cancel tests.
+        #:
+        #: An `asyncio.Event` cannot express "let exactly one through". A test
+        #: that sets the event, waits for the first session and then clears it
+        #: has a window: the driver starts the *second* target and passes the
+        #: still-open event before `clear()` runs. Both cancel tests were
+        #: written that way and both passed locally and failed on CI, where a
+        #: loaded runner widened the window -- 2 targets finished where the
+        #: assertion expected 1, so the abandoned count came back one short.
+        #: A semaphore has no such window: with no permits left, the next
+        #: target blocks whatever the scheduler does.
+        self.permits: asyncio.Semaphore | None = None
 
     async def _one(self, target: str):
         self.asked.append(target)
+        if self.permits is not None:
+            await self.permits.acquire()
         if self.gate is not None:
             await self.gate.wait()
         session_id = uuid4()
@@ -421,17 +435,18 @@ async def test_a_cancelled_run_keeps_the_courses_it_already_wrote(app_and_client
     """
     application, client = app_and_client.application, app_and_client.client
     author = app_and_client.author
-    author.gate = asyncio.Event()
-    author.gate.set()
+    author.permits = asyncio.Semaphore(0)
     project_id = await _new_project(client)
     await _seed_two_clusters(application, project_id)
 
     started = await client.post(f"/api/projects/{project_id}/curriculum/author", json={})
     assert started.status_code == 202
     first_target = started.json()["targets"][0]
+    # Exactly one permit, so exactly one target can finish however the
+    # scheduler interleaves. Every later target blocks on `acquire`.
+    author.permits.release()
     while first_target not in author.sessions:
         await asyncio.sleep(0.01)
-    author.gate.clear()
 
     cancelled = await client.post(f"/api/projects/{project_id}/curriculum/author/cancel")
     assert cancelled.status_code == 200

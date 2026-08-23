@@ -59,8 +59,15 @@ class StubAuthor:
         self.fail_on: str | None = None
         #: Awaited before each target, so a test can hold a run open.
         self.gate: asyncio.Event | None = None
+        #: One permit per target allowed to finish. See the note in
+        #: `tests/interfaces/test_curriculum_routes.py`'s `StubAuthor`: an
+        #: event cannot express "let exactly one through", and the cancel
+        #: test that tried failed on CI where the window is wider.
+        self.permits: asyncio.Semaphore | None = None
 
     async def _one(self, target: str):
+        if self.permits is not None:
+            await self.permits.acquire()
         if self.gate is not None:
             await self.gate.wait()
         if target == self.fail_on:
@@ -220,8 +227,7 @@ async def test_a_cancelled_run_persists_as_cancelled_with_its_courses_intact(db_
     """
     first = await _application(db_file)
     author = StubAuthor()
-    author.gate = asyncio.Event()
-    author.gate.set()
+    author.permits = asyncio.Semaphore(0)
     try:
         project_id = await _project(first)
         activity = _activity(first)
@@ -231,10 +237,12 @@ async def test_a_cancelled_run_persists_as_cancelled_with_its_courses_intact(db_
             lambda _run_id, target: author._one(target),
             kind="path",
         )
+        # Exactly one permit, so exactly one target finishes however the
+        # scheduler interleaves; the rest block on `acquire`.
+        author.permits.release()
         while len(author.sessions) < 1:
             await asyncio.sleep(0.01)
-        author.gate.clear()
-        # Two targets abandoned: the one held on the gate and the one after it.
+        # Two targets abandoned: the one now blocked and the one after it.
         assert activity.cancel(project_id) == 2
         await activity.wait(project_id)
         await first.authoring.caught_up()
