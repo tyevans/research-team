@@ -9,7 +9,7 @@ first of these.
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from research_team.domain.course_catalog import CategoryKey
+from research_team.domain.course_catalog import ArtRef, CategoryKey
 from research_team.domain.learning_area import LearningArea
 
 
@@ -45,4 +45,25 @@ class CategoryGrouper(Protocol):
     def group(self, areas: Sequence[LearningArea]) -> Mapping[str, CategoryKey]:
         """Every area's slug mapped to its category. Total: an area that comes
         in must come out, or the catalog silently loses courses."""
+        ...
+
+
+class ArtPort(Protocol):
+    """Produces a card's illustration.
+
+    A port with one throwaway implementation today (`SeededArtProvider`) and a
+    known replacement waiting -- a searchable art library plus a generator, per
+    the increment-3 note on `ArtRef`. The signature is the contract that swap
+    has to preserve: given a slug and its category, return something to look
+    at and something to say about it. Nothing here promises the art is
+    *generated* rather than *selected*, on purpose, so the throwaway
+    implementation and its replacement can differ completely underneath it.
+    """
+
+    def for_candidate(self, slug: str, category: CategoryKey) -> ArtRef:
+        """The art for one candidate. Deterministic in every implementation
+        this port is expected to have -- a catalog whose illustrations
+        reshuffle between requests is not one a reader can recognise a card
+        in, and that constraint belongs on the port, not just on today's
+        adapter."""
         ...
