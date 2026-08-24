@@ -183,6 +183,34 @@ def test_the_extraction_throughput_knobs_are_overridable(monkeypatch):
     assert config.extraction_chunk_size() == 3_000
 
 
+def test_the_catalog_sweep_defaults_to_one_candidate_at_a_time(monkeypatch):
+    """1, and the number is the finding rather than a failure to finish.
+
+    The sweeps can run candidates concurrently; measured interleaved against
+    the live endpoint on 2026-08-24, with a latency probe bracketing every run,
+    ceiling 8 came back 1.0% faster than ceiling 1 over the same 24 candidates
+    (148.0s against a 149.5s clean sequential baseline). This server
+    serialises, so the default asks it for one thing at a time and the
+    mechanism waits for an endpoint that batches. See
+    `config.catalog_sweep_concurrency` for the table, including the row thrown
+    out for straddling a change in ambient load.
+
+    Pinned as a value and not merely as `<= extraction_concurrency()`: the
+    point of this test is that somebody raising it has to come here, read the
+    curve, and re-measure before changing the number.
+    """
+    monkeypatch.delenv("AGENT_CATALOG_SWEEP_CONCURRENCY", raising=False)
+    assert config.catalog_sweep_concurrency() == 1
+
+
+def test_the_catalog_sweep_ceiling_is_overridable(monkeypatch):
+    """The whole reason the mechanism survives a default of 1: an endpoint
+    that batches turns concurrency on for the cost of an environment
+    variable, with no code change and no rediscovery."""
+    monkeypatch.setenv("AGENT_CATALOG_SWEEP_CONCURRENCY", "8")
+    assert config.catalog_sweep_concurrency() == 8
+
+
 def test_transcription_is_off_until_a_url_is_set(monkeypatch):
     monkeypatch.delenv("AGENT_TRANSCRIBER_URL", raising=False)
     assert config.transcriber_url() is None

@@ -3,9 +3,19 @@
 Modelled directly on `blurb_sweep.py` -- read it first. Same shape: no
 aggregate (nothing on the event log describes a piece of art either, see
 `ArtStore`'s own docstring), an in-memory progress frame per project, one
-sweep at a time, sequential rather than concurrent, and a crashed `_drive`
-settles the frame with an `error` key rather than leaving `running: True`
-forever.
+sweep at a time, candidates worked under `config.catalog_sweep_concurrency()`
+(1 by default -- see that docstring for why concurrency is implemented and
+switched off), a per-candidate exception tallied as
+`failed` rather than ending the run, and a settled frame carrying an `error`
+key rather than leaving `running: True` forever.
+
+**One thing here that the blurb sweep has no equivalent of.**
+`ArtStore.decrement_uses` is a read-modify-write over one row, and two
+candidates moving off the *same* piece of art at once would interleave their
+read and their save and lose one decrement. Sequentially that could not
+happen. `_uses_lock` below serialises exactly that call and nothing else --
+it is held across a couple of SQLite round trips, never across a model call,
+so it costs nothing measurable against a generation that takes a minute.
 
 **What counts as "nothing to do" here is two checks, not one.** A candidate
 is skipped only if it already has an assignment (`CandidateArtStore.get`)
@@ -50,6 +60,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from research_team.application.course_catalog import ArtGeneratorPort, CourseCandidate
+from research_team.infrastructure.config import catalog_sweep_concurrency
 from research_team.infrastructure.persistence.read_models import ArtStore, CandidateArtStore
 
 _logger = logging.getLogger(__name__)
@@ -85,11 +96,23 @@ class ArtSweep:
     check has not been handed a live coroutine to leave unused.
     """
 
-    def __init__(self, art_store: ArtStore, candidate_art_store: CandidateArtStore) -> None:
+    def __init__(
+        self,
+        art_store: ArtStore,
+        candidate_art_store: CandidateArtStore,
+        concurrency: int | None = None,
+    ) -> None:
         self._art = art_store
         self._candidate_art = candidate_art_store
         self._progress: dict[UUID, dict[str, Any]] = {}
         self._tasks: dict[UUID, asyncio.Task] = {}
+        # See `BlurbSweep.__init__` for why this is read once here and
+        # injectable rather than looked up per sweep.
+        self._concurrency = catalog_sweep_concurrency() if concurrency is None else concurrency
+        # Built lazily in `_drive`: an `asyncio.Lock` constructed here would
+        # bind whatever loop happens to be current at composition time, which
+        # under uvicorn is not the loop the sweep runs on.
+        self._uses_lock: asyncio.Lock | None = None
 
     def progress(self, project_id: UUID) -> dict[str, Any]:
         frame = self._progress.get(project_id)
@@ -129,109 +152,113 @@ class ArtSweep:
         *,
         force: bool = False,
     ) -> None:
+        total = len(candidates)
         done = 0
         failed = 0
-        try:
-            for candidate in candidates:
-                assigned = await self._candidate_art.get(project_id, candidate.slug)
-                fresh = (
-                    assigned is not None
-                    and assigned.membership_hash == candidate.membership_hash
-                )
-                if not force and fresh:
-                    # Already resolved against the candidate's current
-                    # cluster -- nothing to do, the sweep's exact equivalent
-                    # of a blurb sweep's cache hit. A drifted assignment
-                    # (`assigned` set but `fresh` False) falls through to be
-                    # treated as if unassigned, below.
-                    done += 1
-                    self._progress[project_id] = {
-                        "running": True,
-                        "done": done,
-                        "total": len(candidates),
-                        "failed": failed,
-                    }
-                    continue
+        first_error: str | None = None
+        permits = asyncio.Semaphore(self._concurrency)
+        if self._uses_lock is None:
+            self._uses_lock = asyncio.Lock()
+        uses_lock = self._uses_lock
 
-                if not force:
-                    match = await matcher.match(candidate)
-                    if match is not None:
-                        # The library already covers this candidate --
-                        # generating would be wasted spend for a picture
-                        # that will resolve the moment anyone actually reads
-                        # this candidate's art (see the module docstring).
-                        # Counted as done, not failed: this is success, just
-                        # success this sweep did not have to pay for.
+        def frame(running: bool) -> dict[str, Any]:
+            return {"running": running, "done": done, "total": total, "failed": failed}
+
+        async def sweep_one(candidate: CourseCandidate) -> None:
+            nonlocal done, failed, first_error
+            async with permits:
+                try:
+                    assigned = await self._candidate_art.get(project_id, candidate.slug)
+                    fresh = (
+                        assigned is not None
+                        and assigned.membership_hash == candidate.membership_hash
+                    )
+                    if not force and fresh:
+                        # Already resolved against the candidate's current
+                        # cluster -- nothing to do, the sweep's exact
+                        # equivalent of a blurb sweep's cache hit. A drifted
+                        # assignment (`assigned` set but `fresh` False) falls
+                        # through to be treated as if unassigned, below.
                         done += 1
-                        self._progress[project_id] = {
-                            "running": True,
-                            "done": done,
-                            "total": len(candidates),
-                            "failed": failed,
-                        }
-                        continue
-
-                draft = await generate.generate(candidate.title, candidate.anchors)
-                if draft is None:
-                    # A refusal: the model had nothing safe to offer. The
-                    # existing picture (or the seeded placeholder, if there
-                    # was none) stays in place -- no assignment is written,
-                    # so this candidate is picked up again next sweep,
-                    # exactly like a blurb sweep's refusal.
+                    elif not force and (await matcher.match(candidate)) is not None:
+                        # The library already covers this candidate --
+                        # generating would be wasted spend for a picture that
+                        # will resolve the moment anyone actually reads this
+                        # candidate's art (see the module docstring). Counted
+                        # as done, not failed: this is success, just success
+                        # this sweep did not have to pay for.
+                        done += 1
+                    else:
+                        draft = await generate.generate(candidate.title, candidate.anchors)
+                        if draft is None:
+                            # A refusal: the model had nothing safe to offer.
+                            # The existing picture (or the seeded placeholder,
+                            # if there was none) stays in place -- no
+                            # assignment is written, so this candidate is
+                            # picked up again next sweep, exactly like a blurb
+                            # sweep's refusal.
+                            failed += 1
+                        else:
+                            art_id = uuid4()
+                            await self._art.put(
+                                art_id=art_id,
+                                svg=draft.svg,
+                                description=draft.description,
+                                # Tags derived cheaply from the candidate
+                                # rather than asked of the model -- see
+                                # DraftArt's docstring for why the model is
+                                # not asked for tags at all.
+                                tags=[candidate.category],
+                                palette=candidate.category,
+                                created_at=datetime.now(UTC),
+                                source="generated",
+                            )
+                            await self._candidate_art.put(
+                                project_id, candidate.slug, art_id, candidate.membership_hash
+                            )
+                            if assigned is not None:
+                                # Moving the candidate off a drifted or
+                                # force-overwritten assignment -- the old
+                                # picture stays in the library (it may still
+                                # suit another candidate) but no longer counts
+                                # this one among its uses. Under the lock: see
+                                # the module docstring on why this one call is
+                                # the only thing here that cannot interleave.
+                                async with uses_lock:
+                                    await self._art.decrement_uses(assigned.art_id)
+                            done += 1
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    # Tallied and survived rather than ending the run -- see
+                    # `blurb_sweep._drive`'s identical `except` for the full
+                    # reasoning and for why `error` still means "this run hit
+                    # a defect".
+                    _logger.exception(
+                        "art sweep for project %s failed on %r", project_id, candidate.slug
+                    )
+                    if first_error is None:
+                        first_error = str(error)
                     failed += 1
-                else:
-                    art_id = uuid4()
-                    await self._art.put(
-                        art_id=art_id,
-                        svg=draft.svg,
-                        description=draft.description,
-                        # Tags derived cheaply from the candidate rather than
-                        # asked of the model -- see DraftArt's docstring for
-                        # why the model is not asked for tags at all.
-                        tags=[candidate.category],
-                        palette=candidate.category,
-                        created_at=datetime.now(UTC),
-                        source="generated",
-                    )
-                    await self._candidate_art.put(
-                        project_id, candidate.slug, art_id, candidate.membership_hash
-                    )
-                    if assigned is not None:
-                        # Moving the candidate off a drifted or
-                        # force-overwritten assignment -- the old picture
-                        # stays in the library (it may still suit another
-                        # candidate) but no longer counts this one among its
-                        # uses.
-                        await self._art.decrement_uses(assigned.art_id)
-                    done += 1
 
-                self._progress[project_id] = {
-                    "running": True,
-                    "done": done,
-                    "total": len(candidates),
-                    "failed": failed,
-                }
-        except Exception as error:
-            # See blurb_sweep._drive's identical `except` for why this is
-            # caught here rather than left to propagate: nothing in
-            # production awaits this task, so an uncaught exception would
-            # leave the last frame at `running: True` forever.
+                self._progress[project_id] = frame(True)
+
+        try:
+            await asyncio.gather(*(sweep_one(candidate) for candidate in candidates))
+        except asyncio.CancelledError:
+            # See `blurb_sweep._drive`: `gather` carries cancellation into
+            # every in-flight child, so this really does stop work in flight.
+            self._progress[project_id] = frame(False)
+            raise
+        except Exception as error:  # pragma: no cover -- see blurb_sweep._drive
             _logger.exception("art sweep for project %s crashed", project_id)
-            self._progress[project_id] = {
-                "running": False,
-                "done": done,
-                "total": len(candidates),
-                "failed": failed,
-                "error": str(error),
-            }
+            self._progress[project_id] = frame(False) | {"error": str(error)}
             return
 
-        self._progress[project_id] = {
-            "running": False,
-            "done": done,
-            "total": len(candidates),
-            "failed": failed,
-        }
+        settled = frame(False)
+        if first_error is not None:
+            settled["error"] = first_error
+        self._progress[project_id] = settled
 
     async def wait(self, project_id: UUID) -> None:
         """Block until this project's sweep settles. For tests, not routes."""
