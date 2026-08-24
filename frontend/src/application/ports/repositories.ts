@@ -689,6 +689,19 @@ export interface BlurbSweepProgress {
   readonly error: string | null
 }
 
+/** `_NOT_RUNNING`'s shape in the art sweep's own server module -- same shape
+ *  as `BlurbSweepProgress` (one project, one sweep at a time), kept as its
+ *  own type rather than reused because the two sweeps are unrelated runs
+ *  over unrelated fields and nothing here should let a caller pass one
+ *  where the other is meant. */
+export interface ArtSweepProgress {
+  readonly running: boolean
+  readonly done: number
+  readonly total: number
+  readonly failed: number
+  readonly error: string | null
+}
+
 export interface CourseRepository {
   /** One cluster's detail page: its candidate card, its outline, its full
    *  current membership, and -- if realized -- how it has drifted since. */
@@ -710,6 +723,13 @@ export interface CourseRepository {
 
   /** Where the last (or current) blurb sweep on this project stands. */
   fetchBlurbSweep(projectId: ProjectId): Promise<BlurbSweepProgress>
+
+  /** Start illustrating every candidate whose cached art is missing or
+   *  stale, in the background. */
+  startArtSweep(projectId: ProjectId): Promise<ArtSweepProgress>
+
+  /** Where the last (or current) art sweep on this project stands. */
+  fetchArtSweep(projectId: ProjectId): Promise<ArtSweepProgress>
 }
 
 export interface TimelineRepository {

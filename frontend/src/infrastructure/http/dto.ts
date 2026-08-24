@@ -1185,3 +1185,18 @@ export const blurbSweepProgressDto = z.object({
     .nullish()
     .transform((v) => v ?? null),
 })
+
+/** The 202 `start_art_sweep` / `read_art_sweep_progress` answers -- same
+ *  shape as `blurbSweepProgressDto`, kept separate for the reason
+ *  `ArtSweepProgress` is its own type: an unrelated sweep over an unrelated
+ *  field. */
+export const artSweepProgressDto = z.object({
+  running: z.boolean(),
+  done: z.number().default(0),
+  total: z.number().default(0),
+  failed: z.number().default(0),
+  error: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
+})

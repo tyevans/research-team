@@ -183,6 +183,10 @@ export const queryKeys = {
    *  the whole front page on every poll. */
   blurbSweep: (project: ProjectId) => ['blurb-sweep', project] as const,
 
+  /** Where the last (or current) art sweep on this project stands -- its
+   *  own key, matching `blurbSweep`'s own reasoning above. */
+  artSweep: (project: ProjectId) => ['art-sweep', project] as const,
+
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
   fileHistory: (session: SessionId, path: FilePath) =>

@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { useEffect, useRef, useState } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
-import type { BlurbSweepProgress } from '@application/ports/repositories.ts'
+import type { ArtSweepProgress, BlurbSweepProgress } from '@application/ports/repositories.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import type { CourseCandidate, OrphanedCourse } from '@domain/knowledge/catalog.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
@@ -76,6 +76,21 @@ export const CatalogPane = ({
     onSuccess: (started) => queryClient.setQueryData(queryKeys.blurbSweep(projectId), started),
   })
 
+  // Its own key and its own poll, matching `sweep` above for the same
+  // reason: an art sweep reports four unrelated counts, and sharing
+  // `catalog`'s key would refetch the whole front page every two seconds
+  // instead of just those.
+  const artSweep = useQuery({
+    queryKey: queryKeys.artSweep(projectId),
+    queryFn: () => courses.fetchArtSweep(projectId),
+    refetchInterval: (q) => (q.state.data?.running ? 2_000 : false),
+  })
+
+  const startArtSweep = useMutation({
+    mutationFn: () => courses.startArtSweep(projectId),
+    onSuccess: (started) => queryClient.setQueryData(queryKeys.artSweep(projectId), started),
+  })
+
   // A poll transitioning `running: true` -> `false` is the one moment fresh
   // blurbs exist that `catalog`'s own cache does not know about yet -- a ref
   // rather than deriving it from the query's own status, because `useQuery`
@@ -86,6 +101,16 @@ export const CatalogPane = ({
     if (wasRunning.current && !running) void invalidate()
     wasRunning.current = running
   }, [running]) // eslint-disable-line react-hooks/exhaustive-deps -- `invalidate` is a fresh closure every render; only `running` should re-run this.
+
+  // Same reasoning as `wasRunning` above, for the art sweep's own poll: a
+  // finished run is the one moment fresh `art.url`s exist that `catalog`'s
+  // cache does not know about yet.
+  const artWasRunning = useRef(false)
+  const artRunning = artSweep.data?.running ?? false
+  useEffect(() => {
+    if (artWasRunning.current && !artRunning) void invalidate()
+    artWasRunning.current = artRunning
+  }, [artRunning]) // eslint-disable-line react-hooks/exhaustive-deps -- `invalidate` is a fresh closure every render; only `artRunning` should re-run this.
 
   const feature = useMutation({
     mutationFn: ({ slug, rank }: { slug: string; rank: number }) =>
@@ -160,6 +185,11 @@ export const CatalogPane = ({
         progress={sweep.data ?? null}
         starting={startSweep.isPending}
         onRun={() => startSweep.mutate()}
+      />
+      <ArtSweepControl
+        progress={artSweep.data ?? null}
+        starting={startArtSweep.isPending}
+        onRun={() => startArtSweep.mutate()}
       />
 
       {data.unnamedCount > 0 && (
@@ -331,6 +361,55 @@ const BlurbSweepControl = ({
           {progress.error !== null
             ? `The sweep failed: ${progress.error}`
             : `${progress.done} of ${progress.total} written${
+                progress.failed > 0 ? `, ${progress.failed} failed` : ''
+              }.`}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** "Illustrate the catalog" and its progress line, over `catalog/art`.
+ *
+ *  Same shape as `BlurbSweepControl` above, over a different endpoint and a
+ *  different field: a background sweep filling in `art.url` for every
+ *  candidate whose illustration is missing or stale, rather than `blurb`.
+ */
+const ArtSweepControl = ({
+  progress,
+  starting,
+  onRun,
+}: {
+  progress: ArtSweepProgress | null
+  starting: boolean
+  onRun: () => void
+}) => {
+  const running = starting || (progress?.running ?? false)
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-bg-panel p-3">
+      <p className="m-0 min-w-0 flex-1 text-xs text-fg-dim">
+        Illustrate every candidate whose art is missing or out of date.
+      </p>
+      <Button small onClick={onRun} disabled={running}>
+        {running && progress !== null
+          ? `Illustrating ${progress.done} of ${progress.total}`
+          : running
+            ? 'Illustrating…'
+            : 'Illustrate the catalog'}
+      </Button>
+      {progress !== null && !running && (
+        // `error` present is the one case that must not read as an ordinary
+        // finish -- see `ArtSweepProgress.error`'s own docstring, matching
+        // `BlurbSweepProgress.error`: set only when the run itself raised.
+        <p
+          className={clsx(
+            'm-0 w-full text-xs',
+            progress.error !== null ? 'text-k-failure' : 'text-fg-dim',
+          )}
+        >
+          {progress.error !== null
+            ? `The sweep failed: ${progress.error}`
+            : `${progress.done} of ${progress.total} illustrated${
                 progress.failed > 0 ? `, ${progress.failed} failed` : ''
               }.`}
         </p>

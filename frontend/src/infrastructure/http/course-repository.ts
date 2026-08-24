@@ -1,4 +1,5 @@
 import type {
+  ArtSweepProgress,
   BlurbSweepProgress,
   CourseRepository,
   RealizeResult,
@@ -55,6 +56,21 @@ export class HttpCourseRepository implements CourseRepository {
     return await this.http.get(
       `/api/projects/${seg(projectId)}/catalog/blurbs`,
       dto.blurbSweepProgressDto,
+    )
+  }
+
+  async startArtSweep(projectId: ProjectId): Promise<ArtSweepProgress> {
+    return await this.http.post(
+      `/api/projects/${seg(projectId)}/catalog/art`,
+      {},
+      dto.artSweepProgressDto,
+    )
+  }
+
+  async fetchArtSweep(projectId: ProjectId): Promise<ArtSweepProgress> {
+    return await this.http.get(
+      `/api/projects/${seg(projectId)}/catalog/art`,
+      dto.artSweepProgressDto,
     )
   }
 }
