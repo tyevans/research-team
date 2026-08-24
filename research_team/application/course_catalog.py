@@ -106,6 +106,41 @@ class ArtPort(Protocol):
 
 
 @dataclass(frozen=True)
+class DraftArt:
+    """What a model produced for one piece of art, before it is stored.
+
+    `svg` has already passed `SvgSanitiser().sanitise` by the time this is
+    constructed -- `ArtGeneratorPort.generate`'s docstring is where that rule
+    lives, this dataclass just carries the result. No `tags` field: the
+    model is asked for an illustration and a description, not a tag list
+    (the prompt already has enough to refuse on without adding a field
+    nothing downstream needs from the model itself), so the caller that
+    stores this (the sweep, in `interfaces/web/art_sweep.py`) derives tags
+    cheaply from the candidate it generated for -- its category, today.
+    """
+
+    svg: str
+    description: str
+
+
+class ArtGeneratorPort(Protocol):
+    """Generates one piece of art from a candidate's title and anchors, or
+    refuses.
+
+    `None` is a refusal, not an error, for `BlurbTextPort`'s exact reason:
+    unparseable output, an empty description, or an SVG `SvgSanitiser`
+    refuses are all a `None` a caller treats identically to "the model had
+    nothing safe to offer" -- the sweep just moves on to the next candidate,
+    leaving the seeded placeholder in place. `description` is the search key
+    `LibraryArtProvider`'s lexical search reads back out of the stored row,
+    so a reply without one has nothing to be searched by later and is
+    refused whole rather than stored with an empty string standing in.
+    """
+
+    async def generate(self, title: str, anchors: Sequence[AreaMember]) -> DraftArt | None: ...
+
+
+@dataclass(frozen=True)
 class DraftBlurb:
     """What a model produced for one candidate's copy, before it is cached.
 
