@@ -168,6 +168,22 @@ SENTENCE_OPENERS = frozenset(
         "these",
         "from",
         "in",
+        # `by` and `at` join the two prepositions above on the same test the
+        # list already applies: a word is exempt when it is ordinary *and* not
+        # a plausible proper noun. Both fail the second half only in ways
+        # `from` and `in` already do, and neither is a ship, a rank or a name
+        # the way the deliberately-excluded `discover`, `master`, `trace` and
+        # `meet` are.
+        #
+        # Added on measurement, not taste: on 2026-08-23 the live model opened
+        # an outline's promise with "By the end of this course, a learner will
+        # be able to..." and the whole outline was refused on the single run
+        # `By`. An outline's promise is one sentence stating an objective, and
+        # "By the end..." / "At the end..." is the form that sentence takes in
+        # every course description ever written -- so this was not an edge
+        # case, it was the modal opening.
+        "by",
+        "at",
         "follow",
         "join",
         "learn",
@@ -210,6 +226,30 @@ def ungrounded_runs(reply: str, anchors: Sequence[AreaMember]) -> list[str]:
         )
         for match in CAPITALISED_RUN.finditer(rest):
             run = match.group()
-            if not any(run.lower() in name for name in names_lower):
+            if not any(candidate in name for candidate in _forms(run) for name in names_lower):
                 ungrounded.append(run)
     return ungrounded
+
+
+def _forms(run: str) -> tuple[str, ...]:
+    """The lowercased forms of `run` that should each count as a match.
+
+    Just the run itself, plus the run with a trailing possessive removed.
+    `Cochrane's` is not a substring of `zefram cochrane`, so without this a
+    model writing "Cochrane's first flight" -- about an entity the cluster
+    holds, named correctly -- is refused as an invention.
+
+    Measured 2026-08-23 against the live model: a genuinely good outline was
+    refused twice over `Cochrane's` alone. The blurb writer never hit it
+    because two sentences of catalog copy rarely inflect a name; an outline's
+    section summaries do it constantly.
+
+    Deliberately only the possessive, and only trailing. Every form added here
+    widens what the check accepts, and the check's whole value is that it
+    fails toward refusal -- see this module's own notes on which false-accepts
+    were traded for which false-refusals.
+    """
+    lowered = run.lower()
+    if lowered.endswith("'s") or lowered.endswith("\u2019s"):
+        return (lowered, lowered[:-2])
+    return (lowered,)

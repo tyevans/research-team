@@ -79,6 +79,9 @@ One or two sentences on what this section covers.
 Between {min_sections} and {max_sections} sections. No bullet lists, no
 numbering, no heading above the opening sentence, and no text after the last
 section.
+
+Write headings in sentence case -- capitalise only the first word and any
+proper noun, like "The first warp flight", not "The First Warp Flight".
 """
 
 #: A section heading: a `##` line, at any indent a model might add.

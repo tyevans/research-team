@@ -55,7 +55,15 @@ pytestmark = pytest.mark.asyncio
 #: the address to use, and the model below is not to be swapped for a
 #: different one on a whim -- it is what this environment actually serves.
 _LIVE_BASE_URL = "http://192.168.1.14:8080/v1/"
-_LIVE_MODEL = "qwen3.8-27b-mtp"
+_LIVE_MODEL = "qwen3.8-27b-64k-txt"
+#: Not `qwen3.8-27b-mtp`, which is the same weights behind a different
+#: serving profile and is what `config.model_name()` names. That profile
+#: answers `/models` and then refuses every completion with `"unable to start
+#: process: upstream command exited prematurely but successfully"` -- measured
+#: 2026-08-23, and the reason this test skipped on the day it was written.
+#: The 64k-txt profile at the same endpoint serves the same model and answers,
+#: so this is a serving-profile choice rather than a different model, which is
+#: why it does not count as swapping the model out from under the test.
 
 
 def _live_model_unreachable_reason() -> str | None:
@@ -133,7 +141,37 @@ async def _seed_one_cluster(application, project_id: str) -> None:
     stub's placeholder. Follows `test_course_routes.py::_seed_one_cluster`."""
     tenant_id = UUID(project_id)
     store = await application.graphs.open(tenant_id)
-    names = ("Zefram Cochrane", "The Phoenix", "Warp Drive Theory", "First Contact Day")
+    # A realistic cluster, not a minimal one. Four entities was the first
+    # version and it made this test skip every run: grounding is checked
+    # against the cluster's membership, and a model asked to outline a course
+    # on warp drive names the Vulcans and the Federation whether or not a
+    # four-entity cluster happens to contain them. Measured 2026-08-23 against
+    # the live model -- the outline it wrote was good and was refused on
+    # `Vulcan` and `United Federation of Planets` alone.
+    #
+    # That refusal is the check working, not failing: an outline must not
+    # promise coverage of entities the cluster does not hold. But a real
+    # `LearningArea` from a real ingest holds dozens of members, so a
+    # four-member fixture tests a stricter world than production has, and the
+    # seam this test exists for never gets exercised.
+    names = (
+        "Zefram Cochrane",
+        "The Phoenix",
+        "Warp Drive Theory",
+        "First Contact Day",
+        "Vulcan",
+        "Vulcans",
+        "United Federation of Planets",
+        "Starfleet",
+        "Earth",
+        "Bozeman, Montana",
+        "Spacetime",
+        "Faster-than-light travel",
+        "Warp core",
+        "Dilithium",
+        "Enterprise",
+        "Humanity",
+    )
     entities = [_entity(tenant_id, name) for name in names]
     await store.upsert_entities(entities)
     edges = [

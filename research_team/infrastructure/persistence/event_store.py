@@ -21,6 +21,7 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 from research_team.application import FeedEntry
 from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.ask_conversation import AskConversation
+from research_team.domain.catalog_curation import CATALOG_AGGREGATE_TYPE
 from research_team.domain.course import Course
 from research_team.domain.course_authoring_run import (
     COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
@@ -98,6 +99,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         SocraticDialogue.aggregate_type,
         BROWSER_SESSION_AGGREGATE_TYPE,
         COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
+        CATALOG_AGGREGATE_TYPE,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -147,6 +149,21 @@ mid-conversation does not repaint, because nothing on that path reaches
 be left open while another tab asks -- the missing repaint only matters once
 something is watching for it, the same condition `Ontology`'s paragraph
 above names for its own pane.
+
+`CourseCatalog` -- featuring and unfeaturing a course -- is off for
+`AskConversation`'s reason. The only client that would repaint is the catalog
+page the curator pressed the button on, and it invalidates its own query on the
+202 it got back, so a frame would tell the one client that already knows.
+
+It sits beside `Course` on the feed and is the near-miss worth stating: both
+are decisions a person makes on the same page, and `Course` is *on* the feed
+because realizing starts a background authoring run whose progress somebody
+else may be watching. Featuring changes a rank and finishes. Nothing keeps
+running, so nothing else needs telling.
+
+It went unlisted rather than decided when increment 1 shipped, which left
+`test_every_aggregate_type_is_routed_or_deliberately_not` red on main from
+that merge until now -- the guard did its job and nobody read it.
 
 `SocraticDialogue` is off for `AskConversation`'s reason and one more: the
 only client that would repaint on a dialogue frame is the browser already
