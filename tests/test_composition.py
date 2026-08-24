@@ -21,6 +21,7 @@ Two claims, and each is the failure `task-6-brief.md` names by name.
    names a model host.
 """
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -227,3 +228,86 @@ async def test_a_raise_late_in_build_application_never_constructs_the_media_clie
     for client in built:
         await client.aclose()
     assert built == []
+
+
+async def test_the_course_projection_is_registered(build_application):
+    """Not 'the app starts'. An event no projection handles counts as applied,
+    so a build with CourseProjection missing starts cleanly, answers every
+    request 200, and reports every course unrealized forever. This asserts
+    the row a `CourseRealized` produces actually lands in `courses` -- the
+    only thing that distinguishes a build with the projection registered
+    from one where the event was silently accepted and dropped.
+    """
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+    from research_team.domain.course import RealizeCourse, course_stream_id
+
+    application = await build_application(model=FakeMessagesListChatModel(responses=[]))
+
+    project_id = uuid4()
+    stream = course_stream_id(project_id, "warp-drive")
+    course = application.course_repository.create_new(stream.aggregate_id)
+    course.execute(
+        RealizeCourse(
+            project_id=project_id,
+            slug="warp-drive",
+            title="Warp Drive",
+            member_entity_ids=("zefram-cochrane", "phoenix"),
+            membership_hash="hash-1",
+            realized_at=datetime.now(UTC),
+        )
+    )
+    await application.course_repository.save(course)
+    await application.courses_caught_up()
+
+    row = await application.courses.get(project_id, "warp-drive")
+    assert row is not None
+    assert row.title == "Warp Drive"
+    assert row.member_entity_ids == ["zefram-cochrane", "phoenix"]
+
+
+async def test_a_realized_course_survives_a_restart(db_path):
+    """The end-to-end version of the above, and the one that would have
+    caught it: realize, close, reopen from the same database, and read the
+    row back -- `CourseRow` alone, per the module docstring's account of
+    `Course`'s off-log record, so nothing here depends on `courses` having
+    replayed anything a second time versus resumed from its checkpoint.
+    """
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+    from research_team import composition
+    from research_team.domain.course import RealizeCourse, course_stream_id
+
+    project_id = uuid4()
+    stream = course_stream_id(project_id, "warp-drive")
+
+    first = composition.build_application(
+        model=FakeMessagesListChatModel(responses=[]), db_path=db_path
+    )
+    await first.start()
+    course = first.course_repository.create_new(stream.aggregate_id)
+    course.execute(
+        RealizeCourse(
+            project_id=project_id,
+            slug="warp-drive",
+            title="Warp Drive",
+            member_entity_ids=("zefram-cochrane",),
+            membership_hash="hash-1",
+            realized_at=datetime.now(UTC),
+        )
+    )
+    await first.course_repository.save(course)
+    await first.courses_caught_up()
+    await first.close()
+
+    second = composition.build_application(
+        model=FakeMessagesListChatModel(responses=[]), db_path=db_path
+    )
+    await second.start()
+    try:
+        row = await second.courses.get(project_id, "warp-drive")
+        assert row is not None
+        assert row.title == "Warp Drive"
+        assert row.membership_hash == "hash-1"
+    finally:
+        await second.close()

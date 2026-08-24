@@ -9,7 +9,7 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -68,7 +68,12 @@ from research_team.application.check_telemetry_read import CheckTelemetryReadPor
 from research_team.application.components import component_guidance
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.course_authoring import CourseAuthor
-from research_team.application.course_catalog import CachedBlurb, CatalogService
+from research_team.application.course_catalog import (
+    CachedBlurb,
+    CachedOutline,
+    CatalogService,
+)
+from research_team.application.course_realization import CourseService, RealizedCourse
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
@@ -102,6 +107,7 @@ from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import ProjectState, Session, SessionPurpose, current_stage_of
 from research_team.domain.commands import RecordStageReview, WriteFile
+from research_team.domain.course import Course
 from research_team.domain.course_authoring_run import CourseAuthoringRun
 from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.research_run import Budget
@@ -173,6 +179,7 @@ from research_team.infrastructure.knowledge.entity_embeddings import (
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
+from research_team.infrastructure.knowledge.outline_writer import ModelOutlineWriter
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.seeded_art import SeededArtProvider
@@ -208,6 +215,7 @@ from research_team.infrastructure.persistence.corpus_reader import ProjectCorpus
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.event_store import (
     build_course_authoring_run_repository,
+    build_course_repository,
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
@@ -218,6 +226,10 @@ from research_team.infrastructure.persistence.read_models import (
     CatalogFeatureProjection,
     CatalogFeatureStore,
     CourseBlurbStore,
+    CourseOutlineStore,
+    CourseProjection,
+    CourseRow,
+    CourseStore,
     EntityDefinitionRunner,
     MediaProposalRunner,
     OntologyRunner,
@@ -225,6 +237,7 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
+from research_team.interfaces.web.blurb_sweep import BlurbSweep
 from research_team.workflows import PRESETS
 
 logger = logging.getLogger(__name__)
@@ -312,6 +325,71 @@ class _CatalogFeatureRunner:
             await self.features.close()
 
 
+class _CourseRunner:
+    """Keeps `courses` following the log, mirroring `_CatalogFeatureRunner`
+    exactly and for the same reason: `CourseStore.open` needs a running event
+    loop, so it opens in `start()`, and `Application` is `frozen=True`
+    (see `_initial_project_id`'s docstring), so `courses` below has to read
+    through this runner's mutable `courses` attribute rather than being a
+    field `start()` could rebind once the store is open.
+
+    Over the application's own event store and publisher, not a second one --
+    `CourseRealized`/`CourseAbandoned` sit on `Course`'s own aggregate type
+    and stream, so this only ever needs to agree with `course_repository`'s
+    writes over the same file.
+    """
+
+    def __init__(self, store: SQLiteEventStore, bus: InMemoryEventBus, db_path: str) -> None:
+        self._store = store
+        self._bus = bus
+        self._db_path = db_path
+        self.courses: CourseStore | None = None
+        self._manager: SubscriptionManager | None = None
+        self._subscription = None
+
+    async def start(self) -> None:
+        if self._manager is not None:
+            return
+        await self._store.current_position()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        checkpoints = SQLCheckpointRepository(engine)
+        dlq = SQLDLQRepository(engine)
+        self.courses = await CourseStore.open(self._db_path)
+        projection = CourseProjection(self.courses, checkpoints, dlq)
+        self._manager = SubscriptionManager(self._store, self._bus, checkpoints, dlq_repo=dlq)
+        self._subscription = await self._manager.subscribe(
+            projection, SubscriptionConfig(start_from="checkpoint")
+        )
+        results = await self._manager.start()
+        failures = {name: err for name, err in results.items() if err is not None}
+        if failures:
+            raise RuntimeError(f"the course projection failed to start: {failures}")
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """A test affordance, matching `_CatalogFeatureRunner.caught_up`:
+        waits until the projection has replayed everything appended so far,
+        rather than everything that will ever be appended."""
+        if self._manager is None:
+            return
+        target = await self._store.current_position()
+        if target is None:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if self._subscription.last_processed_position is not None and (
+                self._subscription.last_processed_position >= target
+            ):
+                return
+            await asyncio.sleep(0.01)
+        raise TimeoutError("the course projection did not catch up in time")
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+        if self.courses is not None:
+            await self.courses.close()
+
+
 class _LazyBlurbCache:
     """`BlurbCachePort` over `CourseBlurbStore`, opened on first use.
 
@@ -366,6 +444,119 @@ class _LazyBlurbCache:
     async def close(self) -> None:
         if self._store is not None:
             await self._store.close()
+
+
+class _LazyOutlineCache:
+    """`OutlineCachePort` over `CourseOutlineStore`, opened on first use.
+
+    `_LazyBlurbCache`'s shape exactly, and for the same reason: `CourseService`
+    is built inside `build_application`, before any event loop is running, so
+    the port handed to it at construction has to defer opening its own
+    connection rather than being swapped in once one exists. A separate class
+    rather than a generic wrapper over both stores -- the two stores' `get`/
+    `put` return different row shapes (`CourseOutlineRow.sections` is a list of
+    dicts; `CachedOutline.sections` is a tuple of pairs), so the translation is
+    the whole body of each method and sharing it would buy nothing.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._store: CourseOutlineStore | None = None
+        self._lock = asyncio.Lock()
+
+    async def _opened(self) -> CourseOutlineStore:
+        if self._store is None:
+            async with self._lock:
+                if self._store is None:
+                    self._store = await CourseOutlineStore.open(self._db_path)
+        return self._store
+
+    async def get(self, project_id: UUID, slug: str) -> CachedOutline | None:
+        store = await self._opened()
+        row = await store.get(project_id, slug)
+        if row is None:
+            return None
+        return CachedOutline(
+            promise=row.promise,
+            sections=tuple((s["heading"], s["summary"]) for s in row.sections),
+            membership_hash=row.membership_hash,
+            model=row.model,
+            generated_at=datetime.fromisoformat(row.generated_at),
+        )
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        promise: str,
+        sections: tuple[tuple[str, str], ...],
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None:
+        store = await self._opened()
+        await store.put(
+            project_id,
+            slug,
+            promise,
+            [{"heading": heading, "summary": summary} for heading, summary in sections],
+            membership_hash,
+            model,
+            generated_at,
+        )
+
+    async def close(self) -> None:
+        if self._store is not None:
+            await self._store.close()
+
+
+class _RealizedCourses:
+    """`RealizedCoursePort` joining `_CourseRunner`'s store with
+    `AuthoringRunRunner.authored_session_for` -- the join `RealizedCoursePort`'s
+    own docstring assigns to the adapter, not the port.
+
+    Reads through `_CourseRunner` lazily, the same way `CatalogService`'s
+    routes read through `catalog_features`: `CourseService` (this adapter's
+    only caller) is built before `start()` has opened `courses`, so a request
+    reaching this adapter before startup finishes raises rather than silently
+    answering "nothing realized" -- the distinction `_started()` on
+    `AuthoringRunRunner` already draws for the same reason.
+    """
+
+    def __init__(self, course_runner: _CourseRunner, authoring: AuthoringRunRunner) -> None:
+        self._course_runner = course_runner
+        self._authoring = authoring
+
+    def _store(self) -> CourseStore:
+        store = self._course_runner.courses
+        if store is None:
+            raise RuntimeError("the course projection has not been started")
+        return store
+
+    async def for_project(self, project_id: UUID) -> Sequence[RealizedCourse]:
+        rows = await self._store().for_project(project_id)
+        return tuple([await self._joined(project_id, row) for row in rows])
+
+    async def get(self, project_id: UUID, slug: str) -> RealizedCourse | None:
+        row = await self._store().get(project_id, slug)
+        if row is None or row.abandoned:
+            # `CourseStore.get` answers regardless of `abandoned` -- see its
+            # own docstring -- but `RealizedCoursePort`'s contract
+            # (`course_realization.py`) is that every implementation returns
+            # only non-abandoned rows, so that filter belongs here.
+            return None
+        return await self._joined(project_id, row)
+
+    async def _joined(self, project_id: UUID, row: CourseRow) -> RealizedCourse:
+        authored_session_id = await self._authoring.authored_session_for(project_id, row.slug)
+        return RealizedCourse(
+            slug=row.slug,
+            title=row.title,
+            member_entity_ids=tuple(row.member_entity_ids),
+            membership_hash=row.membership_hash,
+            realized_at=row.realized_at,
+            authored_session_id=authored_session_id,
+        )
 
 
 @dataclass(frozen=True)
@@ -731,6 +922,53 @@ class Application:
     not this cache -- it is kept here solely so `close()` can close the
     connection it lazily opens."""
 
+    course_service: CourseService
+    """Assembles one course detail page: a candidate, its outline, its
+    membership and -- if realized -- its drift. Takes an already-built
+    `Curriculum` and `Catalog` per call, mirroring `catalog`'s own
+    statelessness, for the same reason: one instance serves every project."""
+
+    _outline_cache: _LazyOutlineCache
+    """The `OutlineCachePort` handed to `course_service` at construction.
+    Private for `_blurb_cache`'s exact reason: kept here solely so `close()`
+    can close the connection it lazily opens, not because any route reads
+    through it -- `course_service` is the field a route holds."""
+
+    _course_runner: _CourseRunner
+    """Owns `courses` and the projection that keeps it level with the log.
+    Private for `_catalog_runner`'s exact reason -- `Application` is frozen,
+    so `courses` below reads through this runner's own mutable `courses`
+    attribute rather than being a field `start()` could rebind once the store
+    is open."""
+
+    course_repository: AggregateRepository[Course]
+    """The `Course` aggregate repository, for whatever route executes
+    `RealizeCourse`/`AbandonCourse` -- not built yet; Task 9's job. Exposed
+    directly rather than behind a factory, mirroring `topic_repository`: a
+    `Course` stream is keyed by `(project_id, slug)` through `course_stream_id`,
+    which needs no project bound at construction, so there is no per-project
+    object to assemble."""
+
+    outlines: ModelOutlineWriter
+    """Writes a course outline for a cluster, given its title and anchors.
+
+    A field for `blurbs`' exact reason: built now, with no route calling it
+    yet, so a later increment adds one call rather than a constructor, an
+    adapter and a wiring decision at once. `_LazyOutlineCache` above (handed
+    to `course_service`, not held here) is the read side of the same port
+    pair `blurbs`/`_blurb_cache` are for blurbs."""
+
+    blurb_sweep: BlurbSweep
+    """One blurb-writing sweep per project, over `_blurb_cache`.
+
+    Built here rather than left for whichever route starts a sweep, matching
+    `blurbs`' reasoning turned into an object rather than a bare port: the
+    module docstring on `BlurbSweep` records that the writer and the cache it
+    needs were built and never called for a whole increment, and building the
+    sweep now is what turns the next one into "add a route that calls
+    `.start()`" instead of "assemble a sweep, a cache adapter and a writer, and
+    wire all three"."""
+
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
 
@@ -862,6 +1100,21 @@ class Application:
         `CourseUnfeatured` appended so far."""
         await self._catalog_runner.caught_up()
 
+    @property
+    def courses(self) -> CourseStore | None:
+        """The read side of realized courses, or `None` until `start()` has
+        opened it. Mirrors `catalog_features` exactly, and for the same
+        reason: `CourseStore.open` needs a running event loop, so this reads
+        through `_course_runner`'s mutable `courses` attribute rather than
+        being a field of its own; see `_course_runner`'s docstring."""
+        return self._course_runner.courses
+
+    async def courses_caught_up(self) -> None:
+        """A test affordance, matching `catalog_caught_up`: waits until
+        `courses` has replayed every `CourseRealized`/`CourseAbandoned`
+        appended so far."""
+        await self._course_runner.caught_up()
+
     async def attach_project(self, project_id: UUID) -> None:
         """Open `project_id`'s graph and give the executor its tools.
 
@@ -895,6 +1148,7 @@ class Application:
         await self.definitions.start()
         await self.ontology.start()
         await self._catalog_runner.start()
+        await self._course_runner.start()
         await self.media_proposals.start()
         # Reconcile proposals a crash left `accepted` -- designed in
         # `docs/superpowers/specs/2026-08-16-accept-reconciliation-design.md`.
@@ -1102,7 +1356,9 @@ class Application:
         await self.definitions.stop()
         await self.ontology.stop()
         await self._catalog_runner.stop()
+        await self._course_runner.stop()
         await self._blurb_cache.close()
+        await self._outline_cache.close()
         await self.media_proposals.stop()
         await self.asks.stop()
         await self.authoring.stop()
@@ -2634,6 +2890,36 @@ def build_application(
     # warns about, and building the object graph now turns the later
     # increment into adding one call rather than a whole graph).
     blurb_writer = ModelBlurbWriter(extraction_model)
+    # The sweep nothing calls yet either -- see `Application.blurb_sweep`'s
+    # docstring. Built over the same `blurb_cache`, so a sweep and an
+    # on-demand `catalog` read of the same slug see one cache, not two.
+    blurb_sweep = BlurbSweep(blurb_cache)
+
+    # `_course_runner` follows the log the same way `catalog_runner` does,
+    # over this application's own store and bus -- see its own docstring for
+    # why it is a runner (mutable `courses` attribute) rather than a plain
+    # field, and `CourseProjection`'s registration below is what
+    # `test-8-brief.md`'s failing test guards: an event no projection handles
+    # counts as applied, so an omitted registration would answer every
+    # request 200 with an empty table rather than raising anything.
+    course_runner = _CourseRunner(repository.store, repository.publisher, resolved_path)
+    # Unsnapshotted, over this application's own store and publisher, mirroring
+    # `media_proposal_repository` -- see `build_course_repository`'s own
+    # docstring for why no snapshot policy is warranted here.
+    course_repository = build_course_repository(repository.store, repository.publisher)
+    outline_cache = _LazyOutlineCache(resolved_path)
+    outline_writer = ModelOutlineWriter(extraction_model)
+    # The same `extraction_model` `blurb_writer` above takes -- the brief's
+    # own instruction, and `ModelOutlineWriter`'s docstring gives the reason:
+    # a second model configuration would be a second thing to keep in sync
+    # with `config.model_name()` for no benefit, since both jobs want the
+    # same "reason less, answer in a fixed shape" trade-off extraction
+    # already makes.
+    course_service = CourseService(
+        realized=_RealizedCourses(course_runner, authoring),
+        outline_writer=outline_writer,
+        outline_cache=outline_cache,
+    )
 
     def check_telemetry_reader(target_project_id: UUID) -> CheckTelemetryReadPort:
         """This project's `CheckTelemetryReadPort`, over the one runner above.
@@ -2860,6 +3146,12 @@ def build_application(
         catalog_recorder=catalog_recorder,
         blurbs=blurb_writer,
         _blurb_cache=blurb_cache,
+        course_service=course_service,
+        _course_runner=course_runner,
+        course_repository=course_repository,
+        outlines=outline_writer,
+        _outline_cache=outline_cache,
+        blurb_sweep=blurb_sweep,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,
