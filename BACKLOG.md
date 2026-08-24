@@ -4645,3 +4645,30 @@ layer allowed to know about session workspaces; putting the join in the service
 would make `LearningArea` -- a pure derivation of the graph -- depend on
 authoring output, and would mean `project_areas` could no longer be driven with
 a literal in a test, which is what `test_projection_is_deterministic` rests on.
+
+### B148. A course's session link is scanned, not indexed, and loses quietly
+
+`AuthoringRunStore.authored_session_for` finds which session holds a target's
+written course by scanning that project's 200 most recent authoring runs and
+returning the first match. The bound is deliberate and its cost is written into
+the method's own docstring, but the cost is the kind this repository keeps
+getting caught by: a project that crosses 200 runs stops linking a course
+authored before the window, with no error, no log line, and no way for a reader
+to tell "authored too long ago to be found" from "never authored". The course
+page simply offers to author something that already exists.
+
+`authored` is a JSON column, which is why this is a scan -- the same constraint
+B139 names for the title join. Two ways out, in increasing cost:
+
+1. **A target table.** `AuthoringRunRow`'s docstring argues against one and the
+   argument is still sound for *its* readers ("nothing queries one authoring
+   target: every read here is the whole run"). This is the query that makes the
+   argument false, so the docstring needs revising in the same commit.
+2. **A `course_sessions` projection** keyed on `(project_id, target)`, written
+   from `CourseAuthored`, holding only the newest session per target. Smaller
+   than a full target table and answers exactly this question.
+
+(2) is preferred. What makes either worth doing is not the 200 itself but that
+nothing measures how close any project is to it. Until then this is a silent
+loss with a number in front of it, which CLAUDE.md's `DerivedFromLine` entry
+records as not being observability.
