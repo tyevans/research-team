@@ -27,6 +27,7 @@ import type { Blurb, Catalog, Category, CourseCandidate } from '@domain/knowledg
 import type {
   CourseDetail,
   CourseFit,
+  CourseText,
   FitEntity,
   Outline,
   RealizedCourse,
@@ -970,6 +971,18 @@ const toRealizedCourse = (raw: Dto<typeof dto.realizedCourseDto>): RealizedCours
   membershipHash: raw.membershipHash,
   fit: toCourseFit(raw.fit),
   authoredSessionId: raw.authoredSessionId,
+})
+
+/** `courseTextDto` to the domain shape. A pass-through in every field, and
+ *  kept anyway rather than letting the DTO reach the component: the console's
+ *  presentation layer imports from `@domain`, and a component typed on a zod
+ *  inference would tie the page's props to the wire. */
+export const toCourseText = (raw: Dto<typeof dto.courseTextDto>): CourseText => ({
+  slug: raw.slug,
+  state: raw.state,
+  sessionId: raw.sessionId,
+  unit: raw.unit,
+  lessons: raw.lessons.map((file) => ({ path: file.path, markdown: file.markdown })),
 })
 
 export const toCourseDetail = (raw: Dto<typeof dto.courseDetailDto>): CourseDetail => ({

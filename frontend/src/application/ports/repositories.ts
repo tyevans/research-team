@@ -15,7 +15,7 @@ import type { OntologyClass } from '@domain/knowledge/ontology.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Curriculum, LearningArea, LearningPath } from '@domain/knowledge/curriculum.ts'
 import type { Catalog } from '@domain/knowledge/catalog.ts'
-import type { CourseDetail } from '@domain/knowledge/course.ts'
+import type { CourseDetail, CourseText } from '@domain/knowledge/course.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
@@ -706,6 +706,17 @@ export interface CourseRepository {
   /** One cluster's detail page: its candidate card, its outline, its full
    *  current membership, and -- if realized -- how it has drifted since. */
   course(projectId: ProjectId, slug: string): Promise<CourseDetail>
+
+  /** The markdown the authoring turns wrote for this course, and which of
+   *  three states its text is in.
+   *
+   *  A second request rather than a field on `course()`, for `useLesson`'s
+   *  reason: the detail response is polled and invalidated by realize,
+   *  abandon, a blurb sweep and an art reroll, none of which change a word of
+   *  the authored text -- and the text is the largest thing on the page. It is
+   *  also the only part whose state changes while a run is in flight, so it
+   *  wants its own poll rather than dragging the whole detail with it. */
+  courseText(projectId: ProjectId, slug: string): Promise<CourseText>
 
   /** Record that a person has decided this cluster is a course, then try to
    *  start authoring it. See `RealizeResult`'s own docstring for why a

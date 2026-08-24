@@ -4,12 +4,12 @@ import type {
   CourseRepository,
   RealizeResult,
 } from '@application/ports/repositories.ts'
-import type { CourseDetail } from '@domain/knowledge/course.ts'
+import type { CourseDetail, CourseText } from '@domain/knowledge/course.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, seg } from './http-client.ts'
-import { toAuthoringRun, toCourseDetail } from './mappers.ts'
+import { toAuthoringRun, toCourseDetail, toCourseText } from './mappers.ts'
 
 export class HttpCourseRepository implements CourseRepository {
   constructor(private readonly http: HttpClient) {}
@@ -19,6 +19,15 @@ export class HttpCourseRepository implements CourseRepository {
       await this.http.get(
         `/api/projects/${seg(projectId)}/catalog/${seg(slug)}`,
         dto.courseDetailDto,
+      ),
+    )
+  }
+
+  async courseText(projectId: ProjectId, slug: string): Promise<CourseText> {
+    return toCourseText(
+      await this.http.get(
+        `/api/projects/${seg(projectId)}/catalog/${seg(slug)}/unit`,
+        dto.courseTextDto,
       ),
     )
   }
