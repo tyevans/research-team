@@ -26,6 +26,25 @@ def test_the_prompt_carries_the_document_and_forbids_outside_knowledge():
     assert "outside the document" in prompt
 
 
+def test_the_prompt_asks_for_the_quoted_sentence_rather_than_its_offsets():
+    """The prompt is where this change actually lives. `_span` can locate a
+    quote all it likes; if the prompt still asks for `{"start": ..., "end":
+    ...}` the model keeps answering with offsets and every class is refused.
+
+    Both halves are asserted, because either alone is passable by a prompt that
+    asks for both and gets the old shape half the time. Measured against
+    `qwen3.8-27b-64k-txt` on 2026-08-24, both wordings over the same 12 chunks
+    of five real corpus documents: the offsets wording produced 15 stored
+    citations of which **1** pointed at text naming the class or a member; this
+    wording produced 14, of which **13** did. The wording is the whole of that
+    difference -- `verify_classes` is unchanged between the two arms.
+    """
+    prompt = build_prompt(SONGS)
+
+    assert "copied from\n    the document exactly as it appears" in prompt
+    assert "character offsets" not in prompt
+
+
 def test_the_prompt_rules_out_open_lists_and_bare_contrasts():
     """Measured 2026-08-15 in `wiki-roman-economy`: "attested for a wide range
     of occupations, including fishermen..." names nine members against a
@@ -86,7 +105,7 @@ def test_a_member_that_is_not_in_the_document_is_rejected_with_its_reason():
             "name": "Difficulty",
             "kind": "ordered_scale",
             "declared_count": 6,
-            "evidence": {"start": 0, "end": 100},
+            "evidence": "There are six difficulties available in the game",
             "members": [{"name": "EASY", "ordinal": 0}, {"name": "LEGEND", "ordinal": 6}],
         }
     ]
@@ -98,17 +117,46 @@ def test_a_member_that_is_not_in_the_document_is_rejected_with_its_reason():
     assert "not found" in klass.rejected_members[0].reason
 
 
-def test_a_class_whose_evidence_span_is_outside_the_document_is_dropped_whole():
-    """An evidence span that does not exist is a span the model produced rather
+def test_evidence_the_document_does_not_contain_drops_the_class_whole():
+    """A quote the document does not hold is a sentence the model wrote rather
     than read, and a class nobody can open the source for is exactly the
     unjudgeable artefact this feature exists to avoid. Dropping the class is
     right where dropping a member is not: without evidence there is nothing
-    left to judge, so recording it would record something uncheckable."""
+    left to judge, so recording it would record something uncheckable.
+
+    The quote is a near-miss on purpose -- `SONGS` says "six", this says
+    "seven" -- because that is what a fabrication looks like. A quote sharing
+    no words with the document would pass an implementation that only checked
+    the evidence was a non-empty string.
+    """
     proposals = [
         {
             "name": "Difficulty",
             "kind": "ordered_scale",
-            "evidence": {"start": 9000, "end": 9100},
+            "evidence": "There are seven difficulties available in the game",
+            "members": [{"name": "EASY"}],
+        }
+    ]
+
+    assert verify_classes(proposals, document_text=SONGS, source_id="songs") == []
+
+
+def test_evidence_given_as_character_offsets_is_refused():
+    """The shape the prompt asked for until 2026-08-24, kept as a test rather
+    than as a code path. A live model handed the new prompt still answers with
+    the old shape occasionally, and accepting it would re-admit the guessed
+    offsets this change exists to stop trusting -- once stored, a class cited
+    from an estimate is indistinguishable from one cited from a quote.
+
+    Fails on any `_span` that keeps a dict branch. `{"start": 0, "end": 66}` is
+    a range that really does lie inside `SONGS`, so an implementation that
+    bounds-checks it verifies happily.
+    """
+    proposals = [
+        {
+            "name": "Difficulty",
+            "kind": "ordered_scale",
+            "evidence": {"start": 0, "end": 66},
             "members": [{"name": "EASY"}],
         }
     ]
@@ -122,7 +170,7 @@ def test_a_class_with_no_surviving_members_is_dropped():
         {
             "name": "Difficulty",
             "kind": "ordered_scale",
-            "evidence": {"start": 0, "end": 50},
+            "evidence": "There are six difficulties available in the game",
             "members": [{"name": "LEGEND"}],
         }
     ]
@@ -139,7 +187,7 @@ def test_an_unknown_kind_is_refused_rather_than_coerced():
         {
             "name": "Difficulty",
             "kind": "spectrum",
-            "evidence": {"start": 0, "end": 50},
+            "evidence": "There are six difficulties available in the game",
             "members": [{"name": "EASY"}],
         }
     ]
@@ -147,15 +195,26 @@ def test_an_unknown_kind_is_refused_rather_than_coerced():
     assert verify_classes(proposals, document_text=SONGS, source_id="songs") == []
 
 
-def test_the_evidence_span_is_carried_with_the_source_it_came_from():
+def test_the_stored_span_is_the_range_the_quoted_sentence_actually_occupies():
     """The span is what makes a class judgeable: the view opens the source
     document at these offsets. A class carrying members and no usable span
-    renders as an assertion with no way to check it."""
+    renders as an assertion with no way to check it.
+
+    This is the test that separates locating a quote from believing an offset.
+    The sentence quoted does **not** start at 0 -- it is the second sentence of
+    `SONGS` -- so the assertion is that the stored range slices back to exactly
+    the quote, byte for byte, rather than to something that merely overlaps it.
+    An implementation reading offsets off the model would have no offsets here
+    at all and drop the class; one that located the quote and then rounded to a
+    sentence boundary would fail the equality.
+    """
+    quote = "Achieving combo milestones grants coins."
+    assert not SONGS.startswith(quote)
     proposals = [
         {
             "name": "Difficulty",
             "kind": "ordered_scale",
-            "evidence": {"start": 0, "end": 66},
+            "evidence": quote,
             "members": [{"name": "EASY", "ordinal": 0}],
         }
     ]
@@ -163,7 +222,7 @@ def test_the_evidence_span_is_carried_with_the_source_it_came_from():
     (klass,) = verify_classes(proposals, document_text=SONGS, source_id="songs")
 
     assert klass.evidence.source_id == "songs"
-    assert SONGS[klass.evidence.start : klass.evidence.end].startswith("There are six")
+    assert SONGS[klass.evidence.start : klass.evidence.end] == quote
 
 
 def test_a_declared_count_the_members_fall_short_of_is_kept_not_repaired():
@@ -179,7 +238,7 @@ def test_a_declared_count_the_members_fall_short_of_is_kept_not_repaired():
             "name": "Difficulty",
             "kind": "unordered_set",
             "declared_count": 268,
-            "evidence": {"start": 0, "end": 66},
+            "evidence": "There are six difficulties available in the game",
             "members": [{"name": "EASY"}],
         }
     ]
@@ -203,7 +262,7 @@ def test_a_reply_that_is_a_list_rather_than_an_object_is_unreadable():
 
 FOUND_ONE = (
     '{"classes": [{"name": "Difficulty", "kind": "ordered_scale", '
-    '"declared_count": 6, "evidence": {"start": 0, "end": 66}, '
+    '"declared_count": 6, "evidence": "There are six difficulties available in the game", '
     '"members": [{"name": "EASY", "ordinal": 0}]}]}'
 )
 
@@ -350,7 +409,7 @@ async def test_a_reply_whose_classes_all_fail_verification_is_recorded_as_empty(
     recorder = _FakeRecorder()
     invented = (
         '{"classes": [{"name": "Difficulty", "kind": "ordered_scale", '
-        '"evidence": {"start": 9000, "end": 9100}, "members": [{"name": "EASY"}]}]}'
+        '"evidence": "There are seven difficulties", "members": [{"name": "EASY"}]}]}'
     )
     service, _ = _service(reply=invented, recorder=recorder)
 
@@ -469,18 +528,23 @@ def test_a_class_found_in_a_later_chunk_cites_the_document_not_the_chunk():
     and a translated one are the same number, so a first-chunk test proves
     nothing at all.
 
-    The span given is offsets 26..36 of the *chunk*, which is `| A rank |`
-    inside it. Untranslated, offsets 26..36 of the document land in the header
-    line -- a real range, inside the document, that renders perfectly and
-    quotes the wrong text. Fails with the translation removed.
+    `| A rank |` is at offset 28 of the *chunk*. Untranslated, offsets 28..38 of
+    the document land in the header line -- a real range, inside the document,
+    that renders perfectly and quotes the wrong text. Fails with the
+    translation removed.
+
+    Locating the quote does not make this test redundant: `str.find` searches
+    the chunk, so it produces chunk coordinates and the translation is still
+    the only thing standing between them and a wrong citation.
     """
     chunk = _rank_chunk()
-    row_in_chunk = chunk.text.index("| A rank |")
+    assert chunk.text.index("| A rank |") == 28
+    assert RANK_DOCUMENT[28:38] == "| Rank | R"
     proposals = [
         {
             "name": "Rank",
             "kind": "ordered_scale",
-            "evidence": {"start": row_in_chunk, "end": row_in_chunk + 10},
+            "evidence": "| A rank |",
             "members": [{"name": "A rank", "ordinal": 1}],
         }
     ]
@@ -509,7 +573,7 @@ def test_a_span_inside_a_repeated_header_cites_where_the_header_really_is():
         {
             "name": "Rank",
             "kind": "ordered_scale",
-            "evidence": {"start": 0, "end": 17},
+            "evidence": "| Rank | Reward |",
             "members": [{"name": "A rank"}],
         }
     ]
@@ -536,7 +600,7 @@ def test_a_span_straddling_the_header_and_the_rows_cites_the_header_alone():
         {
             "name": "Rank",
             "kind": "ordered_scale",
-            "evidence": {"start": 0, "end": len(TABLE_HEADER) + 10},
+            "evidence": TABLE_HEADER + "| A rank |",
             "members": [{"name": "A rank"}],
         }
     ]
@@ -548,6 +612,53 @@ def test_a_span_straddling_the_header_and_the_rows_cites_the_header_alone():
     span = verified[0].evidence
     assert (span.start, span.end) == (HEADER_START, ROWS_START)
     assert "S rank" not in RANK_DOCUMENT[span.start : span.end]
+
+
+def test_a_quote_the_chunk_holds_twice_is_cited_at_its_first_occurrence():
+    """`MarkdownTableChunker` puts the header at the front of the chunk and the
+    document may well repeat it further down -- a long table split into two in
+    the source, or a second table with the same columns. So a header quote has
+    two homes in one chunk, and which one is picked decides where the reader
+    lands.
+
+    The first is right, and it is right for a reason beyond "pick one": the
+    first occurrence is the prefix, which `_to_document_span` maps to where the
+    header really lives. A later occurrence is ordinary chunk text and shifts
+    by `start_char`, which here would cite the *second* table -- a real range
+    that renders, in a table the class was not found in.
+
+    Fails on an implementation using `rfind`, or one scanning past the prefix.
+    """
+    document = (
+        RANK_DOCUMENT
+        + "\nAnother table follows.\n\n"
+        + TABLE_HEADER
+        + "| B rank | 100 coins |\n"
+    )
+    second_header_start = document.index(TABLE_HEADER, HEADER_START + 1)
+    chunk = DocumentChunk(
+        text=TABLE_HEADER + document[SECOND_ROW_START:],
+        start_char=SECOND_ROW_START,
+        prefix=TABLE_HEADER,
+        prefix_start_char=HEADER_START,
+    )
+    assert chunk.text.count("| Rank | Reward |") == 2
+    proposals = [
+        {
+            "name": "Rank",
+            "kind": "ordered_scale",
+            "evidence": "| Rank | Reward |",
+            "members": [{"name": "A rank"}],
+        }
+    ]
+
+    verified = verify_classes(
+        proposals, document_text=document, source_id="ranks", chunk=chunk
+    )
+
+    span = verified[0].evidence
+    assert span.start == HEADER_START
+    assert span.start != second_header_start
 
 
 def test_a_member_the_chunk_does_not_hold_is_rejected_even_though_the_document_does():
@@ -563,7 +674,7 @@ def test_a_member_the_chunk_does_not_hold_is_rejected_even_though_the_document_d
         {
             "name": "Rank",
             "kind": "ordered_scale",
-            "evidence": {"start": 0, "end": 17},
+            "evidence": "| Rank | Reward |",
             "members": [{"name": "A rank"}, {"name": "S rank"}],
         }
     ]

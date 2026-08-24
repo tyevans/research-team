@@ -23,10 +23,15 @@ SONGS = (
     "EXPERT, MASTER, and APPEND."
 )
 
+#: The sentence the model is made to quote as evidence. Named rather than
+#: written twice, so the payload assertion below is against the range this
+#: quote really occupies rather than a number copied by hand.
+QUOTE = "There are six difficulties available in the game"
+
 FOUND = AIMessage(
     content=(
         '{"classes": [{"name": "Difficulty", "kind": "ordered_scale", '
-        '"declared_count": 6, "evidence": {"start": 0, "end": 66}, '
+        '"declared_count": 6, "evidence": "' + QUOTE + '", '
         '"members": [{"name": "EASY", "ordinal": 0}, {"name": "MASTER", "ordinal": 4}, '
         '{"name": "LEGEND", "ordinal": 6}]}]}'
     )
@@ -113,7 +118,9 @@ async def test_the_read_carries_everything_needed_to_judge_a_class(composed):
     assert klass["kind"] == "ordered_scale"
     # Two found against six stated: the checksum disagreeing, on purpose.
     assert (klass["declaredCount"], klass["memberCount"]) == (6, 2)
-    assert klass["evidence"] == {"sourceId": "songs", "start": 0, "end": 66}
+    # The offsets are the range the quoted sentence occupies, located by
+    # `_span` rather than estimated by the model.
+    assert klass["evidence"] == {"sourceId": "songs", "start": 0, "end": len(QUOTE)}
     assert [member["name"] for member in klass["members"]] == ["EASY", "MASTER"]
     # And the reason the two numbers disagree, which is what makes the gap
     # legible rather than merely visible.
