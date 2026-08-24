@@ -937,6 +937,7 @@ export const toCatalog = (raw: Dto<typeof dto.catalogDto>): Catalog => ({
   },
   categories: new Map(Object.entries(raw.categories)),
   unplaceableFeatured: raw.unplaceableFeatured,
+  orphanedCourses: raw.orphanedCourses,
   derivedFrom: {
     entities: raw.derived_from.entities,
     relationships: raw.derived_from.relationships,

@@ -1072,12 +1072,19 @@ export const categoryDto = z.object({
   candidates: z.array(courseCandidateDto).default([]),
 })
 
+export const orphanedCourseDto = z.object({
+  slug: z.string(),
+  title: z.string(),
+  realizedAt: z.string(),
+})
+
 export const catalogDto = z.object({
   hero: z.array(courseCandidateDto).default([]),
   highlights: z.array(courseCandidateDto).default([]),
   filed: z.array(categoryDto).default([]),
   categories: z.record(z.string(), z.string()).default({}),
   unplaceableFeatured: z.array(z.string()).default([]),
+  orphanedCourses: z.array(orphanedCourseDto).default([]),
   derived_from: z.object({
     entities: z.number().default(0),
     relationships: z.number().default(0),

@@ -1,8 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import clsx from 'clsx'
+import { useEffect, useRef } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
+import type { BlurbSweepProgress } from '@application/ports/repositories.ts'
 import { queryKeys } from '@application/queries/keys.ts'
-import type { CourseCandidate } from '@domain/knowledge/catalog.ts'
+import type { CourseCandidate, OrphanedCourse } from '@domain/knowledge/catalog.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button } from '../common/primitives.tsx'
@@ -39,7 +42,7 @@ export const CatalogPane = ({
    *  standalone course view existed. */
   onCourse: (slug: string) => void
 }) => {
-  const { catalog } = useContainer()
+  const { catalog, courses } = useContainer()
   const queryClient = useQueryClient()
 
   const query = useQuery({
@@ -48,6 +51,32 @@ export const CatalogPane = ({
   })
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.catalog(projectId) })
+
+  // Its own key and its own poll, matching `RunPanel`'s reasoning
+  // (`queryKeys.blurbSweep`'s own comment): polling only while a sweep is
+  // running, and on `catalog`'s key would refetch the whole front page every
+  // two seconds instead of just the four counts a sweep reports.
+  const sweep = useQuery({
+    queryKey: queryKeys.blurbSweep(projectId),
+    queryFn: () => courses.fetchBlurbSweep(projectId),
+    refetchInterval: (q) => (q.state.data?.running ? 2_000 : false),
+  })
+
+  const startSweep = useMutation({
+    mutationFn: () => courses.startBlurbSweep(projectId),
+    onSuccess: (started) => queryClient.setQueryData(queryKeys.blurbSweep(projectId), started),
+  })
+
+  // A poll transitioning `running: true` -> `false` is the one moment fresh
+  // blurbs exist that `catalog`'s own cache does not know about yet -- a ref
+  // rather than deriving it from the query's own status, because `useQuery`
+  // has no "this poll just stopped" event, only the value each poll reads.
+  const wasRunning = useRef(false)
+  const running = sweep.data?.running ?? false
+  useEffect(() => {
+    if (wasRunning.current && !running) void invalidate()
+    wasRunning.current = running
+  }, [running]) // eslint-disable-line react-hooks/exhaustive-deps -- `invalidate` is a fresh closure every render; only `running` should re-run this.
 
   const feature = useMutation({
     mutationFn: ({ slug, rank }: { slug: string; rank: number }) =>
@@ -107,6 +136,14 @@ export const CatalogPane = ({
 
   return (
     <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-3">
+      <BlurbSweepControl
+        progress={sweep.data ?? null}
+        starting={startSweep.isPending}
+        onRun={() => startSweep.mutate()}
+      />
+
+      {data.orphanedCourses.length > 0 && <OrphanedCoursesStrip courses={data.orphanedCourses} />}
+
       {data.unplaceableFeatured.length > 0 && (
         // Curation stranded by re-clustering, reported rather than dropped --
         // see `Catalog.unplaceableFeatured`'s own docstring. Rendered as
@@ -202,4 +239,83 @@ const CandidateSection = ({
       </div>
     )}
   </section>
+)
+
+/** "Write the missing copy" and its progress line, over `catalog/blurbs`.
+ *
+ * Deliberately the same shape as `DiscoverySweep` (`presentation/research/`):
+ * a button that starts a background sweep, a progress line polling the same
+ * path, and an error state distinguished from an ordinary slow run. The one
+ * difference from that sweep is where the counts come from -- discovery
+ * counts a client-side loop over one document at a time, this counts a
+ * server-side background task, so `progress` is `null` only before the first
+ * poll has answered rather than for a work list not yet loaded.
+ */
+const BlurbSweepControl = ({
+  progress,
+  starting,
+  onRun,
+}: {
+  progress: BlurbSweepProgress | null
+  starting: boolean
+  onRun: () => void
+}) => {
+  const running = starting || (progress?.running ?? false)
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-bg-panel p-3">
+      <p className="m-0 min-w-0 flex-1 text-xs text-fg-dim">
+        Write catalog copy for every candidate whose blurb is missing or out of date.
+      </p>
+      <Button small onClick={onRun} disabled={running}>
+        {running && progress !== null
+          ? `Writing ${progress.done} of ${progress.total}`
+          : running
+            ? 'Writing…'
+            : 'Write the missing copy'}
+      </Button>
+      {progress !== null && !running && (
+        // `error` present is the one case that must not read as an ordinary
+        // finish -- see `BlurbSweepProgress.error`'s own docstring: it is set
+        // only when the run itself raised, which `failed` alone does not
+        // report. Checked first, so a died sweep can never also print the
+        // done/total/failed line as if it had settled normally.
+        <p
+          className={clsx(
+            'm-0 w-full text-xs',
+            progress.error !== null ? 'text-k-failure' : 'text-fg-dim',
+          )}
+        >
+          {progress.error !== null
+            ? `The sweep failed: ${progress.error}`
+            : `${progress.done} of ${progress.total} written${
+                progress.failed > 0 ? `, ${progress.failed} failed` : ''
+              }.`}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Realized courses re-clustering stranded -- see `OrphanedCourse`'s own
+ *  docstring for why this strip is their only surface: the detail route
+ *  looks up a slug in the *current* catalog and 404s for one of these.
+ */
+const OrphanedCoursesStrip = ({ courses }: { courses: readonly OrphanedCourse[] }) => (
+  <div
+    role="status"
+    className="border-0 border-l-2 border-solid border-accent bg-bg-raise px-3 py-2 text-sm text-fg"
+  >
+    <p className="font-semibold">
+      {courses.length} realized {courses.length === 1 ? 'course has' : 'courses have'} no cluster to
+      show anymore:
+    </p>
+    <ul className="text-fg-muted m-0 list-none p-0">
+      {courses.map((course) => (
+        <li key={course.slug}>
+          {course.title} ({course.slug}) -- realized{' '}
+          {new Date(course.realizedAt).toLocaleDateString()}
+        </li>
+      ))}
+    </ul>
+  </div>
 )

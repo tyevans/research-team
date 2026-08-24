@@ -59,6 +59,20 @@ export interface CatalogSections {
   readonly filed: readonly Category[]
 }
 
+/** A realized course the current catalog has no candidate for at all --
+ *  `CourseService.orphans()`, server-side. Re-clustering can dissolve or
+ *  merge away the cluster a realized course was built from, and the detail
+ *  route (`GET /catalog/{slug}`) is deliberately unreachable for one: it
+ *  looks up `slug` in `catalog.all_candidates`, which no longer holds it.
+ *  This strip is the only surface that reports one exists at all -- see
+ *  `catalog_view`'s own docstring for why this rides beside `Catalog` rather
+ *  than inside it. */
+export interface OrphanedCourse {
+  readonly slug: string
+  readonly title: string
+  readonly realizedAt: string
+}
+
 export interface Catalog {
   readonly sections: CatalogSections
   /** Every category with at least one candidate anywhere in the catalog,
@@ -71,6 +85,11 @@ export interface Catalog {
    *  re-clustering can move or dissolve an area out from under a feature, and
    *  this is what a curator's page reports rather than silently drops it. */
   readonly unplaceableFeatured: readonly string[]
+  /** Realized courses stranded by re-clustering -- see `OrphanedCourse`.
+   *  Empty on every build that has never realized a course, and empty
+   *  forever if `orphans()` is never wired server-side; either reads as
+   *  "nothing stranded", which is why this has no separate loading state. */
+  readonly orphanedCourses: readonly OrphanedCourse[]
   readonly derivedFrom: {
     readonly entities: number
     readonly relationships: number
