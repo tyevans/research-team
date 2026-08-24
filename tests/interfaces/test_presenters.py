@@ -7,6 +7,8 @@ import pytest
 
 from research_team.application import SessionSummary
 from research_team.application.corpus_read import SourceListing
+from research_team.application.course_catalog import CachedOutline, Catalog
+from research_team.application.course_realization import CourseDetail, RealizedCourse
 from research_team.domain import (
     AssistantMessageAdded,
     AutonomyChanged,
@@ -25,8 +27,14 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
+from research_team.domain.course import CourseFit
+from research_team.domain.course_catalog import ArtRef, CatalogSections, CourseCandidate
+from research_team.domain.learning_area import AreaMember
 from research_team.interfaces.web.presenters import (
     SUMMARY_LIMIT,
+    catalog_view,
+    course_detail_view,
+    course_fit_view,
     event_row,
     event_rows,
     event_summary,
@@ -41,6 +49,34 @@ from research_team.interfaces.web.presenters import (
 from research_team.workflows import hybrid_default, ubd_pure
 
 AGGREGATE = uuid4()
+
+
+def _member(entity_id: str, name: str) -> AreaMember:
+    return AreaMember(entity_id=entity_id, name=name, entity_type="person", centrality=1.0)
+
+
+def _candidate(
+    slug: str = "warp-drive", membership_hash: str = "candidate-hash"
+) -> CourseCandidate:
+    return CourseCandidate(
+        slug=slug,
+        title="Warp Drive",
+        category="unclassified",
+        prominence=1.0,
+        size=1,
+        membership_hash=membership_hash,
+        anchors=(_member("e1", "Warp Core"),),
+        art=ArtRef(url="x", alt="x"),
+    )
+
+
+def _catalog(*, unplaceable: tuple[str, ...] = ()) -> Catalog:
+    return Catalog(
+        sections=CatalogSections(hero=(), highlights=(), filed=()),
+        categories={},
+        unplaceable_featured=unplaceable,
+        derived_from=(0, 0),
+    )
 
 
 def make(event_class, **fields):
@@ -544,3 +580,69 @@ def test_a_text_source_view_still_reports_a_character_count_and_no_mimetype():
     assert "media_type" not in view
     assert "byte_count" not in view
     assert view["extracted"] is True
+
+
+def test_a_dropped_entity_is_reported_as_its_id_when_the_cluster_no_longer_names_it():
+    """Not a placeholder and not a lookup elsewhere. The name is genuinely gone
+    and inventing one would claim knowledge the current cluster does not have."""
+    fit = CourseFit(kept=("e1",), added=(), dropped=("e2",), orphaned=False)
+    members = (_member("e1", "Warp Core"),)  # e2 is gone from the cluster
+
+    view = course_fit_view(fit, members)
+
+    assert view["dropped"] == ["e2"]
+    # The kept side resolves against the members it was handed, so this is
+    # not merely "dropped is unresolved" -- kept is resolved and dropped is
+    # not, on the same call.
+    assert view["kept"] == [{"entity_id": "e1", "name": "Warp Core"}]
+
+
+def test_the_outline_carries_a_membership_hash_that_can_differ_from_the_candidates():
+    """Increment 1's regression, one field over. A view that omits it makes
+    every outline report stale forever; a view that copies the candidate's
+    makes every outline report fresh forever. The stub returns a different
+    hash so a copy fails.
+    """
+    detail = CourseDetail(
+        candidate=_candidate(membership_hash="candidate-hash"),
+        outline=CachedOutline(
+            promise="Learn the basics",
+            sections=(("A", "B"),),
+            membership_hash="outline-hash",
+            model="fake-outline-writer",
+            generated_at=datetime(2026, 8, 1, tzinfo=UTC),
+        ),
+        members=(_member("e1", "Warp Core"),),
+    )
+
+    view = course_detail_view(detail)
+
+    assert view["outline"]["membershipHash"] == "outline-hash"
+    assert view["outline"]["membershipHash"] != view["candidate"]["membershipHash"]
+
+
+def test_a_catalog_with_no_orphans_carries_an_empty_list_not_a_missing_key():
+    view = catalog_view(_catalog())
+
+    assert view["orphanedCourses"] == []
+
+
+def test_a_catalogs_orphaned_courses_carry_slug_title_and_realized_at():
+    stranded = RealizedCourse(
+        slug="ancient-rome",
+        title="Ancient Rome",
+        member_entity_ids=("e1",),
+        membership_hash="hash-v1",
+        realized_at=datetime(2026, 8, 20, tzinfo=UTC),
+        authored_session_id=None,
+    )
+
+    view = catalog_view(_catalog(), orphaned_courses=(stranded,))
+
+    assert view["orphanedCourses"] == [
+        {
+            "slug": "ancient-rome",
+            "title": "Ancient Rome",
+            "realizedAt": "2026-08-20T00:00:00+00:00",
+        }
+    ]
