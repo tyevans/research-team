@@ -66,7 +66,12 @@ from research_team.application.corpus_editing import CorpusEditor, DocumentExist
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.course_authoring import CourseAuthor
-from research_team.application.course_catalog import BlurbTextPort, Catalog, CatalogService
+from research_team.application.course_catalog import (
+    ArtGeneratorPort,
+    BlurbTextPort,
+    Catalog,
+    CatalogService,
+)
 from research_team.application.course_realization import CourseService
 from research_team.application.curriculum import CurriculumService
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
@@ -148,6 +153,7 @@ from research_team.domain.topic import (
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.knowledge.semantic_neighbours import VectorNeighbours
 from research_team.infrastructure.knowledge.svg_sanitiser import SvgSanitiser
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
@@ -168,6 +174,8 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
+from research_team.interfaces.web.art_sweep import ArtSweep
+from research_team.interfaces.web.art_sweep import SweepAlreadyActive as ArtSweepAlreadyActive
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.blurb_sweep import BlurbSweep, SweepAlreadyActive
 from research_team.interfaces.web.dispatch import DispatchQueue
@@ -1022,6 +1030,9 @@ def create_app(
     blurb_sweep: BlurbSweep | None = None,
     blurb_writer: BlurbTextPort | None = None,
     art_store: ArtStore | None = None,
+    art_sweep: ArtSweep | None = None,
+    art_generator: ArtGeneratorPort | None = None,
+    art_matcher: LibraryArtProvider | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -3185,7 +3196,10 @@ def create_app(
         /catalog/{slug}` (Task 9): both are one segment past `/catalog`, one
         of them is literal, and the literal one has to come first or a
         project's course named `blurbs` would be unreachable and every other
-        project's sweep progress would read as "no such course".
+        project's sweep progress would read as "no such course". `GET`/`POST
+        /catalog/art` further below is the identical situation with the art
+        sweep in place of the blurb sweep -- registered ahead of
+        `/catalog/{slug}` for the same reason, no separate comment needed.
 
         404 for a key nothing in this catalog uses, not an empty category --
         an empty category and a misspelled key are different answers, and a
@@ -3232,6 +3246,37 @@ def create_app(
         try:
             frame = await blurb_sweep.start(project_id, built.all_candidates, blurb_writer)
         except SweepAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=frame)
+
+    @app.get("/api/projects/{project_id}/catalog/art")
+    async def read_art_sweep_progress(project_id: UUID):
+        """Where the last (or current) art sweep on this project stands.
+        Mirrors `read_blurb_sweep_progress` exactly -- see its docstring and
+        `read_catalog_category`'s for why this is registered ahead of `GET
+        /catalog/{slug}` below."""
+        await _require_project(project_id)
+        if art_sweep is None:
+            raise HTTPException(status_code=503, detail="art sweeping is not configured")
+        return art_sweep.progress(project_id)
+
+    @app.post("/api/projects/{project_id}/catalog/art", status_code=202)
+    async def start_art_sweep(project_id: UUID):
+        """Generate art for every candidate the library has neither assigned
+        nor matched, in the background.
+
+        409 when a sweep is already running on this project, matching
+        `start_blurb_sweep`'s reason.
+        """
+        await _require_project(project_id)
+        if art_sweep is None or art_generator is None or art_matcher is None:
+            raise HTTPException(status_code=503, detail="art sweeping is not configured")
+        built = await _catalog(project_id, include_unnamed=True)
+        try:
+            frame = await art_sweep.start(
+                project_id, built.all_candidates, art_generator, art_matcher
+            )
+        except ArtSweepAlreadyActive as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return JSONResponse(status_code=202, content=frame)
 
