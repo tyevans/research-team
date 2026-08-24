@@ -22,21 +22,76 @@ async def test_a_stored_blurb_reads_back_with_the_hash_it_was_written_from(store
     cluster that has since doubled is indistinguishable from a current one."""
     project = uuid4()
     await store.put(
-        project, "warp", "Learn about warp drive.", "abc123", "m", datetime.now(UTC)
+        project,
+        "warp",
+        "Warp Drive Basics",
+        "Learn about warp drive.",
+        "abc123",
+        "m",
+        datetime.now(UTC),
     )
 
     row = await store.get(project, "warp")
 
     assert row is not None
+    assert row.title == "Warp Drive Basics"
     assert row.text == "Learn about warp drive."
     assert row.membership_hash == "abc123"
 
 
+async def test_a_blurb_row_written_before_titles_existed_reads_back_with_an_empty_title(
+    store, db_path
+):
+    """`apply_schema` reconciles added columns, but it leaves them empty in
+    rows that predate the change. A `title` with no default would make the
+    column required on a populated table, which the read-models section of
+    CLAUDE.md records as the case SQLite refuses and this project already
+    shipped once. Empty is the honest value and the fallback covers it.
+
+    A pre-migration row is simulated with a real `ALTER TABLE ... DROP
+    COLUMN` against a *populated* table, not by inserting a row that merely
+    omits `title` against the current schema -- that lighter version only
+    pins `DEFAULT ''` firing on insert, and says nothing about whether
+    `apply_schema` can widen a table that already has rows in it without
+    raising. CLAUDE.md's "Read models" section is explicit that a read-model
+    change verified only against a fresh database is unverified; reopening
+    through `CourseBlurbStore.open` after the column is gone is what actually
+    exercises the reconciliation path, and this is the case CLAUDE.md
+    describes as already having shipped broken once (a required column with
+    no default refused outright on a table with rows in it).
+    """
+    project = uuid4()
+    await store.put(
+        project,
+        "warp",
+        "Warp Drive Basics",
+        "Learn about warp drive.",
+        "abc123",
+        "m",
+        datetime.now(UTC),
+    )
+    await store._connection.execute("ALTER TABLE course_blurbs DROP COLUMN title")
+    await store._connection.commit()
+    await store.close()
+
+    reopened = await CourseBlurbStore.open(db_path)
+    try:
+        row = await reopened.get(project, "warp")
+    finally:
+        await reopened.close()
+
+    assert row is not None
+    assert row.title == ""
+    assert row.text == "Learn about warp drive."
+
+
 async def test_rewriting_a_slug_replaces_rather_than_duplicates(store):
     project = uuid4()
-    await store.put(project, "warp", "First.", "abc123", "m", datetime.now(UTC))
+    await store.put(project, "warp", "First Title", "First.", "abc123", "m", datetime.now(UTC))
 
-    await store.put(project, "warp", "Second.", "def456", "m", datetime.now(UTC))
+    await store.put(
+        project, "warp", "Second Title", "Second.", "def456", "m", datetime.now(UTC)
+    )
 
     row = await store.get(project, "warp")
     assert row is not None
@@ -52,6 +107,6 @@ async def test_an_unwritten_slug_is_none_rather_than_an_error(store):
 
 async def test_one_projects_blurbs_are_invisible_to_another(store):
     mine, theirs = uuid4(), uuid4()
-    await store.put(mine, "warp", "Mine.", "abc", "m", datetime.now(UTC))
+    await store.put(mine, "warp", "Mine", "Mine.", "abc", "m", datetime.now(UTC))
 
     assert await store.get(theirs, "warp") is None

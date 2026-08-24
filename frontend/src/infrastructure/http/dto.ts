@@ -1072,12 +1072,19 @@ export const categoryDto = z.object({
   candidates: z.array(courseCandidateDto).default([]),
 })
 
+export const orphanedCourseDto = z.object({
+  slug: z.string(),
+  title: z.string(),
+  realizedAt: z.string(),
+})
+
 export const catalogDto = z.object({
   hero: z.array(courseCandidateDto).default([]),
   highlights: z.array(courseCandidateDto).default([]),
   filed: z.array(categoryDto).default([]),
   categories: z.record(z.string(), z.string()).default({}),
   unplaceableFeatured: z.array(z.string()).default([]),
+  orphanedCourses: z.array(orphanedCourseDto).default([]),
   derived_from: z.object({
     entities: z.number().default(0),
     relationships: z.number().default(0),
@@ -1091,4 +1098,89 @@ export const catalogFeatureDto = z.object({
 
 export const catalogUnfeatureDto = z.object({
   slug: z.string(),
+})
+
+/** `outline_view` in `presenters.py`. `sections` is `(heading, summary)`
+ *  pairs already turned into objects server-side (JSON has no tuple type),
+ *  so there is nothing to zip here the way `blurb`'s inner keys once needed. */
+export const outlineSectionDto = z.object({
+  heading: z.string(),
+  summary: z.string(),
+})
+
+export const outlineDto = z.object({
+  promise: z.string(),
+  sections: z.array(outlineSectionDto).default([]),
+  membershipHash: z.string(),
+  model: z.string().default(''),
+  generatedAt: z.string(),
+})
+
+/** One resolved id in a `course_fit_view` list -- `kept` and `added` only,
+ *  matching the presenter: `dropped` carries bare ids because those entities
+ *  are no longer in `members` and there is nothing to resolve them against. */
+export const fitEntityDto = z.object({
+  entity_id: z.string(),
+  name: z.string(),
+})
+
+export const courseFitDto = z.object({
+  kept: z.array(fitEntityDto).default([]),
+  added: z.array(fitEntityDto).default([]),
+  dropped: z.array(z.string()).default([]),
+  orphaned: z.boolean().default(false),
+})
+
+export const realizedCourseDto = z.object({
+  realizedAt: z.string(),
+  membershipHash: z.string(),
+  fit: courseFitDto,
+  authoredSessionId: z.string().nullable().default(null),
+})
+
+/** `course_detail_view` in `presenters.py`. `members` reuses `areaMemberDto`
+ *  rather than a second schema -- the presenter builds the same per-member
+ *  dict `area_view` does, and a rename to one would silently orphan a copy
+ *  of the schema nobody was reading. */
+export const courseDetailDto = z.object({
+  candidate: courseCandidateDto,
+  outline: outlineDto.nullable().default(null),
+  members: z.array(areaMemberDto).default([]),
+  course: realizedCourseDto.nullable().default(null),
+})
+
+/** What `POST .../realize` answers. `authoring` reuses `authoringFrameDto`:
+ *  the route starts an authoring run the same way `POST
+ *  /curriculum/author` does and hands back the same frame shape, not a
+ *  second one -- see `_author_one_target` in `app.py`. `reason` is set
+ *  instead of `authoring` when starting the run failed or authoring is not
+ *  configured; a caller reads the run panel from the next authoring-status
+ *  poll rather than from this response on that path. */
+export const realizeCourseDto = z.object({
+  realized: z.boolean(),
+  authoring: authoringFrameDto.nullable().default(null),
+  reason: z.string().nullable().default(null),
+})
+
+export const abandonCourseDto = z.object({
+  slug: z.string(),
+  realized: z.boolean(),
+})
+
+/** `read_blurb_sweep_progress` / the 202 `start_blurb_sweep` answers --
+ *  `_NOT_RUNNING`'s shape in `blurb_sweep.py`, which is what a project that
+ *  has never swept and one whose sweep just finished both answer, so there
+ *  is no separate "no sweep yet" case to model. `error` is present only when
+ *  the run itself raised (`blurb_sweep.py`'s own comment) -- absent on every
+ *  other path, including an ordinary run with some refused candidates, which
+ *  is what `failed` alone already reports. */
+export const blurbSweepProgressDto = z.object({
+  running: z.boolean(),
+  done: z.number().default(0),
+  total: z.number().default(0),
+  failed: z.number().default(0),
+  error: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 })

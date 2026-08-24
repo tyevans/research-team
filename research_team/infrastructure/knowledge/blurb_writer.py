@@ -1,204 +1,78 @@
-"""`BlurbTextPort` over a LangChain chat model, and the one check it can run.
+"""`BlurbTextPort` over a LangChain chat model, and the checks it can run.
 
-**Weaker than `entity_definitions`, on purpose, and said so rather than
-implied to be equivalent.** That module grounds every claim in a citation --
-a span of a passage the model was shown -- because it has passages to cite
-and an offset scheme (`Citation.source_id, start, end`) built to check them
-against. A blurb has neither: it is two sentences of catalog copy about a
-cluster, not an answer built from shown material, so there is nothing for a
-citation to point at and no `_verified` to run.
+The grounding check itself lives in `grounding.py` -- it is shared with the
+outline writer, and its reasoning (why it is weaker than
+`entity_definitions`, which false-accept it tolerates, why
+`SENTENCE_OPENERS` is a closed list) moved there with it rather than being
+restated here in a second voice that can drift from the first.
 
-What is left, without spans, is names. A model asked to write catalog copy
-about "Warp drive" will happily bring in Captain Kirk from what it read on
-the internet years ago, and that copy is indistinguishable at a glance from
-copy built from this project's own cluster -- which is exactly why a reader
-would trust it. A blurb naming an entity the corpus did not put in this area
-promises a course the corpus cannot teach. So the check here is: every
-capitalised run in the reply must appear, case-insensitively, as a substring
-of some anchor's name. Fail one run and the whole reply is refused.
+What stays here is the part specific to a blurb: the prompt, and the
+refusals a blurb reply makes. An empty reply, one with no separate title
+line, or one whose title or text carries an ungrounded capitalised run, is
+refused whole -- `grounding`'s docstring says why that is the conservative
+direction to fail in.
 
-**Deliberately conservative in the refusing direction.** A refused blurb
-costs a card its copy -- the caller falls back to no blurb, or tries again --
-and only that direction is recoverable by a second click. An accepted
-ungrounded blurb costs a reader their trust, silently, and there is no click
-that gets it back. Given a choice between refusing real copy sometimes and
-admitting invented copy sometimes, this exists to make the first mistake
-rather than the second.
-
-**And it does make the first mistake.** The check is substring-against-name,
-not synonym-aware: "Zefram Cochrane" shortened to "Cochrane" passes (a real
-substring), but a legitimate paraphrase like "the Inventor" for the same
-person does not, because "Inventor" appears in no anchor's name.
-`tests/infrastructure/test_blurb_writer.py::test_a_legitimate_shortening_the_check_still_refuses`
-pins exactly this case rather than leaving it to be rediscovered as a bug
-report. Making the check cleverer -- stemming, a synonym list, an entity
-linker -- was considered and rejected for this task: every one of those tools
-can itself hallucinate a match, which is the failure this check exists to
-rule out, not reintroduce one layer down.
-
-**Sentence-initial exemption is a closed, maintained list, not "whatever word
-opens a sentence".** An earlier version of this check exempted every
-sentence's first word unconditionally, on the reasoning that capitalisation
-there is a rule of English grammar rather than a claim about an entity. That
-reasoning is only true of *some* first words. A model is free to open its
-second sentence with a bare proper noun ("Kirk later commanded the ship.")
-and a blanket exemption let it straight through -- caught by review, not by a
-test, against exactly the anchors this module's own docstring uses as its
-example (`Warp drive`, `Zefram Cochrane`). `_SENTENCE_OPENERS` is the fix:
-only the specific words the prompt's own phrasing ("Follow...", "Join...",
-"The...") is likely to produce are exempt, and only when they open a
-sentence. Everything else -- including a name -- is checked like any other
-capitalised run, wherever in the reply it appears.
-
-**Two costs, not one, and the second was found by a second review pass.** A
-legitimate sentence opener the list does not know is refused, not accepted --
-that much *is* the module's usual failure direction. But `_SENTENCE_OPENERS`
-strips only the matched opener word and leaves the rest of the sentence to be
-checked, so a sentence whose *entire* ungrounded content is one word
-identical to a list entry is invisible to this check: "Explore chronicled the
-frontier. It uses the Warp drive." strips "Explore" as an opener, finds
-nothing else capitalised in that sentence to flag, and is accepted --
-even if "Explore" were standing in for an invented ship name. This is a
-genuine false *accept*, not the refusal direction the rest of this module
-claims for itself, and it is not eliminated by this list: eliminating it
-would mean telling "Explore chronicled the frontier" (a name, subject of a
-sentence) apart from "Explore the frontier" (an imperative opener, no
-subject at all) -- a parse this check deliberately does not attempt, because
-the alternative to a short, wrong-in-one-direction list is a longer, wrong-
-in-two-directions parser.
-`tests/infrastructure/test_blurb_writer.py::test_a_single_word_opener_identical_to_an_ungrounded_name_is_not_caught`
-pins this residual rather than leaving it to be rediscovered. The list stays
-short precisely because that residual exists: padding it toward "anything
-that looks like an ordinary word" only grows the set of words this blind
-spot applies to.
+**The title comes from the same call as the blurb, on purpose.** A second
+model call for a title alone would double the cost of a sweep that already
+makes one call per candidate, and it would let the title and the blurb
+disagree about what the course is about, with nothing able to notice --
+`course_catalog.BlurbTextPort`'s docstring carries the same reasoning for
+callers that only see the port. `write` returns `DraftBlurb(title, text)` or
+`None`; there is no state in between.
 """
 
 import re
 from collections.abc import Sequence
+from string import punctuation
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
+from research_team.application.course_catalog import DraftBlurb
 from research_team.domain.learning_area import AreaMember
-
-#: How many of an area's anchors are named in the prompt.
-#:
-#: Matches `course_authoring.PROMPT_ANCHORS`: an area with sixty members does
-#: not become a better course by having all sixty listed in two sentences of
-#: copy, it becomes copy with no focus. The anchors are ranked by centrality
-#: within the area, so the first twelve are the twelve the graph says the
-#: area is actually about.
-PROMPT_ANCHORS = 12
+from research_team.infrastructure.knowledge.grounding import anchor_lines, ungrounded_runs
 
 _PROMPT = """\
-Write catalog copy for a course titled "{title}".
+Write a title and catalog copy for a course, currently labelled "{title}"
+after its most central entity -- that label is a placeholder, not a title
+to keep.
 
 It covers these entities, which a knowledge graph clustered together --
 work from what they suggest about the course, not from what you already
 know about the subject in general:
 {anchor_lines}
 
+Reply in exactly this shape, nothing before or after it:
+A course title, two to eight words, ordinary sentence capitalisation (not
+Title Case), no trailing punctuation, naming the course rather than
+repeating a single entity from the list above.
 Two sentences of marketing copy for a course catalog card. No heading, no
 lists, no quotation marks around the whole thing.
 """
 
-#: A run of capitalised words: one leading capitalised word, then as many
-#: capitalised words as follow it, so "United Federation of Planets" is one
-#: run rather than three separated by a lowercase "of". `[A-Z]` requires the
-#: ASCII case this corpus's entity names are already in; a title-cased name
-#: in another script would not match this pattern, which is a narrower
-#: problem than this task takes on.
-_CAPITALISED_RUN = re.compile(r"[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*")
+#: A title is one line, so a reply with no second line has no blurb to
+#: extract and is refused rather than guessed at.
+_TITLE_AND_TEXT = re.compile(r"\A(?P<title>[^\n]+)\n+(?P<text>.+)\Z", re.DOTALL)
 
-#: Splits the reply into sentences so a run's *first* word can be told apart
-#: from a mid-sentence one. Deliberately simple -- a period, question mark or
-#: exclamation point followed by space -- because the input here is a model's
-#: own two sentences of prose, not arbitrary text with abbreviations to trip
-#: it up.
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
-
-#: The only words exempt from the check when they open a sentence.
+#: The word-count band a title must fall in.
 #:
-#: Not "whatever word happens to be capitalised at a sentence's start" --
-#: that was the previous version of this check, and it let a bare invented
-#: name straight through whenever it opened the reply's second sentence
-#: ("Kirk later commanded the ship."), because nothing distinguished an
-#: ordinary opener from a name that happened to occupy the same position.
-#:
-#: This list is the words the prompt in `_PROMPT` actually invites -- an
-#: article, a demonstrative, or one of the imperative verbs catalog copy
-#: reaches for ("Follow...", "Join..."). It is finite and known to be
-#: incomplete: an opener outside it is refused, not accepted, which is the
-#: usual failure direction in this module.
-#:
-#: **Deliberately excludes `discover`, `master`, `trace` and `meet`.** Those
-#: four read as ordinary imperatives in "Discover the frontier," but they are
-#: also plausible titles or names on their own -- "Discover" as a ship,
-#: "Master" as a rank, "Meet" as a person's name is a stretch but "Trace" and
-#: "Discover" are not. `follow`, `join`, `learn` and `explore` cover the same
-#: rhetorical need (a two-sentence blurb inviting the reader in) without that
-#: overlap, and dropping the riskier four fails toward refusal -- a legitimate
-#: blurb reaching for "Discover..." as its opener is refused here, which is
-#: accepted as the cost of not reopening the false-accept below on words most
-#: likely to double as invented proper nouns.
-#:
-#: Growing this list toward "any word that looks ordinary" would undo the
-#: fix: an invented proper noun looks exactly as ordinary as a real opener
-#: until the anchors are already known. And even at this size the list is
-#: not free of the false-accept it was narrowed to reduce -- see the module
-#: docstring's second cost, and
-#: `test_a_single_word_opener_identical_to_an_ungrounded_name_is_not_caught`.
-_SENTENCE_OPENERS = frozenset(
-    {
-        "the",
-        "a",
-        "an",
-        "this",
-        "these",
-        "from",
-        "in",
-        "follow",
-        "join",
-        "learn",
-        "explore",
-    }
-)
-
-#: The sentence's first word, so it can be tested against `_SENTENCE_OPENERS`
-#: and stripped only when it is one of them.
-_FIRST_WORD = re.compile(r"[A-Z][\w'-]*")
+#: Tried at 3-8 first, on the brief's literal wording. Measured against real
+#: course names, that floor costs the ones already good: "First contact",
+#: "Roman law" and "Warp propulsion" are all two words and all refused at 3.
+#: The failure a 3-word floor was meant to guard against -- a model handed
+#: one dominant entity echoing its name verbatim -- is already caught by the
+#: anchor-name check below, which is the better instrument for it: it
+#: compares against the actual anchor rather than against a word count that
+#: also rejects unrelated two-word titles. Lowered to 2 for that reason.
+_MIN_TITLE_WORDS = 2
+_MAX_TITLE_WORDS = 8
 
 
-def _anchor_lines(anchors: Sequence[AreaMember]) -> str:
-    return "\n".join(f"- {m.name} ({m.entity_type})" for m in anchors[:PROMPT_ANCHORS])
-
-
-def _ungrounded_runs(reply: str, anchors: Sequence[AreaMember]) -> list[str]:
-    """Capitalised runs in `reply` that no anchor name contains.
-
-    A sentence's first word is stripped before matching only when it is one
-    of `_SENTENCE_OPENERS` -- an ordinary opener the prompt invites, not any
-    word that happens to be capitalised there. A first word outside that
-    list is left in place and checked like any other run, which is what
-    catches a bare invented name opening a non-first sentence.
-    """
-    names_lower = [a.name.lower() for a in anchors]
-    ungrounded = []
-    for sentence in _SENTENCE_SPLIT.split(reply.strip()):
-        first = _FIRST_WORD.match(sentence)
-        # Stripping only the matched word (not merging it into the run below)
-        # is what keeps "Join Captain Kirk..." from exempting "Captain Kirk"
-        # along with "Join": the two are exempted and checked separately.
-        rest = (
-            sentence[first.end() :]
-            if first and first.group().lower() in _SENTENCE_OPENERS
-            else sentence
-        )
-        for match in _CAPITALISED_RUN.finditer(rest):
-            run = match.group()
-            if not any(run.lower() in name for name in names_lower):
-                ungrounded.append(run)
-    return ungrounded
+def _normalised(title: str) -> str:
+    """A title stripped of the punctuation and casing the comparison to the
+    top anchor's name should not turn on -- "Warp Drive!" and "warp drive"
+    both name the same refused title as bare "Warp drive"."""
+    return title.strip().strip(punctuation).lower()
 
 
 class ModelBlurbWriter:
@@ -215,8 +89,36 @@ class ModelBlurbWriter:
     def __init__(self, model: BaseChatModel) -> None:
         self._model = model
 
-    async def write(self, title: str, anchors: Sequence[AreaMember]) -> str | None:
-        prompt = _PROMPT.format(title=title, anchor_lines=_anchor_lines(anchors))
+    @property
+    def model_name(self) -> str:
+        """Which model wrote a blurb, for `CourseBlurbRow.model`.
+
+        A property of the writer rather than a second return value from
+        `write`: returning the name beside the text would lose it on every
+        refusal, and `write` refuses often by design.
+
+        **The production model answers on the first term, measured.** On
+        2026-08-23 `build_extraction_model()` was probed directly: it returns
+        a `ChatOpenAI` carrying both `model_name` and `model`, each equal to
+        `config.model_name()`. An earlier version of this docstring claimed
+        the opposite -- that a local model's wrapper carries neither
+        reliably -- which was asserted about this repository without ever
+        being run against it.
+
+        The fallback stays, for the implementer that does need it: a test
+        stub, which carries whatever its author gave it. See
+        `outline_writer.ModelOutlineWriter.model_name` for the full reasoning
+        and for the note about `config.model_name()` being a second route to
+        the same string; it is written once, there, rather than twice.
+        """
+        return (
+            getattr(self._model, "model_name", None)
+            or getattr(self._model, "model", None)
+            or type(self._model).__name__
+        )
+
+    async def write(self, title: str, anchors: Sequence[AreaMember]) -> DraftBlurb | None:
+        prompt = _PROMPT.format(title=title, anchor_lines=anchor_lines(anchors))
         response = await self._model.ainvoke([HumanMessage(prompt)])
         reply = str(response.content).strip()
         if not reply:
@@ -224,6 +126,41 @@ class ModelBlurbWriter:
             # `entity_definitions`'s identical reasoning for `define()`: a
             # reader sees "no blurb yet", not a blank card that looks broken.
             return None
-        if _ungrounded_runs(reply, anchors):
+
+        match = _TITLE_AND_TEXT.match(reply)
+        if match is None:
+            # No second line to be the blurb -- a reply with only a title,
+            # or only a blurb and no title line, is refused whole rather
+            # than stored with half of it missing.
             return None
-        return reply
+        draft_title = match.group("title").strip()
+        text = match.group("text").strip()
+        if not draft_title or not text:
+            return None
+
+        word_count = len(draft_title.split())
+        if not (_MIN_TITLE_WORDS <= word_count <= _MAX_TITLE_WORDS):
+            return None
+
+        # A model handed one dominant entity returns its name verbatim for
+        # the title, and that answer passes `ungrounded_runs` by
+        # construction -- it is literally an anchor name. Checked before the
+        # grounding pass below, on the normalised form so "Warp Drive!" and
+        # "warp drive" both catch the same refusal as bare "Warp drive".
+        if anchors and _normalised(draft_title) == _normalised(anchors[0].name):
+            return None
+
+        # Checked as two separate fields, not one joined string --
+        # `grounding.ungrounded_runs`'s module docstring records what a
+        # joined title-and-text produces at the boundary between them.
+        #
+        # This is also why the prompt asks for ordinary sentence
+        # capitalisation rather than Title Case: `ungrounded_runs` treats
+        # its input as a sentence, exempting only its first word (and only
+        # when that word is an ordinary opener). A Title Case reply has
+        # every word capitalised, so the whole title would read as one
+        # ungrounded run regardless of content -- refusing every title,
+        # invented or not, which is not the check this task asks for.
+        if ungrounded_runs(draft_title, anchors) or ungrounded_runs(text, anchors):
+            return None
+        return DraftBlurb(title=draft_title, text=text)

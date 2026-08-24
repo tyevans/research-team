@@ -6,6 +6,7 @@ reshaped for the UI without anything below noticing.
 """
 
 import json
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -28,7 +29,8 @@ from research_team.application.course import (
     ProvenanceSummary,
     StageProgress,
 )
-from research_team.application.course_catalog import Catalog
+from research_team.application.course_catalog import CachedOutline, Catalog
+from research_team.application.course_realization import CourseDetail, RealizedCourse
 from research_team.application.curriculum import Curriculum
 from research_team.application.entity_definitions import Definition, ServedCitation
 from research_team.application.findings import Finding
@@ -58,9 +60,15 @@ from research_team.domain import (
     SourceRecord,
     TurnFailed,
 )
+from research_team.domain.course import CourseFit
 from research_team.domain.course_catalog import Category, CourseCandidate
 from research_team.domain.learner import LearnerProgressState
-from research_team.domain.learning_area import LearningArea, LearningPath, PrerequisiteEdge
+from research_team.domain.learning_area import (
+    AreaMember,
+    LearningArea,
+    LearningPath,
+    PrerequisiteEdge,
+)
 from research_team.domain.research_run import ResearchRunState
 from research_team.domain.workflow import Preset, Stage
 
@@ -1498,7 +1506,9 @@ def _every_category(catalog: Catalog) -> dict[str, str]:
     return {key: catalog.categories.get(key, key) for key in sorted(keys)}
 
 
-def catalog_view(catalog: Catalog) -> dict[str, Any]:
+def catalog_view(
+    catalog: Catalog, orphaned_courses: Sequence[RealizedCourse] = ()
+) -> dict[str, Any]:
     """The whole catalog: three bands, every category, and what it was
     derived from.
 
@@ -1506,6 +1516,14 @@ def catalog_view(catalog: Catalog) -> dict[str, Any]:
     catalog over 40 entities and one over 4,000 render identically otherwise.
     `categories` is built from every candidate the catalog holds, not from
     `catalog.categories` alone, for `_every_category`'s reason (R9b).
+
+    `orphaned_courses` -- `CourseService.orphans()`'s result -- is a separate
+    argument rather than a `Catalog` field: it names courses the *catalog*
+    has no candidate for at all (see `RealizedCourse`'s docstring), so nothing
+    in `Catalog`'s own assembly has a way to produce it. Empty by default so
+    every existing caller keeps working; a caller that has not wired
+    `orphans()` up yet renders an honestly empty list rather than a missing
+    key.
     """
     return {
         "hero": [candidate_view(c) for c in catalog.sections.hero],
@@ -1513,6 +1531,14 @@ def catalog_view(catalog: Catalog) -> dict[str, Any]:
         "filed": [category_view(cat) for cat in catalog.sections.filed],
         "categories": _every_category(catalog),
         "unplaceableFeatured": list(catalog.unplaceable_featured),
+        "orphanedCourses": [
+            {
+                "slug": c.slug,
+                "title": c.title,
+                "realizedAt": c.realized_at.isoformat(),
+            }
+            for c in orphaned_courses
+        ],
         "derived_from": {
             "entities": catalog.derived_from[0],
             "relationships": catalog.derived_from[1],
@@ -1543,4 +1569,78 @@ def catalog_category_view(catalog: Catalog, key: str) -> dict[str, Any] | None:
         "key": key,
         "label": catalog.categories.get(key, key),
         "candidates": [candidate_view(c) for c in members],
+    }
+
+
+def outline_view(outline: CachedOutline) -> dict[str, Any]:
+    """A generated or cached outline, `sections` in reading order.
+
+    `(heading, summary)` pairs cross the wire as objects rather than tuples --
+    JSON has no tuple type, and a two-element array would ask every client to
+    remember which index is which.
+    """
+    return {
+        "promise": outline.promise,
+        "sections": [{"heading": h, "summary": s} for h, s in outline.sections],
+        "membershipHash": outline.membership_hash,
+        "model": outline.model,
+        "generatedAt": outline.generated_at.isoformat(),
+    }
+
+
+def course_fit_view(fit: CourseFit, members: Sequence[AreaMember]) -> dict[str, Any]:
+    """How a realized course's frozen membership compares to its cluster now.
+
+    `kept` and `added` resolve against `members` -- the current cluster --
+    because both are ids the cluster still holds. `dropped` is reported as
+    bare ids: those entities are, by construction, no longer among `members`,
+    so there is nothing to resolve against and no other place to look. See
+    `fit_of`'s own docstring for why a dropped id cannot be given a name here.
+    """
+    names = {m.entity_id: m.name for m in members}
+    return {
+        "kept": [{"entity_id": i, "name": names[i]} for i in fit.kept],
+        "added": [{"entity_id": i, "name": names[i]} for i in fit.added],
+        "dropped": list(fit.dropped),
+        "orphaned": fit.orphaned,
+    }
+
+
+def course_detail_view(detail: CourseDetail) -> dict[str, Any]:
+    """One course detail page: the candidate, its outline, its full current
+    membership, and -- if realized -- how it has drifted since.
+
+    `members` uses the same per-member shape `area_view` does, for
+    `candidate_view`'s reason: a client rendering both should not need two
+    readers for one shape. See `CourseDetail.members`'s own docstring for why
+    `[]` here is ambiguous with "no cluster" and has to be read alongside
+    `course.fit.orphaned` rather than alone.
+    """
+    return {
+        "candidate": candidate_view(detail.candidate),
+        "outline": None if detail.outline is None else outline_view(detail.outline),
+        "members": [
+            {
+                "entity_id": m.entity_id,
+                "name": m.name,
+                "entity_type": m.entity_type,
+                "centrality": round(m.centrality, 3),
+                "temporal": m.temporal,
+            }
+            for m in detail.members
+        ],
+        "course": (
+            None
+            if detail.course is None
+            else {
+                "realizedAt": detail.course.realized_at.isoformat(),
+                "membershipHash": detail.course.membership_hash,
+                "fit": course_fit_view(detail.course.fit, detail.members),
+                "authoredSessionId": (
+                    str(detail.course.authored_session_id)
+                    if detail.course.authored_session_id is not None
+                    else None
+                ),
+            }
+        ),
     }

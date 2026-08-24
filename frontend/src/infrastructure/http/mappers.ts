@@ -24,6 +24,13 @@ import type {
 } from '@domain/knowledge/curriculum.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Blurb, Catalog, Category, CourseCandidate } from '@domain/knowledge/catalog.ts'
+import type {
+  CourseDetail,
+  CourseFit,
+  FitEntity,
+  Outline,
+  RealizedCourse,
+} from '@domain/knowledge/course.ts'
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
@@ -930,8 +937,43 @@ export const toCatalog = (raw: Dto<typeof dto.catalogDto>): Catalog => ({
   },
   categories: new Map(Object.entries(raw.categories)),
   unplaceableFeatured: raw.unplaceableFeatured,
+  orphanedCourses: raw.orphanedCourses,
   derivedFrom: {
     entities: raw.derived_from.entities,
     relationships: raw.derived_from.relationships,
   },
+})
+
+const toOutline = (raw: Dto<typeof dto.outlineDto>): Outline => ({
+  promise: raw.promise,
+  sections: raw.sections.map((s) => ({ heading: s.heading, summary: s.summary })),
+  membershipHash: raw.membershipHash,
+  model: raw.model,
+  generatedAt: raw.generatedAt,
+})
+
+const toFitEntity = (raw: Dto<typeof dto.fitEntityDto>): FitEntity => ({
+  entityId: raw.entity_id,
+  name: raw.name,
+})
+
+const toCourseFit = (raw: Dto<typeof dto.courseFitDto>): CourseFit => ({
+  kept: raw.kept.map(toFitEntity),
+  added: raw.added.map(toFitEntity),
+  dropped: raw.dropped,
+  orphaned: raw.orphaned,
+})
+
+const toRealizedCourse = (raw: Dto<typeof dto.realizedCourseDto>): RealizedCourse => ({
+  realizedAt: raw.realizedAt,
+  membershipHash: raw.membershipHash,
+  fit: toCourseFit(raw.fit),
+  authoredSessionId: raw.authoredSessionId,
+})
+
+export const toCourseDetail = (raw: Dto<typeof dto.courseDetailDto>): CourseDetail => ({
+  candidate: toCourseCandidate(raw.candidate),
+  outline: raw.outline === null ? null : toOutline(raw.outline),
+  members: raw.members.map(toAreaMember),
+  course: raw.course === null ? null : toRealizedCourse(raw.course),
 })

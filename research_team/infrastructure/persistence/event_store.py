@@ -21,6 +21,8 @@ from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 from research_team.application import FeedEntry
 from research_team.domain import Corpus, EntityJudgements, Project, Session
 from research_team.domain.ask_conversation import AskConversation
+from research_team.domain.catalog_curation import CATALOG_AGGREGATE_TYPE
+from research_team.domain.course import Course
 from research_team.domain.course_authoring_run import (
     COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
     CourseAuthoringRun,
@@ -52,6 +54,7 @@ FEED_AGGREGATE_TYPES = (
     Topic.aggregate_type,
     Corpus.aggregate_type,
     MediaProposals.aggregate_type,
+    Course.aggregate_type,
     *KNOWLEDGE_CATEGORIES,
 )
 """Every aggregate type `read_since` admits to the live feed.
@@ -73,6 +76,17 @@ reload would show an accepted proposal sitting in a working state forever,
 which is precisely the defect BACKLOG.md B94 records for media rows during
 transcription. Routing it is what makes the review pane's live state possible
 at all.
+
+`Course` is routed for the reason CLAUDE.md's own controller ruling states
+(task-8-brief.md: "a person's decision, which is what the feed is for") --
+realizing or abandoning a course is a person clicking a button in one tab,
+with nothing else on the log covering the same repaint. Unlike
+`CourseAuthoringRun` below, no in-memory channel already announces it: an
+open catalog page in a second tab would otherwise show a stale card until
+reload. This is the opposite call from `CourseAuthoringRunStarted`'s, and
+deliberately so -- see that entry in `UNROUTED_AGGREGATE_TYPES` for why an
+existing `Authoring` frame makes routing the run itself redundant, which is
+not true here.
 """
 
 UNROUTED_AGGREGATE_TYPES = frozenset(
@@ -85,6 +99,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         SocraticDialogue.aggregate_type,
         BROWSER_SESSION_AGGREGATE_TYPE,
         COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
+        CATALOG_AGGREGATE_TYPE,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -134,6 +149,21 @@ mid-conversation does not repaint, because nothing on that path reaches
 be left open while another tab asks -- the missing repaint only matters once
 something is watching for it, the same condition `Ontology`'s paragraph
 above names for its own pane.
+
+`CourseCatalog` -- featuring and unfeaturing a course -- is off for
+`AskConversation`'s reason. The only client that would repaint is the catalog
+page the curator pressed the button on, and it invalidates its own query on the
+202 it got back, so a frame would tell the one client that already knows.
+
+It sits beside `Course` on the feed and is the near-miss worth stating: both
+are decisions a person makes on the same page, and `Course` is *on* the feed
+because realizing starts a background authoring run whose progress somebody
+else may be watching. Featuring changes a rank and finishes. Nothing keeps
+running, so nothing else needs telling.
+
+It went unlisted rather than decided when increment 1 shipped, which left
+`test_every_aggregate_type_is_routed_or_deliberately_not` red on main from
+that merge until now -- the guard did its job and nobody read it.
 
 `SocraticDialogue` is off for `AskConversation`'s reason and one more: the
 only client that would repaint on a dialogue frame is the browser already
@@ -254,6 +284,28 @@ def build_course_authoring_run_repository(
     to grow long enough for a threshold to matter.
     """
     return AggregateRepository(store, CourseAuthoringRun, event_publisher=publisher)
+
+
+def build_course_repository(
+    store: SQLiteEventStore,
+    publisher: InMemoryEventBus | None = None,
+) -> AggregateRepository[Course]:
+    """Realized courses, over the same log as everything else.
+
+    Published unlike `build_course_authoring_run_repository`'s neighbours are
+    *not* unlike it -- `Course` is on `FEED_AGGREGATE_TYPES` (see the
+    docstring there), so publishing here is what makes a `CourseRealized` or
+    `CourseAbandoned` reach `read_since`'s local append flag at all, not only
+    what other repositories do out of habit.
+
+    **No snapshots**, for `build_course_authoring_run_repository`'s reason.
+    `decide` refuses two consecutive `RealizeCourse`s or two consecutive
+    `AbandonCourse`s on the same stream -- realize/abandon can alternate
+    indefinitely, but each alternation is one person's one decision, and a
+    slug realized and abandoned often enough to make the fold worth
+    memoizing is not a case this feature was built for.
+    """
+    return AggregateRepository(store, Course, event_publisher=publisher)
 
 
 def build_research_run_repository(

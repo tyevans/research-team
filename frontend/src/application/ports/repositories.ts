@@ -15,6 +15,7 @@ import type { OntologyClass } from '@domain/knowledge/ontology.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Curriculum, LearningArea, LearningPath } from '@domain/knowledge/curriculum.ts'
 import type { Catalog } from '@domain/knowledge/catalog.ts'
+import type { CourseDetail } from '@domain/knowledge/course.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
@@ -659,6 +660,51 @@ export interface CatalogRepository {
    *  featured -- there is no aggregate here to enforce a precondition
    *  against, and a second click doing nothing is not an error. */
   unfeature(projectId: ProjectId, slug: string): Promise<void>
+}
+
+/** What the course realization endpoints answer -- `POST .../realize`'s own
+ *  shape server-side (`app.py`'s `realize_course`). `authoring` and `reason`
+ *  are mutually informative rather than either alone: a caller reads the run
+ *  panel from the next authoring-status poll when `authoring` is `null`, not
+ *  from re-deriving it out of `reason`. */
+export interface RealizeResult {
+  readonly realized: boolean
+  readonly authoring: AuthoringRun | null
+  readonly reason: string | null
+}
+
+/** `_NOT_RUNNING`'s shape in `blurb_sweep.py` -- one project, one sweep at a
+ *  time, and the shape a project that has never swept and one whose sweep
+ *  just finished both answer alike. */
+export interface BlurbSweepProgress {
+  readonly running: boolean
+  readonly done: number
+  readonly total: number
+  readonly failed: number
+  readonly error: string | null
+}
+
+export interface CourseRepository {
+  /** One cluster's detail page: its candidate card, its outline, its full
+   *  current membership, and -- if realized -- how it has drifted since. */
+  course(projectId: ProjectId, slug: string): Promise<CourseDetail>
+
+  /** Record that a person has decided this cluster is a course, then try to
+   *  start authoring it. See `RealizeResult`'s own docstring for why a
+   *  failure to start authoring is not this call's own error. */
+  realize(projectId: ProjectId, slug: string): Promise<RealizeResult>
+
+  /** Withdraw the decision that this cluster is a course. Does not cancel or
+   *  discard a run already in flight -- the decision is withdrawn, not the
+   *  work it caused. */
+  abandon(projectId: ProjectId, slug: string): Promise<void>
+
+  /** Start writing catalog copy for every candidate whose cached blurb is
+   *  missing or stale, in the background. */
+  startBlurbSweep(projectId: ProjectId): Promise<BlurbSweepProgress>
+
+  /** Where the last (or current) blurb sweep on this project stands. */
+  fetchBlurbSweep(projectId: ProjectId): Promise<BlurbSweepProgress>
 }
 
 export interface TimelineRepository {

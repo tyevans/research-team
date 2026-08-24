@@ -96,16 +96,55 @@ class ArtPort(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class DraftBlurb:
+    """What a model produced for one candidate's copy, before it is cached.
+
+    `title` and `text` come from one model call -- see
+    `BlurbTextPort.write`'s docstring for why a second call for the title
+    alone was rejected. Both fields are present or the whole reply is
+    `None`; there is no state where a card has a generated title and no
+    copy, or copy and no title, because `write` never returns one without
+    the other.
+    """
+
+    title: str
+    text: str
+
+
 class BlurbTextPort(Protocol):
-    """Turns a candidate's title and anchors into catalog copy, or refuses.
+    """Turns a candidate's anchors into a title and catalog copy, or refuses.
 
     `None` is a legitimate answer, not an error: a reply that names an entity
     the cluster does not hold is refused rather than returned, per
     `blurb_writer.ModelBlurbWriter`'s own docstring for why that refusal is
-    deliberately the conservative side to fail on.
+    deliberately the conservative side to fail on. The same refusal covers a
+    title identical to the cluster's top anchor -- a model handed one
+    dominant entity will return its name verbatim, which passes the
+    grounding check by construction and is the defect this port exists to
+    stop, wearing the shape of a correct answer.
+
+    One call, not two: the writer already prompts with the anchors to write
+    the blurb, and a second call for the title would double the cost of a
+    sweep that already makes one model call per candidate -- and would let
+    the title and the blurb disagree about what the course is about, with
+    nothing able to notice. `write` returns both or neither.
     """
 
-    async def write(self, title: str, anchors: Sequence[AreaMember]) -> str | None: ...
+    async def write(self, title: str, anchors: Sequence[AreaMember]) -> DraftBlurb | None: ...
+
+    @property
+    def model_name(self) -> str:
+        """Which model this port writes with, for `CourseBlurbRow.model`.
+
+        On the port rather than returned beside the text, because a refusal
+        returns `None` and would take the name with it -- and the name is a
+        property of the writer, not of one reply. Without this the column
+        exists and nothing in the system can fill it: the caller lives here,
+        and `tests/test_architecture.py` keeps this layer free of the chat
+        model's vocabulary.
+        """
+        ...
 
 
 @dataclass(frozen=True)
@@ -117,9 +156,16 @@ class CachedBlurb:
     `infrastructure.persistence` in a module `tests/test_architecture.py`
     keeps free of it -- the same reasoning `entity_definitions.Definition`
     gives for not being `EntityDefinitionRow`.
+
+    `title` may be `""` -- a row written before titles existed, per
+    `CourseBlurbRow.title`'s own default. `CatalogService.build` is where
+    that empty string becomes `area.display_name()` again; this type carries
+    it through unchanged rather than deciding the fallback itself, so a
+    caller with a reason to want the raw cached value still can.
     """
 
     text: str
+    title: str
     membership_hash: str
     model: str
     generated_at: datetime
@@ -142,7 +188,93 @@ class BlurbCachePort(Protocol):
         self,
         project_id: UUID,
         slug: str,
+        title: str,
         text: str,
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class DraftOutline:
+    """What a model produced for one candidate, before it is cached.
+
+    `sections` is `(heading, summary)` pairs in reading order -- a tuple of
+    pairs rather than a list of dataclasses because nothing reads a section
+    except in order and by position, and a third type for two strings is a
+    file a reader has to visit to learn nothing.
+
+    Not `CourseOutlineRow`, for `CachedBlurb`'s reason: that type carries
+    `project_id`, `slug` and a `membership_hash` the caller already holds,
+    and importing it here would put `infrastructure.persistence` in a module
+    `tests/test_architecture.py` keeps free of it.
+    """
+
+    promise: str
+    sections: tuple[tuple[str, str], ...]
+
+
+class OutlineTextPort(Protocol):
+    """Turns a candidate's title and anchors into an outline, or refuses.
+
+    `None` is a legitimate answer, not an error, and it is the answer more
+    often than for a blurb: an outline is refused when it names an entity the
+    cluster does not hold (`grounding.ungrounded_runs`, shared with
+    `BlurbTextPort`'s adapter), when the reply does not parse as the asked-for
+    shape, and when it carries fewer sections than make it an outline at all.
+    A caller falls back to no outline; it does not retry on the assumption
+    something went wrong.
+
+    Per CLAUDE.md this port has exactly one production adapter
+    (`outline_writer.ModelOutlineWriter`), which means a stub on this side and
+    a unit test on the adapter's side prove the two halves work and cannot
+    prove they meet. The test that matters drives both ends over real data,
+    and it is Task 13's.
+    """
+
+    async def write(
+        self, title: str, anchors: Sequence[AreaMember]
+    ) -> DraftOutline | None: ...
+
+    @property
+    def model_name(self) -> str:
+        """Which model this port writes with, for `CourseOutlineRow.model`.
+        See `BlurbTextPort.model_name` for why it is a property here."""
+        ...
+
+
+@dataclass(frozen=True)
+class CachedOutline:
+    """A previously generated outline, in this layer's own vocabulary.
+
+    `CachedBlurb` with a structured payload, and separate from it for the
+    reason `CourseOutlineRow` is a separate table: one shared type would need
+    a field that is meaningful for half its instances.
+    """
+
+    promise: str
+    sections: tuple[tuple[str, str], ...]
+    membership_hash: str
+    model: str
+    generated_at: datetime
+
+
+class OutlineCachePort(Protocol):
+    """The stored outline for one candidate, if one has been generated.
+
+    Backed by `CourseOutlineStore` at composition time. `slug` alone
+    identifies the candidate within a project, matching `BlurbCachePort`.
+    """
+
+    async def get(self, project_id: UUID, slug: str) -> CachedOutline | None: ...
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        promise: str,
+        sections: tuple[tuple[str, str], ...],
         membership_hash: str,
         model: str,
         generated_at: datetime,
@@ -235,15 +367,22 @@ class CatalogService:
             category = category_of.get(slug, "unclassified")
             cached = await self._blurbs.get(project_id, slug)
             blurb = None
+            title = area.display_name()
             if cached is not None:
                 blurb = Blurb(
                     text=cached.text,
                     membership_hash=cached.membership_hash,
                     generated_at=cached.generated_at,
                 )
+                # `cached.title` is `""` for a row written before titles
+                # existed (`CourseBlurbRow.title`'s default) -- `or` covers
+                # that fallback without a separate branch, and the empty
+                # string is otherwise indistinguishable from "not generated
+                # yet" to a reader.
+                title = cached.title or area.display_name()
             candidates[slug] = CourseCandidate(
                 slug=slug,
-                title=area.display_name(),
+                title=title,
                 category=category,
                 prominence=prominence_of(area),
                 size=area.size,

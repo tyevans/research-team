@@ -162,6 +162,20 @@ export const queryKeys = {
    *  or unfeature invalidates the one cache entry that shows all three. */
   catalog: (project: ProjectId) => ['catalog', project] as const,
 
+  /** One catalog course's detail page, keyed by slug beside `catalog` rather
+   *  than under it -- a realize/abandon invalidates this one course, not the
+   *  whole front page's cache entry. Named `courseDetail` rather than
+   *  `course`: that name is already `queryKeys.course` above, for the
+   *  workflow course a project holds (`@domain/project/course.ts`) -- an
+   *  unrelated `Course` that predates this catalog feature. */
+  courseDetail: (project: ProjectId, slug: string) => ['course-detail', project, slug] as const,
+
+  /** Where the last (or current) blurb sweep on this project stands --
+   *  its own key, not folded into `catalog`: it is polled on its own
+   *  interval while a sweep runs, and sharing `catalog`'s key would refetch
+   *  the whole front page on every poll. */
+  blurbSweep: (project: ProjectId) => ['blurb-sweep', project] as const,
+
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
   fileHistory: (session: SessionId, path: FilePath) =>

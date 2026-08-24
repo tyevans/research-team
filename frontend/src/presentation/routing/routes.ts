@@ -99,6 +99,12 @@ export const FACETS = [
   // it into `area` would make one facet's id mean two different kinds of
   // thing depending on which reading was on screen.
   'catalog',
+  // One candidate's course page, opened from a card on the catalog facet
+  // above. Its own facet rather than `catalog`'s `id` for the reason
+  // `catalog`'s own comment gives: `catalog`'s id is a category key, and a
+  // course's id is a candidate slug -- two different kinds of thing, so one
+  // facet's id cannot mean both without a reader having to guess which.
+  'course',
   'doc',
   // The corpus's other half: a candidate that has not been accepted into it
   // yet. Its own facet rather than folded into `doc` -- `MediaProposalPane`

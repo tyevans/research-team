@@ -6,8 +6,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
-import type { CatalogRepository } from '@application/ports/repositories.ts'
-import type { Catalog, CourseCandidate } from '@domain/knowledge/catalog.ts'
+import type {
+  BlurbSweepProgress,
+  CatalogRepository,
+  CourseRepository,
+} from '@application/ports/repositories.ts'
+import type { Catalog, CourseCandidate, OrphanedCourse } from '@domain/knowledge/catalog.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { CatalogPane } from './CatalogPane.tsx'
@@ -42,9 +46,12 @@ const aCatalog = (over: Partial<Catalog> = {}): Catalog => ({
   },
   categories: new Map([['antiquity', 'Antiquity']]),
   unplaceableFeatured: [],
+  orphanedCourses: [],
   derivedFrom: { entities: 100, relationships: 50 },
   ...over,
 })
+
+const notRunning: BlurbSweepProgress = { running: false, done: 0, total: 0, failed: 0, error: null }
 
 /** Every method throws until a test stubs it, matching this directory's other
  *  fakes: a pane that calls something it did not mean to fails loudly rather
@@ -62,10 +69,37 @@ const fakeCatalog = (over: Partial<CatalogRepository> = {}): CatalogRepository =
   ...over,
 })
 
+/** The sweep controls live on `CourseRepository` (`HttpCourseRepository`),
+ *  not `CatalogRepository` -- see `catalog-repository.ts`'s own history:
+ *  they were written there once, then moved here to reuse the endpoint the
+ *  standalone course page's repository had already implemented and tested,
+ *  rather than duplicating the same two HTTP calls behind a second port.
+ *  `fetchBlurbSweep` is the one exception to "throws until stubbed": every
+ *  test that shows the front page polls it whether or not the test cares
+ *  about sweeping, and a throw there would fail every other test in this
+ *  file on an unrelated query. */
+const fakeCourses = (over: Partial<CourseRepository> = {}): CourseRepository => ({
+  course: vi.fn(() => {
+    throw new Error('course was not stubbed for this test')
+  }),
+  realize: vi.fn(() => {
+    throw new Error('realize was not stubbed for this test')
+  }),
+  abandon: vi.fn(() => {
+    throw new Error('abandon was not stubbed for this test')
+  }),
+  startBlurbSweep: vi.fn(() => {
+    throw new Error('startBlurbSweep was not stubbed for this test')
+  }),
+  fetchBlurbSweep: vi.fn<CourseRepository['fetchBlurbSweep']>().mockResolvedValue(notRunning),
+  ...over,
+})
+
 const wrapperFor = (
   catalog: CatalogRepository,
+  courses: CourseRepository,
 ): (({ children }: { children: ReactNode }) => ReactElement) => {
-  const container = { catalog } as unknown as AppContainer
+  const container = { catalog, courses } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
@@ -74,10 +108,20 @@ const wrapperFor = (
   )
 }
 
-const show = (catalog: CatalogRepository, categoryKey: string | null = null) =>
-  render(<CatalogPane projectId={project} categoryKey={categoryKey} onCategory={() => {}} />, {
-    wrapper: wrapperFor(catalog),
-  })
+const show = (
+  catalog: CatalogRepository,
+  categoryKey: string | null = null,
+  courses: CourseRepository = fakeCourses(),
+) =>
+  render(
+    <CatalogPane
+      projectId={project}
+      categoryKey={categoryKey}
+      onCategory={() => {}}
+      onCourse={() => {}}
+    />,
+    { wrapper: wrapperFor(catalog, courses) },
+  )
 
 describe('CatalogPane', () => {
   it('renders the three sections, each with its cards, from a stubbed repository', async () => {
@@ -165,5 +209,66 @@ describe('CatalogPane', () => {
     show(catalog)
 
     expect(await screen.findByText(/ghost-course, another-ghost/)).toBeInTheDocument()
+  })
+
+  it('renders an orphaned-courses strip naming stranded realized courses', async () => {
+    const orphan: OrphanedCourse = {
+      slug: 'lost-course',
+      title: 'The Course Nobody Can Reach',
+      realizedAt: '2026-01-01T00:00:00Z',
+    }
+    const catalog = fakeCatalog({
+      catalog: vi
+        .fn<CatalogRepository['catalog']>()
+        .mockResolvedValue(aCatalog({ orphanedCourses: [orphan] })),
+    })
+    show(catalog)
+
+    expect(await screen.findByText(/The Course Nobody Can Reach/)).toBeInTheDocument()
+    expect(screen.getByText(/lost-course/)).toBeInTheDocument()
+  })
+
+  it('renders no orphaned-courses strip when nothing is stranded', async () => {
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog)
+
+    await screen.findByText('Hero Course')
+    expect(screen.queryByText(/no cluster to/)).not.toBeInTheDocument()
+  })
+
+  it('starts a blurb sweep by POSTing catalog/blurbs and shows the button', async () => {
+    const startBlurbSweep = vi
+      .fn<CourseRepository['startBlurbSweep']>()
+      .mockResolvedValue({ running: true, done: 0, total: 3, failed: 0, error: null })
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog, null, fakeCourses({ startBlurbSweep }))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Write the missing copy' }))
+
+    await waitFor(() => expect(startBlurbSweep).toHaveBeenCalledWith(project))
+  })
+
+  it('shows the four progress counts while a sweep runs, and names a died sweep distinctly from a slow one', async () => {
+    const fetchBlurbSweep = vi.fn<CourseRepository['fetchBlurbSweep']>().mockResolvedValue({
+      running: false,
+      done: 2,
+      total: 5,
+      failed: 1,
+      error: 'the model refused',
+    })
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog, null, fakeCourses({ fetchBlurbSweep }))
+
+    // `error` present must read as "the sweep failed", not as an ordinary
+    // done/total/failed report -- see `BlurbSweepProgress.error`'s own
+    // docstring on why the two must not look alike.
+    expect(await screen.findByText(/the sweep failed/i)).toBeInTheDocument()
+    expect(screen.getByText(/the model refused/)).toBeInTheDocument()
   })
 })

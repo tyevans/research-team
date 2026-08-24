@@ -4645,3 +4645,81 @@ layer allowed to know about session workspaces; putting the join in the service
 would make `LearningArea` -- a pure derivation of the graph -- depend on
 authoring output, and would mean `project_areas` could no longer be driven with
 a literal in a test, which is what `test_projection_is_deterministic` rests on.
+
+### B148. A course's session link is scanned, not indexed, and loses quietly
+
+`AuthoringRunStore.authored_session_for` finds which session holds a target's
+written course by scanning that project's 200 most recent authoring runs and
+returning the first match. The bound is deliberate and its cost is written into
+the method's own docstring, but the cost is the kind this repository keeps
+getting caught by: a project that crosses 200 runs stops linking a course
+authored before the window, with no error, no log line, and no way for a reader
+to tell "authored too long ago to be found" from "never authored". The course
+page simply offers to author something that already exists.
+
+`authored` is a JSON column, which is why this is a scan -- the same constraint
+B139 names for the title join. Two ways out, in increasing cost:
+
+1. **A target table.** `AuthoringRunRow`'s docstring argues against one and the
+   argument is still sound for *its* readers ("nothing queries one authoring
+   target: every read here is the whole run"). This is the query that makes the
+   argument false, so the docstring needs revising in the same commit.
+2. **A `course_sessions` projection** keyed on `(project_id, target)`, written
+   from `CourseAuthored`, holding only the newest session per target. Smaller
+   than a full target table and answers exactly this question.
+
+(2) is preferred. What makes either worth doing is not the 200 itself but that
+nothing measures how close any project is to it. Until then this is a silent
+loss with a number in front of it, which CLAUDE.md's `DerivedFromLine` entry
+records as not being observability.
+
+### B149. The authoring restart test is deleted, and its coverage with it
+
+`tests/integration/test_an_authoring_run_survives_a_restart.py` is gone as of
+2026-08-23. It was six tests over the seam between an authoring run and the
+table that outlives it, and it was deleted rather than repaired because of how
+it failed, not what it covered.
+
+**Why it went.** Two of its tests established a precondition by spinning:
+
+```python
+while len(author.sessions) < 2:
+    await asyncio.sleep(0.01)
+```
+
+Unbounded, with no deadline. So a regression in the code under test did not
+fail this file -- it **hung** it. CI times out with no assertion message, a slow
+machine is indistinguishable from broken code, and the observed response was the
+one that shape always produces: an agent hit 120 seconds, skipped the file, and
+moved on. A test that hangs gets skipped, and a skipped test protects nothing.
+
+This is `B4`'s shape with the failure mode made worse. B4 records a test called
+flaky for months that was actually broken, and its tell was that it failed in a
+way load could not explain. This one could not even fail. Worth noting the two
+sibling restart tests -- `test_a_dialogue_survives_a_restart.py` and
+`test_ask_survives_a_restart.py` -- carry no spin-wait, so this was one file's
+mistake and not a house pattern to hunt.
+
+**What was lost, and it is not nothing.** Its own docstring makes the case, and
+the case still stands: `CourseAuthored.session_id` is the only record of which
+session holds which area's markdown, and every other authoring test stays green
+in a build where `composition.py` never constructs an `AuthoringRunRunner` --
+the events are appended, nothing subscribes, and `eventsource.replay` counts an
+event no projection handles as APPLIED. So the six deleted tests were the only
+ones asserting on a **session id** rather than on a request succeeding. The
+cases: every authored area resolves after a restart; an interrupted run reports
+`interrupted` and keeps its courses; a cancelled run persists as `cancelled`;
+a run that lost one target is `done` with the failure listed; a run that
+authored nothing is `failed`; the live run is reported by `current` and not by
+`last`.
+
+**Rebuilding it.** Same two-applications-over-one-database-file shape as
+`test_ask_survives_a_restart.py`, with the stub author kept. The one thing to do
+differently is the wait: a bounded helper with a deadline that raises a named
+failure (`"the author never reached 2 sessions in 5s"`), so every hang becomes a
+test failure that says what did not happen. Never an unbounded spin.
+
+Related: **B148**, which is about the same store's `authored_session_for` losing
+a link past its scan window. B148 and this entry are the read side and the
+durability side of one question -- can a course still find the session that
+holds it -- and neither is currently covered.
