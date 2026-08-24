@@ -2265,6 +2265,17 @@ class CourseBlurbRow(ReadModel):
     membership_hash: str
     model: str
     generated_at: str
+    title: str = ""
+    """A generated course title, not the anchor entity's name -- Task 15.
+
+    Defaulted, not required: `apply_schema` reconciles an added column onto a
+    table that already has rows, but it leaves the column empty in every row
+    that predates it. A required column with no default is refused outright
+    on a populated table -- see CLAUDE.md's "Read models" section, which
+    records this project shipping exactly that bug once. `""` is the honest
+    value for "generated before this field existed", and
+    `CatalogService.build`'s `cached.title or area.display_name()` is the
+    fallback that covers it."""
 
     @staticmethod
     def row_id(project_id: UUID, slug: str) -> UUID:
@@ -2319,6 +2330,7 @@ class CourseBlurbStore:
         self,
         project_id: UUID,
         slug: str,
+        title: str,
         text: str,
         membership_hash: str,
         model: str,
@@ -2337,6 +2349,7 @@ class CourseBlurbStore:
                 membership_hash=membership_hash,
                 model=model,
                 generated_at=generated_at.isoformat(),
+                title=title,
             )
         )
 

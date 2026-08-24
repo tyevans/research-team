@@ -344,6 +344,7 @@ class _LazyBlurbCache:
             return None
         return CachedBlurb(
             text=row.text,
+            title=row.title,
             membership_hash=row.membership_hash,
             model=row.model,
             generated_at=datetime.fromisoformat(row.generated_at),
@@ -353,13 +354,14 @@ class _LazyBlurbCache:
         self,
         project_id: UUID,
         slug: str,
+        title: str,
         text: str,
         membership_hash: str,
         model: str,
         generated_at: datetime,
     ) -> None:
         store = await self._opened()
-        await store.put(project_id, slug, text, membership_hash, model, generated_at)
+        await store.put(project_id, slug, title, text, membership_hash, model, generated_at)
 
     async def close(self) -> None:
         if self._store is not None:

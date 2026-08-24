@@ -17,9 +17,66 @@ def _writer(text: str) -> ModelBlurbWriter:
 
 
 async def test_a_blurb_built_from_the_anchors_is_returned():
-    writer = _writer("Follow Zefram Cochrane and the Warp drive that changed everything.")
+    writer = _writer(
+        "The story of first contact\n"
+        "Follow Zefram Cochrane and the Warp drive that changed everything."
+    )
 
     assert await writer.write("Warp drive", ANCHORS) is not None
+
+
+async def test_the_writer_returns_a_title_and_a_blurb_from_one_call():
+    """One call, not two. A second model call for the title would double a
+    sweep's cost and let the two disagree about what the course is about, with
+    nothing able to notice."""
+    writer = _writer(
+        "The story of first contact\n"
+        "Follow Zefram Cochrane and the Warp drive that changed everything."
+    )
+
+    draft = await writer.write("Warp drive", ANCHORS)
+
+    assert draft is not None
+    assert draft.title == "The story of first contact"
+    assert draft.text == "Follow Zefram Cochrane and the Warp drive that changed everything."
+
+
+async def test_a_title_naming_an_entity_the_cluster_does_not_hold_refuses_both():
+    """The title is grounded on the same terms as the blurb. Refusing only the
+    title would leave a card with grounded copy under an invented name, which
+    is the more prominent of the two."""
+    writer = _writer(
+        "Captain Kirk's Legacy\n"
+        "Follow Zefram Cochrane and the Warp drive that changed everything."
+    )
+
+    assert await writer.write("Warp drive", ANCHORS) is None
+
+
+async def test_a_reply_with_a_blurb_and_no_title_is_refused():
+    writer = _writer("Follow Zefram Cochrane and the Warp drive that changed everything.")
+
+    assert await writer.write("Warp drive", ANCHORS) is None
+
+
+async def test_a_title_identical_to_the_top_anchors_name_is_refused():
+    """A model handed one dominant entity returns it verbatim. That answer
+    passes every grounding check by construction -- it is literally an
+    anchor name -- and it is the exact defect this task exists to fix,
+    wearing the shape of a correct answer."""
+    writer = _writer(
+        "Warp Drive\nFollow Zefram Cochrane and the Warp drive that changed everything."
+    )
+
+    assert await writer.write("Warp drive", ANCHORS) is None
+
+
+async def test_a_title_identical_to_the_anchor_case_and_punctuation_insensitively_refused():
+    writer = _writer(
+        "warp drive!\nFollow Zefram Cochrane and the Warp drive that changed everything."
+    )
+
+    assert await writer.write("Warp drive", ANCHORS) is None
 
 
 async def test_a_blurb_naming_an_entity_the_cluster_does_not_hold_is_refused():
@@ -88,7 +145,10 @@ async def test_a_legitimate_second_sentence_opener_is_still_accepted():
     false refuse on nearly every real reply -- this is the test that would
     catch that trade.
     """
-    writer = _writer("Zefram Cochrane invented it. Follow the story of the Warp drive.")
+    writer = _writer(
+        "The inventor's long journey\n"
+        "Zefram Cochrane invented it. Follow the story of the Warp drive."
+    )
 
     assert await writer.write("Warp drive", ANCHORS) is not None
 
@@ -116,6 +176,9 @@ async def test_a_single_word_opener_identical_to_an_ungrounded_name_is_not_caugh
     refusing ordinary two-sentence copy far more often than this accepts
     an ungrounded name).
     """
-    writer = _writer("Explore chronicled the frontier. The story features the Warp drive.")
+    writer = _writer(
+        "The story of the frontier\n"
+        "Explore chronicled the frontier. The story features the Warp drive."
+    )
 
     assert await writer.write("Warp drive", ANCHORS) is not None
