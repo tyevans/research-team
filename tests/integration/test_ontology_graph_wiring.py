@@ -42,7 +42,7 @@ SONGS = (
 DISCOVERED = AIMessage(
     content=(
         '{"classes": [{"name": "Difficulty", "kind": "ordered_scale", '
-        '"declared_count": 6, "evidence": {"start": 0, "end": 66}, '
+        '"declared_count": 6, "evidence": "There are six difficulties available in the game", '
         '"members": [{"name": "EASY", "ordinal": 0}, {"name": "MASTER", "ordinal": 4}]}]}'
     )
 )

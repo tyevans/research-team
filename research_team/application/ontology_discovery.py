@@ -18,8 +18,8 @@ into every chunk of that table, and names taxonomy discovery as the consumer
 that makes it more than tidiness. The split-table problem is not a reason to
 avoid chunking here; it is a solved problem this pass declined to use. What is
 left of the old reasoning is the *offset* hazard, and it is real: a chunk with a
-repeated header is no longer a contiguous slice of the document, so a span the
-model gives in chunk coordinates points at the wrong words unless it is
+repeated header is no longer a contiguous slice of the document, so a quote
+located in chunk coordinates points at the wrong words unless it is
 translated. `_to_document_span` is that translation and
 `DocumentChunk.prefix_start_char` is what makes it possible.
 
@@ -38,11 +38,13 @@ prompt.
 **Verification is against the document, not against plausibility.** A model that
 pattern-matches a taxonomy onto a document that does not state one produces
 something indistinguishable, by eye, from a real discovery. So every member name
-must occur verbatim in the text and every evidence span must lie inside it. What
-is dropped is recorded rather than discarded: a class that found five of a
-declared six with no explanation cannot be judged, because the reader cannot
-tell an invented member from a document that is genuinely short one, and those
-are opposite conclusions about whether to trust the pass.
+must occur verbatim in the text, and so must the sentence cited as evidence for
+the class -- the model quotes it and `_span` finds it, rather than the model
+giving character offsets nothing but arithmetic could check. What is dropped is
+recorded rather than discarded: a class that found five of a declared six with
+no explanation cannot be judged, because the reader cannot tell an invented
+member from a document that is genuinely short one, and those are opposite
+conclusions about whether to trust the pass.
 """
 
 import json
@@ -162,8 +164,8 @@ For each class give:
   - declared_count: the number the document states, if it states one ("There
     are six difficulties" -> 6). Omit it if the document gives no number. Do
     not count the members yourself.
-  - evidence: the character offsets of the sentence or table header that states
-    this class, as {"start": <int>, "end": <int>}.
+  - evidence: the sentence or table header that states this class, copied from
+    the document exactly as it appears.
   - members: each member as {"name": "<exactly as the document spells it>",
     "ordinal": <int from 0, only for ordered_scale>}.
   - parent_name: the name of the class this one nests under, if any.
@@ -172,10 +174,16 @@ Every member name must appear in the document exactly as you write it. A name
 that does not will be discarded and reported as a rejection, so copy rather
 than paraphrase.
 
+The same holds for evidence: quote the document, do not summarise it. A class
+whose evidence cannot be found in the document is discarded whole, so keep the
+quote short enough to copy without a slip -- one sentence, or one table header
+row -- and copy it character for character, including any punctuation and
+table pipes.
+
 Answer with JSON and nothing else:
 
   {"classes": [{"name": ..., "kind": ..., "declared_count": ...,
-                "evidence": {"start": ..., "end": ...},
+                "evidence": "...",
                 "members": [{"name": ..., "ordinal": ...}],
                 "parent_name": ...}]}
 
@@ -296,9 +304,26 @@ def verify_classes(
     minus one, and the reader is told which name went and why. That is what
     keeps a short class judgeable.
 
-    A class whose **evidence span** is outside the document is dropped whole,
+    A class whose **evidence quote** is not in the text is dropped whole,
     because there is nothing left for a reader to open and judge -- recording
     an artefact nobody can check is worse than losing it.
+
+    That drop reads differently since 2026-08-24, and the change is not the one
+    it looks like. It used to fire on an arithmetic slip -- the model was asked
+    for character offsets and estimated them -- which was a harsh penalty for a
+    failure saying nothing about whether the class was real. In practice it
+    almost never fired: measured over 12 chunks of five real documents, 0 of 15
+    proposed classes were dropped here, because an estimate into a 40,000-
+    character chunk lands *inside* it nearly every time. The gate was not
+    costing classes; it was waving through citations that pointed somewhere
+    else (14 of those 15 did -- see `_span`).
+
+    Now the model is asked for the words, so this fires only when the quote is
+    absent from the text, which is the model having written a sentence the
+    document does not contain. Dropping a fabricated citation is the right
+    answer to that, and it stays. Same code, same severity, an entirely
+    different population reaching it -- and the value of the change is in the
+    spans that *pass*, not in the ones this refuses.
 
     A class with an unrecognised **kind** is dropped whole because `kind`
     selects the entire rendering. Coercing it to `unordered_set` would be
@@ -312,12 +337,12 @@ def verify_classes(
     ratio threshold would be a number nobody could justify, and a reader sees
     "9 of 268" for what it is faster than any rule could classify it.
 
-    **`chunk` decides what coordinate system the model answered in**, and it is
-    the likeliest place for a silent wrong answer in this whole module. With no
-    chunk the offsets are the document's, as they always were. With one they
-    are offsets into `chunk.text`, and every one of them is plausible and wrong
-    until `_to_document_span` has moved it -- a span from the ninth chunk of a
-    long article resolves, renders, and quotes words nobody read. Nothing
+    **`chunk` decides what coordinate system the evidence was located in**, and
+    it is the likeliest place for a silent wrong answer in this whole module.
+    With no chunk the offsets are the document's, as they always were. With one
+    they are offsets into `chunk.text`, and every one of them is plausible and
+    wrong until `_to_document_span` has moved it -- a span from the ninth chunk
+    of a long article resolves, renders, and quotes words nobody read. Nothing
     raises. `test_a_class_found_in_a_later_chunk_cites_the_document_not_the_chunk`
     is what fails if the translation is dropped.
 
@@ -365,24 +390,101 @@ def verify_classes(
 
 
 def _span(evidence: Any, text: str) -> tuple[int, int] | None:
-    """The evidence offsets, if they name a range that exists in `text`.
+    """Where the quoted evidence occurs in `text`, or None if it does not.
 
-    `text` is the text the model was shown -- a chunk when there is one -- so
-    this bounds-checks in the coordinate system the answer was written in.
+    **The model is asked for the words, not for the offsets, and this is where
+    that decision is spent.** Until 2026-08-24 the prompt asked for
+    `{"start": ..., "end": ...}` and this function bounds-checked the pair.
+    Language models do not count characters; they estimate them. So the check
+    had two failure modes: an estimate landing outside the text dropped the
+    whole class for an arithmetic slip, and an estimate landing *inside* it
+    passed while pointing at words the model never read.
+
+    **Measured 2026-08-24 against `qwen3.8-27b-64k-txt`, both prompts over the
+    same 12 chunks of five real corpus documents.** The second failure mode is
+    effectively the only one. Under the offsets prompt the bounds check dropped
+    **0 of 15** proposed classes -- an estimate into a 40,000-character chunk is
+    almost always *some* range inside it -- so the gate was not costing classes.
+    What it was doing was passing wrong citations: of those 15 stored spans,
+    **14 pointed at text containing neither the class name nor any of its
+    members.** `four seas`, whose members are North/East/West/South Blue, was
+    cited to "11 consecutive years (2008-2018) and remains the only series
+    with ove".
+
+    Under the quote prompt, over the identical chunks: 16 proposals, 1 refused
+    here, **14 classes verified and 13 of them citing text that names the class
+    or one of its members.** So the change is close to free in volume (15
+    survivors to 14; 11 merged classes to 9) and is worth roughly the whole of
+    the citation: 1 correct in 15 becomes 13 correct in 14.
+
+    That is worth stating plainly because it inverts the obvious reading of the
+    old code. The `if span is None: continue` looks like the expensive line and
+    is nearly dead; the silent line is `EvidenceSpan(...)` two statements
+    later. Nothing about a wrong-but-inside span is visible from the running
+    system, and `graph_reader.py` has been rendering these offsets into an
+    `instance_of` edge's `derivation` string -- reaching `GraphCanvas.tsx` --
+    for as long as the feature has existed. The citations were already on
+    screen; they were just wrong.
+
+    **What the exactness costs, measured rather than guessed.** The one class
+    refused in the after arm is `four seas`, and it was refused for a reason
+    worth knowing before tightening anything here: the corpus stores Wikipedia
+    as markdown, so the sentence carries inline citation markup between the
+    member names --
+    `four seas: North Blue,<sup>[\\[Jp 7\\]](#cite_note-NB-8)</sup> East Blue,...`
+    -- and the model quoted the sentence as a *reader* sees it, with the markup
+    gone. The quote is honest and the document does not contain it. A
+    markup-tolerant locator would recover this class, and would have to map
+    offsets from normalised text back to the raw document to stay correct;
+    that is a heuristic with a real failure mode of its own and it is
+    deliberately not built here. On citation-dense prose this is the shape of
+    what the pass now loses.
+
+    Locating a quote with `str.find` removes both. A quote that is in the text
+    yields the range it actually occupies, which is a correct citation rather
+    than a plausible one; a quote that is not in the text is a fabrication, and
+    there is no third answer to confuse them with. This is the same substring
+    mechanism `_members` uses, and it is loose for the same reason: a stricter
+    match would refuse a table header for its pipes.
+
+    Chunking made the old shape worse rather than better -- offsets are
+    chunk-relative and `_to_document_span` translates them, so the model's
+    estimate was compounded by a translation of an estimate. A located quote
+    goes into that translation as a real range, and the translation is the only
+    arithmetic left in the path.
+
+    `text` is what the model was shown -- a chunk when there is one -- so the
+    range returned is in the coordinate system the answer was written in.
     Translation to document coordinates happens after, in `_to_document_span`.
 
-    Bounds-checked rather than clamped: a clamped span still renders, pointing
-    at words the model never read, which is the failure a citation is supposed
-    to make impossible.
+    The first occurrence is taken. A header repeated by `MarkdownTableChunker`
+    is the case that makes this matter, and the first occurrence in a chunk is
+    the prefix copy, which `_to_document_span` maps to where the header really
+    lives. A later duplicate would be cited into the rows.
+
+    **The old dict shape is refused rather than accepted for a transition
+    window.** The worry was that a live model handed the new prompt would keep
+    emitting `{"start": ...}` some of the time, and that refusing it would cost
+    classes for no gain. Measured over the 12 chunks above: **16 of 16
+    proposals came back with a string**, none with the old shape, so the
+    transition branch would have been dead code. It is refused rather than
+    accepted on principle as well as on the count -- accepting it would keep
+    exactly the guessed offsets this change exists to stop trusting, and once
+    stored a class cited from an estimate is indistinguishable from one cited
+    from a quote. Nothing stored needs the old shape: the stored columns are
+    offsets either way, and this reads model replies, not storage.
+    `test_evidence_given_as_character_offsets_is_refused` is where that
+    decision lives, since the code no longer mentions it.
     """
-    if not isinstance(evidence, dict):
+    if not isinstance(evidence, str):
         return None
-    start, end = evidence.get("start"), evidence.get("end")
-    if not (isinstance(start, int) and isinstance(end, int)):
+    quote = evidence.strip()
+    if not quote:
         return None
-    if not 0 <= start < end <= len(text):
+    start = text.find(quote)
+    if start < 0:
         return None
-    return start, end
+    return start, start + len(quote)
 
 
 def _to_document_span(

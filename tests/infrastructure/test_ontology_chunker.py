@@ -76,10 +76,10 @@ def test_a_class_named_by_a_repeated_header_cites_the_document_correctly():
     real `verify_classes`, and the span comes back pointing at the header the
     document actually holds.
 
-    The model's offsets here are into the chunk (0 to the header's length),
-    which is what a model shown `chunk.text` answers. Untranslated they would
-    land in the opening prose, which is inside the document and reads as a
-    plausible citation.
+    The header quote is located at offset 0 of the chunk, because
+    `MarkdownTableChunker` put it there as the prefix. Untranslated those
+    offsets land in the opening prose, which is inside the document and reads
+    as a plausible citation.
     """
     chunk = next(chunk for chunk in _chunker().chunk(DOCUMENT) if chunk.prefix)
     member = chunk.text[len(chunk.prefix) :].split("|")[1].strip()
@@ -87,7 +87,7 @@ def test_a_class_named_by_a_repeated_header_cites_the_document_correctly():
         {
             "name": "Rank",
             "kind": "ordered_scale",
-            "evidence": {"start": 0, "end": len("| Rank | Reward |")},
+            "evidence": "| Rank | Reward |",
             "members": [{"name": member}],
         }
     ]
@@ -118,7 +118,7 @@ def test_a_chunk_of_prose_carries_no_prefix_and_translates_by_its_offset():
         {
             "name": "Stage",
             "kind": "unordered_set",
-            "evidence": {"start": 0, "end": 10},
+            "evidence": chunk.text[:10],
             "members": [{"name": chunk.text[:6]}],
         }
     ]
