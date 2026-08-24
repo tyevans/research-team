@@ -2344,6 +2344,119 @@ class CourseBlurbStore:
         await self._connection.close()
 
 
+class CourseOutlineRow(ReadModel):
+    """One generated outline, cached against the cluster it describes.
+
+    Its own table rather than a `kind` column beside `CourseBlurbRow`. A blurb's
+    payload is one `text` column and this one's is a structured list, so a
+    shared table needs a JSON column that only half its rows ever fill -- and
+    then the two row types share nothing but a primary key and a namespace. Two
+    stores of the same shape are duplication a reader can see; one store with a
+    column meaningful for half its rows is a schema that has to be explained.
+
+    No `stale` flag, for `CourseBlurbRow`'s reason: `membership_hash` answers
+    the same question by comparison, and a flag would be a second answer that
+    can disagree with the first.
+    """
+
+    __table_name__ = "course_outlines"
+
+    project_id: UUID
+    slug: str
+    promise: str
+    sections: list[dict] = Field(default_factory=list)
+    """`[{"heading": ..., "summary": ...}]`, in reading order."""
+    membership_hash: str
+    model: str
+    generated_at: str
+
+    @field_validator("sections", mode="before")
+    @classmethod
+    def _decode_json_list(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+    @staticmethod
+    def row_id(project_id: UUID, slug: str) -> UUID:
+        # The `outline:` prefix keeps this id from colliding with
+        # `CourseBlurbRow.row_id` and `CatalogFeatureRow.row_id`, which share
+        # `CATALOG_NAMESPACE` and hash the same `{project_id}:{slug}` pair
+        # with their own (or no) prefix.
+        return uuid5(CATALOG_NAMESPACE, f"outline:{project_id}:{slug}")
+
+
+class CourseOutlineStore:
+    """The outline cache table and the connection it owns.
+
+    No projection here, matching `CourseBlurbStore`: nothing on the event log
+    describes an outline, so there is nothing for a projection to replay. The
+    catalog service calls `put` directly after generating one.
+    """
+
+    def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
+        self._connection = connection
+        self._rows = rows
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "CourseOutlineStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, CourseOutlineRow)
+        # `apply_schema` reconciles columns, not indexes -- the same note
+        # `CourseBlurbStore.open` carries, for the same reason: every read
+        # here is project-scoped.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_course_outlines_project "
+            f"ON {CourseOutlineRow.table_name()}(project_id)"
+        )
+        await connection.commit()
+        rows = SQLiteReadModelRepository(connection, CourseOutlineRow, tracer)
+        return cls(connection, rows)
+
+    async def get(self, project_id: UUID, slug: str) -> CourseOutlineRow | None:
+        """The cached outline, or None if none has been generated yet.
+
+        `row.project_id != project_id` cannot happen through this class's
+        own `row_id` -- the pair is baked into the id -- but is checked
+        anyway for the same reason `CourseBlurbStore.get` checks it: a row
+        reached by id alone makes no claim about which project asked.
+        """
+        row = await self._rows.get(CourseOutlineRow.row_id(project_id, slug))
+        if row is None or row.project_id != project_id:
+            return None
+        return row
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        promise: str,
+        sections: list[dict],
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None:
+        """Cache an outline, superseding whatever was cached before for this
+        slug -- `save` writes by id, and `row_id` is stable per
+        `(project_id, slug)`, so a rewrite replaces rather than duplicates.
+        """
+        await self._rows.save(
+            CourseOutlineRow(
+                id=CourseOutlineRow.row_id(project_id, slug),
+                project_id=project_id,
+                slug=slug,
+                promise=promise,
+                sections=sections,
+                membership_hash=membership_hash,
+                model=model,
+                generated_at=generated_at.isoformat(),
+            )
+        )
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
 class CatalogFeatureStore:
     """The featured table and the connection it owns."""
 
