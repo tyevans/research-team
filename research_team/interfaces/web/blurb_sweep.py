@@ -56,10 +56,11 @@ artifact:
   candidates: a single 502 from the endpoint would have left most cards bare
   with nothing to distinguish it from a sweep that finished. See `_drive`.
 
-**The sweep runs candidates concurrently, bounded by
-`config.catalog_sweep_concurrency()`** -- read that docstring for the number,
-for the measurement that could not be taken on the day, and for why the
-choice errs low anyway. Two consequences worth carrying into
+**The sweep can run candidates concurrently, bounded by
+`config.catalog_sweep_concurrency()`, which defaults to 1** -- read that
+docstring before changing the number: concurrency was measured against this
+endpoint and buys 1.1%, because the server serialises. The mechanism is kept
+for an endpoint that batches. Two consequences worth carrying into
 any edit of `_drive`: completion order is not submission order, so the
 progress frame is built from counters rather than from a position in the
 list; and the two artifacts of *one* candidate stay sequential with respect

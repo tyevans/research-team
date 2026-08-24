@@ -43,9 +43,9 @@ DEFAULT_EXTRACTION_CHUNK_SIZE = 2_000
 DEFAULT_CONSOLIDATION_BATCH = 25
 
 #: How many catalog candidates a blurb or art sweep has in flight at once.
-#: See `catalog_sweep_concurrency` for why this is 4 rather than 8, and for
-#: the measurement that could not be taken.
-DEFAULT_CATALOG_SWEEP_CONCURRENCY = 4
+#: 1, not because concurrency is unimplemented but because it was measured
+#: to buy 1.1% on this endpoint. See `catalog_sweep_concurrency` for the curve.
+DEFAULT_CATALOG_SWEEP_CONCURRENCY = 1
 
 VECTOR_STORES = ("none", "memory", "pgvector")
 #: On, since the third scoring feature is what lets consolidation merge a
@@ -386,68 +386,60 @@ def consolidation_batch_size() -> int:
 
 
 def catalog_sweep_concurrency() -> int:
-    """How many candidates a catalog sweep works on at once. 4 by default.
+    """How many candidates a catalog sweep works on at once. **1 by default,
+    because on this deployment concurrency was measured to buy nothing.**
 
     The sweeps (`interfaces/web/blurb_sweep.py`, `interfaces/web/art_sweep.py`)
-    were a plain `for` loop with `await`s in it -- concurrency 1 -- and the
-    arithmetic is why this knob exists at all: a real project (Star Trek, in
-    the owner's database) has 75 candidates, each needing a blurb and an
-    outline, and the art sweep needs an SVG on top. Sequentially that is hours
-    of wall clock behind two buttons.
+    can run candidates in parallel, and the arithmetic said they should: a real
+    project has 75 candidates, each needing a blurb and an outline, and the art
+    sweep an SVG on top. The measurement disagreed.
 
-    **4, and the number is a judgement rather than a measurement, because the
-    measurement could not be taken.** What was measured, on 2026-08-24,
-    against the live endpoint over real candidates out of a copy of the real
-    database, is below. `N` is candidates swept with empty caches, so every
-    one is a real miss and a real pair of model calls:
+    Taken 2026-08-24 against the live endpoint over real candidates from a copy
+    of the real database, empty caches so every candidate is a real miss. The
+    ceilings were run **interleaved**, in the order below, with an 8-token
+    completion timed immediately before and after each run so the ambient load
+    is visible per row rather than assumed:
 
-    ======= ==== ======= =============================
-    ceiling N    wall    note
-    ======= ==== ======= =============================
-    1       8    58.0s   baseline
-    6       8    51.4s   1.13x -- the only pair taken close together
-    1       24   148.5s  baseline
-    6       24   274.1s  **1.85x slower than sequential**
-    12      24   285.8s  no worse than 6, and no better
-    ======= ==== ======= =============================
+    ======= ======= ============ ===========
+    ceiling wall    probe before probe after
+    ======= ======= ============ ===========
+    1       149.7s  0.29s        0.66s
+    2       169.5s  0.30s        0.67s
+    4       148.5s  0.30s        0.68s
+    8       148.0s  0.31s        0.69s
+    1       149.5s  0.29s        0.66s
+    ======= ======= ============ ===========
 
-    Those numbers do not mean concurrency hurts. Another agent was driving the
-    same endpoint throughout, and it got busier as the runs went on: an
-    8-token completion took 1.5-5.0s with the endpoint idle, 39-47s alongside
-    the ceiling-6 run, and 17-25s alongside a *sequential* run later the same
-    hour. A re-run of the ceiling-1 baseline, started after the table above,
-    had not finished at three times its own earlier time. **The load moved
-    further between the rows than the rows differ from each other, so the
-    table cannot be read as a comparison** -- it is recorded because the next
-    person to touch this number should not have to rediscover that.
+    **Ceiling 8 is 1.1% faster than ceiling 1.** The closing repeat of ceiling
+    1 came back 0.13% from the opening one, so the box did not drift under the
+    experiment and the flatness is the endpoint's, not the measurement's. The
+    169.5s at ceiling 2 is the only row off the line and is not explained;
+    treat it as noise rather than as a shape.
 
-    So 4 is chosen on the shape of the problem, not on a curve. Below
-    `extraction_concurrency`'s 8, because that ceiling is per *document* over
-    2000-character chunks while this one is per candidate over a whole blurb,
-    outline or SVG -- hundreds of output tokens with a slot held for the
-    length of the generation. Well below it, because the one thing the table
-    does establish is that this server queues rather than parallelises once it
-    is loaded, and a sweep is the only thing a person is watching when they
-    press the button: a ceiling that deepens the queue makes every other call
-    on the box slower to buy a sweep nothing.
+    The reading: wall clock here is bounded by total generation work, not by
+    how many requests are outstanding. This server serialises. Asking it eight
+    questions at once returns the eighth answer no sooner than asking eight
+    times in a row.
 
-    What it costs if it is wrong in each direction. Too high: the server
-    queues, every call's latency rises together, and the failure is invisible
-    from here because a queued call and a slow call look identical. Too low:
-    wall clock, linearly, and nothing else. That asymmetry is the whole
-    argument for erring low.
+    **Why the ceiling still exists at 1.** The mechanism is not the same thing
+    as the number. An endpoint that batches -- a hosted one, or this one
+    reconfigured -- turns this into a real speedup for the cost of an
+    environment variable, and the alternative was deleting a tested code path
+    and rediscovering the need for it later. What 1 buys in the meantime is
+    the absence of concurrency's costs on a deployment that pays them for
+    nothing: `ArtStore.decrement_uses` is a read-modify-write that two
+    candidates can reach at once (locked in `art_sweep._drive`, and *not*
+    locked in `ArtReroll`, which has the same hazard), and progress frames
+    settle out of submission order.
 
-    **The measurement worth taking, when the endpoint is quiet:** ceiling 1,
-    2, 4 and 8 over the same 24 candidates, interleaved rather than in
-    sequence, with a short completion timed before and after each run to prove
-    the load did not move. Raise this number if the knee turns out to be
-    higher; `AGENT_CATALOG_SWEEP_CONCURRENCY=1` restores the sequential
-    behaviour exactly, which is what to set if a sweep ever looks like it is
-    starving something else.
-
-    Against a hosted endpoint with a request-per-minute quota this is the
-    wrong shape of limit entirely and wants lowering, exactly as
-    `extraction_concurrency` says of its own.
+    **Do not raise this without re-measuring**, and re-measure the way the
+    table above was taken -- interleaved, with a latency probe bracketing each
+    run. An earlier pass at this ran the ceilings back to back while another
+    agent was loading the same endpoint and produced ceiling 6 at 274.1s
+    against a 148.5s baseline, which reads as "concurrency is 1.85x slower"
+    and is entirely that agent's traffic. A queued call and a slow call are
+    indistinguishable from the client, which is exactly why the probe rows are
+    part of the table rather than a note beside it.
     """
     return int(
         os.getenv("AGENT_CATALOG_SWEEP_CONCURRENCY", str(DEFAULT_CATALOG_SWEEP_CONCURRENCY))

@@ -3,8 +3,9 @@
 Modelled directly on `blurb_sweep.py` -- read it first. Same shape: no
 aggregate (nothing on the event log describes a piece of art either, see
 `ArtStore`'s own docstring), an in-memory progress frame per project, one
-sweep at a time, candidates worked concurrently under
-`config.catalog_sweep_concurrency()`, a per-candidate exception tallied as
+sweep at a time, candidates worked under `config.catalog_sweep_concurrency()`
+(1 by default -- see that docstring for why concurrency is implemented and
+switched off), a per-candidate exception tallied as
 `failed` rather than ending the run, and a settled frame carrying an `error`
 key rather than leaving `running: True` forever.
 
