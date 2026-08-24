@@ -346,8 +346,8 @@ const BlurbSweepControl = ({
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-bg-panel p-3">
       <p className="m-0 min-w-0 flex-1 text-xs text-fg-dim">
-        Write catalog copy and outlines for every candidate whose blurb or outline is missing or
-        out of date.
+        Write catalog copy and outlines for every candidate whose blurb or outline is missing or out
+        of date.
       </p>
       <Button small onClick={onRun} disabled={running}>
         {running && progress !== null
