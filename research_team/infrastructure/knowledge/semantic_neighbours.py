@@ -9,14 +9,15 @@ them.
 port has a perfectly good `search`, and using it costs one call per entity --
 which is exact, and quadratic, and done in Python. Measured on 2026-08-22
 against redstring's `InMemoryVectorStore` at 768 dimensions: 100 entities in
-0.52s, 250 in 3.26s, 500 in 13.88s. The projection advertises a cap of 2,000,
-which extrapolates to about four minutes for a route budgeted in seconds. The
-same work as one float32 matrix multiply is 0.056s.
+0.52s, 250 in 3.26s, 500 in 13.88s. The projection advertises a cap of 5,000
+(raised from 2,000 on 2026-08-24), which extrapolates to well over the age of
+the request for a route budgeted in seconds. The same work as one float32
+matrix multiply is 0.056s.
 
 So the vectors are fetched once by id -- `get` per entity, which is a dict
 lookup on the in-memory store -- and the neighbourhood is computed here. The
-cost of that choice is a dense `n x n` similarity matrix held briefly: 16MB at
-the 2,000 cap, and quadratic in memory as well as time, which is why
+cost of that choice is a dense `n x n` similarity matrix held briefly: ~100MB
+at the 5,000 cap, and quadratic in memory as well as time, which is why
 `MAX_SEMANTIC_ENTITIES` exists below rather than being left to the caller.
 
 **A missing vector is not an error.** Entities extracted before embeddings
@@ -42,12 +43,15 @@ logger = logging.getLogger(__name__)
 #: Above this many *embedded* entities the semantic channel is skipped.
 #:
 #: Chosen for memory rather than time: the similarity matrix is `n^2` float32,
-#: so 4,000 is 64MB held while a request is in flight and 8,000 would be
-#: 256MB. The projection's own `MAX_CLUSTERED_ENTITIES` is 2,000 and refuses
-#: above it, so this is deliberately set beyond that -- it is a backstop for a
-#: caller that raised the other cap, not a second limit a normal run can meet.
-#: Skipping is silent in the areas and visible in `semantic_count`, which is 0.
-MAX_SEMANTIC_ENTITIES = 4_000
+#: so 5,000 is ~100MB held while a request is in flight. Matched to the
+#: projection's own `MAX_CLUSTERED_ENTITIES` (also 5,000, raised from 2,000 on
+#: 2026-08-24) rather than set beyond it: the previous value of 4,000 reasoned
+#: from the *old* clustering cap of 2,000 and was already below it in spirit,
+#: but raising the clustering cap alone would have put this channel back
+#: under it -- exactly the projects the clustering fix was meant to unblock
+#: would have kept silently losing their semantic edges. Skipping is silent in
+#: the areas and visible in `semantic_count`, which is 0.
+MAX_SEMANTIC_ENTITIES = 5_000
 
 
 class VectorNeighbours:

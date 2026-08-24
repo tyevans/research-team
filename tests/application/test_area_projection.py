@@ -11,6 +11,7 @@ would fail against a naive but well-formed clusterer, which is the point.
 """
 
 import random
+import time
 
 import pytest
 
@@ -251,13 +252,54 @@ def test_truncation_is_carried_onto_the_projection():
     assert projection.truncated is True
 
 
-def test_projection_refuses_a_graph_it_cannot_cluster_promptly():
+def test_projection_refuses_a_graph_above_the_cap():
     """Refused, not sampled. A curriculum over an arbitrary subset of a
     project is indistinguishable from a real one at every surface."""
     too_many = [entity(f"e{i}") for i in range(MAX_CLUSTERED_ENTITIES + 1)]
 
     with pytest.raises(GraphTooLarge):
         project_areas(graph(too_many, []), [])
+
+
+def test_projection_clusters_a_dense_graph_at_the_cap_promptly():
+    """A graph at the cap, dense rather than sparse, still returns in seconds.
+
+    Dense because average degree is what costs time in greedy modularity, not
+    entity count alone -- a sparse graph at the cap is comparatively cheap.
+    Measured on this machine on 2026-08-24, over a planted-partition graph of
+    `MAX_CLUSTERED_ENTITIES` entities, 30 communities, ~70 average degree
+    (85% of edges intra-community, 15% inter): 5.33s. This asserts a 20s
+    ceiling -- comfortable headroom over that single measurement rather than
+    a number chosen to make the test pass, since wall-clock varies with the
+    machine running it. If this starts failing, the honest fix is a faster
+    clustering pass or a lower cap, not a larger ceiling.
+    """
+    rng = random.Random(1234)
+    n = MAX_CLUSTERED_ENTITIES
+    entities = [entity(f"e{i}") for i in range(n)]
+    n_communities = 30
+    by_community: dict[int, list[int]] = {}
+    for i in range(n):
+        by_community.setdefault(i % n_communities, []).append(i)
+
+    avg_degree = 70
+    n_edges = int(n * avg_degree / 2)
+    relationships = []
+    for _ in range(n_edges):
+        if rng.random() < 0.85:
+            members = by_community[rng.choice(list(by_community))]
+            a, b = rng.sample(members, 2)
+        else:
+            a, b = rng.sample(range(n), 2)
+        relationships.append(rel(f"e{a}", f"e{b}"))
+
+    start = time.perf_counter()
+    project_areas(graph(entities, relationships), [])
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 20.0, (
+        f"clustering {n} dense entities took {elapsed:.2f}s, over the ceiling"
+    )
 
 
 def test_relationships_to_absent_entities_are_ignored():
