@@ -16,13 +16,38 @@ for a project that never swept, or whose sweep has finished, answers the same
 durable underneath it to distinguish those two cases, and a caller rendering
 a progress bar should not need to.
 
-The three-way split most worth reading before touching `_drive`:
+**This sweep now also writes outlines, folded in rather than built as a
+second sweep beside it.** Outline generation used to happen inside
+`CourseService._outline_for`, awaited synchronously behind a candidate's
+detail-page request -- no spinner distinguishable from a slow network, no
+cancel, two readers of the same slug paying for two generations, and a
+refusal-prone cluster paying the model call again on every later view since a
+refusal is deliberately never cached. `CourseService._outline_for` is now
+cache-read-only; the only place anything writes an outline is here. This
+module already walks exactly the candidate list an outline sweep needs,
+already has a progress channel, and already does the membership-hash
+freshness check that "is this cache entry still good" is -- the same check,
+run twice, once per artifact.
+
+**Copy and outline are attempted independently per candidate, and a
+candidate counts as `done` only when both are fresh at the end of the
+attempt; `failed` if either was refused.** Not "wrote at least one thing" --
+a partial success counting as `done` would make the progress line report the
+sweep finished while cards are still bare of the piece that failed, which is
+exactly what these counts exist to let a reader catch. One artifact's
+refusal must not skip the attempt at the other: a cluster the model will not
+write copy for may still take an outline, and the reverse, so both writers
+are always called (or both cache hits checked) regardless of how the other
+one went.
+
+The three-way split most worth reading before touching `_drive`, restated per
+artifact:
 
 * **A cache hit whose hash matches** is skipped -- the whole point of
   sweeping, over regenerating every card on every click.
-* **A refusal** (`write` returns `None`) is counted as failed and moves on --
-  see the module-level test's docstring; one ungrounded cluster must not wall
-  off every card behind it.
+* **A refusal** (`write` returns `None`) counts that artifact as not written
+  and moves on -- see the module-level test's docstring; one ungrounded
+  cluster must not wall off every card behind it.
 * **Anything else raises**, and unlike a refusal it is *not* tallied as a
   counted outcome -- it is a defect. But it is still caught inside `_drive`,
   not left to crash the background task: nothing in production awaits that
@@ -42,7 +67,12 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from research_team.application.course_catalog import BlurbCachePort, DraftBlurb
+from research_team.application.course_catalog import (
+    BlurbCachePort,
+    DraftBlurb,
+    DraftOutline,
+    OutlineCachePort,
+)
 from research_team.domain.learning_area import AreaMember
 
 _logger = logging.getLogger(__name__)
@@ -71,6 +101,16 @@ class _Writer(Protocol):
     async def write(self, title: str, anchors: Sequence[AreaMember]) -> DraftBlurb | None: ...
 
 
+class _OutlineWriter(Protocol):
+    """The sliver of `OutlineTextPort` this module reads -- see `_Writer`."""
+
+    model_name: str
+
+    async def write(
+        self, title: str, anchors: Sequence[AreaMember]
+    ) -> DraftOutline | None: ...
+
+
 class SweepAlreadyActive(Exception):
     """A sweep is already running on this project.
 
@@ -91,16 +131,17 @@ those two cases are not distinguished."""
 
 
 class BlurbSweep:
-    """One blurb-writing sweep per project, over in-memory progress only.
+    """One copy-and-outline sweep per project, over in-memory progress only.
 
-    `cache` is the one durable collaborator; the writer is supplied per call
-    to `start`, matching `AuthoringActivity.start`'s `run` parameter and for
-    the same reason -- a caller refused by the active-run check has not been
-    handed a live coroutine or a writer to leave unused.
+    `cache`/`outline_cache` are the durable collaborators; the writers are
+    supplied per call to `start`, matching `AuthoringActivity.start`'s `run`
+    parameter and for the same reason -- a caller refused by the active-run
+    check has not been handed a live coroutine or a writer to leave unused.
     """
 
-    def __init__(self, cache: BlurbCachePort) -> None:
+    def __init__(self, cache: BlurbCachePort, outline_cache: OutlineCachePort) -> None:
         self._cache = cache
+        self._outline_cache = outline_cache
         self._progress: dict[UUID, dict[str, Any]] = {}
         self._tasks: dict[UUID, asyncio.Task] = {}
 
@@ -122,6 +163,7 @@ class BlurbSweep:
         project_id: UUID,
         candidates: Sequence[_Candidate],
         write: _Writer,
+        write_outline: _OutlineWriter,
     ) -> dict[str, Any]:
         """Sweep every candidate in the background, refusing a second run.
 
@@ -142,53 +184,87 @@ class BlurbSweep:
             "failed": 0,
         }
         self._tasks[project_id] = asyncio.ensure_future(
-            self._drive(project_id, candidates, write)
+            self._drive(project_id, candidates, write, write_outline)
         )
         return dict(self._progress[project_id])
+
+    async def _blurb_ok(self, project_id: UUID, candidate: _Candidate, write: _Writer) -> bool:
+        """`True` when this candidate's copy is fresh in the cache by the
+        end of the attempt -- already there, or just written."""
+        cached = await self._cache.get(project_id, candidate.slug)
+        if cached is not None and cached.membership_hash == candidate.membership_hash:
+            # Up to date -- the whole reason this is a sweep and not a
+            # regenerate-everything button.
+            return True
+
+        draft = await write.write(candidate.title, candidate.anchors)
+        if draft is None:
+            # A refusal: the model would not ground this cluster's copy. The
+            # card keeps its title and its art -- see the module docstring --
+            # and the sweep moves on rather than stopping.
+            return False
+
+        await self._cache.put(
+            project_id,
+            candidate.slug,
+            draft.title,
+            draft.text,
+            candidate.membership_hash,
+            write.model_name,
+            datetime.now(UTC),
+        )
+        return True
+
+    async def _outline_ok(
+        self, project_id: UUID, candidate: _Candidate, write_outline: _OutlineWriter
+    ) -> bool:
+        """`_blurb_ok`'s exact shape, over the outline cache and writer --
+        see the module docstring on why copy and outline are attempted
+        independently rather than one gating the other."""
+        cached = await self._outline_cache.get(project_id, candidate.slug)
+        if cached is not None and cached.membership_hash == candidate.membership_hash:
+            return True
+
+        draft = await write_outline.write(candidate.title, candidate.anchors)
+        if draft is None:
+            return False
+
+        await self._outline_cache.put(
+            project_id,
+            candidate.slug,
+            draft.promise,
+            draft.sections,
+            candidate.membership_hash,
+            write_outline.model_name,
+            datetime.now(UTC),
+        )
+        return True
 
     async def _drive(
         self,
         project_id: UUID,
         candidates: Sequence[_Candidate],
         write: _Writer,
+        write_outline: _OutlineWriter,
     ) -> None:
         done = 0
         failed = 0
         try:
             for candidate in candidates:
-                cached = await self._cache.get(project_id, candidate.slug)
-                if cached is not None and cached.membership_hash == candidate.membership_hash:
-                    # Up to date -- the whole reason this is a sweep and not a
-                    # regenerate-everything button.
+                # Both attempted regardless of how the other went -- see the
+                # module docstring's paragraph on independence. A candidate
+                # counts as `done` only when everything it needed came out
+                # fresh; if either is missing, it is `failed`, not partially
+                # `done`, because a caller reading `done == total` uses that
+                # to mean "every card is fully written" and a partial success
+                # counted as `done` would make that reading wrong while the
+                # card is still bare of the piece that failed.
+                blurb_ok = await self._blurb_ok(project_id, candidate, write)
+                outline_ok = await self._outline_ok(project_id, candidate, write_outline)
+                if blurb_ok and outline_ok:
                     done += 1
-                    self._progress[project_id] = {
-                        "running": True,
-                        "done": done,
-                        "total": len(candidates),
-                        "failed": failed,
-                    }
-                    continue
-
-                draft = await write.write(candidate.title, candidate.anchors)
-                if draft is None:
-                    # A refusal: the model would not ground this cluster's
-                    # copy. The card keeps its title and its art -- see the
-                    # module docstring -- and the sweep moves on rather than
-                    # stopping. Not the same thing as the `except` below: a
-                    # refusal is an expected outcome this method counts, not
-                    # a defect it reports.
-                    failed += 1
                 else:
-                    await self._cache.put(
-                        project_id,
-                        candidate.slug,
-                        draft.title,
-                        draft.text,
-                        candidate.membership_hash,
-                        write.model_name,
-                        datetime.now(UTC),
-                    )
-                    done += 1
+                    failed += 1
 
                 self._progress[project_id] = {
                     "running": True,

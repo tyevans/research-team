@@ -1060,22 +1060,23 @@ class Application:
     outlines: ModelOutlineWriter
     """Writes a course outline for a cluster, given its title and anchors.
 
-    A field for `blurbs`' exact reason: built now, with no route calling it
-    yet, so a later increment adds one call rather than a constructor, an
-    adapter and a wiring decision at once. `_LazyOutlineCache` above (handed
-    to `course_service`, not held here) is the read side of the same port
-    pair `blurbs`/`_blurb_cache` are for blurbs."""
+    Called from exactly one place: `blurb_sweep`'s background sweep, which is
+    handed this field per call to `.start()` (see `web.py`'s
+    `outline_writer=application.outlines`). `CourseService` no longer holds
+    a reference to this writer at all -- `_outline_for` is cache-read-only,
+    per `course_realization.py`'s module docstring -- so `_LazyOutlineCache`
+    above (handed to both `course_service` and `blurb_sweep`) is the one
+    place an outline is read *and* the one place it is written."""
 
     blurb_sweep: BlurbSweep
-    """One blurb-writing sweep per project, over `_blurb_cache`.
+    """One copy-and-outline sweep per project, over `_blurb_cache` and
+    `_outline_cache`.
 
     Built here rather than left for whichever route starts a sweep, matching
-    `blurbs`' reasoning turned into an object rather than a bare port: the
-    module docstring on `BlurbSweep` records that the writer and the cache it
-    needs were built and never called for a whole increment, and building the
-    sweep now is what turns the next one into "add a route that calls
-    `.start()`" instead of "assemble a sweep, a cache adapter and a writer, and
-    wire all three"."""
+    `blurbs`' reasoning turned into an object rather than a bare port. Writes
+    outlines as well as copy -- folded in rather than built as a second sweep
+    beside it, since course-detail outline generation moved out of the
+    request path entirely; see `blurb_sweep.py`'s module docstring."""
 
     art_store: _LazyArtStore
     """The art library's storage half. Handed to `create_app`'s `art_store`
@@ -3042,12 +3043,26 @@ def build_application(
     # warns about, and building the object graph now turns the later
     # increment into adding one call rather than a whole graph).
     blurb_writer = ModelBlurbWriter(extraction_model)
-    # The sweep nothing calls yet either -- see `Application.blurb_sweep`'s
-    # docstring. Built over the same `blurb_cache`, so a sweep and an
-    # on-demand `catalog` read of the same slug see one cache, not two.
-    blurb_sweep = BlurbSweep(blurb_cache)
+    # `outline_cache` is built here, ahead of `blurb_sweep` below, rather than
+    # down beside `course_service` where it used to live -- the sweep now
+    # writes outlines as well as copy (see `blurb_sweep.py`'s module
+    # docstring) and needs the same cache `course_service` reads.
+    outline_cache = _LazyOutlineCache(resolved_path)
+    outline_writer = ModelOutlineWriter(extraction_model)
+    # The same `extraction_model` `blurb_writer` above takes -- the brief's
+    # own instruction, and `ModelOutlineWriter`'s docstring gives the reason:
+    # a second model configuration would be a second thing to keep in sync
+    # with `config.model_name()` for no benefit, since both jobs want the
+    # same "reason less, answer in a fixed shape" trade-off extraction
+    # already makes.
+    # The sweep nothing called yet in increment 1 -- see `Application
+    # .blurb_sweep`'s docstring. Built over the same `blurb_cache` and
+    # `outline_cache` every other reader of either uses, so a sweep and an
+    # on-demand `catalog`/course-detail read of the same slug see one cache
+    # each, not two.
+    blurb_sweep = BlurbSweep(blurb_cache, outline_cache)
     # Same `extraction_model` `blurb_writer` above takes -- no second model
-    # configuration, matching `outline_writer`'s own comment below on why.
+    # configuration, matching `outline_writer`'s own comment above on why.
     art_generator = ModelSvgArtist(extraction_model)
     art_sweep = ArtSweep(art_store, candidate_art_store)
 
@@ -3063,17 +3078,11 @@ def build_application(
     # `media_proposal_repository` -- see `build_course_repository`'s own
     # docstring for why no snapshot policy is warranted here.
     course_repository = build_course_repository(repository.store, repository.publisher)
-    outline_cache = _LazyOutlineCache(resolved_path)
-    outline_writer = ModelOutlineWriter(extraction_model)
-    # The same `extraction_model` `blurb_writer` above takes -- the brief's
-    # own instruction, and `ModelOutlineWriter`'s docstring gives the reason:
-    # a second model configuration would be a second thing to keep in sync
-    # with `config.model_name()` for no benefit, since both jobs want the
-    # same "reason less, answer in a fixed shape" trade-off extraction
-    # already makes.
+    # `outline_writer` is not passed here: `CourseService` no longer calls a
+    # model at all -- see `course_realization.py`'s module docstring. It
+    # stays a local above only because `blurb_sweep` needs it.
     course_service = CourseService(
         realized=_RealizedCourses(course_runner, authoring),
-        outline_writer=outline_writer,
         outline_cache=outline_cache,
     )
 

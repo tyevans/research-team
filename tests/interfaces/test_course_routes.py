@@ -103,6 +103,7 @@ async def app_and_client(db_path, fake_model):
         course_repository=application.course_repository,
         blurb_sweep=application.blurb_sweep,
         blurb_writer=application.blurbs,
+        outline_writer=application.outlines,
     )
     transport = ASGITransport(app=api)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -272,7 +273,17 @@ async def test_reading_blurb_progress_is_not_read_as_a_slug(app_and_client):
     assert "running" in response.json()
 
 
-async def test_the_detail_route_generates_a_missing_outline(app_and_client):
+async def test_the_detail_route_never_calls_a_model_and_reports_no_outline_uncached(
+    app_and_client,
+):
+    """`CourseService._outline_for` is cache-read-only now -- see
+    `course_realization.py`'s module docstring. A candidate nothing has ever
+    swept renders `outline: None`, the same shape a refusal used to render,
+    and this route must not block on a model call to answer that. Outline
+    generation moved entirely into the background sweep
+    (`POST /catalog/blurbs`, see `blurb_sweep.py`); it is not exercised by
+    this fixture's `fake_model`-backed application here.
+    """
     application, client = app_and_client.application, app_and_client.client
     project_id = await _new_project(client)
     await _seed_one_cluster(application, project_id)
@@ -283,12 +294,7 @@ async def test_the_detail_route_generates_a_missing_outline(app_and_client):
     assert response.status_code == 200
     body = response.json()
     assert body["candidate"]["slug"] == slug
-    # `application.course_service`'s outline writer is the real
-    # `ModelOutlineWriter` over `fake_model`, which answers neither a
-    # groundable nor a parseable outline for these four bare entities -- the
-    # assertion is on the shape this route commits to (`outline` present as
-    # a key, `None` for a refusal), not on a specific model reply.
-    assert "outline" in body
+    assert body["outline"] is None
     assert body["course"] is None
 
 

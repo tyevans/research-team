@@ -6,8 +6,10 @@ two things that were never checked against each other -- the co-mention
 channel shipped exactly that way, with every piece unit-tested, and produced
 nothing for a whole release. This drives the *real* `ModelOutlineWriter`
 against a live model, over anchors from a real ingest through
-`build_application`/`create_app` (`composition.py`'s own wiring), through the
-`GET /catalog/{slug}` route that generates and caches an outline
+`build_application`/`create_app` (`composition.py`'s own wiring), through
+`POST /catalog/blurbs` -- the background sweep that now writes outlines
+(`BlurbSweep`, folded in per `blurb_sweep.py`'s module docstring) -- and then
+`GET /catalog/{slug}`, which as of this change only ever reads the cache
 (`CourseService._outline_for`).
 
 **Skips loudly, not silently**, when no live model answers at the configured
@@ -21,14 +23,14 @@ is `tuple[tuple[str, str], ...]` -- positional, `(heading, summary)` -- and
 position in both directions, so a transposed pair (a summary written into a
 heading, or the reverse) would typecheck, round-trip, and render backwards
 with nothing else in the suite asserting the pairing survived. This test
-generates an outline once (a live model call, cached), then reads the same
-candidate's detail page a second time -- a cache hit, no model call -- and
-asserts the two responses carry byte-identical `heading`/`summary` pairs in
-the same order. A transposition bug on either the write or the read side of
-`_LazyOutlineCache` would still pass a same-shape assertion done once; only
-comparing the freshly-generated response against the cached re-read exercises
-both `put` and `get` on the same data and would catch either direction
-disagreeing with itself.
+sweeps the catalog once (a live model call, cached), then reads the same
+candidate's detail page twice -- both cache hits, no further model call --
+and asserts the two responses carry byte-identical `heading`/`summary` pairs
+in the same order. A transposition bug on either the write or the read side
+of `_LazyOutlineCache` would still pass a same-shape assertion done once;
+only comparing two independent reads of the cached row exercises both `put`
+(inside the sweep) and `get` (inside `_outline_for`) on the same data and
+would catch either direction disagreeing with itself.
 """
 
 from datetime import UTC, datetime
@@ -228,6 +230,15 @@ async def test_an_outline_over_a_real_ingest_survives_its_own_cache_round_trip(d
         catalog_features=lambda: _NoFeatures(),
         course_service=application.course_service,
         course_repository=application.course_repository,
+        # Outline generation now happens only in the sweep -- see the module
+        # docstring. `blurb_writer`/`blurb_sweep` are the real ones off
+        # `application`, over the real `blurb_cache` composition wired (not
+        # `_NoBlurbs`, which is only `catalog`'s stand-in for rendering); a
+        # sweep needs somewhere real to write the copy it generates alongside
+        # every outline.
+        blurb_sweep=application.blurb_sweep,
+        blurb_writer=application.blurbs,
+        outline_writer=application.outlines,
     )
     transport = ASGITransport(app=api)
     try:
@@ -253,8 +264,18 @@ async def test_an_outline_over_a_real_ingest_survives_its_own_cache_round_trip(d
             )
             slug = all_candidates[0]["slug"]
 
-            # First read: a cache miss, so `CourseService._outline_for` calls
-            # the real `ModelOutlineWriter` and caches a non-refusal.
+            # Sweep once: `BlurbSweep._drive` calls the real
+            # `ModelOutlineWriter` for this candidate (a cache miss) and
+            # caches a non-refusal, alongside the real `ModelBlurbWriter` for
+            # its copy -- the sweep attempts both, per the module docstring's
+            # independence rule, but this test asserts only on the outline.
+            started = await client.post(f"/api/projects/{project_id}/catalog/blurbs")
+            assert started.status_code == 202
+            await application.blurb_sweep.wait(UUID(project_id))
+
+            # First read: `_outline_for` is cache-read-only now -- this is a
+            # cache hit, no model call, reading back what the sweep above
+            # wrote.
             first = await client.get(f"/api/projects/{project_id}/catalog/{slug}")
             assert first.status_code == 200
             first_outline = first.json()["outline"]
@@ -273,10 +294,10 @@ async def test_an_outline_over_a_real_ingest_survives_its_own_cache_round_trip(d
                 )
 
             # Second read: `candidate.membership_hash` has not changed, so
-            # `_outline_for` returns the cached row without calling the model
-            # again -- this is `OutlineCachePort.get` exercising the read side
-            # of the exact conversion `.put` above exercised on the write
-            # side, on the same data.
+            # `_outline_for` returns the same cached row again -- this is
+            # `OutlineCachePort.get` read twice over the one row the sweep's
+            # `put` wrote, the exact conversion this test exists to check
+            # both directions of.
             second = await client.get(f"/api/projects/{project_id}/catalog/{slug}")
             assert second.status_code == 200
             second_outline = second.json()["outline"]
