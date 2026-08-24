@@ -538,7 +538,17 @@ Run: `uv run pytest tests/infrastructure/test_outline_writer.py -v`
 - Prompt names at most `PROMPT_ANCHORS` anchors (import the constant from `application/course_authoring.py`; do not restate 12).
 - Asks for a one-sentence promise and three to six `## Heading` / paragraph pairs.
 - Parses; on a parse failure returns `None`.
-- Runs `grounding.ungrounded_runs` over the promise and every heading and summary joined; any ungrounded run refuses the whole outline.
+- Runs `grounding.ungrounded_runs` **separately over each field** — the promise, each heading, each summary — and concatenates the results. Any ungrounded run refuses the whole outline.
+
+  **Do not join the fields into one string first.** `_SENTENCE_SPLIT` splits on terminal punctuation, and a heading has none, so a joined `"Origins"` + `"Cochrane's first flight."` reads as one sentence and yields the single capitalised run `Origins Cochrane's` — grounded in no anchor, refusing every outline that has a capitalised heading. Which is every outline. Add a test that would fail on the joined version:
+
+```python
+async def test_a_capitalised_heading_does_not_run_into_the_summary_beneath_it():
+    """Fails on a writer that joins the fields before checking: the heading
+    and the summary's first word fuse into one capitalised run that no anchor
+    contains, refusing every outline that has a heading. Every outline has a
+    heading."""
+```
 - Fewer than three sections refuses; more than six truncates to six.
 
 - [ ] **Step 5: Run to verify pass, then re-run the blurb suite**
