@@ -93,6 +93,7 @@ class _OneStaleBlurb:
             return None
         return CachedBlurb(
             text="a blurb from before",
+            title="A course from before",
             membership_hash=STALE_MEMBERSHIP_HASH,
             model="test",
             generated_at=datetime(2020, 1, 1, tzinfo=UTC),
