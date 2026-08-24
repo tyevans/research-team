@@ -177,6 +177,7 @@ from research_team.infrastructure.knowledge.entity_embeddings import (
     refresh_project_embeddings,
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
 from research_team.infrastructure.knowledge.outline_writer import ModelOutlineWriter
@@ -189,6 +190,7 @@ from research_team.infrastructure.knowledge.stores import (
     build_graph_store,
     build_vector_store,
 )
+from research_team.infrastructure.knowledge.svg_artist import ModelSvgArtist
 from research_team.infrastructure.knowledge.type_plurality_grouper import TypePluralityGrouper
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.perception.readeverything_adapter import (
@@ -225,6 +227,8 @@ from research_team.infrastructure.persistence.read_models import (
     ArtStore,
     AskConversationRunner,
     AuthoringRunRunner,
+    CandidateArtRow,
+    CandidateArtStore,
     CatalogFeatureProjection,
     CatalogFeatureStore,
     CourseBlurbStore,
@@ -239,6 +243,7 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
+from research_team.interfaces.web.art_sweep import ArtSweep
 from research_team.interfaces.web.blurb_sweep import BlurbSweep
 from research_team.workflows import PRESETS
 
@@ -496,6 +501,39 @@ class _LazyArtStore:
     async def increment_uses(self, art_id: UUID) -> None:
         store = await self._opened()
         await store.increment_uses(art_id)
+
+    async def close(self) -> None:
+        if self._store is not None:
+            await self._store.close()
+
+
+class _LazyCandidateArtStore:
+    """`CandidateArtStore`, opened on first use -- `_LazyArtStore`'s exact
+    shape and reason. A second small wrapper rather than one class managing
+    both tables: `ArtStore` and `CandidateArtStore` are two different
+    connections to two different tables in `read_models.py` already, and
+    `_LazyOutlineCache`'s own docstring gives the precedent for keeping a
+    lazy wrapper one store to one class."""
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._store: CandidateArtStore | None = None
+        self._lock = asyncio.Lock()
+
+    async def _opened(self) -> CandidateArtStore:
+        if self._store is None:
+            async with self._lock:
+                if self._store is None:
+                    self._store = await CandidateArtStore.open(self._db_path)
+        return self._store
+
+    async def get(self, project_id: UUID, slug: str) -> CandidateArtRow | None:
+        store = await self._opened()
+        return await store.get(project_id, slug)
+
+    async def put(self, project_id: UUID, slug: str, art_id: UUID) -> None:
+        store = await self._opened()
+        await store.put(project_id, slug, art_id)
 
     async def close(self) -> None:
         if self._store is not None:
@@ -1026,13 +1064,34 @@ class Application:
     wire all three"."""
 
     art_store: _LazyArtStore
-    """The art library's storage half (Task: art storage). A field for
-    `_blurb_cache`'s reason turned around -- that one is private because
-    `catalog_features` reads through the runner beside it, but nothing
-    reads art through anything else yet, so this is public and handed to
-    `create_app`'s `art_store` parameter directly. The generator, the
-    searcher and the assignment sweep are a sibling task's job; this field
-    exists so `/api/art/{art_id}.svg` can serve what that task writes."""
+    """The art library's storage half. Handed to `create_app`'s `art_store`
+    parameter directly, so `/api/art/{art_id}.svg` can serve what
+    `art_generator`/`art_sweep` below write to it."""
+
+    art_generator: ModelSvgArtist
+    """Generates one piece of art from a candidate's title and anchors, or
+    refuses -- see `ArtGeneratorPort`'s docstring. Built over the same
+    `extraction_model` `blurbs`/`outlines` use; no second model
+    configuration, matching `outline_writer`'s own comment on why."""
+
+    _candidate_art_store: _LazyCandidateArtStore
+    """The candidate-to-art assignment table `art_matcher`/`art_sweep` read
+    and write through `LibraryArtProvider`. Private for `_blurb_cache`'s
+    reason turned around -- kept here solely so `close()` can close the
+    connection it lazily opens."""
+
+    art_matcher: LibraryArtProvider
+    """The same `LibraryArtProvider` `catalog_service` was built with,
+    exposed separately so `art_sweep` can call `.match()` to check "does the
+    library already cover this candidate" without generating for it -- see
+    `art_sweep.py`'s module docstring for why the sweep and the on-demand
+    path share exactly one search implementation rather than each carrying
+    their own."""
+
+    art_sweep: ArtSweep
+    """One art-generation sweep per project, over `art_store`/
+    `_candidate_art_store` -- `blurb_sweep`'s reasoning turned to art: built
+    here so a route only has to add one call to `.start()`."""
 
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
@@ -1425,6 +1484,7 @@ class Application:
         await self._blurb_cache.close()
         await self._outline_cache.close()
         await self.art_store.close()
+        await self._candidate_art_store.close()
         await self.media_proposals.stop()
         await self.asks.stop()
         await self.authoring.stop()
@@ -2939,15 +2999,27 @@ def build_application(
     catalog_runner = _CatalogFeatureRunner(
         repository.store, repository.publisher, resolved_path
     )
-    # `TypePluralityGrouper`/`SeededArtProvider` are the one production
-    # adapter each of `CategoryGrouper`/`ArtPort` has today -- see their own
-    # docstrings for why, and see `test_catalog_wiring.py` for the
-    # both-ends-over-real-data test CLAUDE.md's co-mention section demands
-    # of exactly this shape.
+    # `TypePluralityGrouper` is the one production adapter `CategoryGrouper`
+    # has today -- see its own docstring for why. `ArtPort` now has two:
+    # `LibraryArtProvider` below is what `catalog_service` is built with,
+    # falling back to `SeededArtProvider` -- see `test_catalog_wiring.py` for
+    # the both-ends-over-real-data test CLAUDE.md's co-mention section
+    # demands of exactly this shape.
     blurb_cache = _LazyBlurbCache(resolved_path)
+    # The art library's storage half. Opened lazily for `blurb_cache`'s
+    # exact reason -- no event loop yet -- and over the same `resolved_path`
+    # every other cache in this function reads, so a piece of art assigned
+    # by one request is visible to the very next one.
+    art_store = _LazyArtStore(resolved_path)
+    candidate_art_store = _LazyCandidateArtStore(resolved_path)
+    art_matcher = LibraryArtProvider(
+        art_store=art_store,
+        candidate_art_store=candidate_art_store,
+        fallback=SeededArtProvider(),
+    )
     catalog_service = CatalogService(
         grouper=TypePluralityGrouper(),
-        art=SeededArtProvider(),
+        art=art_matcher,
         blurbs=blurb_cache,
     )
     # R5: constructed even though nothing calls `.write()` yet this
@@ -2960,11 +3032,10 @@ def build_application(
     # docstring. Built over the same `blurb_cache`, so a sweep and an
     # on-demand `catalog` read of the same slug see one cache, not two.
     blurb_sweep = BlurbSweep(blurb_cache)
-    # The art library's storage half (Task: art storage). Opened lazily for
-    # `blurb_cache`'s exact reason -- no event loop yet -- and over the same
-    # `resolved_path` every other cache in this function reads, so a piece
-    # of art assigned by one request is visible to the very next one.
-    art_store = _LazyArtStore(resolved_path)
+    # Same `extraction_model` `blurb_writer` above takes -- no second model
+    # configuration, matching `outline_writer`'s own comment below on why.
+    art_generator = ModelSvgArtist(extraction_model)
+    art_sweep = ArtSweep(art_store, candidate_art_store)
 
     # `_course_runner` follows the log the same way `catalog_runner` does,
     # over this application's own store and bus -- see its own docstring for
@@ -3224,6 +3295,10 @@ def build_application(
         _outline_cache=outline_cache,
         blurb_sweep=blurb_sweep,
         art_store=art_store,
+        art_generator=art_generator,
+        art_matcher=art_matcher,
+        _candidate_art_store=candidate_art_store,
+        art_sweep=art_sweep,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,
