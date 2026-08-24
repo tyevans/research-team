@@ -159,8 +159,15 @@ export const queryKeys = {
 
   /** The whole front page in one key, matching `curriculum`'s reasoning: one
    *  request answers hero, highlights and every filed category, so a feature
-   *  or unfeature invalidates the one cache entry that shows all three. */
-  catalog: (project: ProjectId) => ['catalog', project] as const,
+   *  or unfeature invalidates the one cache entry that shows all three.
+   *
+   *  `includeUnnamed` is part of the key, not a separate flag checked after
+   *  the fact -- the server filters before sectioning (`CatalogService.build`),
+   *  so "show unnamed" and "hide unnamed" are genuinely different response
+   *  bodies (different hero/highlights membership, not just a client-side
+   *  filter over one shared payload) and belong in separate cache entries. */
+  catalog: (project: ProjectId, includeUnnamed: boolean) =>
+    ['catalog', project, includeUnnamed] as const,
 
   /** One catalog course's detail page, keyed by slug beside `catalog` rather
    *  than under it -- a realize/abandon invalidates this one course, not the

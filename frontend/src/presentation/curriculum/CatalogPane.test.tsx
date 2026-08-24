@@ -46,6 +46,7 @@ const aCatalog = (over: Partial<Catalog> = {}): Catalog => ({
   },
   categories: new Map([['antiquity', 'Antiquity']]),
   unplaceableFeatured: [],
+  unnamedCount: 0,
   orphanedCourses: [],
   derivedFrom: { entities: 100, relationships: 50 },
   ...over,
@@ -147,7 +148,63 @@ describe('CatalogPane', () => {
     const catalog = fakeCatalog({ catalog: catalogFn })
     show(catalog)
 
-    await waitFor(() => expect(catalogFn).toHaveBeenCalledWith(project))
+    // `false`: the toggle's local state starts off, and that state is what
+    // decides which of the two cache entries (`queryKeys.catalog(project,
+    // includeUnnamed)`) this fetch lands in.
+    await waitFor(() => expect(catalogFn).toHaveBeenCalledWith(project, false))
+  })
+
+  it('shows how many candidates are hidden, and refetches with unnamed=true when toggled', async () => {
+    const catalogFn = vi
+      .fn<CatalogRepository['catalog']>()
+      .mockResolvedValue(aCatalog({ unnamedCount: 3 }))
+    const catalog = fakeCatalog({ catalog: catalogFn })
+    show(catalog)
+
+    const toggle = await screen.findByRole('button', { name: /show 3 unnamed/i })
+    await userEvent.click(toggle)
+
+    await waitFor(() => expect(catalogFn).toHaveBeenCalledWith(project, true))
+  })
+
+  it('reads "hide unnamed" once the toggle is showing them', async () => {
+    const catalog = fakeCatalog({
+      catalog: vi
+        .fn<CatalogRepository['catalog']>()
+        .mockResolvedValue(aCatalog({ unnamedCount: 2 })),
+    })
+    show(catalog)
+
+    await userEvent.click(await screen.findByRole('button', { name: /show 2 unnamed/i }))
+
+    expect(await screen.findByRole('button', { name: /hide unnamed/i })).toBeInTheDocument()
+  })
+
+  it('renders no toggle when nothing is hidden', async () => {
+    const catalog = fakeCatalog({
+      catalog: vi
+        .fn<CatalogRepository['catalog']>()
+        .mockResolvedValue(aCatalog({ unnamedCount: 0 })),
+    })
+    show(catalog)
+
+    await screen.findByText('Hero Course')
+    expect(screen.queryByRole('button', { name: /unnamed/i })).not.toBeInTheDocument()
+  })
+
+  it('points at the sweep button when the catalog has never been named', async () => {
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(
+        aCatalog({
+          sections: { hero: [], highlights: [], filed: [] },
+          unnamedCount: 5,
+        }),
+      ),
+    })
+    show(catalog)
+
+    expect(await screen.findByText(/write the missing copy/i)).toBeInTheDocument()
+    expect(await screen.findByText(/nothing named yet/i)).toHaveTextContent(/5 candidates/)
   })
 
   it('renders Loading while the catalog is pending', () => {

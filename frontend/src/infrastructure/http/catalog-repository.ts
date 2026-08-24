@@ -8,8 +8,11 @@ import { toCatalog } from './mappers.ts'
 export class HttpCatalogRepository implements CatalogRepository {
   constructor(private readonly http: HttpClient) {}
 
-  async catalog(projectId: ProjectId) {
-    return toCatalog(await this.http.get(`/api/projects/${seg(projectId)}/catalog`, dto.catalogDto))
+  async catalog(projectId: ProjectId, includeUnnamed = false) {
+    const suffix = includeUnnamed ? '?unnamed=true' : ''
+    return toCatalog(
+      await this.http.get(`/api/projects/${seg(projectId)}/catalog${suffix}`, dto.catalogDto),
+    )
   }
 
   async feature(projectId: ProjectId, slug: string, rank: number) {
