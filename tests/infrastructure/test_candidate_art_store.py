@@ -22,11 +22,14 @@ async def test_an_assignment_round_trips(store):
     project_id = uuid4()
     art_id = uuid4()
 
-    await store.put(project_id, "warp-drive", art_id)
+    await store.put(project_id, "warp-drive", art_id, "hash-1")
 
     row = await store.get(project_id, "warp-drive")
     assert row is not None
     assert row.art_id == art_id
+    # The hash the assignment was made against, not just the art id -- the
+    # art-refresh feature's whole hook for detecting a drifted candidate.
+    assert row.membership_hash == "hash-1"
 
 
 async def test_an_unassigned_slug_returns_none(store):
@@ -41,12 +44,13 @@ async def test_assigning_the_same_slug_twice_replaces_rather_than_duplicates(sto
     project_id = uuid4()
     first_art, second_art = uuid4(), uuid4()
 
-    await store.put(project_id, "warp-drive", first_art)
-    await store.put(project_id, "warp-drive", second_art)
+    await store.put(project_id, "warp-drive", first_art, "hash-1")
+    await store.put(project_id, "warp-drive", second_art, "hash-2")
 
     row = await store.get(project_id, "warp-drive")
     assert row is not None
     assert row.art_id == second_art
+    assert row.membership_hash == "hash-2"
 
 
 async def test_the_same_slug_in_two_projects_is_two_rows(store):
@@ -54,8 +58,8 @@ async def test_the_same_slug_in_two_projects_is_two_rows(store):
     project_a, project_b = uuid4(), uuid4()
     art_a, art_b = uuid4(), uuid4()
 
-    await store.put(project_a, slug, art_a)
-    await store.put(project_b, slug, art_b)
+    await store.put(project_a, slug, art_a, "hash-a")
+    await store.put(project_b, slug, art_b, "hash-b")
 
     row_a = await store.get(project_a, slug)
     row_b = await store.get(project_b, slug)
