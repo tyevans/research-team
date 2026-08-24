@@ -477,7 +477,8 @@ git commit -m "The outline cache, and why it is not a kind column on blurbs"
 
 **Interfaces:**
 - Consumes: `research_team.domain.learning_area.AreaMember`.
-- Produces: `grounding.ungrounded_runs(reply, anchors) -> list[str]`, `grounding.SENTENCE_OPENERS`; `OutlineTextPort.write(title, anchors) -> DraftOutline | None`; `DraftOutline(promise: str, sections: tuple[tuple[str, str], ...])`.
+- Produces: `grounding.ungrounded_runs(reply, anchors) -> list[str]`, `grounding.SENTENCE_OPENERS`; `OutlineTextPort.write(title, anchors) -> DraftOutline | None`; `OutlineTextPort.model_name: str`; `DraftOutline(promise: str, sections: tuple[tuple[str, str], ...])`.
+- Also produces: **`BlurbTextPort.model_name: str`**, and the matching property on `ModelBlurbWriter`. See R7 below.
 
 **Read `blurb_writer.py` in full before starting.** Its grounding check has three rounds of review behind it — a capitalised run in the reply must substring-match an anchor name, with a shrunk list of exempt sentence openers. **Move it; do not re-derive it.** Two copies of that predicate will drift, and the blurb's copy is the one that survived review.
 
@@ -531,6 +532,12 @@ async def test_a_reply_that_is_not_the_expected_shape_is_refused_rather_than_rai
 Run: `uv run pytest tests/infrastructure/test_outline_writer.py -v`
 
 - [ ] **Step 4: Implement**
+
+**R7 — both text ports gain a `model_name` property.** `CourseBlurbRow` and `CourseOutlineRow` both carry a `model` column, and nothing in the system can currently fill it: `ModelBlurbWriter` holds a `BaseChatModel` privately and exposes only `write`. Increment 1 never noticed because it never called `put`. The caller is in `application/`, which `tests/test_architecture.py` keeps free of LangChain's vocabulary, so it cannot reach into the chat model itself.
+
+Add `model_name: str` to `BlurbTextPort` and `OutlineTextPort`, implemented on each adapter as a property reading the chat model's own name (`getattr(self._model, "model_name", None) or getattr(self._model, "model", None) or type(self._model).__name__` — a local model's LangChain wrapper does not reliably carry either attribute, and a stored `"unknown"` is better than a crash on a value that exists only for provenance). Add a test that the property is non-empty for a stub model carrying neither attribute.
+
+The alternative — returning the name beside the text from `write` — was rejected: it makes every refusal (`None`) also lose the model name, and the name is a property of the writer, not of one reply.
 
 `OutlineTextPort` in `research_team/application/course_catalog.py`, beside `BlurbTextPort` and documented in the same register — including that `None` is a legitimate answer and not an error, and **that per CLAUDE.md this port has exactly one production adapter and therefore needs a test driving both ends over real data** (Task 13).
 
