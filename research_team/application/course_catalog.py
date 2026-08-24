@@ -6,6 +6,7 @@ have to be edited every time a better one arrives. `CategoryGrouper` is the
 first of these.
 """
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -87,13 +88,56 @@ class ArtPort(Protocol):
     implementation and its replacement can differ completely underneath it.
     """
 
-    def for_candidate(self, slug: str, category: CategoryKey) -> ArtRef:
+    async def for_candidate(self, project_id: UUID, candidate: CourseCandidate) -> ArtRef:
         """The art for one candidate. Deterministic in every implementation
         this port is expected to have -- a catalog whose illustrations
         reshuffle between requests is not one a reader can recognise a card
         in, and that constraint belongs on the port, not just on today's
-        adapter."""
+        adapter.
+
+        `project_id` is not on `CourseCandidate` and is required anyway: a
+        library-backed implementation keys its per-project assignment (which
+        art id a given slug resolved to) on `(project_id, slug)`, so the port
+        takes it explicitly rather than asking every candidate to carry a
+        field only one caller needs. The candidate itself is passed whole,
+        not just `slug`/`category`, because a search-based implementation
+        needs the title and anchors too."""
         ...
+
+
+@dataclass(frozen=True)
+class DraftArt:
+    """What a model produced for one piece of art, before it is stored.
+
+    `svg` has already passed `SvgSanitiser().sanitise` by the time this is
+    constructed -- `ArtGeneratorPort.generate`'s docstring is where that rule
+    lives, this dataclass just carries the result. No `tags` field: the
+    model is asked for an illustration and a description, not a tag list
+    (the prompt already has enough to refuse on without adding a field
+    nothing downstream needs from the model itself), so the caller that
+    stores this (the sweep, in `interfaces/web/art_sweep.py`) derives tags
+    cheaply from the candidate it generated for -- its category, today.
+    """
+
+    svg: str
+    description: str
+
+
+class ArtGeneratorPort(Protocol):
+    """Generates one piece of art from a candidate's title and anchors, or
+    refuses.
+
+    `None` is a refusal, not an error, for `BlurbTextPort`'s exact reason:
+    unparseable output, an empty description, or an SVG `SvgSanitiser`
+    refuses are all a `None` a caller treats identically to "the model had
+    nothing safe to offer" -- the sweep just moves on to the next candidate,
+    leaving the seeded placeholder in place. `description` is the search key
+    `LibraryArtProvider`'s lexical search reads back out of the stored row,
+    so a reply without one has nothing to be searched by later and is
+    refused whole rather than stored with an empty string standing in.
+    """
+
+    async def generate(self, title: str, anchors: Sequence[AreaMember]) -> DraftArt | None: ...
 
 
 @dataclass(frozen=True)
@@ -395,7 +439,7 @@ class CatalogService:
                 has_name = bool(cached.title)
                 title = cached.title or area.display_name()
             named[slug] = has_name
-            candidates[slug] = CourseCandidate(
+            candidate = CourseCandidate(
                 slug=slug,
                 title=title,
                 category=category,
@@ -403,9 +447,12 @@ class CatalogService:
                 size=area.size,
                 membership_hash=membership_hash(area),
                 anchors=area.anchors,
-                art=self._art.for_candidate(slug, category),
+                art=ArtRef(url="", alt=""),  # placeholder, replaced below
                 blurb=blurb,
                 featured_rank=featured.get(slug),
+            )
+            candidates[slug] = dataclasses.replace(
+                candidate, art=await self._art.for_candidate(project_id, candidate)
             )
 
         # A featured candidate is never hidden, named or not: someone pinned

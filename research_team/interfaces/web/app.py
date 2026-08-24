@@ -66,7 +66,12 @@ from research_team.application.corpus_editing import CorpusEditor, DocumentExist
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.course_authoring import CourseAuthor
-from research_team.application.course_catalog import BlurbTextPort, Catalog, CatalogService
+from research_team.application.course_catalog import (
+    ArtGeneratorPort,
+    BlurbTextPort,
+    Catalog,
+    CatalogService,
+)
 from research_team.application.course_realization import CourseService
 from research_team.application.curriculum import CurriculumService
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
@@ -148,7 +153,9 @@ from research_team.domain.topic import (
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.knowledge.semantic_neighbours import VectorNeighbours
+from research_team.infrastructure.knowledge.svg_sanitiser import SvgSanitiser
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
@@ -156,6 +163,7 @@ from research_team.infrastructure.persistence.corpus_reader import ProjectCorpus
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
 from research_team.infrastructure.persistence.interaction_log import ENVELOPE_FIELDS
 from research_team.infrastructure.persistence.read_models import (
+    ArtStore,
     AskConversationRunner,
     CatalogFeatureStore,
     MediaProposalRow,
@@ -166,6 +174,8 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
+from research_team.interfaces.web.art_sweep import ArtSweep
+from research_team.interfaces.web.art_sweep import SweepAlreadyActive as ArtSweepAlreadyActive
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.blurb_sweep import BlurbSweep, SweepAlreadyActive
 from research_team.interfaces.web.dispatch import DispatchQueue
@@ -1019,6 +1029,10 @@ def create_app(
     course_repository: AggregateRepository[Course] | None = None,
     blurb_sweep: BlurbSweep | None = None,
     blurb_writer: BlurbTextPort | None = None,
+    art_store: ArtStore | None = None,
+    art_sweep: ArtSweep | None = None,
+    art_generator: ArtGeneratorPort | None = None,
+    art_matcher: LibraryArtProvider | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -3182,7 +3196,10 @@ def create_app(
         /catalog/{slug}` (Task 9): both are one segment past `/catalog`, one
         of them is literal, and the literal one has to come first or a
         project's course named `blurbs` would be unreachable and every other
-        project's sweep progress would read as "no such course".
+        project's sweep progress would read as "no such course". `GET`/`POST
+        /catalog/art` further below is the identical situation with the art
+        sweep in place of the blurb sweep -- registered ahead of
+        `/catalog/{slug}` for the same reason, no separate comment needed.
 
         404 for a key nothing in this catalog uses, not an empty category --
         an empty category and a misspelled key are different answers, and a
@@ -3229,6 +3246,37 @@ def create_app(
         try:
             frame = await blurb_sweep.start(project_id, built.all_candidates, blurb_writer)
         except SweepAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=frame)
+
+    @app.get("/api/projects/{project_id}/catalog/art")
+    async def read_art_sweep_progress(project_id: UUID):
+        """Where the last (or current) art sweep on this project stands.
+        Mirrors `read_blurb_sweep_progress` exactly -- see its docstring and
+        `read_catalog_category`'s for why this is registered ahead of `GET
+        /catalog/{slug}` below."""
+        await _require_project(project_id)
+        if art_sweep is None:
+            raise HTTPException(status_code=503, detail="art sweeping is not configured")
+        return art_sweep.progress(project_id)
+
+    @app.post("/api/projects/{project_id}/catalog/art", status_code=202)
+    async def start_art_sweep(project_id: UUID):
+        """Generate art for every candidate the library has neither assigned
+        nor matched, in the background.
+
+        409 when a sweep is already running on this project, matching
+        `start_blurb_sweep`'s reason.
+        """
+        await _require_project(project_id)
+        if art_sweep is None or art_generator is None or art_matcher is None:
+            raise HTTPException(status_code=503, detail="art sweeping is not configured")
+        built = await _catalog(project_id, include_unnamed=True)
+        try:
+            frame = await art_sweep.start(
+                project_id, built.all_candidates, art_generator, art_matcher
+            )
+        except ArtSweepAlreadyActive as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return JSONResponse(status_code=202, content=frame)
 
@@ -3417,6 +3465,62 @@ def create_app(
         """
         await _require_project(project_id)
         return catalog_view(await _catalog(project_id, include_unnamed=unnamed))
+
+    @app.get("/api/art/{art_id}.svg")
+    async def read_art(art_id: UUID):
+        """Serve one piece of art from the global library.
+
+        Deliberately **not** under `/api/projects/{id}/` -- the increment-3
+        spec's "Reuse across projects" section is the point of the library
+        existing at all: a picture drawn for one project's course is
+        findable and servable from any other, and nesting this under a
+        project id would make that reuse a lie the URL itself contradicts.
+
+        Re-sanitises on the way out rather than trusting `ArtStore.put`'s
+        write-time check alone. `ArtStore.put`'s own docstring gives the
+        cost side of that trade -- every read pays a parse it does not
+        strictly need if nothing has gone wrong -- but the alternative is a
+        route whose safety depends entirely on every past and future writer
+        of this table having called the sanitiser correctly, including any
+        row written by a version of this codebase that predates it, or by a
+        bug in the sibling generator task this route cannot see. A refusal
+        here degrades to 404 rather than serving anything, and an SVG cheap
+        enough to regenerate is a better failure than trusting a write path
+        this route does not control.
+        """
+        if art_store is None:
+            raise HTTPException(status_code=404, detail=f"no art {art_id}")
+        row = await art_store.get(art_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no art {art_id}")
+        safe = SvgSanitiser().sanitise(row.svg)
+        if safe is None:
+            # A row that fails re-sanitisation is treated the same as a
+            # missing one -- 404, not 500 -- because the failure is "this
+            # is not safe to serve", which is exactly what a missing row
+            # also means to a caller of this route. Logged as a real
+            # anomaly, since it means a stored row disagrees with the
+            # sanitiser that is supposed to have already passed it once.
+            logging.getLogger(__name__).warning(
+                "stored art %s failed re-sanitisation on read", art_id
+            )
+            raise HTTPException(status_code=404, detail=f"no art {art_id}")
+        return Response(
+            content=safe,
+            media_type="image/svg+xml",
+            headers={
+                # Immutable: `art_id` is `uuid4`, minted once, and the bytes
+                # under it never change (see `ArtRow`'s docstring) -- so a
+                # browser that has fetched one id never needs to ask again.
+                "Cache-Control": "public, max-age=31536000, immutable",
+                # Belt over the sanitiser's suspenders, per the increment-3
+                # spec: an `<img src>` will not execute script in any
+                # current browser, but this route is general enough that a
+                # future caller may inline the response, and this header is
+                # what still holds the line if one does.
+                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+            },
+        )
 
     @app.post("/api/projects/{project_id}/embeddings", status_code=202)
     async def refresh_embeddings(project_id: UUID):

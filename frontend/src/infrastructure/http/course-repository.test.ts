@@ -113,3 +113,18 @@ it('starts and reads a blurb sweep', async () => {
   expect(http.post.mock.calls[0]?.[0]).toBe(`/api/projects/${PROJECT}/catalog/blurbs`)
   expect(http.get.mock.calls[0]?.[0]).toBe(`/api/projects/${PROJECT}/catalog/blurbs`)
 })
+
+it('starts and reads an art sweep', async () => {
+  const progress = { running: true, done: 1, total: 4, failed: 0, error: null }
+  const http = {
+    post: vi.fn().mockResolvedValue(progress),
+    get: vi.fn().mockResolvedValue(progress),
+  }
+  const repository = new HttpCourseRepository(http as never)
+
+  await repository.startArtSweep(PROJECT)
+  await repository.fetchArtSweep(PROJECT)
+
+  expect(http.post.mock.calls[0]?.[0]).toBe(`/api/projects/${PROJECT}/catalog/art`)
+  expect(http.get.mock.calls[0]?.[0]).toBe(`/api/projects/${PROJECT}/catalog/art`)
+})

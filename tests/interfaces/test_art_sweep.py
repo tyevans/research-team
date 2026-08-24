@@ -1,0 +1,206 @@
+"""The art sweep: generates art for every candidate the library has neither
+assigned nor matched, in the background, one run per project. Modelled on
+`test_blurb_sweep.py` -- read it first for the shared shape."""
+
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+
+from research_team.application.course_catalog import DraftArt
+from research_team.domain.learning_area import AreaMember
+from research_team.interfaces.web.art_sweep import ArtSweep, SweepAlreadyActive
+
+
+class _FakeArtStore:
+    def __init__(self) -> None:
+        self.put_calls: list[dict] = []
+
+    async def put(self, **kwargs):
+        self.put_calls.append(kwargs)
+
+
+class _FakeCandidateArtStore:
+    def __init__(self, assigned: set[str] | None = None) -> None:
+        self._assigned = assigned or set()
+        self.put_calls: list[tuple] = []
+
+    async def get(self, project_id, slug):
+        return object() if slug in self._assigned else None
+
+    async def put(self, project_id, slug, art_id):
+        self.put_calls.append((project_id, slug, art_id))
+
+
+class _FakeMatcher:
+    """`LibraryArtProvider`-shaped. `matches` names slugs `match` answers
+    something (not `None`) for."""
+
+    def __init__(self, matches: set[str] | None = None) -> None:
+        self._matches = matches or set()
+        self.calls: list[str] = []
+
+    async def match(self, candidate):
+        self.calls.append(candidate.slug)
+        if candidate.slug in self._matches:
+            return (object(), 0.9)
+        return None
+
+
+class _FakeGenerator:
+    def __init__(self, refuse: set[str] | None = None) -> None:
+        self._refuse = refuse or set()
+        self.calls: list[str] = []
+
+    async def generate(self, title, anchors):
+        self.calls.append(title)
+        if title in self._refuse:
+            return None
+        return DraftArt(svg="<svg viewBox='0 0 1 1'/>", description=f"Art for {title}.")
+
+
+class _RaisingGenerator:
+    async def generate(self, title, anchors):
+        raise RuntimeError("boom")
+
+
+def _candidate(slug: str, category: str = "work"):
+    return SimpleNamespace(
+        slug=slug,
+        title=slug.title(),
+        category=category,
+        anchors=(
+            AreaMember(entity_id=f"{slug}-e", name=slug, entity_type="topic", centrality=1.0),
+        ),
+    )
+
+
+async def test_a_candidate_already_assigned_is_skipped_and_counted_done():
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore(assigned={"already"})
+    matcher = _FakeMatcher()
+    generator = _FakeGenerator()
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(project_id, [_candidate("already")], generator, matcher)
+    await sweep.wait(project_id)
+
+    assert sweep.progress(project_id) == {
+        "running": False,
+        "done": 1,
+        "total": 1,
+        "failed": 0,
+    }
+    assert generator.calls == []
+    assert matcher.calls == []
+
+
+async def test_a_candidate_the_library_already_matches_is_skipped_and_not_generated_for():
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore()
+    matcher = _FakeMatcher(matches={"warp"})
+    generator = _FakeGenerator()
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(project_id, [_candidate("warp")], generator, matcher)
+    await sweep.wait(project_id)
+
+    assert sweep.progress(project_id)["done"] == 1
+    assert sweep.progress(project_id)["failed"] == 0
+    assert generator.calls == []
+    # And no assignment written -- LibraryArtProvider.for_candidate is the
+    # one place that resolves and records a match, on demand.
+    assert candidate_art.put_calls == []
+
+
+async def test_a_generated_candidate_is_stored_and_assigned():
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore()
+    matcher = _FakeMatcher()
+    generator = _FakeGenerator()
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(project_id, [_candidate("warp", category="work")], generator, matcher)
+    await sweep.wait(project_id)
+
+    assert sweep.progress(project_id) == {
+        "running": False,
+        "done": 1,
+        "total": 1,
+        "failed": 0,
+    }
+    assert len(art_store.put_calls) == 1
+    stored = art_store.put_calls[0]
+    assert stored["source"] == "generated"
+    assert stored["tags"] == ["work"]
+    assert len(candidate_art.put_calls) == 1
+    assert candidate_art.put_calls[0][1] == "warp"
+    assert candidate_art.put_calls[0][2] == stored["art_id"]
+
+
+async def test_a_refusal_is_counted_failed_and_writes_nothing():
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore()
+    matcher = _FakeMatcher()
+    generator = _FakeGenerator(refuse={"Warp"})
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(project_id, [_candidate("warp")], generator, matcher)
+    await sweep.wait(project_id)
+
+    assert sweep.progress(project_id) == {
+        "running": False,
+        "done": 0,
+        "total": 1,
+        "failed": 1,
+    }
+    assert art_store.put_calls == []
+    assert candidate_art.put_calls == []
+
+
+async def test_a_second_sweep_on_the_same_project_while_one_is_active_is_refused():
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore()
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(
+        project_id, [_candidate("a"), _candidate("b")], _FakeGenerator(), _FakeMatcher()
+    )
+    with pytest.raises(SweepAlreadyActive):
+        await sweep.start(project_id, [_candidate("a")], _FakeGenerator(), _FakeMatcher())
+    await sweep.wait(project_id)
+
+
+async def test_a_crash_settles_the_frame_with_an_error_rather_than_hanging_at_running_true():
+    """The exact regression `blurb_sweep._drive`'s `except` guards against --
+    without it, an uncaught exception leaves `progress()` reporting
+    `running: True` forever, indistinguishable from a sweep that is merely
+    slow."""
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore()
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(project_id, [_candidate("warp")], _RaisingGenerator(), _FakeMatcher())
+    await sweep.wait(project_id)
+
+    frame = sweep.progress(project_id)
+    assert frame["running"] is False
+    assert "error" in frame
+    assert "boom" in frame["error"]
+
+
+async def test_progress_for_a_project_never_swept_answers_not_running():
+    sweep = ArtSweep(_FakeArtStore(), _FakeCandidateArtStore())
+
+    assert sweep.progress(uuid4()) == {
+        "running": False,
+        "done": 0,
+        "total": 0,
+        "failed": 0,
+    }

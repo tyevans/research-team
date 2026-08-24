@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type {
+  ArtSweepProgress,
   BlurbSweepProgress,
   CatalogRepository,
   CourseRepository,
@@ -53,6 +54,13 @@ const aCatalog = (over: Partial<Catalog> = {}): Catalog => ({
 })
 
 const notRunning: BlurbSweepProgress = { running: false, done: 0, total: 0, failed: 0, error: null }
+const artNotRunning: ArtSweepProgress = {
+  running: false,
+  done: 0,
+  total: 0,
+  failed: 0,
+  error: null,
+}
 
 /** Every method throws until a test stubs it, matching this directory's other
  *  fakes: a pane that calls something it did not mean to fails loudly rather
@@ -93,6 +101,10 @@ const fakeCourses = (over: Partial<CourseRepository> = {}): CourseRepository => 
     throw new Error('startBlurbSweep was not stubbed for this test')
   }),
   fetchBlurbSweep: vi.fn<CourseRepository['fetchBlurbSweep']>().mockResolvedValue(notRunning),
+  startArtSweep: vi.fn(() => {
+    throw new Error('startArtSweep was not stubbed for this test')
+  }),
+  fetchArtSweep: vi.fn<CourseRepository['fetchArtSweep']>().mockResolvedValue(artNotRunning),
   ...over,
 })
 
@@ -325,6 +337,37 @@ describe('CatalogPane', () => {
     // `error` present must read as "the sweep failed", not as an ordinary
     // done/total/failed report -- see `BlurbSweepProgress.error`'s own
     // docstring on why the two must not look alike.
+    expect(await screen.findByText(/the sweep failed/i)).toBeInTheDocument()
+    expect(screen.getByText(/the model refused/)).toBeInTheDocument()
+  })
+
+  it('starts an art sweep by POSTing catalog/art and shows the button', async () => {
+    const startArtSweep = vi
+      .fn<CourseRepository['startArtSweep']>()
+      .mockResolvedValue({ running: true, done: 0, total: 3, failed: 0, error: null })
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog, null, fakeCourses({ startArtSweep }))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Illustrate the catalog' }))
+
+    await waitFor(() => expect(startArtSweep).toHaveBeenCalledWith(project))
+  })
+
+  it('shows the four progress counts while an art sweep runs, and names a died sweep distinctly from a slow one', async () => {
+    const fetchArtSweep = vi.fn<CourseRepository['fetchArtSweep']>().mockResolvedValue({
+      running: false,
+      done: 2,
+      total: 5,
+      failed: 1,
+      error: 'the model refused',
+    })
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog, null, fakeCourses({ fetchArtSweep }))
+
     expect(await screen.findByText(/the sweep failed/i)).toBeInTheDocument()
     expect(screen.getByText(/the model refused/)).toBeInTheDocument()
   })

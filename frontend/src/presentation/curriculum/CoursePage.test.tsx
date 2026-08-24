@@ -56,6 +56,12 @@ const fakeCourses = (over: Partial<CourseRepository> = {}): CourseRepository => 
   fetchBlurbSweep: vi.fn(() => {
     throw new Error('fetchBlurbSweep was not stubbed for this test')
   }),
+  startArtSweep: vi.fn(() => {
+    throw new Error('startArtSweep was not stubbed for this test')
+  }),
+  fetchArtSweep: vi.fn(() => {
+    throw new Error('fetchArtSweep was not stubbed for this test')
+  }),
   ...over,
 })
 
