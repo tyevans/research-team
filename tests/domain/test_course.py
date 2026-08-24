@@ -11,6 +11,7 @@ from research_team.domain.course import (
     CourseRealized,
     CourseState,
     RealizeCourse,
+    course_stream_id,
     decide,
     evolve,
     fit_of,
@@ -100,3 +101,27 @@ def test_fit_distinguishes_drift_from_orphaning(area, expected):
     `dropped` tuples and must still be told apart, which is what `orphaned`
     carries and what a single non-parametrised case would never check."""
     assert fit_of(("a", "b"), area) == expected
+
+
+def test_the_same_project_and_slug_always_resolve_to_the_same_stream():
+    """The property `uuid5` is being relied on for, and the one thing that
+    makes realize-after-restart reach the course it already wrote.
+
+    Nothing stores a slug-to-id mapping, so a derivation that varied by
+    process -- `hash()`, which is salted per process, or a `uuid4` minted at
+    call time -- would file the second realization in a stream the first never
+    touched. The aggregate would then load empty, the realize-once invariant
+    would never fire, and the frozen membership would be silently overwritten
+    on every restart. That failure is invisible in a single process, which is
+    every test in this file above this one.
+    """
+    project_id = uuid4()
+    assert course_stream_id(project_id, "warp-drive") == course_stream_id(
+        project_id, "warp-drive"
+    )
+    assert course_stream_id(project_id, "warp-drive") != course_stream_id(
+        project_id, "transporters"
+    )
+    assert course_stream_id(project_id, "warp-drive") != course_stream_id(
+        uuid4(), "warp-drive"
+    )
