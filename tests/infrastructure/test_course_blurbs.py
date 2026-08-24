@@ -110,3 +110,39 @@ async def test_one_projects_blurbs_are_invisible_to_another(store):
     await store.put(mine, "warp", "Mine", "Mine.", "abc", "m", datetime.now(UTC))
 
     assert await store.get(theirs, "warp") is None
+
+
+async def test_all_for_project_reads_every_cached_slug_in_one_call(store):
+    """`CatalogService.build` used to call `get` once per area; this is the
+    replacement -- one query for the whole project. Keyed by slug, matching
+    what a caller would already build from N `get` calls, so switching
+    callers over changes nothing about what "cached" means."""
+    project = uuid4()
+    await store.put(project, "warp", "Warp", "Warp copy.", "h1", "m", datetime.now(UTC))
+    await store.put(
+        project, "shields", "Shields", "Shield copy.", "h2", "m", datetime.now(UTC)
+    )
+
+    rows = await store.all_for_project(project)
+
+    assert set(rows) == {"warp", "shields"}
+    assert rows["warp"].text == "Warp copy."
+    assert rows["shields"].membership_hash == "h2"
+
+
+async def test_all_for_project_excludes_another_projects_rows(store):
+    """The same isolation `get` enforces via `row.project_id != project_id`,
+    proven here for the bulk read instead -- a query over the wrong id would
+    leak another project's cached copy into this one's catalog."""
+    mine, theirs = uuid4(), uuid4()
+    await store.put(mine, "warp", "Mine", "Mine.", "abc", "m", datetime.now(UTC))
+    await store.put(theirs, "warp", "Theirs", "Theirs.", "def", "m", datetime.now(UTC))
+
+    rows = await store.all_for_project(mine)
+
+    assert set(rows) == {"warp"}
+    assert rows["warp"].text == "Mine."
+
+
+async def test_all_for_project_is_empty_for_a_project_with_no_cached_blurbs(store):
+    assert await store.all_for_project(uuid4()) == {}

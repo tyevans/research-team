@@ -2326,6 +2326,20 @@ class CourseBlurbStore:
             return None
         return row
 
+    async def all_for_project(self, project_id: UUID) -> dict[str, CourseBlurbRow]:
+        """Every cached blurb for this project, keyed by slug, in one query.
+
+        `CatalogService.build` used to call `get` once per area -- an N+1
+        over the areas in a curriculum. `idx_course_blurbs_project` already
+        exists for exactly this read and nothing used it. A slug absent from
+        the returned dict means "not cached", the same thing `get` returning
+        `None` means, so a caller can switch from `await get(project_id,
+        slug)` to `cache.get(slug)` on this dict without changing what
+        "missing" means.
+        """
+        rows = await self._rows.find(Query(filters=[Filter.eq("project_id", str(project_id))]))
+        return {row.slug: row for row in rows}
+
     async def put(
         self,
         project_id: UUID,

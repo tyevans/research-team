@@ -19,14 +19,24 @@ class _NoBlurbs:
     async def get(self, project_id, slug):
         return None
 
+    async def all_for_project(self, project_id):
+        return {}
+
 
 class _CachedBlurbs:
-    """A blurb cache with one row already generated, for the fallback tests."""
+    """A blurb cache with one row already generated, for the fallback tests.
+
+    `all_for_project` cannot enumerate slugs the way a real store's query
+    does -- this fake has no table to scan, only a fixed answer for whatever
+    slug is asked. `_AnySlug` below stands in for that: every test using
+    this fake builds a curriculum of exactly one area, so "the same blurb no
+    matter which slug is looked up" is the honest shape of "one row cached".
+    """
 
     def __init__(self, title: str) -> None:
         self._title = title
 
-    async def get(self, project_id, slug):
+    def _blurb(self) -> CachedBlurb:
         return CachedBlurb(
             text="Some cached copy.",
             title=self._title,
@@ -34,6 +44,24 @@ class _CachedBlurbs:
             model="m",
             generated_at=datetime.now(UTC),
         )
+
+    async def get(self, project_id, slug):
+        return self._blurb()
+
+    async def all_for_project(self, project_id):
+        return _AnySlug(self._blurb())
+
+
+class _AnySlug(dict):
+    """A `Mapping` stand-in that answers `.get(slug)` with the same value
+    for any key, for a fake cache that has no real per-slug table to scan."""
+
+    def __init__(self, blurb: CachedBlurb) -> None:
+        super().__init__()
+        self._blurb = blurb
+
+    def get(self, key, default=None):
+        return self._blurb
 
 
 class _TitledFor:
@@ -44,9 +72,7 @@ class _TitledFor:
     def __init__(self, titled: set[str]) -> None:
         self._titled = titled
 
-    async def get(self, project_id, slug):
-        if slug not in self._titled:
-            return None
+    def _blurb(self, slug: str) -> CachedBlurb:
         return CachedBlurb(
             text="Some cached copy.",
             title=f"{slug} Title",
@@ -54,6 +80,14 @@ class _TitledFor:
             model="m",
             generated_at=datetime.now(UTC),
         )
+
+    async def get(self, project_id, slug):
+        if slug not in self._titled:
+            return None
+        return self._blurb(slug)
+
+    async def all_for_project(self, project_id):
+        return {slug: self._blurb(slug) for slug in self._titled}
 
 
 def _area(slug: str, size: int, centrality: float, kind: str = "person") -> LearningArea:
@@ -341,3 +375,37 @@ async def test_a_featured_unnamed_candidate_does_not_count_toward_unnamed_count(
     )
 
     assert catalog.unnamed_count == 1
+
+
+class _CountingBlurbs:
+    """A `BlurbCachePort` that counts calls to each method -- for proving
+    `build` reads the cache once per catalog rather than once per area. An
+    assertion on the *data* `build` returns would pass under both the N+1
+    version and the batched one; only the call count tells them apart."""
+
+    def __init__(self) -> None:
+        self.get_calls = 0
+        self.all_for_project_calls = 0
+
+    async def get(self, project_id, slug):
+        self.get_calls += 1
+        return None
+
+    async def all_for_project(self, project_id):
+        self.all_for_project_calls += 1
+        return {}
+
+
+async def test_build_reads_the_blurb_cache_once_regardless_of_area_count():
+    """Was one `get` per area -- an N+1 over the curriculum's areas. This
+    fails on that version (`all_for_project_calls == 0`, `get_calls == 3`)
+    and passes on the batched one."""
+    blurbs = _CountingBlurbs()
+    areas = [_area("a", 5, 3.0), _area("b", 5, 2.0), _area("c", 5, 1.0)]
+
+    await CatalogService(
+        grouper=TypePluralityGrouper(), art=SeededArtProvider(), blurbs=blurbs
+    ).build(uuid4(), _curriculum(*areas), featured={})
+
+    assert blurbs.all_for_project_calls == 1
+    assert blurbs.get_calls == 0

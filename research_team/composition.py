@@ -435,6 +435,20 @@ class _LazyBlurbCache:
             generated_at=datetime.fromisoformat(row.generated_at),
         )
 
+    async def all_for_project(self, project_id: UUID) -> dict[str, CachedBlurb]:
+        store = await self._opened()
+        rows = await store.all_for_project(project_id)
+        return {
+            slug: CachedBlurb(
+                text=row.text,
+                title=row.title,
+                membership_hash=row.membership_hash,
+                model=row.model,
+                generated_at=datetime.fromisoformat(row.generated_at),
+            )
+            for slug, row in rows.items()
+        }
+
     async def put(
         self,
         project_id: UUID,

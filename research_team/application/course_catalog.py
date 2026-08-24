@@ -225,6 +225,17 @@ class BlurbCachePort(Protocol):
 
     async def get(self, project_id: UUID, slug: str) -> CachedBlurb | None: ...
 
+    async def all_for_project(self, project_id: UUID) -> Mapping[str, CachedBlurb]:
+        """Every cached blurb for this project, keyed by slug, in one call.
+
+        `CatalogService.build` reads this once per catalog build rather than
+        `get` once per area -- the same tradeoff `CourseStore.for_project`
+        already makes over `CourseStore.get`. A slug absent from the mapping
+        means "not cached", exactly what `get` returning `None` means, so
+        `mapping.get(slug)` and `await get(project_id, slug)` agree.
+        """
+        ...
+
     async def put(
         self,
         project_id: UUID,
@@ -413,12 +424,18 @@ class CatalogService:
 
         unplaceable = tuple(sorted(slug for slug in featured if slug not in by_slug))
 
+        # One query for every area's blurb rather than one `get` per area --
+        # `areas` here is the whole curriculum's projection, so this was an
+        # N+1 over every catalog build. A slug the mapping has nothing for
+        # reads exactly as `get` returning `None` would.
+        blurb_cache = await self._blurbs.all_for_project(project_id)
+
         candidates: dict[str, CourseCandidate] = {}
         named: dict[str, bool] = {}
         for area in areas:
             slug = area.slug
             category = category_of.get(slug, "unclassified")
-            cached = await self._blurbs.get(project_id, slug)
+            cached = blurb_cache.get(slug)
             blurb = None
             title = area.display_name()
             has_name = False
