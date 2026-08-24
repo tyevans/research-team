@@ -123,6 +123,46 @@ def test_the_interaction_log_switch_actually_removes_the_dependency(monkeypatch)
     assert eval(code, namespace) is _StubApplication.interaction_recorder
 
 
+def test_the_entrypoint_resolves_catalog_features_late():
+    """`catalog_features` must be passed as a getter, not read at wiring time.
+
+    The two tests above cannot see this one: the parameter *is* supplied and
+    it is not a literal `None`, yet `application.catalog_features` evaluates
+    to `None` here -- the store is opened by `start()`, which runs in the
+    lifespan, after this call. That shipped, and every catalog request in the
+    real server answered "the course catalog is not configured" while all
+    three catalog test files passed, because each of them starts the
+    application before it builds the app.
+
+    Evaluated against a stub rather than asserted on the syntax, following
+    `test_the_interaction_log_switch_actually_removes_the_dependency` above:
+    the property is read once, then the stub's value is changed and the
+    expression's result is asked again. A getter answers the new value; an
+    early read answers the old one. Any late-resolving shape passes -- this
+    pins the behaviour, not the lambda.
+    """
+    order = list(inspect.signature(create_app).parameters)
+    supplied = _supplied_parameters(_create_app_call(), order)
+    expression = ast.Expression(supplied["catalog_features"])
+    ast.fix_missing_locations(expression)
+    code = compile(expression, filename=str(ENTRYPOINT), mode="eval")
+
+    class _StubApplication:
+        catalog_features = None
+
+    application = _StubApplication()
+    getter = eval(code, {"application": application})
+    assert callable(getter), (
+        "web.py passes catalog_features by value; it is None until start() runs "
+        "in the lifespan, so the factory captures None and every catalog route 503s"
+    )
+    assert getter() is None
+
+    opened = object()
+    _StubApplication.catalog_features = opened
+    assert getter() is opened
+
+
 @pytest.mark.parametrize("parameter", ["topics", "topic_repository", "corpus"])
 def test_the_guarded_parameters_are_still_optional_on_the_factory(parameter):
     """The guard only means anything while the factory tolerates the absence.

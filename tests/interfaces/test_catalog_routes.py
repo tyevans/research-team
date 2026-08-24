@@ -189,7 +189,7 @@ async def app_and_client(db_path, fake_model):
         graphs=application.graphs,
         curriculum=curriculum,
         catalog=catalog,
-        catalog_features=features.features,
+        catalog_features=lambda: features.features,
         catalog_recorder=features.recorder,
     )
     transport = ASGITransport(app=api)
@@ -310,7 +310,7 @@ async def test_a_candidate_carries_its_own_membership_hash_distinct_from_its_blu
         graphs=application.graphs,
         curriculum=CurriculumService(),
         catalog=stale_catalog,
-        catalog_features=app_and_client.features.features,
+        catalog_features=lambda: app_and_client.features.features,
         catalog_recorder=app_and_client.features.recorder,
     )
     async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as stale:

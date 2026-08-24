@@ -11,6 +11,7 @@ projection reads, the grouper never reaching the catalog) fails here rather
 than only in a fixture that happens to compose the pieces correctly itself.
 """
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -107,7 +108,7 @@ async def test_a_catalog_over_a_real_ingest_has_cards_in_more_than_one_category(
         graphs=application.graphs,
         curriculum=curriculum,
         catalog=application.catalog,
-        catalog_features=application.catalog_features,
+        catalog_features=lambda: application.catalog_features,
         catalog_recorder=application.catalog_recorder,
     )
     transport = ASGITransport(app=api)
@@ -159,3 +160,75 @@ async def test_a_catalog_over_a_real_ingest_has_cards_in_more_than_one_category(
     assert len(all_candidates[0]["anchors"]) > 0
     assert len(body["categories"]) >= 2
     assert after["hero"][0]["slug"] == candidate_slug
+
+
+async def test_the_catalog_answers_when_the_app_is_built_before_start(db_path, fake_model):
+    """The ordering `web.py` actually uses: `create_app` first, `start()` after.
+
+    Every other test in this file and in `tests/interfaces/test_catalog_routes.py`
+    calls `application.start()` *before* `create_app`, so the store they hand
+    the factory is already open. `web.py` cannot do that -- `start()` opens an
+    aiosqlite connection and has to run under uvicorn's loop, which is why it
+    lives in the lifespan -- so the entrypoint reads `catalog_features` while
+    it is still `None` and the factory captures that `None` for the life of
+    the process. Nothing else here can see it: the shape of the arrange phase
+    is what hides the defect, which is the general failure CLAUDE.md names
+    under "Read models".
+
+    So this test runs the app's own lifespan rather than starting the
+    application by hand, and asserts on the catalog's *contents*. Before the
+    fix it fails: `create_app` treats the getter as a store and the route
+    answers 500 (and answered 503 in the running server, where the entrypoint
+    passed the `None` itself).
+    """
+    application = build_application(model=fake_model, db_path=db_path)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        await application.start()
+        yield
+        await application.close()
+
+    curriculum = CurriculumService()
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        lifespan,
+        corpus=application.corpus,
+        blob_store=application.blob_store,
+        graphs=application.graphs,
+        curriculum=curriculum,
+        catalog=application.catalog,
+        # A getter, not the value: at this point in the ordering the value is
+        # `None`. This mirrors `web.py` and is the line the fix is about.
+        catalog_features=lambda: application.catalog_features,
+        catalog_recorder=application.catalog_recorder,
+    )
+    transport = ASGITransport(app=api)
+    # Starlette's own lifespan runner, not a hand-rolled `async with
+    # lifespan(api)`: this is the call uvicorn makes, so a factory that
+    # dropped the argument fails here too.
+    async with (
+        api.router.lifespan_context(api),
+        AsyncClient(transport=transport, base_url="http://test") as client,
+    ):
+        name = f"catalog-late-{uuid4()}"
+        created = await client.post("/api/projects", json={"name": name})
+        assert created.status_code == 200
+        project_id = created.json()["id"]
+
+        await _seed_two_categories(application, project_id)
+
+        response = await client.get(f"/api/projects/{project_id}/catalog")
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+    candidates = [
+        *body["hero"],
+        *body["highlights"],
+        *(c for cat in body["filed"] for c in cat["candidates"]),
+    ]
+    assert len(candidates) > 0
+    assert len(candidates[0]["anchors"]) > 0
+    assert len(body["categories"]) >= 2
