@@ -234,3 +234,91 @@ async def test_the_catalog_answers_when_the_app_is_built_before_start(db_path, f
     assert len(candidates) > 0
     assert len(candidates[0]["anchors"]) > 0
     assert len(body["categories"]) >= 2
+
+
+async def test_a_composed_blurb_sweep_writes_a_row_the_catalog_reads_back(db_path):
+    """The gap CLAUDE.md's co-mention rule names, closed for the sweep.
+
+    Every test in `tests/interfaces/test_blurb_sweep.py` drives `BlurbSweep`
+    against a fake cache and a fake writer, and this file did not mention
+    `blurb_sweep` at all. So `BlurbCachePort` had a stub on one side and a
+    unit test on the other, and the question this test asks -- does the sweep
+    `composition.py` builds write through the cache `composition.py` builds,
+    to a row `CatalogService` reads back -- was asked by nothing. That is the
+    exact shape the co-mention channel shipped in and produced nothing for a
+    whole feature.
+
+    The assertion is the *title*, not a 202 or a settled frame. A sweep that
+    was never wired, or one whose `_LazyBlurbCache` wrote somewhere the
+    catalog does not read, still answers 202 and still settles at
+    `running: False`; only the candidate's title changing from
+    `area.display_name()` to the one the model chose proves a row went in and
+    came back out. Would fail with the `blurb_sweep=`/`blurb_writer=`
+    arguments dropped from `create_app` below -- the route answers 503.
+
+    The model is canned rather than `fake_model`, which replies "done" and is
+    refused by `ModelBlurbWriter` for having no second line. The outline half
+    of the sweep is refused by design here (the same reply is not
+    outline-shaped), which is why the candidate settles as `failed` rather
+    than `done` -- the blurb is still written, per the sweep's independence
+    rule, and that is what this test is about.
+    """
+    from langchain_core.messages import AIMessage
+
+    from tests.conftest import ToolAwareFakeChatModel
+
+    written_title = "Building a warp-capable civilisation"
+    model = ToolAwareFakeChatModel(
+        responses=[
+            AIMessage(
+                content=f"{written_title}\n\nHow a species crosses the light "
+                "barrier. The people, the physics and the first handshake.",
+                id="b1",
+            )
+        ]
+    )
+    application = build_application(model=model, db_path=db_path)
+    await application.start()
+    curriculum = CurriculumService()
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        blob_store=application.blob_store,
+        graphs=application.graphs,
+        curriculum=curriculum,
+        # `application.catalog`, not a locally built `CatalogService`:
+        # composition builds it over the very `_LazyBlurbCache` the sweep
+        # writes through, and that shared instance is the whole point -- a
+        # test that assembled its own would prove only that two objects it
+        # wired itself agree.
+        catalog=application.catalog,
+        catalog_features=lambda: application.catalog_features,
+        catalog_recorder=application.catalog_recorder,
+        blurb_sweep=application.blurb_sweep,
+        blurb_writer=application.blurbs,
+        outline_writer=application.outlines,
+    )
+    transport = ASGITransport(app=api)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            created = await client.post(
+                "/api/projects", json={"name": f"composed-sweep-{uuid4()}"}
+            )
+            project_id = created.json()["id"]
+            await _seed_two_categories(application, project_id)
+
+            url = f"/api/projects/{project_id}/catalog?unnamed=true"
+            before = (await client.get(url)).json()
+            assert written_title not in [c["title"] for c in before["hero"]]
+
+            started = await client.post(f"/api/projects/{project_id}/catalog/blurbs")
+            assert started.status_code == 202
+            await application.blurb_sweep.wait(UUID(project_id))
+
+            after = (await client.get(url)).json()
+    finally:
+        await application.close()
+
+    assert written_title in [c["title"] for c in after["hero"]]

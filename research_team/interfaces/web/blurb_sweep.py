@@ -48,15 +48,23 @@ artifact:
 * **A refusal** (`write` returns `None`) counts that artifact as not written
   and moves on -- see the module-level test's docstring; one ungrounded
   cluster must not wall off every card behind it.
-* **Anything else raises**, and unlike a refusal it is *not* tallied as a
-  counted outcome -- it is a defect. But it is still caught inside `_drive`,
-  not left to crash the background task: nothing in production awaits that
-  task (only the test-only `wait()` does), so an uncaught exception would
-  become an unretrieved-exception log line at best while the last frame
-  written sits at `running: True` forever. A reader watching the button has
-  no way to tell that apart from a sweep that is merely slow. The frame is
-  logged and settled instead, with an `error` key present only on this path
-  -- see `_drive`.
+* **Anything else raises**, and is caught per candidate: it is tallied as
+  `failed`, logged, and the sweep carries on. It is still a defect rather
+  than an expected outcome, and the settled frame carries an `error` key --
+  present on no other path -- to say so. This used to end the whole run,
+  which was defensible over a short list at concurrency 1 and is not over 71
+  candidates: a single 502 from the endpoint would have left most cards bare
+  with nothing to distinguish it from a sweep that finished. See `_drive`.
+
+**The sweep runs candidates concurrently, bounded by
+`config.catalog_sweep_concurrency()`** -- read that docstring for the number,
+for the measurement that could not be taken on the day, and for why the
+choice errs low anyway. Two consequences worth carrying into
+any edit of `_drive`: completion order is not submission order, so the
+progress frame is built from counters rather than from a position in the
+list; and the two artifacts of *one* candidate stay sequential with respect
+to each other, because the outline is written against the title the blurb
+just chose.
 """
 
 import asyncio
@@ -74,6 +82,7 @@ from research_team.application.course_catalog import (
     OutlineCachePort,
 )
 from research_team.domain.learning_area import AreaMember
+from research_team.infrastructure.config import catalog_sweep_concurrency
 
 _logger = logging.getLogger(__name__)
 
@@ -139,11 +148,23 @@ class BlurbSweep:
     check has not been handed a live coroutine or a writer to leave unused.
     """
 
-    def __init__(self, cache: BlurbCachePort, outline_cache: OutlineCachePort) -> None:
+    def __init__(
+        self,
+        cache: BlurbCachePort,
+        outline_cache: OutlineCachePort,
+        concurrency: int | None = None,
+    ) -> None:
         self._cache = cache
         self._outline_cache = outline_cache
         self._progress: dict[UUID, dict[str, Any]] = {}
         self._tasks: dict[UUID, asyncio.Task] = {}
+        # Read once at construction rather than per sweep: composition builds
+        # one of these per process, and a ceiling that could change between
+        # two sweeps in the same process would make a measurement taken
+        # against one sweep say nothing about the next. Injectable so a test
+        # can pin 1 and assert the sequential shape, or pin 2 and assert the
+        # concurrent one, without an environment variable.
+        self._concurrency = catalog_sweep_concurrency() if concurrency is None else concurrency
 
     def progress(self, project_id: UUID) -> dict[str, Any]:
         """The live frame if one exists, or the not-running default.
@@ -188,21 +209,42 @@ class BlurbSweep:
         )
         return dict(self._progress[project_id])
 
-    async def _blurb_ok(self, project_id: UUID, candidate: _Candidate, write: _Writer) -> bool:
-        """`True` when this candidate's copy is fresh in the cache by the
-        end of the attempt -- already there, or just written."""
+    async def _blurb_ok(
+        self, project_id: UUID, candidate: _Candidate, write: _Writer
+    ) -> tuple[bool, str]:
+        """Whether this candidate's copy is fresh in the cache by the end of
+        the attempt -- already there, or just written -- **and the title that
+        is now the candidate's**.
+
+        The second half of that pair is not decoration. `_drive` used to hand
+        `candidate.title` to the outline writer, and `candidate` is a frozen
+        snapshot taken at `start()`: on a project's first sweep a candidate
+        with no blurb yet carries `area.display_name()`, the single most
+        central entity's name, so every outline in that sweep was written
+        against a title like "Xindi" while the card ended up showing the one
+        the model had just chosen a line earlier.
+
+        **Measured as cosmetic on 2026-08-23** against the live endpoint: the
+        outline is driven by the anchors, and came back correct under a
+        deliberately wrong placeholder title. So this returns the title rather
+        than re-reading the cache, which would cost a query per candidate to
+        recover something the call above already has in hand. A cache hit
+        returns `candidate.title` unchanged, and that is already right --
+        `CatalogService.build` fills a candidate's title from the cached blurb
+        whenever one is there.
+        """
         cached = await self._cache.get(project_id, candidate.slug)
         if cached is not None and cached.membership_hash == candidate.membership_hash:
             # Up to date -- the whole reason this is a sweep and not a
             # regenerate-everything button.
-            return True
+            return True, candidate.title
 
         draft = await write.write(candidate.title, candidate.anchors)
         if draft is None:
             # A refusal: the model would not ground this cluster's copy. The
             # card keeps its title and its art -- see the module docstring --
             # and the sweep moves on rather than stopping.
-            return False
+            return False, candidate.title
 
         await self._cache.put(
             project_id,
@@ -213,19 +255,27 @@ class BlurbSweep:
             write.model_name,
             datetime.now(UTC),
         )
-        return True
+        return True, draft.title
 
     async def _outline_ok(
-        self, project_id: UUID, candidate: _Candidate, write_outline: _OutlineWriter
+        self,
+        project_id: UUID,
+        candidate: _Candidate,
+        title: str,
+        write_outline: _OutlineWriter,
     ) -> bool:
         """`_blurb_ok`'s exact shape, over the outline cache and writer --
         see the module docstring on why copy and outline are attempted
-        independently rather than one gating the other."""
+        independently rather than one gating the other.
+
+        `title` is passed in rather than read off `candidate` because the
+        blurb attempt may have just replaced it; see `_blurb_ok`'s docstring
+        for the snapshot this closes over."""
         cached = await self._outline_cache.get(project_id, candidate.slug)
         if cached is not None and cached.membership_hash == candidate.membership_hash:
             return True
 
-        draft = await write_outline.write(candidate.title, candidate.anchors)
+        draft = await write_outline.write(title, candidate.anchors)
         if draft is None:
             return False
 
@@ -247,58 +297,108 @@ class BlurbSweep:
         write: _Writer,
         write_outline: _OutlineWriter,
     ) -> None:
+        total = len(candidates)
         done = 0
         failed = 0
-        try:
-            for candidate in candidates:
-                # Both attempted regardless of how the other went -- see the
-                # module docstring's paragraph on independence. A candidate
-                # counts as `done` only when everything it needed came out
-                # fresh; if either is missing, it is `failed`, not partially
-                # `done`, because a caller reading `done == total` uses that
-                # to mean "every card is fully written" and a partial success
-                # counted as `done` would make that reading wrong while the
-                # card is still bare of the piece that failed.
-                blurb_ok = await self._blurb_ok(project_id, candidate, write)
-                outline_ok = await self._outline_ok(project_id, candidate, write_outline)
-                if blurb_ok and outline_ok:
-                    done += 1
-                else:
-                    failed += 1
+        first_error: str | None = None
+        permits = asyncio.Semaphore(self._concurrency)
 
-                self._progress[project_id] = {
-                    "running": True,
-                    "done": done,
-                    "total": len(candidates),
-                    "failed": failed,
-                }
-        except Exception as error:
-            # Caught here rather than left to propagate out of the task: with
-            # nothing in production awaiting it (only the test-only `wait`
-            # does), an uncaught exception becomes an unretrieved-exception
-            # log line at best, and the frame this loop last wrote sits at
-            # `running: True` forever -- a progress bar with no way to tell
-            # "the sweep died" from "the sweep is just slow". `error` is only
-            # present on this path: a normal finish's frame has no such key,
-            # so `progress()["error"]`'s presence is itself the "ended badly"
-            # signal, and every dict-equality test for a clean run stays
-            # correct without listing a key it never expects.
+        def frame(running: bool) -> dict[str, Any]:
+            return {"running": running, "done": done, "total": total, "failed": failed}
+
+        async def sweep_one(candidate: _Candidate) -> None:
+            nonlocal done, failed, first_error
+            async with permits:
+                try:
+                    # Both attempted regardless of how the other went -- see
+                    # the module docstring's paragraph on independence. A
+                    # candidate counts as `done` only when everything it
+                    # needed came out fresh; if either is missing, it is
+                    # `failed`, not partially `done`, because a caller reading
+                    # `done == total` uses that to mean "every card is fully
+                    # written" and a partial success counted as `done` would
+                    # make that reading wrong while the card is still bare of
+                    # the piece that failed.
+                    #
+                    # Sequential *within* a candidate, and that is not an
+                    # oversight: the outline is written against the title the
+                    # blurb just chose (see `_blurb_ok`), so overlapping the
+                    # two would reintroduce the placeholder-title defect this
+                    # same change fixes, to buy at most a factor of two on top
+                    # of a ceiling that is already the server's limit.
+                    blurb_ok, title = await self._blurb_ok(project_id, candidate, write)
+                    outline_ok = await self._outline_ok(
+                        project_id, candidate, title, write_outline
+                    )
+                except asyncio.CancelledError:
+                    # Re-raised, never counted: a cancelled candidate did not
+                    # fail, and swallowing it here would leave `gather` below
+                    # believing the sweep ran to completion.
+                    raise
+                except Exception as error:
+                    # **One candidate's defect no longer abandons the rest,
+                    # and this is a deliberate change from the sequential
+                    # loop**, which let the exception out of the `for` and
+                    # settled the whole sweep on the spot. That was defensible
+                    # at concurrency 1 over a short list; it is not at 71
+                    # candidates and two and a half hours, where a single 502
+                    # from the endpoint would silently end the run with most
+                    # cards still bare. So a raise is tallied as `failed` --
+                    # the candidate genuinely has nothing written -- and the
+                    # sweep continues.
+                    #
+                    # What is preserved is the *signal*: `error` still appears
+                    # in the settled frame and nowhere else, so a caller can
+                    # still tell "this run hit a defect" from "this run was
+                    # clean", and every dict-equality test for a clean run
+                    # stays correct without listing a key it never expects.
+                    # The first error is the one kept, not the last: it is the
+                    # one most likely to explain the ones after it.
+                    _logger.exception(
+                        "blurb sweep for project %s failed on %r", project_id, candidate.slug
+                    )
+                    if first_error is None:
+                        first_error = str(error)
+                    failed += 1
+                else:
+                    if blurb_ok and outline_ok:
+                        done += 1
+                    else:
+                        failed += 1
+
+                # Written after every candidate, from whichever one finished
+                # -- not indexed by position in the list, which is why the
+                # counters above are the record and the list order is not.
+                # Safe without a lock only because every read-modify-write of
+                # `done`/`failed`/this frame happens with no `await` between
+                # them, on one event loop thread.
+                self._progress[project_id] = frame(True)
+
+        try:
+            await asyncio.gather(*(sweep_one(candidate) for candidate in candidates))
+        except asyncio.CancelledError:
+            # `gather` propagates cancellation into every in-flight child, so
+            # by the time this is reached the model calls are already
+            # unwinding -- cancelling the sweep task really does stop work in
+            # flight, not merely stop new submissions. The frame is settled on
+            # the way out for the same reason the `except Exception` below
+            # settles it: a poller has no other way to learn the run ended.
+            self._progress[project_id] = frame(False)
+            raise
+        except Exception as error:  # pragma: no cover -- see below
+            # Reaching here now means `sweep_one` itself broke rather than a
+            # writer -- the per-candidate `except` above catches everything a
+            # model call can raise. Kept because the cost of being wrong about
+            # that is a frame stuck at `running: True` forever, which a reader
+            # watching the button cannot tell from a slow sweep.
             _logger.exception("blurb sweep for project %s crashed", project_id)
-            self._progress[project_id] = {
-                "running": False,
-                "done": done,
-                "total": len(candidates),
-                "failed": failed,
-                "error": str(error),
-            }
+            self._progress[project_id] = frame(False) | {"error": str(error)}
             return
 
-        self._progress[project_id] = {
-            "running": False,
-            "done": done,
-            "total": len(candidates),
-            "failed": failed,
-        }
+        settled = frame(False)
+        if first_error is not None:
+            settled["error"] = first_error
+        self._progress[project_id] = settled
 
     async def wait(self, project_id: UUID) -> None:
         """Block until this project's sweep settles. For tests, not routes."""

@@ -268,3 +268,134 @@ async def test_force_regenerates_a_fresh_assignment_and_skips_matching():
     assert generator.calls == ["Warp"]
     assert matcher.calls == []
     assert len(art_store.decrement_calls) == 1
+
+
+async def test_a_raising_generator_costs_one_candidate_and_not_the_rest():
+    """`test_blurb_sweep`'s equivalent, and the same deliberate change: a
+    candidate whose generation raises is `failed` and the sweep carries on,
+    where the sequential loop ended the run. Proved red by re-raising out of
+    `sweep_one` instead of tallying -- `done` then reads 0."""
+
+    class _SelectivelyRaising:
+        async def generate(self, title, anchors):
+            if title == "Warp":
+                raise RuntimeError("boom")
+            return DraftArt(svg="<svg viewBox='0 0 1 1'/>", description=f"Art for {title}.")
+
+    art_store = _FakeArtStore()
+    sweep = ArtSweep(art_store, _FakeCandidateArtStore())
+    project_id = uuid4()
+
+    await sweep.start(
+        project_id,
+        [_candidate("warp"), _candidate("xindi"), _candidate("borg")],
+        _SelectivelyRaising(),
+        _FakeMatcher(),
+    )
+    await sweep.wait(project_id)
+
+    frame = sweep.progress(project_id)
+    assert frame == {
+        "running": False,
+        "done": 2,
+        "total": 3,
+        "failed": 1,
+        "error": frame["error"],
+    }
+    assert "boom" in frame["error"]
+    assert len(art_store.put_calls) == 2
+
+
+async def test_the_art_sweep_holds_the_configured_number_of_candidates_in_flight():
+    """`test_blurb_sweep`'s ceiling test over the generator. Both bounds for
+    the same reason -- see that test's docstring."""
+    import asyncio
+
+    in_flight = 0
+    peak = 0
+    release = asyncio.Event()
+
+    class _CountingGenerator:
+        async def generate(self, title, anchors):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await release.wait()
+            in_flight -= 1
+            return DraftArt(svg="<svg viewBox='0 0 1 1'/>", description="art")
+
+    sweep = ArtSweep(_FakeArtStore(), _FakeCandidateArtStore(), concurrency=3)
+    project_id = uuid4()
+
+    await sweep.start(
+        project_id,
+        [_candidate(f"c{n}") for n in range(8)],
+        _CountingGenerator(),
+        _FakeMatcher(),
+    )
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert peak == 3
+
+    release.set()
+    await sweep.wait(project_id)
+    assert sweep.progress(project_id) == {
+        "running": False,
+        "done": 8,
+        "total": 8,
+        "failed": 0,
+    }
+
+
+async def test_two_candidates_moving_off_one_picture_both_decrement_its_uses():
+    """`ArtStore.decrement_uses` is a read-modify-write over one row, and the
+    sweep is the only place two candidates can reach it at the same moment --
+    a drifted assignment each, pointing at the same piece.
+
+    This drives a store that models the real one's read-then-save rather than
+    just recording calls, because a `decrement_calls` list would count two
+    calls whether or not either was lost. Proved red by removing
+    `async with uses_lock` from `_drive`: `uses` then ends at 1, both
+    decrements having read the same 2.
+    """
+    import asyncio
+
+    class _RaceyArtStore:
+        """`_FakeArtStore` plus the real store's non-atomic decrement: a read,
+        a yield to the loop (which `aiosqlite` does at every round trip), then
+        a save."""
+
+        def __init__(self) -> None:
+            self.uses = 2
+            self.put_calls: list[dict] = []
+
+        async def put(self, **kwargs):
+            self.put_calls.append(kwargs)
+
+        async def decrement_uses(self, art_id):
+            seen = self.uses
+            await asyncio.sleep(0)
+            self.uses = max(0, seen - 1)
+
+    shared = object()
+
+    class _SharedAssignmentStore(_FakeCandidateArtStore):
+        async def get(self, project_id, slug):
+            # Both candidates already point at one picture, assigned against
+            # a hash that no longer matches -- so both drift and both
+            # regenerate.
+            return _Assignment(art_id=shared, membership_hash="stale")
+
+    art_store = _RaceyArtStore()
+    sweep = ArtSweep(art_store, _SharedAssignmentStore(), concurrency=2)
+    project_id = uuid4()
+
+    await sweep.start(
+        project_id,
+        [_candidate("warp"), _candidate("xindi")],
+        _FakeGenerator(),
+        _FakeMatcher(),
+    )
+    await sweep.wait(project_id)
+
+    assert art_store.uses == 0

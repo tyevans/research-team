@@ -42,6 +42,11 @@ DEFAULT_EXTRACTION_CHUNK_SIZE = 2_000
 #: costs that grow with it and why neither has been measured to a limit yet.
 DEFAULT_CONSOLIDATION_BATCH = 25
 
+#: How many catalog candidates a blurb or art sweep has in flight at once.
+#: See `catalog_sweep_concurrency` for why this is 4 rather than 8, and for
+#: the measurement that could not be taken.
+DEFAULT_CATALOG_SWEEP_CONCURRENCY = 4
+
 VECTOR_STORES = ("none", "memory", "pgvector")
 #: On, since the third scoring feature is what lets consolidation merge a
 #: cross-document duplicate on evidence rather than on an overridden threshold.
@@ -378,6 +383,75 @@ def consolidation_batch_size() -> int:
     staleness window is what took them.
     """
     return int(os.getenv("AGENT_CONSOLIDATION_BATCH", str(DEFAULT_CONSOLIDATION_BATCH)))
+
+
+def catalog_sweep_concurrency() -> int:
+    """How many candidates a catalog sweep works on at once. 4 by default.
+
+    The sweeps (`interfaces/web/blurb_sweep.py`, `interfaces/web/art_sweep.py`)
+    were a plain `for` loop with `await`s in it -- concurrency 1 -- and the
+    arithmetic is why this knob exists at all: a real project (Star Trek, in
+    the owner's database) has 75 candidates, each needing a blurb and an
+    outline, and the art sweep needs an SVG on top. Sequentially that is hours
+    of wall clock behind two buttons.
+
+    **4, and the number is a judgement rather than a measurement, because the
+    measurement could not be taken.** What was measured, on 2026-08-24,
+    against the live endpoint over real candidates out of a copy of the real
+    database, is below. `N` is candidates swept with empty caches, so every
+    one is a real miss and a real pair of model calls:
+
+    ======= ==== ======= =============================
+    ceiling N    wall    note
+    ======= ==== ======= =============================
+    1       8    58.0s   baseline
+    6       8    51.4s   1.13x -- the only pair taken close together
+    1       24   148.5s  baseline
+    6       24   274.1s  **1.85x slower than sequential**
+    12      24   285.8s  no worse than 6, and no better
+    ======= ==== ======= =============================
+
+    Those numbers do not mean concurrency hurts. Another agent was driving the
+    same endpoint throughout, and it got busier as the runs went on: an
+    8-token completion took 1.5-5.0s with the endpoint idle, 39-47s alongside
+    the ceiling-6 run, and 17-25s alongside a *sequential* run later the same
+    hour. A re-run of the ceiling-1 baseline, started after the table above,
+    had not finished at three times its own earlier time. **The load moved
+    further between the rows than the rows differ from each other, so the
+    table cannot be read as a comparison** -- it is recorded because the next
+    person to touch this number should not have to rediscover that.
+
+    So 4 is chosen on the shape of the problem, not on a curve. Below
+    `extraction_concurrency`'s 8, because that ceiling is per *document* over
+    2000-character chunks while this one is per candidate over a whole blurb,
+    outline or SVG -- hundreds of output tokens with a slot held for the
+    length of the generation. Well below it, because the one thing the table
+    does establish is that this server queues rather than parallelises once it
+    is loaded, and a sweep is the only thing a person is watching when they
+    press the button: a ceiling that deepens the queue makes every other call
+    on the box slower to buy a sweep nothing.
+
+    What it costs if it is wrong in each direction. Too high: the server
+    queues, every call's latency rises together, and the failure is invisible
+    from here because a queued call and a slow call look identical. Too low:
+    wall clock, linearly, and nothing else. That asymmetry is the whole
+    argument for erring low.
+
+    **The measurement worth taking, when the endpoint is quiet:** ceiling 1,
+    2, 4 and 8 over the same 24 candidates, interleaved rather than in
+    sequence, with a short completion timed before and after each run to prove
+    the load did not move. Raise this number if the knee turns out to be
+    higher; `AGENT_CATALOG_SWEEP_CONCURRENCY=1` restores the sequential
+    behaviour exactly, which is what to set if a sweep ever looks like it is
+    starving something else.
+
+    Against a hosted endpoint with a request-per-minute quota this is the
+    wrong shape of limit entirely and wants lowering, exactly as
+    `extraction_concurrency` says of its own.
+    """
+    return int(
+        os.getenv("AGENT_CATALOG_SWEEP_CONCURRENCY", str(DEFAULT_CATALOG_SWEEP_CONCURRENCY))
+    )
 
 
 def extraction_chunk_size() -> int:

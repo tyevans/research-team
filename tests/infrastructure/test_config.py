@@ -183,6 +183,30 @@ def test_the_extraction_throughput_knobs_are_overridable(monkeypatch):
     assert config.extraction_chunk_size() == 3_000
 
 
+def test_the_catalog_sweep_ceiling_is_below_the_extraction_one(monkeypatch):
+    """4 and 8 differ by choice, not by drift.
+
+    Both point at the same local server, but extraction's ceiling is per
+    *document* over 2000-character chunks while a sweep's unit is a whole
+    blurb, outline or SVG -- a slot held for the length of a generation. The
+    gap is deliberate; see `catalog_sweep_concurrency`'s docstring for the
+    measurement that could not be taken and why the choice errs low anyway.
+    Asserted as a relation as well as a value so that raising
+    `extraction_concurrency` without thinking about this one fails here.
+    """
+    monkeypatch.delenv("AGENT_CATALOG_SWEEP_CONCURRENCY", raising=False)
+    monkeypatch.delenv("AGENT_EXTRACTION_CONCURRENCY", raising=False)
+    assert config.catalog_sweep_concurrency() == 4
+    assert config.catalog_sweep_concurrency() < config.extraction_concurrency()
+
+
+def test_the_catalog_sweep_ceiling_is_overridable(monkeypatch):
+    """The way down for a hosted endpoint with a per-minute quota, and the way
+    back to the sequential behaviour this replaced without editing code."""
+    monkeypatch.setenv("AGENT_CATALOG_SWEEP_CONCURRENCY", "1")
+    assert config.catalog_sweep_concurrency() == 1
+
+
 def test_transcription_is_off_until_a_url_is_set(monkeypatch):
     monkeypatch.delenv("AGENT_TRANSCRIBER_URL", raising=False)
     assert config.transcriber_url() is None
