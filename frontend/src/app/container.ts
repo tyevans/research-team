@@ -6,6 +6,7 @@ import type {
   AskRepository,
   AutonomyRepository,
   CatalogRepository,
+  CourseRepository,
   DefinitionsRepository,
   DialogueRepository,
   OntologyRepository,
@@ -30,6 +31,7 @@ import type {
 import { HttpAskRepository } from '@infrastructure/http/ask-repository.ts'
 import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
 import { HttpCatalogRepository } from '@infrastructure/http/catalog-repository.ts'
+import { HttpCourseRepository } from '@infrastructure/http/course-repository.ts'
 import { HttpDefinitionsRepository } from '@infrastructure/http/definitions-repository.ts'
 import { HttpOntologyRepository } from '@infrastructure/http/ontology-repository.ts'
 import { HttpDialogueRepository } from '@infrastructure/http/dialogue-repository.ts'
@@ -83,6 +85,7 @@ export interface Container {
   readonly ontology: OntologyRepository
   readonly curricula: CurriculumRepository
   readonly catalog: CatalogRepository
+  readonly courses: CourseRepository
   /** URLs, not bodies. Downloads are handed to the browser rather than
    *  fetched into the tab; see `HttpExportRepository`. */
   readonly exports: ExportRepository
@@ -128,6 +131,7 @@ export const createContainer = (baseUrl = ''): Container => {
     ontology: new HttpOntologyRepository(http),
     curricula: new HttpCurriculumRepository(http),
     catalog: new HttpCatalogRepository(http),
+    courses: new HttpCourseRepository(http),
     exports: new HttpExportRepository(baseUrl),
     timelines: new HttpTimelineRepository(http),
     workers: new HttpWorkerRepository(http),
