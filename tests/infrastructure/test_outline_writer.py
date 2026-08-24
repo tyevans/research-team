@@ -151,16 +151,68 @@ async def test_a_reply_that_is_not_the_expected_shape_is_refused_rather_than_rai
     assert await _writer(reply).write("Warp drive", ANCHORS) is None
 
 
-async def test_a_heading_with_no_paragraph_under_it_is_refused():
-    """Half a section is a parse failure, not a section with an empty
-    summary: storing one puts a heading on screen with nothing beneath it,
-    which reads as a rendering bug rather than as missing copy."""
+async def test_a_heading_with_no_paragraph_under_it_refuses_the_whole_outline():
+    """Half a section is a parse failure, not a section to drop quietly:
+    storing one puts a heading on screen with nothing beneath it, which reads
+    as a rendering bug rather than as missing copy.
+
+    The input separates that rule from the other candidate. An earlier
+    version of this test used three headings of which two were empty, and
+    that reply answers `None` under *both* rules -- refuse-the-whole-outline
+    returns `None`, and drop-the-empty-sections leaves one section, which is
+    below `MIN_SECTIONS` and also returns `None`. It pinned nothing.
+    Four sound sections plus one empty heading is the input that tells them
+    apart: refuse-whole gives `None`, drop-empty would give a valid
+    four-section outline. Found in review on 2026-08-23.
+    """
     reply = (
-        "Follow the Warp drive from its first flight.\n\n"
-        "## Warp drive\n\n## Warp drive\n\n## Warp drive\nZefram Cochrane built it."
+        "Follow the Warp drive from its first flight.\n\n" + _sections(4) + "\n\n## Warp drive"
     )
 
     assert await _writer(reply).write("Warp drive", ANCHORS) is None
+
+
+async def test_a_dangling_heading_past_the_ceiling_cannot_refuse_the_outline():
+    """The parse's veto stops at the ceiling, and this is where that is decided.
+
+    Fails on the version this replaced, where `_parse` applied the
+    empty-summary veto to every heading it found: six sound sections followed
+    by one stray `##` answered `None`. A model that runs out of budget
+    mid-reply stops after a heading, so that stray line is the commonest way
+    for a reply to end badly -- and it is precisely the trailing padding
+    `MAX_SECTIONS` exists to absorb. Letting it destroy six sections is the
+    ceiling's own argument ("text no reader will see should not be able to
+    veto text every reader will") run backwards.
+
+    The sibling above is what keeps this from becoming a blanket tolerance:
+    an empty heading *inside* the ceiling still refuses.
+    """
+    reply = (
+        "Follow the Warp drive from its first flight.\n\n" + _sections(6) + "\n\n## Dangling"
+    )
+
+    outline = await _writer(reply).write("Warp drive", ANCHORS)
+
+    assert outline is not None
+    assert len(outline.sections) == 6
+
+
+async def test_a_summary_written_as_two_paragraphs_is_stored_as_one():
+    """Documented in `_parse` and asserted nowhere until review asked.
+
+    A paragraph break inside a section summary is not a distinction a catalog
+    card renders, so joining with a space is the right call -- but a rule that
+    lives only in a docstring is a rule nothing defends.
+    """
+    reply = (
+        "Follow the Warp drive from its first flight.\n\n"
+        "## Warp drive\nZefram Cochrane built it.\n\nWarp drive followed.\n\n" + _sections(3)
+    )
+
+    outline = await _writer(reply).write("Warp drive", ANCHORS)
+
+    assert outline is not None
+    assert outline.sections[0][1] == "Zefram Cochrane built it. Warp drive followed."
 
 
 async def test_a_reply_with_sections_but_no_promise_is_refused():

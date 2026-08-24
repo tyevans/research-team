@@ -42,6 +42,20 @@ MIN_SECTIONS = 3
 #: so a padded seventh section naming an entity the cluster does not hold
 #: cannot refuse an outline whose visible six are sound -- text no reader will
 #: see should not be able to veto text every reader will.
+#:
+#: **And before parsing's own veto, which is where this principle was first
+#: written down and not held.** `_parse` refuses an outline for a heading with
+#: nothing under it, and it did so over *every* heading, including ones past
+#: this ceiling -- so six sound sections followed by one stray `##` line were
+#: destroyed by the one section no reader would have seen. That is exactly the
+#: trailing padding this ceiling exists to absorb: a model that runs out of
+#: budget mid-reply stops after a heading, which is the commonest way for a
+#: reply to end badly. Found in review on 2026-08-23, by measurement, against
+#: a module whose own comment argued the opposite rule two paragraphs up.
+#:
+#: `_parse` now cuts to this ceiling before it validates, so there is one rule
+#: rather than two: past the ceiling nothing about a section can refuse
+#: anything, whether it is ungrounded or malformed.
 MAX_SECTIONS = 6
 
 _PROMPT = """\
@@ -81,7 +95,17 @@ def _parse(reply: str) -> DraftOutline | None:
     A heading with nothing under it fails the whole parse rather than
     becoming a section with an empty summary: an empty summary reaches a
     reader as a heading with a blank space below it, which reads as a
-    rendering fault rather than as missing copy.
+    rendering fault rather than as missing copy. A malformed section is
+    refused, in other words, where a merely thin one is kept -- but only
+    *within* the ceiling. The cut to `MAX_SECTIONS` happens here, before that
+    veto, so nothing past the ceiling can refuse anything; see
+    `MAX_SECTIONS`'s own comment for why holding the veto globally was the
+    ceiling's argument run backwards.
+
+    Summaries join with a single space, so a section a model wrote as two
+    paragraphs stores as one. A paragraph break inside a section summary is
+    not a distinction a catalog card renders, and preserving it would invent
+    a formatting contract nothing downstream reads.
     """
     promise_lines: list[str] = []
     sections: list[tuple[str, list[str]]] = []
@@ -94,6 +118,7 @@ def _parse(reply: str) -> DraftOutline | None:
     promise = " ".join(promise_lines)
     if not promise or not sections:
         return None
+    sections = sections[:MAX_SECTIONS]
     if any(not summary for _, summary in sections):
         return None
     return DraftOutline(
@@ -117,11 +142,28 @@ class ModelOutlineWriter:
     def model_name(self) -> str:
         """Which model wrote an outline, for `CourseOutlineRow.model`.
 
-        Read defensively and falling back rather than raising, because the
-        value exists only for provenance: a local model's LangChain wrapper
-        carries neither `model_name` nor `model` reliably, and a stored class
-        name is worth more than an exception thrown while caching an outline
-        that generated correctly.
+        **The production model answers on the first term, measured.** On
+        2026-08-23 `build_extraction_model()` was probed directly: it returns
+        a `ChatOpenAI` carrying both `model_name` and `model`, each equal to
+        `config.model_name()` (`'qwen3.6-27b-mtp'` that day). So the fallback
+        chain is not there because this repo's wrapper is unreliable -- an
+        earlier version of this docstring said that, and it was untrue.
+
+        It is there for the other implementer: a test stub. `_extraction_model`
+        returns either the real model or an injected fake, and a fake carries
+        whatever its author gave it, which is usually neither attribute. A
+        class name is the honest answer for a stub, and it costs nothing that
+        the same expression would also absorb a future wrapper that happens to
+        expose neither. What it costs is loudness: this property cannot raise,
+        so a wrong-but-plausible provenance string would go unnoticed. That is
+        accepted because the value exists only for provenance -- an exception
+        thrown while caching an outline that generated correctly is worse.
+
+        Note for whoever wires `put`: `config.model_name()` already reaches
+        this same string and is read at `composition.py:2130`, `:2567` and
+        `:2589`. This property is a third route to it. The three agree today
+        (measured, same probe); pick one deliberately rather than discovering
+        both later.
         """
         return (
             getattr(self._model, "model_name", None)
@@ -137,10 +179,12 @@ class ModelOutlineWriter:
             max_sections=MAX_SECTIONS,
         )
         response = await self._model.ainvoke([HumanMessage(prompt)])
+        # Already cut to `MAX_SECTIONS` by `_parse`, which has to know the
+        # ceiling anyway to keep its own veto inside it. Truncating in one
+        # place is what stops the two rules disagreeing again.
         draft = _parse(str(response.content).strip())
         if draft is None or len(draft.sections) < MIN_SECTIONS:
             return None
-        draft = DraftOutline(draft.promise, draft.sections[:MAX_SECTIONS])
         # Field by field, never joined -- see the module docstring. The runs
         # are concatenated rather than short-circuited so a future caller
         # that wants to report *what* was ungrounded has the whole list; the

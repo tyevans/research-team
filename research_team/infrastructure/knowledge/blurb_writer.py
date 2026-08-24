@@ -55,11 +55,19 @@ class ModelBlurbWriter:
         `write`: returning the name beside the text would lose it on every
         refusal, and `write` refuses often by design.
 
-        Read defensively and falling back rather than raising, because the
-        value exists only for provenance -- a local model's LangChain wrapper
-        carries neither `model_name` nor `model` reliably, and a stored class
-        name is worth more than an exception thrown while caching a blurb
-        that was generated correctly.
+        **The production model answers on the first term, measured.** On
+        2026-08-23 `build_extraction_model()` was probed directly: it returns
+        a `ChatOpenAI` carrying both `model_name` and `model`, each equal to
+        `config.model_name()`. An earlier version of this docstring claimed
+        the opposite -- that a local model's wrapper carries neither
+        reliably -- which was asserted about this repository without ever
+        being run against it.
+
+        The fallback stays, for the implementer that does need it: a test
+        stub, which carries whatever its author gave it. See
+        `outline_writer.ModelOutlineWriter.model_name` for the full reasoning
+        and for the note about `config.model_name()` being a second route to
+        the same string; it is written once, there, rather than twice.
         """
         return (
             getattr(self._model, "model_name", None)
