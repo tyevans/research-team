@@ -85,6 +85,13 @@ export interface Catalog {
    *  re-clustering can move or dissolve an area out from under a feature, and
    *  this is what a curator's page reports rather than silently drops it. */
   readonly unplaceableFeatured: readonly string[]
+  /** How many candidates have no cached title and are not featured -- the
+   *  set `CatalogService.build` hides unless the toggle asks to see them
+   *  (`GET /catalog?unnamed=true`, server-side). Present regardless of
+   *  which way the toggle is currently set, so the control can say how many
+   *  are behind it even while showing them -- see `CatalogService.build`'s
+   *  own docstring on `unnamed_count`. */
+  readonly unnamedCount: number
   /** Realized courses stranded by re-clustering -- see `OrphanedCourse`.
    *  Empty on every build that has never realized a course, and empty
    *  forever if `orphans()` is never wired server-side; either reads as

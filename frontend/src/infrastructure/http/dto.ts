@@ -1084,6 +1084,7 @@ export const catalogDto = z.object({
   filed: z.array(categoryDto).default([]),
   categories: z.record(z.string(), z.string()).default({}),
   unplaceableFeatured: z.array(z.string()).default([]),
+  unnamedCount: z.number().default(0),
   orphanedCourses: z.array(orphanedCourseDto).default([]),
   derived_from: z.object({
     entities: z.number().default(0),

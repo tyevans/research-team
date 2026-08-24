@@ -258,15 +258,63 @@ async def _seed_two_clusters(application, project_id: str) -> None:
 
 async def test_the_catalog_has_a_non_empty_hero_and_a_category(app_and_client):
     """The count is the assertion, not the status -- a build that never
-    constructs `CatalogService` answers this route 200 with empty sections."""
+    constructs `CatalogService` answers this route 200 with empty sections.
+
+    `unnamed=true`: this module's fixture wires `_NoBlurbs`, so every
+    candidate seeded here has no cached title -- exactly what the toggle
+    hides by default. This test is about hero/category placement, not the
+    toggle, so it asks to see everything.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    body = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
+
+    assert len(body["hero"]) > 0
+    assert len(body["categories"]) >= 1
+
+
+async def test_an_unnamed_candidate_is_hidden_by_default(app_and_client):
+    """No test in this module seeds a cached title, so the plain (no-query)
+    route answers with nothing in hero -- the default the user asked for:
+    a cluster nobody has named should not be surfaced."""
     application, client = app_and_client.application, app_and_client.client
     project_id = await _new_project(client)
     await _seed_two_clusters(application, project_id)
 
     body = (await client.get(f"/api/projects/{project_id}/catalog")).json()
 
+    assert body["hero"] == []
+    assert body["highlights"] == []
+    assert body["filed"] == []
+    assert body["unnamedCount"] == 2
+
+
+async def test_unnamed_count_is_reported_even_while_shown(app_and_client):
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+
+    body = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
+
     assert len(body["hero"]) > 0
-    assert len(body["categories"]) >= 1
+    assert body["unnamedCount"] == 2
+
+
+async def test_a_project_with_no_graph_has_an_empty_catalog_and_no_unnamed(app_and_client):
+    """Distinguishing "empty because nothing has been swept yet" from "empty
+    because there is no graph at all" is the client's job (a message pointing
+    at the sweep button versus one pointing at ingestion) -- but both need to
+    be able to tell them apart from `unnamedCount`, and a graphless project
+    must report zero, not the same blank sections a cold-but-populated one
+    would."""
+    project_id = await _new_project(app_and_client.client)
+
+    body = (await app_and_client.client.get(f"/api/projects/{project_id}/catalog")).json()
+
+    assert body["hero"] == []
+    assert body["unnamedCount"] == 0
 
 
 async def test_a_candidate_carries_its_own_membership_hash_distinct_from_its_blurbs(
@@ -289,7 +337,7 @@ async def test_a_candidate_carries_its_own_membership_hash_distinct_from_its_blu
     application, client = app_and_client.application, app_and_client.client
     project_id = await _new_project(client)
     await _seed_two_clusters(application, project_id)
-    before = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    before = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
     slug = before["hero"][0]["slug"]
 
     # A second app over the same application and the same catalog feature
@@ -315,7 +363,7 @@ async def test_a_candidate_carries_its_own_membership_hash_distinct_from_its_blu
         catalog_recorder=app_and_client.features.recorder,
     )
     async with AsyncClient(transport=ASGITransport(app=api), base_url="http://test") as stale:
-        body = (await stale.get(f"/api/projects/{project_id}/catalog")).json()
+        body = (await stale.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
 
     (candidate,) = [c for c in body["hero"] if c["slug"] == slug]
     assert candidate["membershipHash"]
@@ -353,7 +401,7 @@ async def test_featuring_puts_a_candidate_first_in_hero(app_and_client):
     application, client = app_and_client.application, app_and_client.client
     project_id = await _new_project(client)
     await _seed_two_clusters(application, project_id)
-    before = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    before = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
     slug = before["hero"][-1]["slug"]
 
     response = await client.post(
@@ -362,7 +410,7 @@ async def test_featuring_puts_a_candidate_first_in_hero(app_and_client):
     assert response.status_code == 200
     await app_and_client.features.caught_up()
 
-    after = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    after = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
     assert after["hero"][0]["slug"] == slug
 
 
@@ -370,19 +418,19 @@ async def test_unfeaturing_restores_the_derived_order(app_and_client):
     application, client = app_and_client.application, app_and_client.client
     project_id = await _new_project(client)
     await _seed_two_clusters(application, project_id)
-    before = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    before = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
     original_order = [c["slug"] for c in before["hero"]]
     slug = original_order[-1]
 
     await client.post(f"/api/projects/{project_id}/catalog/{slug}/feature", json={"rank": 0})
     await app_and_client.features.caught_up()
-    featured = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    featured = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
     assert [c["slug"] for c in featured["hero"]] != original_order
 
     await client.post(f"/api/projects/{project_id}/catalog/{slug}/unfeature")
     await app_and_client.features.caught_up()
 
-    restored = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    restored = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
     assert [c["slug"] for c in restored["hero"]] == original_order
 
 
@@ -408,7 +456,7 @@ async def test_a_category_page_lists_a_candidate_promoted_to_hero(app_and_client
     application, client = app_and_client.application, app_and_client.client
     project_id = await _new_project(client)
     await _seed_two_clusters(application, project_id)
-    before = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+    before = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
     # Every seeded entity is `entity_type="concept"`, so `TypePluralityGrouper`
     # puts both areas in one category -- there is exactly one to assert on.
     (category_key,) = before["categories"]

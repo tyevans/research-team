@@ -647,8 +647,13 @@ export interface CurriculumRepository {
 export interface CatalogRepository {
   /** The front page: hero, highlights, everything else by category, and what
    *  it was derived from -- matching `CurriculumRepository.curriculum`'s own
-   *  reasoning, an empty catalog and a rich one must not render identically. */
-  catalog(projectId: ProjectId): Promise<Catalog>
+   *  reasoning, an empty catalog and a rich one must not render identically.
+   *
+   *  `includeUnnamed` defaults false, matching the server's own default
+   *  (`GET /catalog?unnamed=`) -- a title-less card falls back to the
+   *  cluster's single most central entity name, which reads as an entity
+   *  rather than a course. */
+  catalog(projectId: ProjectId, includeUnnamed?: boolean): Promise<Catalog>
 
   /** Put one candidate on the front page, at `rank`. No precondition that
    *  `slug` currently names an area -- re-clustering can move or dissolve one

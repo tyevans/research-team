@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
 import type { BlurbSweepProgress } from '@application/ports/repositories.ts'
@@ -45,12 +45,21 @@ export const CatalogPane = ({
   const { catalog, courses } = useContainer()
   const queryClient = useQueryClient()
 
+  // Local, not persisted: the brief's own call -- a reader who flips this on
+  // to check something is not expected to have it remembered next visit, and
+  // there is nowhere on this pane that currently persists a view preference.
+  const [showUnnamed, setShowUnnamed] = useState(false)
+
   const query = useQuery({
-    queryKey: queryKeys.catalog(projectId),
-    queryFn: () => catalog.catalog(projectId),
+    queryKey: queryKeys.catalog(projectId, showUnnamed),
+    queryFn: () => catalog.catalog(projectId, showUnnamed),
   })
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.catalog(projectId) })
+  // Invalidates both cache entries (the key's `project` prefix matches
+  // either `includeUnnamed` value) -- a feature/unfeature changes what both
+  // the shown and hidden views would answer, not just the one currently on
+  // screen.
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['catalog', projectId] })
 
   // Its own key and its own poll, matching `RunPanel`'s reasoning
   // (`queryKeys.blurbSweep`'s own comment): polling only while a sweep is
@@ -134,6 +143,17 @@ export const CatalogPane = ({
     )
   }
 
+  // A cluster with no cached title falls back to `LearningArea.display_name()`
+  // -- its single most central *entity*, e.g. "Xindi" -- which reads as an
+  // entity name rather than a course, so the server hides it unless asked.
+  // Every seeded-but-never-swept project lands here on its very first visit,
+  // and a blank front page with no explanation reads as broken rather than
+  // as "nothing has been named yet".
+  const isEmpty =
+    data.sections.hero.length === 0 &&
+    data.sections.highlights.length === 0 &&
+    data.sections.filed.length === 0
+
   return (
     <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-3">
       <BlurbSweepControl
@@ -141,6 +161,29 @@ export const CatalogPane = ({
         starting={startSweep.isPending}
         onRun={() => startSweep.mutate()}
       />
+
+      {data.unnamedCount > 0 && (
+        <div className="flex items-center gap-2">
+          <Button small tone="quiet" onClick={() => setShowUnnamed((v) => !v)}>
+            {showUnnamed ? 'Hide unnamed courses' : `Show ${data.unnamedCount} unnamed courses`}
+          </Button>
+        </div>
+      )}
+
+      {isEmpty && (
+        // Points at the one action that gets this project out of the empty
+        // state -- a message with nothing to do about it is worse than none,
+        // and "unnamedCount" is what tells a reader whether the sweep has
+        // work waiting (a positive count) or the graph itself is empty
+        // (zero, `CatalogService.build`'s own default).
+        <p role="status" className="text-fg-muted text-sm">
+          {data.unnamedCount > 0
+            ? `Nothing named yet. ${data.unnamedCount} candidate${
+                data.unnamedCount === 1 ? '' : 's'
+              } ${data.unnamedCount === 1 ? 'is' : 'are'} waiting on the sweep below, or show them unnamed.`
+            : 'Nothing here yet.'}
+        </p>
+      )}
 
       {data.orphanedCourses.length > 0 && <OrphanedCoursesStrip courses={data.orphanedCourses} />}
 

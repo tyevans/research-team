@@ -300,6 +300,18 @@ class Catalog:
     categories: Mapping[CategoryKey, str]
     unplaceable_featured: tuple[str, ...]
     derived_from: tuple[int, int]
+    unnamed_count: int = 0
+    """How many candidates have no cached title and are not featured -- the
+    ones `CatalogService.build` hides by default (a card whose only title is
+    `LearningArea.display_name()` reads as its single most central entity,
+    e.g. "Xindi", rather than a course name). Computed regardless of
+    `include_unnamed`, so a caller showing unnamed candidates can still say
+    how many *would* be hidden with the toggle off -- a switch with no
+    indication anything is behind it is not a usable toggle. A featured
+    candidate is never counted here even without a title: someone pinned it
+    deliberately, and `unplaceable_featured` already exists to surface
+    curation that goes missing -- this field must not silently double as a
+    second way for a featured slug to look dropped."""
 
     @property
     def all_candidates(self) -> tuple[CourseCandidate, ...]:
@@ -348,6 +360,8 @@ class CatalogService:
         project_id: UUID,
         curriculum: Curriculum,
         featured: Mapping[str, int],
+        *,
+        include_unnamed: bool = False,
     ) -> Catalog:
         areas = curriculum.projection.areas
         by_slug = {a.slug: a for a in areas}
@@ -356,12 +370,14 @@ class CatalogService:
         unplaceable = tuple(sorted(slug for slug in featured if slug not in by_slug))
 
         candidates: dict[str, CourseCandidate] = {}
+        named: dict[str, bool] = {}
         for area in areas:
             slug = area.slug
             category = category_of.get(slug, "unclassified")
             cached = await self._blurbs.get(project_id, slug)
             blurb = None
             title = area.display_name()
+            has_name = False
             if cached is not None:
                 blurb = Blurb(
                     text=cached.text,
@@ -372,8 +388,13 @@ class CatalogService:
                 # existed (`CourseBlurbRow.title`'s default) -- `or` covers
                 # that fallback without a separate branch, and the empty
                 # string is otherwise indistinguishable from "not generated
-                # yet" to a reader.
+                # yet" to a reader. A candidate is "named" only when the
+                # cached title itself is non-empty -- the same test the
+                # unnamed-toggle judges a candidate by, so a row written
+                # before titles existed reads as unnamed rather than named.
+                has_name = bool(cached.title)
                 title = cached.title or area.display_name()
+            named[slug] = has_name
             candidates[slug] = CourseCandidate(
                 slug=slug,
                 title=title,
@@ -386,6 +407,20 @@ class CatalogService:
                 blurb=blurb,
                 featured_rank=featured.get(slug),
             )
+
+        # A featured candidate is never hidden, named or not: someone pinned
+        # it deliberately, and hiding it would make curation silently
+        # vanish -- the exact failure `unplaceable_featured` above exists to
+        # avoid for a slug that moves, not one that never had a title.
+        hidden_slugs = {
+            slug
+            for slug, candidate in candidates.items()
+            if not named[slug] and candidate.featured_rank is None
+        }
+        unnamed_count = len(hidden_slugs)
+        if not include_unnamed:
+            for slug in hidden_slugs:
+                del candidates[slug]
 
         # Featured candidates are pinned ahead of everything else, ordered by
         # curator-assigned rank; the remainder falls through to the derived
@@ -444,4 +479,5 @@ class CatalogService:
                 curriculum.projection.entity_count,
                 curriculum.projection.relationship_count,
             ),
+            unnamed_count=unnamed_count,
         )

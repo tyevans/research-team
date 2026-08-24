@@ -157,7 +157,16 @@ async def _seed_one_cluster(application, project_id: str) -> None:
 
 
 async def _one_candidate_slug(app_and_client, project_id: str) -> str:
-    body = (await app_and_client.client.get(f"/api/projects/{project_id}/catalog")).json()
+    """The single candidate this module's fixture seeds.
+
+    `?unnamed=true` because the front page hides candidates whose blurb has no
+    title, and nothing in this module writes a blurb -- these tests are about
+    realizing and abandoning a course, not about its copy. Without the flag the
+    catalog comes back empty and the unpack below fails with
+    `not enough values to unpack`, which names nothing about the filter.
+    """
+    url = f"/api/projects/{project_id}/catalog?unnamed=true"
+    body = (await app_and_client.client.get(url)).json()
     (slug,) = {c["slug"] for c in body["hero"] + body["highlights"]} | {
         candidate["slug"] for category in body["filed"] for candidate in category["candidates"]
     }
