@@ -237,7 +237,8 @@ async def test_an_outline_over_a_real_ingest_survives_its_own_cache_round_trip(d
 
             await _seed_one_cluster(application, project_id)
 
-            body = (await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
+            url = f"/api/projects/{project_id}/catalog?unnamed=true"
+            body = (await client.get(url)).json()
             all_candidates = [
                 *body["hero"],
                 *body["highlights"],

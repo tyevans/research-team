@@ -165,7 +165,8 @@ async def _one_candidate_slug(app_and_client, project_id: str) -> str:
     catalog comes back empty and the unpack below fails with
     `not enough values to unpack`, which names nothing about the filter.
     """
-    body = (await app_and_client.client.get(f"/api/projects/{project_id}/catalog?unnamed=true")).json()
+    url = f"/api/projects/{project_id}/catalog?unnamed=true"
+    body = (await app_and_client.client.get(url)).json()
     (slug,) = {c["slug"] for c in body["hero"] + body["highlights"]} | {
         candidate["slug"] for category in body["filed"] for candidate in category["candidates"]
     }
