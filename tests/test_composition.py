@@ -237,6 +237,17 @@ async def test_the_course_projection_is_registered(build_application):
     the row a `CourseRealized` produces actually lands in `courses` -- the
     only thing that distinguishes a build with the projection registered
     from one where the event was silently accepted and dropped.
+
+    **What actually reddens it, measured 2026-08-23 by removing the
+    `subscribe` call:** `AttributeError` from `courses_caught_up()`, not the
+    row assertion below -- `_CourseRunner` holds no subscription to wait on,
+    so the test dies before it reaches the check its docstring advertises.
+    Recorded rather than corrected because the two failures guard different
+    things and both are wanted: `caught_up()` catches a runner that never
+    subscribed, and the row assertion catches a subscription that carries the
+    wrong projection or writes nothing. Only the second survives a refactor
+    that keeps the wait and drops the handler, which is the likelier
+    regression.
     """
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
