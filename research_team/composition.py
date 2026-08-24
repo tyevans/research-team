@@ -545,9 +545,18 @@ class _LazyCandidateArtStore:
         store = await self._opened()
         return await store.get(project_id, slug)
 
-    async def put(self, project_id: UUID, slug: str, art_id: UUID) -> None:
+    async def put(
+        self, project_id: UUID, slug: str, art_id: UUID, membership_hash: str
+    ) -> None:
+        # `membership_hash` is required here rather than defaulted, mirroring
+        # `CandidateArtStore.put`. An assignment recorded without the hash it
+        # was made against is exactly the row drift-detection can never
+        # refresh -- it would compare against `""`, never match, and either
+        # regenerate forever or never, depending on which way the comparison
+        # falls. A default would make that unreachable-by-accident state
+        # reachable by omission.
         store = await self._opened()
-        await store.put(project_id, slug, art_id)
+        await store.put(project_id, slug, art_id, membership_hash)
 
     async def close(self) -> None:
         if self._store is not None:
