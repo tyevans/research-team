@@ -136,7 +136,13 @@ def main() -> None:
             # added to `create_app` and not to this call answer 503 in the
             # running server while every test that builds its own app passes.
             catalog=application.catalog,
-            catalog_features=application.catalog_features,
+            # A getter, not the attribute: `catalog_features` is `None` until
+            # the lifespan above has run `start()`, and this call happens
+            # first. Reading it here captured that `None` and every catalog
+            # request in this entrypoint answered 503 while all three catalog
+            # test files passed -- they start the application before building
+            # the app, which is an ordering the server cannot use.
+            catalog_features=lambda: application.catalog_features,
             catalog_recorder=application.catalog_recorder,
             dispatcher=application.dispatcher,
             dispatch=dispatch,

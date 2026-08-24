@@ -450,6 +450,27 @@ class CatalogFeatureRecorder(Protocol):
     async def unfeature(self, slug: str) -> None: ...
 
 
+CatalogFeatures = Callable[[], CatalogFeatureStore | None]
+"""The read side of course featuring, resolved when a request needs it.
+
+A getter rather than the store itself, and the difference is the whole of a
+503 that shipped. `CatalogFeatureStore.open` needs a running event loop, so
+`Application.catalog_features` is `None` until `start()` -- which runs in the
+server's lifespan, *after* `web.py` has called `create_app`. Passing the value
+captured that `None` permanently and every catalog request answered "the
+course catalog is not configured" in the running server while every test
+passed, because every test starts the application before it builds the app.
+
+A `CatalogFeatureStore | Callable[...]` union was considered and rejected: it
+keeps "pass the value" legal, which is exactly the shape that shipped the bug,
+and there is no gate that would notice an entrypoint choosing it again. Taking
+only the callable means the early read is not expressible here.
+
+The cost is three call sites that already had an open store having to wrap it
+in a lambda, and one more indirection per request -- an attribute read.
+"""
+
+
 CatalogFeatureRecorders = Callable[[UUID], CatalogFeatureRecorder]
 """One project's `CatalogFeatureRecorder`, built on demand, matching
 `OntologyDiscoverers`'s shape and its reason: the project is bound at
@@ -988,7 +1009,7 @@ def create_app(
     authoring: AuthoringActivity | None = None,
     reembed: ReembedProject | None = None,
     catalog: CatalogService | None = None,
-    catalog_features: CatalogFeatureStore | None = None,
+    catalog_features: CatalogFeatures | None = None,
     catalog_recorder: CatalogFeatureRecorders | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
@@ -3120,8 +3141,15 @@ def create_app(
         """
         if catalog is None or catalog_features is None:
             raise HTTPException(status_code=503, detail="the course catalog is not configured")
+        # Resolved here rather than closed over at wiring time: the store does
+        # not exist until the server's lifespan has run `start()`. See
+        # `CatalogFeatures`. A getter that still answers `None` at request time
+        # is a build whose lifespan never ran, and 503 is the honest answer.
+        features = catalog_features()
+        if features is None:
+            raise HTTPException(status_code=503, detail="the course catalog is not configured")
         built = await _curriculum(project_id)
-        featured = await catalog_features.featured_for(project_id)
+        featured = await features.featured_for(project_id)
         return await catalog.build(project_id, built, featured)
 
     @app.get("/api/projects/{project_id}/catalog/categories/{key}")
