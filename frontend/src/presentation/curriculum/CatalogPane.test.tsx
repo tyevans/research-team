@@ -316,7 +316,9 @@ describe('CatalogPane', () => {
     })
     show(catalog, null, fakeCourses({ startBlurbSweep }))
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Write the missing copy' }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Write the missing copy and outlines' }),
+    )
 
     await waitFor(() => expect(startBlurbSweep).toHaveBeenCalledWith(project))
   })
