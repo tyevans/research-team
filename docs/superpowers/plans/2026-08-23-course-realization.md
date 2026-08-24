@@ -1014,3 +1014,108 @@ cd frontend && npm run verify
 ```bash
 git commit -am "Verified against a copy of the real database, not a fresh one"
 ```
+
+---
+
+### Task 15: A course title, not an entity name
+
+**Dispatched between Tasks 6 and 7.** Appended here rather than renumbered so
+every brief path already generated still points at the task it was cut from.
+
+**Files:**
+- Modify: `research_team/application/course_catalog.py` (`BlurbTextPort`, `CachedBlurb`, `CatalogService`)
+- Modify: `research_team/infrastructure/knowledge/blurb_writer.py`
+- Modify: `research_team/infrastructure/persistence/read_models.py` (`CourseBlurbRow`, `CourseBlurbStore.put`)
+- Modify: `research_team/composition.py` (`_LazyBlurbCache`)
+- Test: `tests/infrastructure/test_blurb_writer.py`, `tests/infrastructure/test_course_blurbs.py`, `tests/application/test_catalog_service.py`
+
+**Why.** `CourseCandidate.title` is `area.display_name()`, which is
+`area_projection.py:565`'s `anchor.name` — the single highest-centrality entity
+in the cluster. That is an entity name, not a course name, and it reads like
+one: this project's real catalog offers courses called "Xindi" and
+"Rotten Tomatoes". Increment 1's spec pinned the field to `display_name()` and
+said "not generated in this increment"; this is that increment.
+
+**Why it rides on the blurb call rather than getting its own.** The writer
+already makes one grounded model call per candidate and already has the
+anchors in the prompt. A second call would double the cost of a sweep that is
+already the most expensive thing on the page, and — worse — would let the title
+and the blurb disagree about what the course is *about*, with nothing to
+notice. One call returns both or refuses both.
+
+**The fallback is not optional.** A candidate with no cached copy, or whose
+copy the model refused, must still render. `display_name()` stays as the
+fallback, so a cold catalog looks exactly as it does today rather than as a
+page of blank cards.
+
+**Interfaces:**
+- Consumes: Task 4's `grounding.ungrounded_runs`, `BlurbTextPort.model_name`.
+- Produces: `DraftBlurb(title: str, text: str)`; `BlurbTextPort.write(...) -> DraftBlurb | None`; `CachedBlurb.title: str`; `CourseBlurbRow.title: str = ""`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# tests/infrastructure/test_blurb_writer.py
+async def test_the_writer_returns_a_title_and_a_blurb_from_one_call():
+    """One call, not two. A second model call for the title would double a
+    sweep's cost and let the two disagree about what the course is about, with
+    nothing able to notice."""
+    ...
+
+
+async def test_a_title_naming_an_entity_the_cluster_does_not_hold_refuses_both():
+    """The title is grounded on the same terms as the blurb. Refusing only the
+    title would leave a card with grounded copy under an invented name, which
+    is the more prominent of the two."""
+    ...
+
+
+async def test_a_reply_with_a_blurb_and_no_title_is_refused():
+    ...
+```
+
+```python
+# tests/application/test_catalog_service.py
+async def test_a_candidate_with_no_cached_copy_falls_back_to_the_area_name():
+    """So a cold catalog renders as it does today rather than as blank cards.
+    Fails on an implementation that reads the cached title unconditionally."""
+    ...
+
+
+async def test_a_cached_title_is_preferred_over_the_area_name():
+    ...
+```
+
+```python
+# tests/infrastructure/test_course_blurbs.py
+async def test_a_blurb_row_written_before_titles_existed_reads_back_with_an_empty_title():
+    """`apply_schema` reconciles added columns, but it leaves them empty in
+    rows that predate the change. A `title` with no default would make the
+    column required on a populated table, which the read-models section of
+    CLAUDE.md records as the case SQLite refuses and this project already
+    shipped once. Empty is the honest value and the fallback covers it."""
+    ...
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+- [ ] **Step 3: Implement**
+
+The prompt asks for a title on its own first line and the two sentences
+beneath it. Constrain it in the prompt and enforce it in the parse:
+**three to eight words, no trailing punctuation, and not identical to the top
+anchor's name** — the last because a model handed one dominant entity will
+return it verbatim, which is the defect this task exists to fix and which
+would otherwise pass every grounding check by construction.
+
+`CourseBlurbRow.title: str = ""` — a default, not required, for the reason in
+the test docstring above.
+
+`CatalogService.build` sets `title=cached.title or area.display_name()`.
+
+- [ ] **Step 4: Run to verify pass**
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -am "A course title, not the name of its most central entity"
+```
