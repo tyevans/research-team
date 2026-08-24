@@ -56,3 +56,11 @@ frontend/.vitest-attachments/
 # for a plan in flight. Regenerated from the plan and git log, and meaningless
 # once the branch lands -- the commits are the record.
 .superpowers/
+
+# Playwright MCP scratch output -- screenshots and traces from browser
+# sessions, written into whatever directory the server was started from.
+.playwright-mcp/
+
+# Editor backups. They appear beside a file being rewritten and read as a
+# second, stale copy of a document somebody is still editing.
+*.bak
