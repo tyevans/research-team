@@ -1,19 +1,10 @@
 """`OutlineTextPort` over a LangChain chat model.
 
-The same grounding check the blurb runs (`grounding.ungrounded_runs`, and its
-docstring for why that check is the only one available without spans), plus
-the two things a structured artifact adds: a shape that can fail to parse,
-and a count of sections that can be too few or too many.
-
-**The fields are checked one at a time and never joined.** `SENTENCE_SPLIT`
-splits on terminal punctuation and a heading carries none, so a heading
-concatenated to the paragraph below it reads as one sentence: "Zefram
-Cochrane" followed by "Warp drive theory..." yields the single run "Zefram
-Cochrane Warp", which no anchor name contains, and every outline with a
-capitalised heading is refused. Which is every outline.
-`test_a_capitalised_heading_does_not_run_into_the_summary_beneath_it` is the
-one test that separates this implementation from the joined one -- a reply
-whose sections are flat prose passes under both.
+Used to also run a capitalisation-based grounding check shared with the
+blurb writer, dropped 2026-08-23 -- see `anchors.py`'s module docstring for
+why. What is left is the shape checks a structured artifact needs regardless:
+a reply that can fail to parse, and a count of sections that can be too few
+or too many.
 """
 
 import re
@@ -24,26 +15,22 @@ from langchain_core.messages import HumanMessage
 
 from research_team.application.course_catalog import DraftOutline
 from research_team.domain.learning_area import AreaMember
-from research_team.infrastructure.knowledge.grounding import anchor_lines, ungrounded_runs
+from research_team.infrastructure.knowledge.anchors import anchor_lines
 
 #: The floor, below which this is not a different artifact from the blurb.
 #:
 #: Two sections is a blurb with bullets, and the card already carries a blurb.
-#: A reply under the floor is refused rather than padded here -- inventing the
-#: third section is exactly the ungrounded copy the rest of this module exists
-#: to keep out.
+#: A reply under the floor is refused rather than padded here -- inventing a
+#: third section is not something this module has any business doing.
 MIN_SECTIONS = 3
 
 #: The ceiling, above which the tail is padding.
 #:
 #: Truncated rather than refused, and the direction is deliberate: the extra
 #: sections are usually real and simply thin, so refusing throws away a whole
-#: model call over a formatting excess. Truncation happens *before* grounding,
-#: so a padded seventh section naming an entity the cluster does not hold
-#: cannot refuse an outline whose visible six are sound -- text no reader will
-#: see should not be able to veto text every reader will.
+#: model call over a formatting excess.
 #:
-#: **And before parsing's own veto, which is where this principle was first
+#: **Before parsing's own veto, which is where this principle was first
 #: written down and not held.** `_parse` refuses an outline for a heading with
 #: nothing under it, and it did so over *every* heading, including ones past
 #: this ceiling -- so six sound sections followed by one stray `##` line were
@@ -55,7 +42,7 @@ MIN_SECTIONS = 3
 #:
 #: `_parse` now cuts to this ceiling before it validates, so there is one rule
 #: rather than two: past the ceiling nothing about a section can refuse
-#: anything, whether it is ungrounded or malformed.
+#: anything, whether it is malformed or merely padding.
 MAX_SECTIONS = 6
 
 _PROMPT = """\
@@ -83,6 +70,12 @@ section.
 Write headings in sentence case -- capitalise only the first word and any
 proper noun, like "The first warp flight", not "The First Warp Flight".
 """
+# Sentence case above used to be load-bearing for the (now removed) grounding
+# check, which read Title Case as every word being an ungrounded capitalised
+# run. That reason is gone, but the ask stays: the frontend's `titleCase`
+# helper applies casing at display time, and a model free to vary between
+# sentence and Title Case would make that helper produce inconsistent
+# headings across cards.
 
 #: A section heading: a `##` line, at any indent a model might add.
 _HEADING = re.compile(r"^\s*#{2,}\s*(.+?)\s*$")
@@ -187,16 +180,5 @@ class ModelOutlineWriter:
         # place is what stops the two rules disagreeing again.
         draft = _parse(str(response.content).strip())
         if draft is None or len(draft.sections) < MIN_SECTIONS:
-            return None
-        # Field by field, never joined -- see the module docstring. The runs
-        # are concatenated rather than short-circuited so a future caller
-        # that wants to report *what* was ungrounded has the whole list; the
-        # cost is checking a few more strings after the first failure, on
-        # text that is already in memory.
-        ungrounded = ungrounded_runs(draft.promise, anchors)
-        for heading, summary in draft.sections:
-            ungrounded += ungrounded_runs(heading, anchors)
-            ungrounded += ungrounded_runs(summary, anchors)
-        if ungrounded:
             return None
         return draft

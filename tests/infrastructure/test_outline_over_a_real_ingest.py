@@ -142,18 +142,18 @@ async def _seed_one_cluster(application, project_id: str) -> None:
     tenant_id = UUID(project_id)
     store = await application.graphs.open(tenant_id)
     # A realistic cluster, not a minimal one. Four entities was the first
-    # version and it made this test skip every run: grounding is checked
-    # against the cluster's membership, and a model asked to outline a course
-    # on warp drive names the Vulcans and the Federation whether or not a
-    # four-entity cluster happens to contain them. Measured 2026-08-23 against
-    # the live model -- the outline it wrote was good and was refused on
-    # `Vulcan` and `United Federation of Planets` alone.
+    # version; a real `LearningArea` from a real ingest holds dozens of
+    # members, and a four-member fixture is a thinner world than production
+    # ever hands the writer -- kept wide here so this test exercises the same
+    # anchor list a real sweep would.
     #
-    # That refusal is the check working, not failing: an outline must not
-    # promise coverage of entities the cluster does not hold. But a real
-    # `LearningArea` from a real ingest holds dozens of members, so a
-    # four-member fixture tests a stricter world than production has, and the
-    # seam this test exists for never gets exercised.
+    # This used to matter for a different reason too: a now-removed grounding
+    # check refused an outline for naming any entity outside the cluster, and
+    # a four-entity fixture made that check refuse constantly (measured
+    # 2026-08-23: a good outline refused on `Vulcan` and `United Federation of
+    # Planets` alone). That check is gone -- see
+    # `research_team/infrastructure/knowledge/anchors.py` -- but the wider
+    # cluster is still the more honest fixture, so it stays.
     names = (
         "Zefram Cochrane",
         "The Phoenix",
@@ -256,16 +256,16 @@ async def test_an_outline_over_a_real_ingest_survives_its_own_cache_round_trip(d
             first_outline = first.json()["outline"]
 
             if first_outline is None:
-                # A real model is allowed to refuse -- ungrounded copy, too
-                # few sections, an unparseable reply -- `OutlineTextPort`'s own
-                # docstring says `None` is a legitimate answer, not a flake.
-                # Nothing about the mapping can be asserted over an outline
-                # that was never cached, so this is the honest, named stop
-                # rather than a false pass.
+                # A real model is allowed to refuse -- too few sections, an
+                # unparseable reply -- `OutlineTextPort`'s own docstring says
+                # `None` is a legitimate answer, not a flake. Nothing about
+                # the mapping can be asserted over an outline that was never
+                # cached, so this is the honest, named stop rather than a
+                # false pass.
                 pytest.skip(
-                    "the live model refused this outline (ungrounded, too few "
-                    "sections, or unparseable) -- nothing to assert the "
-                    "heading/summary mapping against this run"
+                    "the live model refused this outline (too few sections, "
+                    "or unparseable) -- nothing to assert the heading/summary "
+                    "mapping against this run"
                 )
 
             # Second read: `candidate.membership_hash` has not changed, so
@@ -286,8 +286,8 @@ async def test_an_outline_over_a_real_ingest_survives_its_own_cache_round_trip(d
     for section in first_outline["sections"]:
         # The mapping assertion itself: each `heading` and `summary` came
         # from the same position in the same `DraftOutline.sections` tuple.
-        # A transposed pair -- the summary's long, ungrounded-entity-free
-        # prose written into `heading` -- would still satisfy every assertion
+        # A transposed pair -- the summary's long prose written into
+        # `heading` -- would still satisfy every assertion
         # above (the cache would round-trip its own mistake byte-for-byte),
         # so this checks the fields did not just round-trip consistently but
         # round-tripped the *right way round*: a heading is short prose
