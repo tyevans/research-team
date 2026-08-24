@@ -6,6 +6,7 @@ have to be edited every time a better one arrives. `CategoryGrouper` is the
 first of these.
 """
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -87,12 +88,20 @@ class ArtPort(Protocol):
     implementation and its replacement can differ completely underneath it.
     """
 
-    def for_candidate(self, slug: str, category: CategoryKey) -> ArtRef:
+    async def for_candidate(self, project_id: UUID, candidate: CourseCandidate) -> ArtRef:
         """The art for one candidate. Deterministic in every implementation
         this port is expected to have -- a catalog whose illustrations
         reshuffle between requests is not one a reader can recognise a card
         in, and that constraint belongs on the port, not just on today's
-        adapter."""
+        adapter.
+
+        `project_id` is not on `CourseCandidate` and is required anyway: a
+        library-backed implementation keys its per-project assignment (which
+        art id a given slug resolved to) on `(project_id, slug)`, so the port
+        takes it explicitly rather than asking every candidate to carry a
+        field only one caller needs. The candidate itself is passed whole,
+        not just `slug`/`category`, because a search-based implementation
+        needs the title and anchors too."""
         ...
 
 
@@ -395,7 +404,7 @@ class CatalogService:
                 has_name = bool(cached.title)
                 title = cached.title or area.display_name()
             named[slug] = has_name
-            candidates[slug] = CourseCandidate(
+            candidate = CourseCandidate(
                 slug=slug,
                 title=title,
                 category=category,
@@ -403,9 +412,12 @@ class CatalogService:
                 size=area.size,
                 membership_hash=membership_hash(area),
                 anchors=area.anchors,
-                art=self._art.for_candidate(slug, category),
+                art=ArtRef(url="", alt=""),  # placeholder, replaced below
                 blurb=blurb,
                 featured_rank=featured.get(slug),
+            )
+            candidates[slug] = dataclasses.replace(
+                candidate, art=await self._art.for_candidate(project_id, candidate)
             )
 
         # A featured candidate is never hidden, named or not: someone pinned

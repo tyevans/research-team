@@ -18,8 +18,9 @@ forever, for the same slug -- which is the whole requirement.
 
 from hashlib import sha256
 from urllib.parse import quote
+from uuid import UUID
 
-from research_team.domain.course_catalog import ArtRef, CategoryKey
+from research_team.domain.course_catalog import ArtRef, CategoryKey, CourseCandidate
 
 # One palette per key the default grouper (type_plurality_grouper.CATEGORY_LABELS)
 # actually emits, so a category page reads as one family rather than a
@@ -111,10 +112,17 @@ def _svg_for(slug: str, category: CategoryKey) -> str:
 
 
 class SeededArtProvider:
-    """The one production `ArtPort` adapter for the placeholder increment."""
+    """The fallback `ArtPort` adapter -- used directly pre-increment-3, and
+    now also as `LibraryArtProvider`'s miss path, so a candidate the library
+    has neither assigned nor matched still gets a browsable card."""
 
-    def for_candidate(self, slug: str, category: CategoryKey) -> ArtRef:
-        svg = _svg_for(slug, category)
+    async def for_candidate(self, project_id: UUID, candidate: CourseCandidate) -> ArtRef:
+        """`project_id` is accepted only to satisfy `ArtPort` -- this
+        implementation is deterministic on `candidate.slug`/`candidate.category`
+        alone and never needs it. `async` for the same reason: the port is
+        async so a library-backed implementation can await store calls, and
+        every implementation has to share the signature."""
+        svg = _svg_for(candidate.slug, candidate.category)
         # `quote` rather than base64: base64 inflates an already-tiny SVG by a
         # third, and plain percent-encoded text is what every browser expects
         # for an `image/svg+xml` data URI. `safe=""` percent-encodes `/` and
@@ -122,4 +130,4 @@ class SeededArtProvider:
         # future shape (an arc, an id-referenced gradient) might.
         encoded = quote(svg, safe="")
         url = f"data:image/svg+xml,{encoded}"
-        return ArtRef(url=url, alt=f"Illustration for {slug}")
+        return ArtRef(url=url, alt=f"Illustration for {candidate.slug}")
