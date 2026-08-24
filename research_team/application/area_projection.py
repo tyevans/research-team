@@ -67,10 +67,15 @@ MAX_PASSAGE_ENTITIES = 25
 
 #: How many entities this pass will cluster. Greedy modularity is superlinear,
 #: and a refusal a person can see beats a projection that quietly consumes the
-#: request. The number is where a naive-heap implementation in CPython stays
-#: inside a few seconds on a dense graph, measured rather than guessed -- see
-#: `test_projection_refuses_a_graph_it_cannot_cluster_promptly`.
-MAX_CLUSTERED_ENTITIES = 2_000
+#: request. Matched to `graph_read.MAX_GRAPH_NODES` on purpose -- a lower
+#: value here meant a graph the reader would hand over whole was still
+#: unclusterable, and the owner's largest project (3,619 clusterable
+#: entities) sat in exactly that gap at the old value of 2,000, so its
+#: Curriculum and Catalog pages could not build at all. The number is where a
+#: naive-heap implementation in CPython stays inside a few seconds on a dense
+#: graph, measured rather than guessed -- see
+#: `test_projection_clusters_a_dense_graph_at_the_cap_promptly`.
+MAX_CLUSTERED_ENTITIES = 5_000
 
 #: Above this fraction of the graph, a community is split once more.
 #:
