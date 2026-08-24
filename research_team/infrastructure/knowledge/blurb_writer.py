@@ -47,6 +47,26 @@ class ModelBlurbWriter:
     def __init__(self, model: BaseChatModel) -> None:
         self._model = model
 
+    @property
+    def model_name(self) -> str:
+        """Which model wrote a blurb, for `CourseBlurbRow.model`.
+
+        A property of the writer rather than a second return value from
+        `write`: returning the name beside the text would lose it on every
+        refusal, and `write` refuses often by design.
+
+        Read defensively and falling back rather than raising, because the
+        value exists only for provenance -- a local model's LangChain wrapper
+        carries neither `model_name` nor `model` reliably, and a stored class
+        name is worth more than an exception thrown while caching a blurb
+        that was generated correctly.
+        """
+        return (
+            getattr(self._model, "model_name", None)
+            or getattr(self._model, "model", None)
+            or type(self._model).__name__
+        )
+
     async def write(self, title: str, anchors: Sequence[AreaMember]) -> str | None:
         prompt = _PROMPT.format(title=title, anchor_lines=anchor_lines(anchors))
         response = await self._model.ainvoke([HumanMessage(prompt)])

@@ -107,6 +107,19 @@ class BlurbTextPort(Protocol):
 
     async def write(self, title: str, anchors: Sequence[AreaMember]) -> str | None: ...
 
+    @property
+    def model_name(self) -> str:
+        """Which model this port writes with, for `CourseBlurbRow.model`.
+
+        On the port rather than returned beside the text, because a refusal
+        returns `None` and would take the name with it -- and the name is a
+        property of the writer, not of one reply. Without this the column
+        exists and nothing in the system can fill it: the caller lives here,
+        and `tests/test_architecture.py` keeps this layer free of the chat
+        model's vocabulary.
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class CachedBlurb:
@@ -143,6 +156,91 @@ class BlurbCachePort(Protocol):
         project_id: UUID,
         slug: str,
         text: str,
+        membership_hash: str,
+        model: str,
+        generated_at: datetime,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class DraftOutline:
+    """What a model produced for one candidate, before it is cached.
+
+    `sections` is `(heading, summary)` pairs in reading order -- a tuple of
+    pairs rather than a list of dataclasses because nothing reads a section
+    except in order and by position, and a third type for two strings is a
+    file a reader has to visit to learn nothing.
+
+    Not `CourseOutlineRow`, for `CachedBlurb`'s reason: that type carries
+    `project_id`, `slug` and a `membership_hash` the caller already holds,
+    and importing it here would put `infrastructure.persistence` in a module
+    `tests/test_architecture.py` keeps free of it.
+    """
+
+    promise: str
+    sections: tuple[tuple[str, str], ...]
+
+
+class OutlineTextPort(Protocol):
+    """Turns a candidate's title and anchors into an outline, or refuses.
+
+    `None` is a legitimate answer, not an error, and it is the answer more
+    often than for a blurb: an outline is refused when it names an entity the
+    cluster does not hold (`grounding.ungrounded_runs`, shared with
+    `BlurbTextPort`'s adapter), when the reply does not parse as the asked-for
+    shape, and when it carries fewer sections than make it an outline at all.
+    A caller falls back to no outline; it does not retry on the assumption
+    something went wrong.
+
+    Per CLAUDE.md this port has exactly one production adapter
+    (`outline_writer.ModelOutlineWriter`), which means a stub on this side and
+    a unit test on the adapter's side prove the two halves work and cannot
+    prove they meet. The test that matters drives both ends over real data,
+    and it is Task 13's.
+    """
+
+    async def write(
+        self, title: str, anchors: Sequence[AreaMember]
+    ) -> DraftOutline | None: ...
+
+    @property
+    def model_name(self) -> str:
+        """Which model this port writes with, for `CourseOutlineRow.model`.
+        See `BlurbTextPort.model_name` for why it is a property here."""
+        ...
+
+
+@dataclass(frozen=True)
+class CachedOutline:
+    """A previously generated outline, in this layer's own vocabulary.
+
+    `CachedBlurb` with a structured payload, and separate from it for the
+    reason `CourseOutlineRow` is a separate table: one shared type would need
+    a field that is meaningful for half its instances.
+    """
+
+    promise: str
+    sections: tuple[tuple[str, str], ...]
+    membership_hash: str
+    model: str
+    generated_at: datetime
+
+
+class OutlineCachePort(Protocol):
+    """The stored outline for one candidate, if one has been generated.
+
+    Backed by `CourseOutlineStore` at composition time. `slug` alone
+    identifies the candidate within a project, matching `BlurbCachePort`.
+    """
+
+    async def get(self, project_id: UUID, slug: str) -> CachedOutline | None: ...
+
+    async def put(
+        self,
+        project_id: UUID,
+        slug: str,
+        promise: str,
+        sections: tuple[tuple[str, str], ...],
         membership_hash: str,
         model: str,
         generated_at: datetime,
