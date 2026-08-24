@@ -115,14 +115,11 @@ class DraftBlurb:
 class BlurbTextPort(Protocol):
     """Turns a candidate's anchors into a title and catalog copy, or refuses.
 
-    `None` is a legitimate answer, not an error: a reply that names an entity
-    the cluster does not hold is refused rather than returned, per
-    `blurb_writer.ModelBlurbWriter`'s own docstring for why that refusal is
-    deliberately the conservative side to fail on. The same refusal covers a
-    title identical to the cluster's top anchor -- a model handed one
-    dominant entity will return its name verbatim, which passes the
-    grounding check by construction and is the defect this port exists to
-    stop, wearing the shape of a correct answer.
+    `None` is a legitimate answer, not an error: an empty reply, one with no
+    separate title line, or a title identical to the cluster's top anchor is
+    refused rather than returned. That last case is a model handed one
+    dominant entity returning its name verbatim as the title -- a plausible-
+    looking answer this port exists to stop.
 
     One call, not two: the writer already prompts with the anchors to write
     the blurb, and a second call for the title would double the cost of a
@@ -218,13 +215,10 @@ class DraftOutline:
 class OutlineTextPort(Protocol):
     """Turns a candidate's title and anchors into an outline, or refuses.
 
-    `None` is a legitimate answer, not an error, and it is the answer more
-    often than for a blurb: an outline is refused when it names an entity the
-    cluster does not hold (`grounding.ungrounded_runs`, shared with
-    `BlurbTextPort`'s adapter), when the reply does not parse as the asked-for
-    shape, and when it carries fewer sections than make it an outline at all.
-    A caller falls back to no outline; it does not retry on the assumption
-    something went wrong.
+    `None` is a legitimate answer, not an error: an outline is refused when the
+    reply does not parse as the asked-for shape, and when it carries fewer
+    sections than make it an outline at all. A caller falls back to no
+    outline; it does not retry on the assumption something went wrong.
 
     Per CLAUDE.md this port has exactly one production adapter
     (`outline_writer.ModelOutlineWriter`), which means a stub on this side and

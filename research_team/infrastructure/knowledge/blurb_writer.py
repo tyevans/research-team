@@ -1,16 +1,11 @@
 """`BlurbTextPort` over a LangChain chat model, and the checks it can run.
 
-The grounding check itself lives in `grounding.py` -- it is shared with the
-outline writer, and its reasoning (why it is weaker than
-`entity_definitions`, which false-accept it tolerates, why
-`SENTENCE_OPENERS` is a closed list) moved there with it rather than being
-restated here in a second voice that can drift from the first.
-
-What stays here is the part specific to a blurb: the prompt, and the
-refusals a blurb reply makes. An empty reply, one with no separate title
-line, or one whose title or text carries an ungrounded capitalised run, is
-refused whole -- `grounding`'s docstring says why that is the conservative
-direction to fail in.
+Used to also run a capitalisation-based grounding check shared with the
+outline writer, dropped 2026-08-23 -- see `anchors.py`'s module docstring for
+why. What is left is the part specific to a blurb's shape: the prompt, and
+the refusals a blurb reply makes on that shape. An empty reply, one with no
+separate title line, or a title identical to the cluster's top anchor, is
+refused whole.
 
 **The title comes from the same call as the blurb, on purpose.** A second
 model call for a title alone would double the cost of a sweep that already
@@ -30,8 +25,14 @@ from langchain_core.messages import HumanMessage
 
 from research_team.application.course_catalog import DraftBlurb
 from research_team.domain.learning_area import AreaMember
-from research_team.infrastructure.knowledge.grounding import anchor_lines, ungrounded_runs
+from research_team.infrastructure.knowledge.anchors import anchor_lines
 
+# Sentence case in the prompt below used to be load-bearing for the (now
+# removed) grounding check, which read Title Case as every word being an
+# ungrounded capitalised run. That reason is gone, but the ask stays: the
+# frontend's `titleCase` helper applies casing at display time, and a model
+# free to vary between sentence and Title Case would make that helper produce
+# inconsistent results across cards.
 _PROMPT = """\
 Write a title and catalog copy for a course, currently labelled "{title}"
 after its most central entity -- that label is a placeholder, not a title
@@ -150,17 +151,4 @@ class ModelBlurbWriter:
         if anchors and _normalised(draft_title) == _normalised(anchors[0].name):
             return None
 
-        # Checked as two separate fields, not one joined string --
-        # `grounding.ungrounded_runs`'s module docstring records what a
-        # joined title-and-text produces at the boundary between them.
-        #
-        # This is also why the prompt asks for ordinary sentence
-        # capitalisation rather than Title Case: `ungrounded_runs` treats
-        # its input as a sentence, exempting only its first word (and only
-        # when that word is an ordinary opener). A Title Case reply has
-        # every word capitalised, so the whole title would read as one
-        # ungrounded run regardless of content -- refusing every title,
-        # invented or not, which is not the check this task asks for.
-        if ungrounded_runs(draft_title, anchors) or ungrounded_runs(text, anchors):
-            return None
         return DraftBlurb(title=draft_title, text=text)
