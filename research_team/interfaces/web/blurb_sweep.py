@@ -23,13 +23,19 @@ The three-way split most worth reading before touching `_drive`:
 * **A refusal** (`write` returns `None`) is counted as failed and moves on --
   see the module-level test's docstring; one ungrounded cluster must not wall
   off every card behind it.
-* **Anything else raises** and is *not* caught here, matching
-  `CatalogService.build`'s own posture toward its ports: a broken cache or a
-  transport error is a bug to surface, not a per-candidate outcome to tally
-  alongside a refusal.
+* **Anything else raises**, and unlike a refusal it is *not* tallied as a
+  counted outcome -- it is a defect. But it is still caught inside `_drive`,
+  not left to crash the background task: nothing in production awaits that
+  task (only the test-only `wait()` does), so an uncaught exception would
+  become an unretrieved-exception log line at best while the last frame
+  written sits at `running: True` forever. A reader watching the button has
+  no way to tell that apart from a sweep that is merely slow. The frame is
+  logged and settled instead, with an `error` key present only on this path
+  -- see `_drive`.
 """
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -38,6 +44,8 @@ from uuid import UUID
 
 from research_team.application.course_catalog import BlurbCachePort, DraftBlurb
 from research_team.domain.learning_area import AreaMember
+
+_logger = logging.getLogger(__name__)
 
 
 class _Candidate(Protocol):
@@ -146,44 +154,68 @@ class BlurbSweep:
     ) -> None:
         done = 0
         failed = 0
-        for candidate in candidates:
-            cached = await self._cache.get(project_id, candidate.slug)
-            if cached is not None and cached.membership_hash == candidate.membership_hash:
-                # Up to date -- the whole reason this is a sweep and not a
-                # regenerate-everything button.
-                done += 1
+        try:
+            for candidate in candidates:
+                cached = await self._cache.get(project_id, candidate.slug)
+                if cached is not None and cached.membership_hash == candidate.membership_hash:
+                    # Up to date -- the whole reason this is a sweep and not a
+                    # regenerate-everything button.
+                    done += 1
+                    self._progress[project_id] = {
+                        "running": True,
+                        "done": done,
+                        "total": len(candidates),
+                        "failed": failed,
+                    }
+                    continue
+
+                draft = await write.write(candidate.title, candidate.anchors)
+                if draft is None:
+                    # A refusal: the model would not ground this cluster's
+                    # copy. The card keeps its title and its art -- see the
+                    # module docstring -- and the sweep moves on rather than
+                    # stopping. Not the same thing as the `except` below: a
+                    # refusal is an expected outcome this method counts, not
+                    # a defect it reports.
+                    failed += 1
+                else:
+                    await self._cache.put(
+                        project_id,
+                        candidate.slug,
+                        draft.title,
+                        draft.text,
+                        candidate.membership_hash,
+                        write.model_name,
+                        datetime.now(UTC),
+                    )
+                    done += 1
+
                 self._progress[project_id] = {
                     "running": True,
                     "done": done,
                     "total": len(candidates),
                     "failed": failed,
                 }
-                continue
-
-            draft = await write.write(candidate.title, candidate.anchors)
-            if draft is None:
-                # A refusal: the model would not ground this cluster's copy.
-                # The card keeps its title and its art -- see the module
-                # docstring -- and the sweep moves on rather than stopping.
-                failed += 1
-            else:
-                await self._cache.put(
-                    project_id,
-                    candidate.slug,
-                    draft.title,
-                    draft.text,
-                    candidate.membership_hash,
-                    write.model_name,
-                    datetime.now(UTC),
-                )
-                done += 1
-
+        except Exception as error:
+            # Caught here rather than left to propagate out of the task: with
+            # nothing in production awaiting it (only the test-only `wait`
+            # does), an uncaught exception becomes an unretrieved-exception
+            # log line at best, and the frame this loop last wrote sits at
+            # `running: True` forever -- a progress bar with no way to tell
+            # "the sweep died" from "the sweep is just slow". `error` is only
+            # present on this path: a normal finish's frame has no such key,
+            # so `progress()["error"]`'s presence is itself the "ended badly"
+            # signal, and every dict-equality test for a clean run stays
+            # correct without listing a key it never expects.
+            _logger.exception("blurb sweep for project %s crashed", project_id)
             self._progress[project_id] = {
-                "running": True,
+                "running": False,
                 "done": done,
                 "total": len(candidates),
                 "failed": failed,
+                "error": str(error),
             }
+            return
 
         self._progress[project_id] = {
             "running": False,

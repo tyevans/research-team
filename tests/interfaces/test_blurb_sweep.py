@@ -169,6 +169,40 @@ async def test_a_second_sweep_while_one_runs_is_refused():
     await sweep.wait(project_id)
 
 
+async def test_a_crash_mid_sweep_settles_the_frame_instead_of_spinning_forever():
+    """A writer that raises must still settle the frame. Before this fix the
+    closing `running: False` write sat after the loop, so an exception
+    partway through skipped it and left the frame at `running: True`
+    permanently -- indistinguishable from a sweep that is merely slow, since
+    nothing in production awaits the background task to notice it died."""
+    cache = _FakeCache()
+
+    class _CrashingWriter:
+        model_name = "crashing-model"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def write(self, title, anchors):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("model endpoint unreachable")
+            return DraftBlurb(title=title, text="ok")
+
+    sweep = BlurbSweep(cache)
+    project_id = uuid4()
+
+    await sweep.start(
+        project_id, [_candidate("a"), _candidate("b"), _candidate("c")], _CrashingWriter()
+    )
+    await sweep.wait(project_id)
+
+    progress = sweep.progress(project_id)
+    assert progress["running"] is False
+    assert progress["done"] == 1
+    assert "error" in progress
+
+
 async def test_progress_for_a_project_that_never_swept_reports_not_running():
     sweep = BlurbSweep(_FakeCache())
     assert sweep.progress(uuid4()) == {"running": False, "done": 0, "total": 0, "failed": 0}
