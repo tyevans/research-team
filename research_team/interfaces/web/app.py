@@ -3137,7 +3137,7 @@ def create_app(
         await _require_project(project_id)
         return curriculum_view(await _curriculum(project_id))
 
-    async def _catalog(project_id: UUID) -> Catalog:
+    async def _catalog(project_id: UUID, *, include_unnamed: bool = False) -> Catalog:
         """This project's catalog, assembled over its curriculum and its
         featured overrides.
 
@@ -3146,6 +3146,14 @@ def create_app(
         the right answer for a project with no graph, and an unwired build
         answering the same thing would be indistinguishable from that --
         exactly the failure this feature is arranged against.
+
+        `include_unnamed` defaults false, matching the front page's own
+        default -- a caller that only needs one candidate by slug (course
+        detail, realize) does not care which candidates the front page is
+        currently hiding, since a hidden candidate's slug still resolves.
+        The sweep route below passes `True` explicitly: it exists to *give*
+        unnamed candidates a title, so it is the one caller that must see
+        the set the toggle hides.
         """
         if catalog is None or catalog_features is None:
             raise HTTPException(status_code=503, detail="the course catalog is not configured")
@@ -3158,10 +3166,12 @@ def create_app(
             raise HTTPException(status_code=503, detail="the course catalog is not configured")
         built = await _curriculum(project_id)
         featured = await features.featured_for(project_id)
-        return await catalog.build(project_id, built, featured)
+        return await catalog.build(
+            project_id, built, featured, include_unnamed=include_unnamed
+        )
 
     @app.get("/api/projects/{project_id}/catalog/categories/{key}")
-    async def read_catalog_category(project_id: UUID, key: str):
+    async def read_catalog_category(project_id: UUID, key: str, unnamed: bool = False):
         """One category's page.
 
         **Registered ahead of the feature/unfeature routes below**, matching
@@ -3179,7 +3189,7 @@ def create_app(
         reader needs to tell them apart.
         """
         await _require_project(project_id)
-        page = catalog_category_view(await _catalog(project_id), key)
+        page = catalog_category_view(await _catalog(project_id, include_unnamed=unnamed), key)
         if page is None:
             raise HTTPException(status_code=404, detail=f"no category {key!r}")
         return page
@@ -3211,7 +3221,11 @@ def create_app(
         await _require_project(project_id)
         if blurb_sweep is None or blurb_writer is None:
             raise HTTPException(status_code=503, detail="blurb sweeping is not configured")
-        built = await _catalog(project_id)
+        # `include_unnamed=True`: the whole point of a sweep is to give an
+        # unnamed candidate a title, so the one caller that must see them is
+        # this one -- the default-hidden set on the front page is exactly the
+        # backlog this route exists to work through.
+        built = await _catalog(project_id, include_unnamed=True)
         try:
             frame = await blurb_sweep.start(project_id, built.all_candidates, blurb_writer)
         except SweepAlreadyActive as error:
@@ -3232,7 +3246,11 @@ def create_app(
         if course_service is None:
             raise HTTPException(status_code=503, detail="course realization is not configured")
         built = await _curriculum(project_id)
-        catalog_built = await _catalog(project_id)
+        # `include_unnamed=True`: a slug is looked up directly here, and a
+        # candidate the front page currently hides by default must not 404
+        # just for being unnamed -- the toggle governs what the front page
+        # shows, not which slugs exist.
+        catalog_built = await _catalog(project_id, include_unnamed=True)
         detail = await course_service.detail(project_id, built, catalog_built, slug)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"no course {slug!r}")
@@ -3288,7 +3306,9 @@ def create_app(
         if course_repository is None:
             raise HTTPException(status_code=503, detail="course realization is not configured")
         built = await _curriculum(project_id)
-        catalog_built = await _catalog(project_id)
+        # `include_unnamed=True` for `read_course_detail`'s reason above: a
+        # slug looked up directly must not 404 for being unnamed.
+        catalog_built = await _catalog(project_id, include_unnamed=True)
         candidate = next((c for c in catalog_built.all_candidates if c.slug == slug), None)
         if candidate is None:
             raise HTTPException(status_code=404, detail=f"no course {slug!r}")
@@ -3387,10 +3407,16 @@ def create_app(
         return {"slug": slug}
 
     @app.get("/api/projects/{project_id}/catalog")
-    async def read_catalog(project_id: UUID):
-        """The front page: hero, highlights, and everything else by category."""
+    async def read_catalog(project_id: UUID, unnamed: bool = False):
+        """The front page: hero, highlights, and everything else by category.
+
+        `unnamed=true` shows candidates with no cached title -- default false
+        because a title-less card falls back to `LearningArea.display_name()`,
+        the single most central *entity* in the cluster, and reads as an
+        entity name rather than a course.
+        """
         await _require_project(project_id)
-        return catalog_view(await _catalog(project_id))
+        return catalog_view(await _catalog(project_id, include_unnamed=unnamed))
 
     @app.post("/api/projects/{project_id}/embeddings", status_code=202)
     async def refresh_embeddings(project_id: UUID):

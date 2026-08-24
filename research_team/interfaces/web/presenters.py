@@ -1531,6 +1531,7 @@ def catalog_view(
         "filed": [category_view(cat) for cat in catalog.sections.filed],
         "categories": _every_category(catalog),
         "unplaceableFeatured": list(catalog.unplaceable_featured),
+        "unnamedCount": catalog.unnamed_count,
         "orphanedCourses": [
             {
                 "slug": c.slug,

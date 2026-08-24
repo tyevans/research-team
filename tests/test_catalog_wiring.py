@@ -122,7 +122,7 @@ async def test_a_catalog_over_a_real_ingest_has_cards_in_more_than_one_category(
 
             await _seed_two_categories(application, project_id)
 
-            response = await client.get(f"/api/projects/{project_id}/catalog")
+            response = await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")
             assert response.status_code == 200
             body = response.json()
 
@@ -147,7 +147,9 @@ async def test_a_catalog_over_a_real_ingest_has_cards_in_more_than_one_category(
             assert feature_response.status_code == 200
             await application.catalog_caught_up()
 
-            after = (await client.get(f"/api/projects/{project_id}/catalog")).json()
+            after = (
+                await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")
+            ).json()
     finally:
         await application.close()
 
@@ -220,7 +222,7 @@ async def test_the_catalog_answers_when_the_app_is_built_before_start(db_path, f
 
         await _seed_two_categories(application, project_id)
 
-        response = await client.get(f"/api/projects/{project_id}/catalog")
+        response = await client.get(f"/api/projects/{project_id}/catalog?unnamed=true")
         assert response.status_code == 200, response.text
         body = response.json()
 
