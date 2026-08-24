@@ -62,6 +62,20 @@ const fakeCourses = (over: Partial<CourseRepository> = {}): CourseRepository => 
   fetchArtSweep: vi.fn(() => {
     throw new Error('fetchArtSweep was not stubbed for this test')
   }),
+  // `CoursePage` polls this on every render regardless of what a test is
+  // about, matching `courseDetail`'s own always-fetched shape -- a resolved
+  // default, not a throwing one, so a test unrelated to rerolling does not
+  // have to stub it just to render.
+  startArtReroll: vi.fn(() => {
+    throw new Error('startArtReroll was not stubbed for this test')
+  }),
+  fetchArtReroll: vi.fn().mockResolvedValue({
+    running: false,
+    done: 0,
+    total: 0,
+    failed: 0,
+    error: null,
+  }),
   ...over,
 })
 

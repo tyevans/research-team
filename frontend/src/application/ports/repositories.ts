@@ -725,11 +725,23 @@ export interface CourseRepository {
   fetchBlurbSweep(projectId: ProjectId): Promise<BlurbSweepProgress>
 
   /** Start illustrating every candidate whose cached art is missing or
-   *  stale, in the background. */
-  startArtSweep(projectId: ProjectId): Promise<ArtSweepProgress>
+   *  stale, in the background. `force: true` re-illustrates *every*
+   *  candidate, including one whose art is already fresh -- the distinct
+   *  affordance the owner asked for, so pressing the ordinary button never
+   *  costs a model call per card that already has art. */
+  startArtSweep(projectId: ProjectId, options?: { force?: boolean }): Promise<ArtSweepProgress>
 
   /** Where the last (or current) art sweep on this project stands. */
   fetchArtSweep(projectId: ProjectId): Promise<ArtSweepProgress>
+
+  /** Drop one candidate's art assignment and generate a fresh piece,
+   *  skipping the library search -- see the server's `ArtReroll` for why a
+   *  reroll must not risk re-matching back to the very picture the reroll
+   *  is trying to escape. */
+  startArtReroll(projectId: ProjectId, slug: string): Promise<ArtSweepProgress>
+
+  /** Where the last (or current) reroll of this candidate's art stands. */
+  fetchArtReroll(projectId: ProjectId, slug: string): Promise<ArtSweepProgress>
 }
 
 export interface TimelineRepository {

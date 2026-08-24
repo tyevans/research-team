@@ -59,9 +59,13 @@ export class HttpCourseRepository implements CourseRepository {
     )
   }
 
-  async startArtSweep(projectId: ProjectId): Promise<ArtSweepProgress> {
+  async startArtSweep(
+    projectId: ProjectId,
+    options?: { force?: boolean },
+  ): Promise<ArtSweepProgress> {
+    const query = options?.force === true ? '?force=true' : ''
     return await this.http.post(
-      `/api/projects/${seg(projectId)}/catalog/art`,
+      `/api/projects/${seg(projectId)}/catalog/art${query}`,
       {},
       dto.artSweepProgressDto,
     )
@@ -70,6 +74,21 @@ export class HttpCourseRepository implements CourseRepository {
   async fetchArtSweep(projectId: ProjectId): Promise<ArtSweepProgress> {
     return await this.http.get(
       `/api/projects/${seg(projectId)}/catalog/art`,
+      dto.artSweepProgressDto,
+    )
+  }
+
+  async startArtReroll(projectId: ProjectId, slug: string): Promise<ArtSweepProgress> {
+    return await this.http.post(
+      `/api/projects/${seg(projectId)}/catalog/${seg(slug)}/art/reroll`,
+      {},
+      dto.artSweepProgressDto,
+    )
+  }
+
+  async fetchArtReroll(projectId: ProjectId, slug: string): Promise<ArtSweepProgress> {
+    return await this.http.get(
+      `/api/projects/${seg(projectId)}/catalog/${seg(slug)}/art/reroll`,
       dto.artSweepProgressDto,
     )
   }
