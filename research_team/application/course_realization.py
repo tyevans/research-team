@@ -16,12 +16,14 @@ from uuid import UUID
 
 from research_team.application.course_catalog import (
     CachedOutline,
+    Catalog,
     OutlineCachePort,
     OutlineTextPort,
 )
 from research_team.application.curriculum import Curriculum
 from research_team.domain.course import CourseFit, fit_of
 from research_team.domain.course_catalog import CourseCandidate
+from research_team.domain.learning_area import AreaMember
 
 
 @dataclass(frozen=True)
@@ -84,7 +86,19 @@ class CourseDetail:
 
     candidate: CourseCandidate
     outline: CachedOutline | None
-    members: tuple = ()
+    members: tuple[AreaMember, ...] = ()
+    """The cluster's full membership now -- not just its anchors, so a reader
+    can check the outline's claims about coverage against the population the
+    claims were made over.
+
+    `()` means the slug names no cluster, which on the wire is
+    indistinguishable from a cluster with no members. That collision is
+    tolerable only because `course.fit.orphaned` answers the same question
+    unambiguously on the same object; a caller reading `members` alone to
+    decide whether the cluster still exists is reading the wrong field. It is
+    written down for the reason `outline: None` is: a field with two meanings
+    and no note is one a later reader resolves by guessing.
+    """
     course: RealizedCourseView | None = None
 
 
@@ -107,7 +121,7 @@ class CourseService:
         self,
         project_id: UUID,
         curriculum: Curriculum,
-        catalog,
+        catalog: Catalog,
         slug: str,
     ) -> CourseDetail | None:
         """The candidate, its outline and (if realized) its drift.
