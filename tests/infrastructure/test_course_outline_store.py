@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from research_team.infrastructure.persistence.read_models import (
+    CandidateArtRow,
     CatalogFeatureRow,
     CourseBlurbRow,
     CourseOutlineRow,
@@ -76,15 +77,15 @@ async def test_putting_the_same_slug_twice_replaces_rather_than_duplicates(store
 
 
 async def test_an_outline_row_id_does_not_collide_with_any_sibling(store):
-    """Four row types now derive an id from `CATALOG_NAMESPACE` over the same
+    """Five row types now derive an id from `CATALOG_NAMESPACE` over the same
     `{project_id}:{slug}` pair, and a literal prefix is the only thing keeping
     any two of them apart -- none for `CatalogFeatureRow`, then `blurb:`,
-    `course:` and `outline:`.
+    `course:`, `outline:` and `art:` (Task: art storage).
 
     Checked against every sibling rather than only the blurb. A version of this
-    test naming one neighbour passes while `outline:` collides with either of
-    the other two, and the failure that would cause is a store silently reading
-    and overwriting another table's row for the same course.
+    test naming one neighbour passes while `outline:` collides with any of the
+    others, and the failure that would cause is a store silently reading and
+    overwriting another table's row for the same course.
     """
     project_id = uuid4()
     ids = {
@@ -92,6 +93,7 @@ async def test_an_outline_row_id_does_not_collide_with_any_sibling(store):
         CourseBlurbRow.row_id(project_id, "warp-drive"),
         CourseRow.row_id(project_id, "warp-drive"),
         CatalogFeatureRow.row_id(project_id, "warp-drive"),
+        CandidateArtRow.row_id(project_id, "warp-drive"),
     }
 
-    assert len(ids) == 4
+    assert len(ids) == 5

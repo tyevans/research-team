@@ -221,6 +221,8 @@ from research_team.infrastructure.persistence.event_store import (
 from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
 from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
+    ArtRow,
+    ArtStore,
     AskConversationRunner,
     AuthoringRunRunner,
     CatalogFeatureProjection,
@@ -440,6 +442,60 @@ class _LazyBlurbCache:
     ) -> None:
         store = await self._opened()
         await store.put(project_id, slug, title, text, membership_hash, model, generated_at)
+
+    async def close(self) -> None:
+        if self._store is not None:
+            await self._store.close()
+
+
+class _LazyArtStore:
+    """`ArtStore`, opened on first use -- `_LazyBlurbCache`'s exact shape and
+    reason, but exposing the store's own methods directly rather than a
+    narrower port. Nothing in this increment builds an `ArtGeneratorPort`
+    adapter yet (that is a sibling task's job), so there is no port to defer
+    behind; this exists solely so `create_app`'s `art_store` parameter has
+    something to serve `/api/art/{art_id}.svg` from without opening a
+    connection before uvicorn's event loop exists -- see `_LazyBlurbCache`'s
+    docstring for why that ordering matters.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._store: ArtStore | None = None
+        self._lock = asyncio.Lock()
+
+    async def _opened(self) -> ArtStore:
+        if self._store is None:
+            async with self._lock:
+                if self._store is None:
+                    self._store = await ArtStore.open(self._db_path)
+        return self._store
+
+    async def get(self, art_id: UUID) -> ArtRow | None:
+        store = await self._opened()
+        return await store.get(art_id)
+
+    async def put(
+        self,
+        art_id: UUID,
+        svg: str,
+        description: str,
+        tags: list[str],
+        palette: str,
+        created_at: datetime,
+        source: str,
+        uses: int = 0,
+    ) -> None:
+        store = await self._opened()
+        await store.put(art_id, svg, description, tags, palette, created_at, source, uses)
+
+    async def all(self) -> list[ArtRow]:
+        store = await self._opened()
+        return await store.all()
+
+    async def increment_uses(self, art_id: UUID) -> None:
+        store = await self._opened()
+        await store.increment_uses(art_id)
 
     async def close(self) -> None:
         if self._store is not None:
@@ -969,6 +1025,15 @@ class Application:
     `.start()`" instead of "assemble a sweep, a cache adapter and a writer, and
     wire all three"."""
 
+    art_store: _LazyArtStore
+    """The art library's storage half (Task: art storage). A field for
+    `_blurb_cache`'s reason turned around -- that one is private because
+    `catalog_features` reads through the runner beside it, but nothing
+    reads art through anything else yet, so this is public and handed to
+    `create_app`'s `art_store` parameter directly. The generator, the
+    searcher and the assignment sweep are a sibling task's job; this field
+    exists so `/api/art/{art_id}.svg` can serve what that task writes."""
+
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
 
@@ -1359,6 +1424,7 @@ class Application:
         await self._course_runner.stop()
         await self._blurb_cache.close()
         await self._outline_cache.close()
+        await self.art_store.close()
         await self.media_proposals.stop()
         await self.asks.stop()
         await self.authoring.stop()
@@ -2894,6 +2960,11 @@ def build_application(
     # docstring. Built over the same `blurb_cache`, so a sweep and an
     # on-demand `catalog` read of the same slug see one cache, not two.
     blurb_sweep = BlurbSweep(blurb_cache)
+    # The art library's storage half (Task: art storage). Opened lazily for
+    # `blurb_cache`'s exact reason -- no event loop yet -- and over the same
+    # `resolved_path` every other cache in this function reads, so a piece
+    # of art assigned by one request is visible to the very next one.
+    art_store = _LazyArtStore(resolved_path)
 
     # `_course_runner` follows the log the same way `catalog_runner` does,
     # over this application's own store and bus -- see its own docstring for
@@ -3152,6 +3223,7 @@ def build_application(
         outlines=outline_writer,
         _outline_cache=outline_cache,
         blurb_sweep=blurb_sweep,
+        art_store=art_store,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,

@@ -249,6 +249,7 @@ def main() -> None:
             course_repository=application.course_repository,
             blurb_sweep=application.blurb_sweep,
             blurb_writer=application.blurbs,
+            art_store=application.art_store,
         ),
         host=config.web_host(),
         port=config.web_port(),
