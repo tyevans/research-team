@@ -1150,6 +1150,21 @@ export const courseDetailDto = z.object({
   course: realizedCourseDto.nullable().default(null),
 })
 
+/** `read_course_unit` in `app.py`: one realized course's authored markdown.
+ *
+ * `state` is a closed enum rather than a string, so a server that grows a
+ * fourth state fails the parse here instead of falling through the console's
+ * `authored` branch as an unrecognised value. That is the trade: a deploy skew
+ * becomes a visible error rather than a page that renders the wrong state
+ * silently, which is the failure this whole route exists to end. */
+export const courseTextDto = z.object({
+  slug: z.string(),
+  state: z.enum(['authored', 'authoring', 'unauthored']),
+  sessionId: z.string().nullable().default(null),
+  unit: z.string().nullable().default(null),
+  lessons: z.array(z.object({ path: z.string(), markdown: z.string() })).default([]),
+})
+
 /** What `POST .../realize` answers. `authoring` reuses `authoringFrameDto`:
  *  the route starts an authoring run the same way `POST
  *  /curriculum/author` does and hands back the same frame shape, not a

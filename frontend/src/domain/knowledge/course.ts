@@ -70,6 +70,48 @@ export interface CourseDetail {
   readonly course: RealizedCourse | null
 }
 
+/** One authored file of a course, as the turn wrote it. `path` is the
+ *  workspace path (`/course/areas/<slug>/lesson-01.md`), kept rather than
+ *  reduced to a label because it is the only stable identity a lesson has --
+ *  two lessons can open with the same heading, and a React key built from the
+ *  heading would collapse them. */
+export interface AuthoredFile {
+  readonly path: string
+  readonly markdown: string
+}
+
+/** Which of three states a course's *authored text* is in.
+ *
+ * Three words rather than a nullable field, and that is the whole reason this
+ * type exists. `Outline` above is deliberately allowed to conflate "refused"
+ * with "never generated" (see `outlineAge`), because both render as "no
+ * outline yet" and nothing downstream cares. A course cannot afford the same
+ * conflation: "nobody has written this" is a button to press and "it is being
+ * written right now" is a reason to wait, and a reader who cannot tell them
+ * apart presses the button on a run already in flight.
+ *
+ * `authored` is decided server-side by files existing, not by a run having
+ * settled -- see `read_course_unit` in `app.py` for why a course that exists
+ * is served even while a later run rewrites it.
+ */
+export type CourseTextState = 'authored' | 'authoring' | 'unauthored'
+
+/** The markdown the three UbD authoring turns wrote for one course.
+ *
+ * `unit` is Stage 1 and Stage 2; `lessons` are the rest, in path order. Both
+ * are empty for every state but `authored`, and a reader should branch on
+ * `state` rather than on `unit === null`: a run that wrote lessons and lost
+ * its framing turn is `authored` with a null unit, which is a real state and
+ * not an absence.
+ */
+export interface CourseText {
+  readonly slug: string
+  readonly state: CourseTextState
+  readonly sessionId: string | null
+  readonly unit: string | null
+  readonly lessons: readonly AuthoredFile[]
+}
+
 /** Whether a detail's outline is current or behind the candidate it
  *  describes -- `blurbAge` in `catalog.ts`, applied to `outline` rather than
  *  `blurb`. `null` covers "no outline yet" and "current" both, for the same

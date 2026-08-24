@@ -8,7 +8,7 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { CourseRepository } from '@application/ports/repositories.ts'
 import type { CourseCandidate } from '@domain/knowledge/catalog.ts'
-import type { CourseDetail } from '@domain/knowledge/course.ts'
+import type { CourseDetail, CourseText } from '@domain/knowledge/course.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { CoursePage } from './CoursePage.tsx'
@@ -26,6 +26,15 @@ const aCandidate = (over: Partial<CourseCandidate> = {}): CourseCandidate => ({
   art: { url: '/art/roman-succession.png', alt: 'A mosaic of an imperial court' },
   blurb: null,
   featuredRank: null,
+  ...over,
+})
+
+const aText = (over: Partial<CourseText> = {}): CourseText => ({
+  slug: 'roman-succession',
+  state: 'unauthored',
+  sessionId: null,
+  unit: null,
+  lessons: [],
   ...over,
 })
 
@@ -76,8 +85,29 @@ const fakeCourses = (over: Partial<CourseRepository> = {}): CourseRepository => 
     failed: 0,
     error: null,
   }),
+  // Resolved rather than throwing, for `fetchArtReroll`'s reason above:
+  // `CourseUnit` fetches this on every realized course, so a test about drift
+  // or about the abandon button would otherwise have to stub the course text
+  // just to render. `unauthored` is the default because it is the state that
+  // renders one line and asserts nothing -- a default holding real markdown
+  // would put text on the page every unrelated test could accidentally match.
+  courseText: vi.fn<CourseRepository['courseText']>().mockResolvedValue(aText()),
   ...over,
 })
+
+/** A realized course, since every course-text test needs one to render the
+ *  unit at all -- `CoursePage` shows `CourseUnit` only where `course` is not
+ *  null, which is the same condition that hides the outline. */
+const aRealized = (over: Partial<CourseDetail['course'] & object> = {}): CourseDetail =>
+  aDetail({
+    course: {
+      realizedAt: '2026-01-15T00:00:00Z',
+      membershipHash: 'hash-1',
+      fit: { kept: [], added: [], dropped: [], orphaned: false },
+      authoredSessionId: null,
+      ...over,
+    },
+  })
 
 const wrapperFor = (
   courses: CourseRepository,
@@ -183,41 +213,125 @@ describe('CoursePage', () => {
     expect(summary.textContent).not.toContain('added')
   })
 
-  it('links the authored session when one exists, and offers to author when none does', async () => {
+  it('offers no session link when nothing has been authored', async () => {
     const withoutSession = fakeCourses({
-      course: vi.fn<CourseRepository['course']>().mockResolvedValue(
-        aDetail({
-          course: {
-            realizedAt: '2026-01-15T00:00:00Z',
-            membershipHash: 'hash-1',
-            fit: { kept: [], added: [], dropped: [], orphaned: false },
-            authoredSessionId: null,
-          },
-        }),
-      ),
+      course: vi.fn<CourseRepository['course']>().mockResolvedValue(aRealized()),
     })
     show(withoutSession)
-    expect(await screen.findByText(/not authored yet/i)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /authored session/i })).not.toBeInTheDocument()
+    await screen.findByText(/made into a course/i)
+    expect(screen.queryByRole('link', { name: /session/i })).not.toBeInTheDocument()
   })
 
-  it('links the authored session when one exists', async () => {
+  it('keeps the authoring session reachable, but no longer as the way in', async () => {
     const withSession = fakeCourses({
-      course: vi.fn<CourseRepository['course']>().mockResolvedValue(
-        aDetail({
-          course: {
-            realizedAt: '2026-01-15T00:00:00Z',
-            membershipHash: 'hash-1',
-            fit: { kept: [], added: [], dropped: [], orphaned: false },
-            authoredSessionId: 'session-1',
-          },
-        }),
-      ),
+      course: vi
+        .fn<CourseRepository['course']>()
+        .mockResolvedValue(aRealized({ authoredSessionId: 'session-1' })),
+      courseText: vi
+        .fn<CourseRepository['courseText']>()
+        .mockResolvedValue(aText({ state: 'authored', unit: '# Succession\n\nThe unit.' })),
     })
     show(withSession)
 
-    const link = await screen.findByRole('link', { name: /authored session/i })
+    const link = await screen.findByRole('link', { name: /authoring session/i })
     expect(link.getAttribute('href')).toContain('session-1')
+    // The point of the demotion: the course itself is on the page beside the
+    // link, so the transcript is no longer the only door. Fails if the unit
+    // ever stops rendering, which is the whole increment.
+    expect(await screen.findByRole('heading', { name: 'Succession' })).toBeInTheDocument()
+  })
+
+  it('renders the authored unit as prose, not as a download or a transcript link', async () => {
+    const courses = fakeCourses({
+      course: vi.fn<CourseRepository['course']>().mockResolvedValue(aRealized()),
+      courseText: vi.fn<CourseRepository['courseText']>().mockResolvedValue(
+        aText({
+          state: 'authored',
+          sessionId: 'session-1',
+          unit: '# Roman Succession\n\nLearners will grasp the *adoptive* principle.',
+          lessons: [
+            { path: '/course/areas/roman-succession/lesson-01.md', markdown: '# The Five Good' },
+          ],
+        }),
+      ),
+    })
+    show(courses)
+
+    // Asserted as rendered markdown -- a heading element and an emphasis
+    // element -- rather than as the source string. A component that dumped the
+    // markdown into a `<p>` would satisfy a text match and would not be a
+    // rendered course.
+    expect(await screen.findByRole('heading', { name: 'Roman Succession' })).toBeInTheDocument()
+    expect(screen.getByText('adoptive').tagName).toBe('EM')
+    expect(screen.getByRole('heading', { name: 'The Five Good' })).toBeInTheDocument()
+  })
+
+  it('tells a reader nobody has started from a run writing this course right now', async () => {
+    const nobody = fakeCourses({
+      course: vi.fn<CourseRepository['course']>().mockResolvedValue(aRealized()),
+      courseText: vi
+        .fn<CourseRepository['courseText']>()
+        .mockResolvedValue(aText({ state: 'unauthored' })),
+    })
+    const { unmount } = show(nobody)
+    expect(await screen.findByText(/nobody has written this course yet/i)).toBeInTheDocument()
+    unmount()
+
+    // The distinction the outline's nullable field could not carry: one of
+    // these is a reason to ask for the course and the other is a reason to
+    // wait. Fails against any implementation that renders one line for both.
+    const running = fakeCourses({
+      course: vi.fn<CourseRepository['course']>().mockResolvedValue(aRealized()),
+      courseText: vi
+        .fn<CourseRepository['courseText']>()
+        .mockResolvedValue(aText({ state: 'authoring' })),
+    })
+    show(running)
+    expect(await screen.findByText(/being written now/i)).toBeInTheDocument()
+    expect(screen.queryByText(/nobody has written this course yet/i)).not.toBeInTheDocument()
+  })
+
+  it('says the framing is missing rather than hiding lessons that were written', async () => {
+    const courses = fakeCourses({
+      course: vi.fn<CourseRepository['course']>().mockResolvedValue(aRealized()),
+      courseText: vi.fn<CourseRepository['courseText']>().mockResolvedValue(
+        aText({
+          state: 'authored',
+          unit: null,
+          lessons: [{ path: '/course/areas/x/lesson-01.md', markdown: '# Orphaned lesson' }],
+        }),
+      ),
+    })
+    show(courses)
+
+    expect(await screen.findByText(/framing for this course was not written/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Orphaned lesson' })).toBeInTheDocument()
+  })
+
+  it('drops the generated outline once the real course exists', async () => {
+    const outline = {
+      promise: 'a survey of empire',
+      sections: [{ heading: 'Rise', summary: 'How it began.' }],
+      membershipHash: 'hash-1',
+      model: 'x',
+      generatedAt: '2026-01-01T00:00:00Z',
+    }
+    const courses = fakeCourses({
+      course: vi
+        .fn<CourseRepository['course']>()
+        .mockResolvedValue(aDetail({ outline, course: aRealized().course })),
+      courseText: vi
+        .fn<CourseRepository['courseText']>()
+        .mockResolvedValue(aText({ state: 'authored', unit: '# Succession\n\nThe real thing.' })),
+    })
+    show(courses)
+
+    // The owner's decision, pinned: the outline was a pitch to help somebody
+    // decide, and once they have decided and the course exists the pitch is
+    // two descriptions of one thing, free to disagree. Fails if anyone renders
+    // both, or adds a toggle.
+    expect(await screen.findByRole('heading', { name: 'Succession' })).toBeInTheDocument()
+    expect(screen.queryByText('a survey of empire')).not.toBeInTheDocument()
   })
 
   it('marks the outline stale when its hash disagrees with the candidate', async () => {

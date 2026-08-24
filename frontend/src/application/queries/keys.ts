@@ -177,6 +177,13 @@ export const queryKeys = {
    *  unrelated `Course` that predates this catalog feature. */
   courseDetail: (project: ProjectId, slug: string) => ['course-detail', project, slug] as const,
 
+  /** One course's authored markdown, keyed apart from `courseDetail` on
+   *  purpose. The detail is invalidated by realize, abandon, a blurb sweep and
+   *  an art reroll -- four writes that change nothing about the text -- and
+   *  the text is the largest payload on the page. Sharing a key would refetch
+   *  a whole course every time somebody rerolled its picture. */
+  courseText: (project: ProjectId, slug: string) => ['course-text', project, slug] as const,
+
   /** Where the last (or current) blurb sweep on this project stands --
    *  its own key, not folded into `catalog`: it is polled on its own
    *  interval while a sweep runs, and sharing `catalog`'s key would refetch

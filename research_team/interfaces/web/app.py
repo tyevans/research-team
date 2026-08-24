@@ -177,6 +177,11 @@ from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep, RerollAlreadyActive
 from research_team.interfaces.web.art_sweep import SweepAlreadyActive as ArtSweepAlreadyActive
+from research_team.interfaces.web.authored_files import (
+    is_path_file,
+    path_file,
+    split_area,
+)
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.blurb_sweep import BlurbSweep, SweepAlreadyActive
 from research_team.interfaces.web.dispatch import DispatchQueue
@@ -3357,6 +3362,108 @@ def create_app(
         if detail is None:
             raise HTTPException(status_code=404, detail=f"no course {slug!r}")
         return course_detail_view(detail)
+
+    @app.get("/api/projects/{project_id}/catalog/{slug}/unit")
+    async def read_course_unit(project_id: UUID, slug: str):
+        """The markdown the authoring turns wrote for this course, as text a
+        browser renders -- not as an attachment.
+
+        **The gap this closes.** Everything downstream of `realize` already
+        worked: the three UbD turns write `/course/areas/<slug>/unit.md` and
+        its lessons into their session's workspace, `authoring_runs` records
+        which session that was, and `export.py` resolves both. But every route
+        that read those files set `Content-Disposition` -- that module's own
+        docstring says none of them "returns a body a browser would render in
+        place" -- so a realized course's page could offer a download or a link
+        into the agent transcript and nothing else. A product whose stated end
+        is "where learners go to learn" terminated in a zip file.
+
+        **Three states, and they are the point of the shape below.**
+        `CourseDetail.outline` deliberately conflates "the model refused" with
+        "nothing has generated one yet", and its docstring argues that is fine
+        because both render as "no outline yet". That argument does not
+        survive being applied to a whole course: a reader who lands on
+        "nothing here" must be able to tell *nobody has written this* from
+        *it is being written right now*, because the first is a button to
+        press and the second is a reason to wait. So `state` is explicit --
+        `authored`, `authoring`, `unauthored` -- rather than inferred by a
+        client from a null field.
+
+        **The order the states are decided in, and what it costs.** Files
+        first: if a session recorded against this slug holds course markdown,
+        that is `authored`, *even while a later run is rewriting it*. The
+        alternative was to let an in-flight run win and show a spinner over a
+        course that exists and is readable, which trades a reader's whole
+        course for a progress indicator they can already see in the authoring
+        panel. The cost is that a re-author in progress is invisible from this
+        payload alone; that is deliberate, and the run panel is where it
+        shows.
+
+        A recorded session that holds *no* files under the prefix falls
+        through to the run check rather than answering `authored` with
+        nothing in it. An empty `authored` would be the same silence this
+        route exists to end, wearing the word that means the opposite.
+
+        **`authoring` requires the slug to be among a live run's targets**,
+        not merely that some run is live. A path run over eight other areas
+        tells this reader nothing about theirs, and "being written right now"
+        about a course nobody queued is a promise the system will not keep.
+
+        503 when authoring is unwired, matching `read_course_detail` beside
+        it: a build with no authoring cannot answer any of the three states
+        truthfully, and `unauthored` would read as a fact about the course.
+        `service.load` raising for a session id the table names is left to
+        propagate -- a recorded session that cannot be opened is a broken
+        record, and answering `unauthored` would file it as ordinary absence.
+        """
+        await _require_project(project_id)
+        if authoring is None:
+            raise HTTPException(status_code=503, detail="course authoring is not configured")
+
+        session_id = await authoring.authored_session_for(project_id, slug)
+        if session_id is not None:
+            session = await service.load(session_id)
+            if is_path_file(session, slug):
+                # A target that wrote the path overview rather than an area:
+                # one file, no lessons. Asked of the workspace rather than
+                # inferred from the slug, for `is_path_file`'s reason.
+                entry = session.state.files.get(path_file(slug)) or {}
+                return {
+                    "slug": slug,
+                    "state": "authored",
+                    "sessionId": str(session_id),
+                    "unit": entry.get("content", ""),
+                    "lessons": [],
+                }
+            unit, lessons = split_area(session, slug)
+            if unit is not None or lessons:
+                return {
+                    "slug": slug,
+                    "state": "authored",
+                    "sessionId": str(session_id),
+                    "unit": None if unit is None else unit[1],
+                    "lessons": [
+                        {"path": path, "markdown": content} for path, content in lessons
+                    ],
+                }
+
+        live = authoring.active(project_id)
+        if live is not None and slug in (live.get("targets") or []):
+            return {
+                "slug": slug,
+                "state": "authoring",
+                "sessionId": None,
+                "unit": None,
+                "lessons": [],
+            }
+
+        return {
+            "slug": slug,
+            "state": "unauthored",
+            "sessionId": None,
+            "unit": None,
+            "lessons": [],
+        }
 
     def _author_one_target(
         project_id: UUID,

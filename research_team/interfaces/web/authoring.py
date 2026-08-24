@@ -351,6 +351,23 @@ class AuthoringActivity:
             return self._frame_of(row)
         return None
 
+    async def authored_session_for(self, project_id: UUID, target: str) -> UUID | None:
+        """Which session holds `target`'s course markdown, or `None` if no run
+        has ever authored it.
+
+        A delegation to `AuthoringRunStore.authored_session_for` -- see there
+        for why it scans 200 runs deep rather than reusing `last`'s window.
+        It is here so a route reading one course's files goes through the same
+        object it already asks about runs, rather than being handed a second
+        collaborator that answers a question this one is already the front for.
+
+        Deliberately not filtered by run status. A target completed by a run
+        that was later cancelled or interrupted still wrote real files into a
+        real session, and refusing to name that session would be the console's
+        version of the refusal `export.py` stopped making.
+        """
+        return await self._records.authored_session_for(project_id, target)
+
     def _live_run_id(self, project_id: UUID) -> UUID | None:
         frame = self.active(project_id)
         return None if frame is None else UUID(frame["run_id"])

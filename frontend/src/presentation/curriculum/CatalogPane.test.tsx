@@ -111,6 +111,9 @@ const fakeCourses = (over: Partial<CourseRepository> = {}): CourseRepository => 
   startArtReroll: vi.fn(() => {
     throw new Error('startArtReroll was not stubbed for this test')
   }),
+  courseText: vi.fn(() => {
+    throw new Error('courseText was not stubbed for this test')
+  }),
   fetchArtReroll: vi.fn(() => {
     throw new Error('fetchArtReroll was not stubbed for this test')
   }),

@@ -29,13 +29,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-#: Where the authoring turns write, and the third copy of these two strings --
-#: `course_authoring.AREAS_DIR`/`PATHS_DIR` on the server and
-#: `frontend/src/presentation/curriculum/course-paths.ts` in the console.
-#: Imported from the first rather than repeated, because unlike the console
-#: this module *can* import it: they are in the same process, and a rename
-#: that missed here would produce an empty archive rather than a dead link.
-from research_team.application.course_authoring import AREAS_DIR, PATHS_DIR
 from research_team.application.curriculum import Curriculum
 from research_team.application.graph_export import (
     MAX_EXPORT_NODES,
@@ -47,6 +40,19 @@ from research_team.application.graph_read import (
     MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
     GraphReadPort,
+)
+
+#: Where the authoring turns write, and how a run's targets map onto a
+#: workspace. Moved to `authored_files.py` when the console's read route
+#: needed the same four questions -- see that module for why the directory
+#: constants have exactly one reader on the server side.
+from research_team.interfaces.web.authored_files import (
+    area_prefix,
+    course_links,
+    files_under,
+    is_path_file,
+    path_file,
+    split_area,
 )
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.course_html import (
@@ -139,7 +145,7 @@ def export_router(deps: ExportDeps) -> APIRouter:
         await deps.require_project(project_id)
         run = await _run_of(project_id, deps.authoring)
 
-        links = _course_links(run)
+        links = course_links(run)
         if area is not None:
             links = [pair for pair in links if pair[0] == area]
             if not links:
@@ -167,15 +173,11 @@ def export_router(deps: ExportDeps) -> APIRouter:
                 # A run's targets are area slugs plus, last, the path's own
                 # slug, and nothing on the frame says which is which -- so the
                 # workspace is asked rather than the slug parsed. See
-                # `_is_path_file`.
+                # `is_path_file`.
                 prefix = (
-                    f"{PATHS_DIR}/{target}.md"
-                    if _is_path_file(session, target)
-                    else f"{AREAS_DIR}/{target}/"
+                    path_file(target) if is_path_file(session, target) else area_prefix(target)
                 )
-                for path, entry in sorted(session.state.files.items()):
-                    if not path.startswith(prefix):
-                        continue
+                for path, content in files_under(session, prefix):
                     # Rooted under the project's name so an archive unzipped
                     # beside another does not merge into it. `/course` is
                     # dropped from the stored path: it is a workspace
@@ -183,7 +185,7 @@ def export_router(deps: ExportDeps) -> APIRouter:
                     # `areas/roman-law/unit.md`, not a directory that only
                     # means something inside this system.
                     inside = path.removeprefix("/course/")
-                    archive.writestr(f"{_safe(name)}/{inside}", entry.get("content", ""))
+                    archive.writestr(f"{_safe(name)}/{inside}", content)
                     written += 1
             archive.writestr(
                 f"{_safe(name)}/README.md", _course_readme(name, project_id, run, area)
@@ -325,7 +327,7 @@ async def _course_page(
     """The whole course as one HTML file.
 
     Gathers the same workspace files the zip does -- through the same
-    `_course_links`/`_is_path_file` pair, so the two formats can never
+    `course_links`/`is_path_file` pair, so the two formats can never
     disagree about which session holds which area -- and then hands them to
     `course_html`, which does the live reads and the rendering.
 
@@ -341,26 +343,16 @@ async def _course_page(
     for target, session_id in links:
         session = await deps.service.load(UUID(session_id))
         files = session.state.files
-        if _is_path_file(session, target):
-            entry = files.get(f"{PATHS_DIR}/{target}.md") or {}
-            overview = read_course_file(f"{PATHS_DIR}/{target}.md", entry.get("content", ""))
+        if is_path_file(session, target):
+            entry = files.get(path_file(target)) or {}
+            overview = read_course_file(path_file(target), entry.get("content", ""))
             continue
-        prefix = f"{AREAS_DIR}/{target}/"
-        unit = None
-        lessons = []
-        for path, entry in sorted(files.items()):
-            if not path.startswith(prefix):
-                continue
-            parsed = read_course_file(path, entry.get("content", ""))
-            # `unit.md` is Stages 1 and 2 and everything else is a lesson,
-            # matched on the filename because that is what `course_authoring`
-            # writes -- there is no marker inside the file. A run that wrote
-            # only lessons produces an area with no unit rather than a
-            # missing area, which is the state a reader can act on.
-            if path == f"{prefix}unit.md":
-                unit = parsed
-            else:
-                lessons.append(parsed)
+        # The unit/lesson split is `split_area`'s, shared with the console's
+        # read route -- see `authored_files.UNIT_FILE` for why one reader of
+        # that filename beats two.
+        raw_unit, raw_lessons = split_area(session, target)
+        unit = None if raw_unit is None else read_course_file(*raw_unit)
+        lessons = [read_course_file(path, content) for path, content in raw_lessons]
         # An area whose session held no file under its prefix is skipped
         # rather than added empty. An empty `<section>` with a heading and
         # nothing under it reads as an area whose lessons were deleted; and
@@ -518,33 +510,11 @@ def _status_suffix(run: dict) -> str:
     return "" if status in ("", "done") else f"-{_safe(status)}"
 
 
-def _course_links(run: dict) -> list[tuple[str, str]]:
-    """`completed` zipped with `sessions`, dropping any pair that does not match.
-
-    The same refusal `courseLinks` makes in the console, for the same reason:
-    a target paired with the wrong run's session names a real file about
-    something else, and nobody would suspect it.
-    """
-    completed = run.get("completed") or []
-    sessions = run.get("sessions") or []
-    return [(target, sessions[i]) for i, target in enumerate(completed) if i < len(sessions)]
-
-
 def _wrote(run: dict) -> str:
     """What the run's targets were, for a 404 that tells the caller what to ask
     for instead. `'nothing'` rather than an empty string: a message ending in
     "it wrote " reads as a bug in the message."""
-    return ", ".join(target for target, _ in _course_links(run)) or "nothing"
-
-
-def _is_path_file(session: Any, target: str) -> bool:
-    """Whether this run's target wrote the path overview rather than an area.
-
-    Asked of the workspace rather than inferred from the slug. A run's targets
-    are area slugs plus, last, the path's own slug -- and nothing on the frame
-    marks which is which, so the only honest test is whether the file exists.
-    """
-    return f"{PATHS_DIR}/{target}.md" in session.state.files
+    return ", ".join(target for target, _ in course_links(run)) or "nothing"
 
 
 #: What each settled status means, in a sentence somebody who has never read
@@ -600,7 +570,7 @@ def _never_started(run: dict) -> list[str]:
     correctly. Empty for an ordinary completed run, which is what keeps the
     section out of the archives that do not need it.
     """
-    accounted = {target for target, _ in _course_links(run)}
+    accounted = {target for target, _ in course_links(run)}
     accounted |= {failure["target"] for failure in (run.get("failures") or [])}
     return [target for target in (run.get("targets") or []) if target not in accounted]
 
@@ -637,7 +607,7 @@ def _course_readme(name: str, project_id: UUID, run: dict, area: str | None) -> 
     ]
     if area is not None:
         lines += [f"This archive holds **one area only**: `{area}`.", ""]
-    completed = [target for target, _ in _course_links(run)]
+    completed = [target for target, _ in course_links(run)]
     if completed:
         # Listed rather than counted. "7 of 9 written" tells a reader the
         # archive is short and not which two to go and write.
