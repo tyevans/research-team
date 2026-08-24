@@ -4981,6 +4981,22 @@ class ArtStore:
         row.uses += 1
         await self._rows.save(row)
 
+    async def decrement_uses(self, art_id: UUID) -> None:
+        """`increment_uses`'s mirror, for the art-refresh work: a reroll or a
+        drift-triggered reassignment moves a candidate off a piece without
+        deleting it -- the piece may still suit another candidate, per the
+        owner's brief -- so the count of who still points at it has to come
+        back down. Floored at 0 rather than allowed to go negative: a stale
+        assignment double-cleared (a crash between clearing and reassigning,
+        retried) must not leave `uses` reading as if fewer candidates than
+        zero point at a picture nothing else miscounts.
+        """
+        row = await self._rows.get(art_id)
+        if row is None:
+            return
+        row.uses = max(0, row.uses - 1)
+        await self._rows.save(row)
+
     async def close(self) -> None:
         await self._connection.close()
 
@@ -4998,6 +5014,25 @@ class CandidateArtRow(ReadModel):
     project_id: UUID
     slug: str
     art_id: UUID
+    membership_hash: str = ""
+    """The candidate's `membership_hash` at the moment this assignment was
+    made -- the art-refresh feature's whole hook for "does this candidate's
+    art match a cluster that no longer exists in this shape". Compared
+    against `CourseCandidate.membership_hash` the same way `CourseBlurbRow`
+    is compared against a candidate's current hash; see that field's
+    docstring.
+
+    Defaulted to `""` rather than required, for `CourseBlurbRow.title`'s
+    exact reason: `apply_schema` reconciles this column onto a database that
+    already has assignment rows, and leaves it empty in every one of them.
+    A real `membership_hash` is a sha256 hex digest and is never `""`, so an
+    old row's empty default can never equal a live candidate's hash -- it
+    reads as **stale**, not fresh, the moment this ships. Getting this
+    backwards (defaulting to a value that happened to match, or skipping the
+    comparison for an empty hash) is CLAUDE.md's read-models failure mode
+    exactly: every pre-existing assignment would silently never refresh
+    again, while every code path claims the feature works.
+    """
 
     @staticmethod
     def row_id(project_id: UUID, slug: str) -> UUID:
@@ -5048,17 +5083,28 @@ class CandidateArtStore:
             return None
         return row
 
-    async def put(self, project_id: UUID, slug: str, art_id: UUID) -> None:
+    async def put(
+        self, project_id: UUID, slug: str, art_id: UUID, membership_hash: str
+    ) -> None:
         """Assign art to a candidate, superseding whatever was assigned
         before for this slug -- `save` writes by id, and `row_id` is stable
         per `(project_id, slug)`, so a rewrite replaces rather than
-        duplicates."""
+        duplicates.
+
+        `membership_hash` is required, not defaulted, on this write path --
+        the column default of `""` (see `CandidateArtRow`) exists only to
+        let a pre-existing row load; every caller minting or refreshing an
+        assignment knows the candidate's current hash and must stamp it, or
+        the row it just wrote would read as stale again on the very next
+        check.
+        """
         await self._rows.save(
             CandidateArtRow(
                 id=CandidateArtRow.row_id(project_id, slug),
                 project_id=project_id,
                 slug=slug,
                 art_id=art_id,
+                membership_hash=membership_hash,
             )
         )
 

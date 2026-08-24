@@ -109,7 +109,9 @@ class _ArtStoreLike(Protocol):
 
 class _CandidateArtStoreLike(Protocol):
     async def get(self, project_id: UUID, slug: str): ...
-    async def put(self, project_id: UUID, slug: str, art_id: UUID) -> None: ...
+    async def put(
+        self, project_id: UUID, slug: str, art_id: UUID, membership_hash: str
+    ) -> None: ...
 
 
 class _FallbackArtPort(Protocol):
@@ -143,8 +145,23 @@ class LibraryArtProvider:
         self._fallback = fallback
 
     async def for_candidate(self, project_id: UUID, candidate: CourseCandidate) -> ArtRef:
+        """Resolve this candidate's art, refreshing an assignment made
+        against a cluster that has since drifted (a different
+        `membership_hash`) -- the art equivalent of a stale blurb.
+
+        A drifted assignment is *eligible* for a fresher library match here,
+        but never discarded for staleness alone: if nothing in the library
+        matches any better, this keeps returning the picture the candidate
+        already has rather than falling back to the seeded placeholder,
+        exactly as it would for a fresh assignment. Generating a *new*
+        piece for a drifted candidate with no match is the sweep's job
+        (`art_sweep.py`), not this per-request path -- a model call on every
+        catalog read is the same cost `ArtGeneratorPort`'s callers already
+        avoid everywhere else.
+        """
         assigned = await self._candidate_art.get(project_id, candidate.slug)
-        if assigned is not None:
+        stale = assigned is not None and assigned.membership_hash != candidate.membership_hash
+        if assigned is not None and not stale:
             row = await self._art.get(assigned.art_id)
             if row is not None:
                 return _ref(row)
@@ -155,9 +172,24 @@ class LibraryArtProvider:
         match = await self.match(candidate)
         if match is not None:
             row, _score = match
-            await self._candidate_art.put(project_id, candidate.slug, row.id)
+            if assigned is not None and row.id != assigned.art_id:
+                # Moving the candidate off whatever it pointed at before --
+                # a fresh assignment (this branch) or a drifted one being
+                # upgraded to a better match. The old piece may still suit
+                # another candidate (increment 3's "Art is write-once" is
+                # exactly what this feature removes), so it stays in the
+                # library; only its use count follows the candidate away.
+                await self._art.decrement_uses(assigned.art_id)
+            await self._candidate_art.put(
+                project_id, candidate.slug, row.id, candidate.membership_hash
+            )
             await self._art.increment_uses(row.id)
             return _ref(row)
+
+        if stale:
+            row = await self._art.get(assigned.art_id)
+            if row is not None:
+                return _ref(row)
 
         return await self._fallback.for_candidate(project_id, candidate)
 
