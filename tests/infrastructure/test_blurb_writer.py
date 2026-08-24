@@ -53,9 +53,9 @@ async def test_a_title_naming_an_entity_the_cluster_does_not_hold_refuses_both()
     refused *for being Title Case* would pass this test on an implementation
     that refuses every Title Case reply, grounded or not -- sentence case is
     also the only shape the prompt asks for, so it is the only shape this
-    check will ever meet in production. `test_a_sentence_case_title_that_is_invented_but_grounded_is_accepted`
-    below is the companion this test needs: together they separate "refuses
-    ungrounded" from "refuses everything", which this test alone cannot do.
+    check will ever meet in production. The next test below is the companion
+    this one needs: together they separate "refuses ungrounded" from
+    "refuses everything", which this test alone cannot do.
     """
     writer = _writer(
         "The legacy of Captain Kirk\n"
@@ -103,6 +103,32 @@ async def test_a_title_identical_to_the_anchor_case_and_punctuation_insensitivel
     )
 
     assert await writer.write("Warp drive", ANCHORS) is None
+
+
+async def test_a_title_identical_to_a_multi_word_anchor_is_refused_by_the_anchor_check_alone():
+    """`Warp drive` is two words, so the tests above are refused by the
+    anchor-name check *and* by the word-count band at once -- nothing proves
+    the anchor-name check does anything on its own. A top anchor of three or
+    more words closes that gap: `United Federation of Planets` is within the
+    2-8 word band, so a title identical to it can only be caught by the
+    anchor-name comparison."""
+    anchors = (
+        AreaMember(
+            entity_id="1",
+            name="United Federation of Planets",
+            entity_type="organization",
+            centrality=3.0,
+        ),
+        AreaMember(
+            entity_id="2", name="Zefram Cochrane", entity_type="person", centrality=2.0
+        ),
+    )
+    writer = _writer(
+        "United Federation of Planets\n"
+        "Follow Zefram Cochrane as the United Federation of Planets takes shape."
+    )
+
+    assert await writer.write("United Federation of Planets", anchors) is None
 
 
 async def test_a_blurb_naming_an_entity_the_cluster_does_not_hold_is_refused():

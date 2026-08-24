@@ -43,7 +43,7 @@ know about the subject in general:
 {anchor_lines}
 
 Reply in exactly this shape, nothing before or after it:
-A course title, three to eight words, ordinary sentence capitalisation (not
+A course title, two to eight words, ordinary sentence capitalisation (not
 Title Case), no trailing punctuation, naming the course rather than
 repeating a single entity from the list above.
 Two sentences of marketing copy for a course catalog card. No heading, no
@@ -53,6 +53,19 @@ lists, no quotation marks around the whole thing.
 #: A title is one line, so a reply with no second line has no blurb to
 #: extract and is refused rather than guessed at.
 _TITLE_AND_TEXT = re.compile(r"\A(?P<title>[^\n]+)\n+(?P<text>.+)\Z", re.DOTALL)
+
+#: The word-count band a title must fall in.
+#:
+#: Tried at 3-8 first, on the brief's literal wording. Measured against real
+#: course names, that floor costs the ones already good: "First contact",
+#: "Roman law" and "Warp propulsion" are all two words and all refused at 3.
+#: The failure a 3-word floor was meant to guard against -- a model handed
+#: one dominant entity echoing its name verbatim -- is already caught by the
+#: anchor-name check below, which is the better instrument for it: it
+#: compares against the actual anchor rather than against a word count that
+#: also rejects unrelated two-word titles. Lowered to 2 for that reason.
+_MIN_TITLE_WORDS = 2
+_MAX_TITLE_WORDS = 8
 
 
 def _normalised(title: str) -> str:
@@ -126,7 +139,7 @@ class ModelBlurbWriter:
             return None
 
         word_count = len(draft_title.split())
-        if not (3 <= word_count <= 8):
+        if not (_MIN_TITLE_WORDS <= word_count <= _MAX_TITLE_WORDS):
             return None
 
         # A model handed one dominant entity returns its name verbatim for

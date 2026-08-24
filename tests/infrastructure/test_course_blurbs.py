@@ -5,10 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.infrastructure.persistence.read_models import (
-    CourseBlurbRow,
-    CourseBlurbStore,
-)
+from research_team.infrastructure.persistence.read_models import CourseBlurbStore
 
 
 @pytest.fixture
@@ -42,35 +39,46 @@ async def test_a_stored_blurb_reads_back_with_the_hash_it_was_written_from(store
     assert row.membership_hash == "abc123"
 
 
-async def test_a_blurb_row_written_before_titles_existed_reads_back_with_an_empty_title(store):
+async def test_a_blurb_row_written_before_titles_existed_reads_back_with_an_empty_title(
+    store, db_path
+):
     """`apply_schema` reconciles added columns, but it leaves them empty in
     rows that predate the change. A `title` with no default would make the
     column required on a populated table, which the read-models section of
     CLAUDE.md records as the case SQLite refuses and this project already
-    shipped once. Empty is the honest value and the fallback covers it."""
-    project = uuid4()
-    connection = store._connection  # simulating a pre-migration row, before `title` existed
-    now = datetime.now(UTC).isoformat()
-    await connection.execute(
-        "INSERT INTO course_blurbs "
-        "(id, created_at, updated_at, project_id, slug, text, membership_hash, "
-        "model, generated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            str(CourseBlurbRow.row_id(project, "warp")),
-            now,
-            now,
-            str(project),
-            "warp",
-            "Learn about warp drive.",
-            "abc123",
-            "m",
-            now,
-        ),
-    )
-    await connection.commit()
+    shipped once. Empty is the honest value and the fallback covers it.
 
-    row = await store.get(project, "warp")
+    A pre-migration row is simulated with a real `ALTER TABLE ... DROP
+    COLUMN` against a *populated* table, not by inserting a row that merely
+    omits `title` against the current schema -- that lighter version only
+    pins `DEFAULT ''` firing on insert, and says nothing about whether
+    `apply_schema` can widen a table that already has rows in it without
+    raising. CLAUDE.md's "Read models" section is explicit that a read-model
+    change verified only against a fresh database is unverified; reopening
+    through `CourseBlurbStore.open` after the column is gone is what actually
+    exercises the reconciliation path, and this is the case CLAUDE.md
+    describes as already having shipped broken once (a required column with
+    no default refused outright on a table with rows in it).
+    """
+    project = uuid4()
+    await store.put(
+        project,
+        "warp",
+        "Warp Drive Basics",
+        "Learn about warp drive.",
+        "abc123",
+        "m",
+        datetime.now(UTC),
+    )
+    await store._connection.execute("ALTER TABLE course_blurbs DROP COLUMN title")
+    await store._connection.commit()
+    await store.close()
+
+    reopened = await CourseBlurbStore.open(db_path)
+    try:
+        row = await reopened.get(project, "warp")
+    finally:
+        await reopened.close()
 
     assert row is not None
     assert row.title == ""
