@@ -28,7 +28,8 @@ from research_team.application.course import (
     ProvenanceSummary,
     StageProgress,
 )
-from research_team.application.course_catalog import Catalog
+from research_team.application.course_catalog import CachedOutline, Catalog
+from research_team.application.course_realization import CourseDetail
 from research_team.application.curriculum import Curriculum
 from research_team.application.entity_definitions import Definition, ServedCitation
 from research_team.application.findings import Finding
@@ -58,6 +59,7 @@ from research_team.domain import (
     SourceRecord,
     TurnFailed,
 )
+from research_team.domain.course import CourseFit
 from research_team.domain.course_catalog import Category, CourseCandidate
 from research_team.domain.learner import LearnerProgressState
 from research_team.domain.learning_area import LearningArea, LearningPath, PrerequisiteEdge
@@ -1543,4 +1545,74 @@ def catalog_category_view(catalog: Catalog, key: str) -> dict[str, Any] | None:
         "key": key,
         "label": catalog.categories.get(key, key),
         "candidates": [candidate_view(c) for c in members],
+    }
+
+
+def outline_view(outline: CachedOutline) -> dict[str, Any]:
+    """A generated or cached outline, `sections` in reading order.
+
+    `(heading, summary)` pairs cross the wire as objects rather than tuples --
+    JSON has no tuple type, and a two-element array would ask every client to
+    remember which index is which.
+    """
+    return {
+        "promise": outline.promise,
+        "sections": [{"heading": h, "summary": s} for h, s in outline.sections],
+        "membershipHash": outline.membership_hash,
+        "model": outline.model,
+        "generatedAt": outline.generated_at.isoformat(),
+    }
+
+
+def course_fit_view(fit: CourseFit) -> dict[str, Any]:
+    """How a realized course's frozen membership compares to its cluster now.
+
+    Entity ids, not names -- see `fit_of`'s own docstring for why a dropped
+    id cannot be resolved to a label here.
+    """
+    return {
+        "kept": list(fit.kept),
+        "added": list(fit.added),
+        "dropped": list(fit.dropped),
+        "orphaned": fit.orphaned,
+    }
+
+
+def course_detail_view(detail: CourseDetail) -> dict[str, Any]:
+    """One course detail page: the candidate, its outline, its full current
+    membership, and -- if realized -- how it has drifted since.
+
+    `members` uses the same per-member shape `area_view` does, for
+    `candidate_view`'s reason: a client rendering both should not need two
+    readers for one shape. See `CourseDetail.members`'s own docstring for why
+    `[]` here is ambiguous with "no cluster" and has to be read alongside
+    `course.fit.orphaned` rather than alone.
+    """
+    return {
+        "candidate": candidate_view(detail.candidate),
+        "outline": None if detail.outline is None else outline_view(detail.outline),
+        "members": [
+            {
+                "entity_id": m.entity_id,
+                "name": m.name,
+                "entity_type": m.entity_type,
+                "centrality": round(m.centrality, 3),
+                "temporal": m.temporal,
+            }
+            for m in detail.members
+        ],
+        "course": (
+            None
+            if detail.course is None
+            else {
+                "realizedAt": detail.course.realized_at.isoformat(),
+                "membershipHash": detail.course.membership_hash,
+                "fit": course_fit_view(detail.course.fit),
+                "authoredSessionId": (
+                    str(detail.course.authored_session_id)
+                    if detail.course.authored_session_id is not None
+                    else None
+                ),
+            }
+        ),
     }

@@ -236,6 +236,19 @@ def main() -> None:
             interactions=(
                 application.interaction_recorder if config.interaction_log_enabled() else None
             ),
+            # The write side of Task 9's routes: `course_repository` is what
+            # `RealizeCourse`/`AbandonCourse` execute against, `course_service`
+            # is what the detail route reads through, and `blurb_sweep`/
+            # `blurbs` are the sweep button and the writer it hands off to.
+            # Following `catalog`'s own precedent above rather than
+            # `catalog_features`'s: none of the four is `None` until `start()`
+            # runs -- they are built in `build_application` itself, not
+            # assigned by a projection's subscription -- so there is no stale
+            # `None` for this call to capture.
+            course_service=application.course_service,
+            course_repository=application.course_repository,
+            blurb_sweep=application.blurb_sweep,
+            blurb_writer=application.blurbs,
         ),
         host=config.web_host(),
         port=config.web_port(),

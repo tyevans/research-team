@@ -66,7 +66,8 @@ from research_team.application.corpus_editing import CorpusEditor, DocumentExist
 from research_team.application.corpus_spans import quote
 from research_team.application.course import course_progress
 from research_team.application.course_authoring import CourseAuthor
-from research_team.application.course_catalog import Catalog, CatalogService
+from research_team.application.course_catalog import BlurbTextPort, Catalog, CatalogService
+from research_team.application.course_realization import CourseService
 from research_team.application.curriculum import CurriculumService
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.entity_definitions import DefinitionService, serve_citations
@@ -124,6 +125,7 @@ from research_team.domain import (
     SelectWorkflow,
     SessionPurpose,
 )
+from research_team.domain.course import AbandonCourse, Course, RealizeCourse, course_stream_id
 from research_team.domain.interaction import INTERACTION_EVENTS, InteractionEvent
 from research_team.domain.media_proposals import (
     AcceptMediaProposal,
@@ -165,6 +167,7 @@ from research_team.infrastructure.persistence.read_models import (
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.authoring import AuthoringActivity
+from research_team.interfaces.web.blurb_sweep import BlurbSweep, SweepAlreadyActive
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.export import ExportDeps, export_router
 from research_team.interfaces.web.extraction import ExtractionActivity
@@ -175,6 +178,7 @@ from research_team.interfaces.web.presenters import (
     catalog_category_view,
     catalog_view,
     corpus_change,
+    course_detail_view,
     course_view,
     curriculum_view,
     definition_view,
@@ -1011,6 +1015,10 @@ def create_app(
     catalog: CatalogService | None = None,
     catalog_features: CatalogFeatures | None = None,
     catalog_recorder: CatalogFeatureRecorders | None = None,
+    course_service: CourseService | None = None,
+    course_repository: AggregateRepository[Course] | None = None,
+    blurb_sweep: BlurbSweep | None = None,
+    blurb_writer: BlurbTextPort | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -3159,10 +3167,12 @@ def create_app(
         **Registered ahead of the feature/unfeature routes below**, matching
         the `/sources/extract` block's own comment: a literal segment that
         could also be read as a path parameter has to be declared first, or
-        FastAPI's declaration-order matching reads it as one. Nothing under
-        `/catalog` currently collides on method *and* segment count with this
-        route, but the ordering is kept defensive rather than relying on that
-        happening to be true today.
+        FastAPI's declaration-order matching reads it as one. `GET
+        /catalog/blurbs` below is the same situation against `GET
+        /catalog/{slug}` (Task 9): both are one segment past `/catalog`, one
+        of them is literal, and the literal one has to come first or a
+        project's course named `blurbs` would be unreachable and every other
+        project's sweep progress would read as "no such course".
 
         404 for a key nothing in this catalog uses, not an empty category --
         an empty category and a misspelled key are different answers, and a
@@ -3173,6 +3183,175 @@ def create_app(
         if page is None:
             raise HTTPException(status_code=404, detail=f"no category {key!r}")
         return page
+
+    @app.get("/api/projects/{project_id}/catalog/blurbs")
+    async def read_blurb_sweep_progress(project_id: UUID):
+        """Where the last (or current) blurb sweep on this project stands.
+
+        **Registered ahead of `GET /catalog/{slug}` below** -- see
+        `read_catalog_category`'s docstring. `_NOT_RUNNING`'s shape (see
+        `blurb_sweep.py`) is what a project that has never swept and a
+        project whose sweep just finished both answer, so this never needs
+        its own 404 case.
+        """
+        await _require_project(project_id)
+        if blurb_sweep is None:
+            raise HTTPException(status_code=503, detail="blurb sweeping is not configured")
+        return blurb_sweep.progress(project_id)
+
+    @app.post("/api/projects/{project_id}/catalog/blurbs", status_code=202)
+    async def start_blurb_sweep(project_id: UUID):
+        """Write catalog copy for every candidate whose cached blurb is
+        missing or stale, in the background.
+
+        409 when a sweep is already running on this project -- one at a time,
+        `BlurbSweep.start`'s own reason: two sweeps racing would both read and
+        write the same cache entries.
+        """
+        await _require_project(project_id)
+        if blurb_sweep is None or blurb_writer is None:
+            raise HTTPException(status_code=503, detail="blurb sweeping is not configured")
+        built = await _catalog(project_id)
+        try:
+            frame = await blurb_sweep.start(project_id, built.all_candidates, blurb_writer)
+        except SweepAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=frame)
+
+    @app.get("/api/projects/{project_id}/catalog/{slug}")
+    async def read_course_detail(project_id: UUID, slug: str):
+        """One cluster's detail page: its candidate card, its outline, its
+        full membership, and -- if realized -- how far it has drifted.
+
+        404 for a slug naming no candidate in the current catalog, matching
+        `CourseService.detail`'s own reasoning: a stranded realized course
+        (one whose slug names no *current* cluster) is deliberately not
+        reachable through this route -- see `orphans()`.
+        """
+        await _require_project(project_id)
+        if course_service is None:
+            raise HTTPException(status_code=503, detail="course realization is not configured")
+        built = await _curriculum(project_id)
+        catalog_built = await _catalog(project_id)
+        detail = await course_service.detail(project_id, built, catalog_built, slug)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"no course {slug!r}")
+        return course_detail_view(detail)
+
+    def _author_one_target(
+        project_id: UUID,
+        built,
+        by_slug: dict,
+        subject: str,
+        lesson_count: int = 3,
+    ):
+        """One target's authoring call, shared by `author_courses`'s run and
+        `realize_course`'s single-area run below (Task 9's brief) -- one call
+        into `CourseAuthor`, not two copies that could drift on what "the
+        path's own slug" means.
+        """
+
+        async def _one(run_id: UUID, target: str):
+            if target == built.path.slug:
+                return await course_author.author_path(
+                    project_id, built.path, by_slug, run_id=run_id
+                )
+            return await course_author.author_area(
+                project_id, by_slug[target], subject, lesson_count=lesson_count, run_id=run_id
+            )
+
+        return _one
+
+    @app.post("/api/projects/{project_id}/catalog/{slug}/realize", status_code=202)
+    async def realize_course(project_id: UUID, slug: str):
+        """Record that a person has decided this cluster is a course, then
+        try to start writing it.
+
+        **The decision is appended first, unconditionally on the slug naming
+        a current candidate and not already being realized.** Authoring is
+        then attempted, and `RunAlreadyActive` is caught rather than left to
+        become this route's own 409 -- see the module's Task 9 brief: whether
+        a person can *choose* a course must not depend on whether someone
+        else's authoring run happens to be in flight. `authoring` is `None`
+        and `reason` is set on that path; a caller invalidates the run panel
+        on the next `curriculum/author` attempt rather than reading a frame
+        from this response.
+
+        **The frozen membership is the area's full membership, not its
+        anchors** -- `CourseCandidate.anchors` is capped at 12 (Task 9's
+        brief), and freezing that would make every course's fit report drift
+        that is an artifact of the cap rather than a fact about the cluster.
+        404 for a slug naming no current candidate; 409 when `decide` refuses
+        a second `RealizeCourse` on an already-realized stream.
+        """
+        await _require_project(project_id)
+        if course_repository is None:
+            raise HTTPException(status_code=503, detail="course realization is not configured")
+        built = await _curriculum(project_id)
+        catalog_built = await _catalog(project_id)
+        candidate = next((c for c in catalog_built.all_candidates if c.slug == slug), None)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail=f"no course {slug!r}")
+
+        area = built.area(slug)
+        member_ids = tuple(m.entity_id for m in area.members) if area is not None else ()
+
+        aggregate = await course_repository.load_or_create(
+            course_stream_id(project_id, slug).aggregate_id
+        )
+        try:
+            aggregate.execute(
+                RealizeCourse(
+                    project_id=project_id,
+                    slug=slug,
+                    title=candidate.title,
+                    member_entity_ids=member_ids,
+                    membership_hash=candidate.membership_hash,
+                    realized_at=datetime.now(UTC),
+                )
+            )
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        await course_repository.save(aggregate)
+
+        authoring_frame: dict[str, Any] | None = None
+        reason: str | None = None
+        if authoring is None or course_author is None:
+            reason = "course authoring is not configured"
+        else:
+            subject = (await service.project_state(project_id)).name or str(project_id)
+            _one = _author_one_target(project_id, built, built.by_slug, subject)
+            try:
+                authoring_frame = await authoring.start(project_id, [slug], _one, kind="area")
+            except RunAlreadyActive as error:
+                reason = str(error)
+
+        return JSONResponse(
+            status_code=202,
+            content={"realized": True, "authoring": authoring_frame, "reason": reason},
+        )
+
+    @app.post("/api/projects/{project_id}/catalog/{slug}/abandon")
+    async def abandon_course(project_id: UUID, slug: str):
+        """Withdraw the decision that this cluster is a course.
+
+        Does not cancel a running authoring run and does not delete anything
+        that run wrote -- the decision is withdrawn, not the work it caused
+        (Task 9's brief). 409 when `decide` refuses -- the course was never
+        realized, or was already abandoned.
+        """
+        await _require_project(project_id)
+        if course_repository is None:
+            raise HTTPException(status_code=503, detail="course realization is not configured")
+        aggregate = await course_repository.load_or_create(
+            course_stream_id(project_id, slug).aggregate_id
+        )
+        try:
+            aggregate.execute(AbandonCourse(project_id=project_id, slug=slug))
+        except CommandRejectedError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        await course_repository.save(aggregate)
+        return {"slug": slug, "realized": False}
 
     class FeatureCourse(BaseModel):
         rank: int = 0
@@ -3359,14 +3538,7 @@ def create_app(
         # material that is not there.
         subject = (await service.project_state(project_id)).name or str(project_id)
 
-        async def _one(run_id: UUID, target: str):
-            if target == built.path.slug:
-                return await course_author.author_path(
-                    project_id, built.path, by_slug, run_id=run_id
-                )
-            return await course_author.author_area(
-                project_id, by_slug[target], subject, lesson_count=body.lessons, run_id=run_id
-            )
+        _one = _author_one_target(project_id, built, by_slug, subject, body.lessons)
 
         try:
             frame = await authoring.start(
