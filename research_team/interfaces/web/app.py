@@ -71,6 +71,7 @@ from research_team.application.course_catalog import (
     BlurbTextPort,
     Catalog,
     CatalogService,
+    OutlineTextPort,
 )
 from research_team.application.course_realization import CourseService
 from research_team.application.curriculum import CurriculumService
@@ -1029,6 +1030,7 @@ def create_app(
     course_repository: AggregateRepository[Course] | None = None,
     blurb_sweep: BlurbSweep | None = None,
     blurb_writer: BlurbTextPort | None = None,
+    outline_writer: OutlineTextPort | None = None,
     art_store: ArtStore | None = None,
     art_sweep: ArtSweep | None = None,
     art_generator: ArtGeneratorPort | None = None,
@@ -3228,15 +3230,21 @@ def create_app(
 
     @app.post("/api/projects/{project_id}/catalog/blurbs", status_code=202)
     async def start_blurb_sweep(project_id: UUID):
-        """Write catalog copy for every candidate whose cached blurb is
-        missing or stale, in the background.
+        """Write catalog copy and outlines for every candidate whose cached
+        copy or outline is missing or stale, in the background.
+
+        Outline generation used to happen inside `GET /catalog/{slug}` on a
+        cache miss -- a model call awaited behind a click. It now happens
+        only here; `CourseService._outline_for` is cache-read-only. See
+        `blurb_sweep.py`'s module docstring for why this is folded into the
+        existing copy sweep rather than a second one running beside it.
 
         409 when a sweep is already running on this project -- one at a time,
         `BlurbSweep.start`'s own reason: two sweeps racing would both read and
         write the same cache entries.
         """
         await _require_project(project_id)
-        if blurb_sweep is None or blurb_writer is None:
+        if blurb_sweep is None or blurb_writer is None or outline_writer is None:
             raise HTTPException(status_code=503, detail="blurb sweeping is not configured")
         # `include_unnamed=True`: the whole point of a sweep is to give an
         # unnamed candidate a title, so the one caller that must see them is
@@ -3244,7 +3252,9 @@ def create_app(
         # backlog this route exists to work through.
         built = await _catalog(project_id, include_unnamed=True)
         try:
-            frame = await blurb_sweep.start(project_id, built.all_candidates, blurb_writer)
+            frame = await blurb_sweep.start(
+                project_id, built.all_candidates, blurb_writer, outline_writer
+            )
         except SweepAlreadyActive as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return JSONResponse(status_code=202, content=frame)

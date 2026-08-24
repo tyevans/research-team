@@ -249,6 +249,7 @@ def main() -> None:
             course_repository=application.course_repository,
             blurb_sweep=application.blurb_sweep,
             blurb_writer=application.blurbs,
+            outline_writer=application.outlines,
             art_store=application.art_store,
             art_sweep=application.art_sweep,
             art_generator=application.art_generator,

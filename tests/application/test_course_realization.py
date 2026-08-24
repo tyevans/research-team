@@ -5,12 +5,18 @@
 frozen side. Both ports here are faked in-process rather than against a real
 store, matching `test_catalog_service.py`'s own convention -- the store
 classes in `infrastructure/persistence/read_models.py` have their own tests.
+
+`CourseService` no longer calls `OutlineTextPort.write` -- outline
+generation moved to the background sweep (`interfaces/web/blurb_sweep.py`).
+`_outline_for` is now a cache read, and this file's outline tests assert
+exactly that: a fresh hit is returned, a miss and a stale hit both answer
+`None`, and nothing here ever writes to the cache.
 """
 
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from research_team.application.course_catalog import CachedOutline, DraftOutline
+from research_team.application.course_catalog import CachedOutline
 from research_team.application.course_realization import (
     CourseService,
     RealizedCourse,
@@ -58,24 +64,11 @@ class _StubCatalog:
         self.all_candidates = tuple(candidates)
 
 
-class _FakeOutlineWriter:
-    """Records how many times it was asked to write, and returns a fixed
-    answer -- `None` for the refusal tests, a `DraftOutline` otherwise."""
-
-    def __init__(self, result: DraftOutline | None) -> None:
-        self._result = result
-        self.calls = 0
-
-    async def write(self, title, anchors):
-        self.calls += 1
-        return self._result
-
-    @property
-    def model_name(self) -> str:
-        return "fake-outline-writer"
-
-
 class _FakeOutlineCache:
+    """Records every `put`, so a test can assert `_outline_for` never calls
+    it -- the read side is now the whole of `CourseService`'s use of this
+    port."""
+
     def __init__(self, cached: CachedOutline | None = None) -> None:
         self._cached = cached
         self.put_calls = 0
@@ -85,7 +78,7 @@ class _FakeOutlineCache:
 
     async def put(
         self, project_id, slug, promise, sections, membership_hash, model, generated_at
-    ):
+    ):  # pragma: no cover -- CourseService never calls this; see module docstring
         self.put_calls += 1
         self._cached = CachedOutline(
             promise=promise,
@@ -110,10 +103,13 @@ class _FakeRealizedCourses:
         return next((c for c in self._courses if c.slug == slug), None)
 
 
-def _draft() -> DraftOutline:
-    return DraftOutline(
-        promise="Learn the basics",
+def _cached_outline(promise: str, membership_hash: str = "hash-v1") -> CachedOutline:
+    return CachedOutline(
+        promise=promise,
         sections=(("Intro", "Where it starts"),),
+        membership_hash=membership_hash,
+        model="fake-outline-writer",
+        generated_at=datetime(2026, 8, 1, tzinfo=UTC),
     )
 
 
@@ -149,91 +145,48 @@ def _candidate(slug: str = "warp-drive", membership_hash: str = "hash-v1"):
     )
 
 
-async def test_a_missing_outline_is_generated_and_cached():
-    writer = _FakeOutlineWriter(_draft())
+async def test_a_missing_outline_answers_none_without_writing_to_the_cache():
+    """No sweep has ever cached anything for this slug -- `detail` must not
+    generate one on the caller's behalf, only report there is none yet."""
     cache = _FakeOutlineCache(cached=None)
-    service = CourseService(
-        realized=_FakeRealizedCourses(),
-        outline_writer=writer,
-        outline_cache=cache,
-    )
+    service = CourseService(realized=_FakeRealizedCourses(), outline_cache=cache)
     curriculum = _curriculum(_area("warp-drive", "e1", "e2"))
     catalog = _StubCatalog(_candidate())
 
     detail = await service.detail(uuid4(), curriculum, catalog, "warp-drive")
 
-    assert writer.calls == 1
-    assert cache.put_calls == 1
+    assert cache.put_calls == 0
     assert detail is not None
-    assert detail.outline is not None
-    assert detail.outline.promise == "Learn the basics"
+    assert detail.outline is None
 
 
-async def test_a_cached_outline_whose_hash_matches_is_not_regenerated():
-    writer = _FakeOutlineWriter(_draft())
+async def test_a_cached_outline_whose_hash_matches_is_returned():
     cache = _FakeOutlineCache(
-        cached=CachedOutline(
-            promise="Cached promise",
-            sections=(("A", "B"),),
-            membership_hash="hash-v1",
-            model="fake-outline-writer",
-            generated_at=datetime(2026, 8, 1, tzinfo=UTC),
-        )
+        cached=_cached_outline("Cached promise", membership_hash="hash-v1")
     )
-    service = CourseService(
-        realized=_FakeRealizedCourses(),
-        outline_writer=writer,
-        outline_cache=cache,
-    )
+    service = CourseService(realized=_FakeRealizedCourses(), outline_cache=cache)
     curriculum = _curriculum(_area("warp-drive", "e1", "e2"))
     catalog = _StubCatalog(_candidate(membership_hash="hash-v1"))
 
     detail = await service.detail(uuid4(), curriculum, catalog, "warp-drive")
 
-    assert writer.calls == 0
+    assert cache.put_calls == 0
     assert detail.outline is not None
     assert detail.outline.promise == "Cached promise"
 
 
-async def test_a_cached_outline_whose_hash_disagrees_is_regenerated():
-    """The staleness mechanism. A version that only checks presence passes the
-    first two tests and never regenerates after a single drift."""
-    writer = _FakeOutlineWriter(_draft())
+async def test_a_cached_outline_whose_hash_disagrees_answers_none():
+    """The staleness mechanism. A version that only checks presence would
+    keep serving the stale row after the cluster has drifted -- this is the
+    one case that distinguishes the two, and there is no writer here to
+    regenerate it: a stale hit and a miss now render identically, both
+    waiting on the next sweep."""
     cache = _FakeOutlineCache(
-        cached=CachedOutline(
-            promise="Stale promise",
-            sections=(("A", "B"),),
-            membership_hash="hash-v0",
-            model="fake-outline-writer",
-            generated_at=datetime(2026, 8, 1, tzinfo=UTC),
-        )
+        cached=_cached_outline("Stale promise", membership_hash="hash-v0")
     )
-    service = CourseService(
-        realized=_FakeRealizedCourses(),
-        outline_writer=writer,
-        outline_cache=cache,
-    )
+    service = CourseService(realized=_FakeRealizedCourses(), outline_cache=cache)
     curriculum = _curriculum(_area("warp-drive", "e1", "e2"))
     catalog = _StubCatalog(_candidate(membership_hash="hash-v1"))
-
-    detail = await service.detail(uuid4(), curriculum, catalog, "warp-drive")
-
-    assert writer.calls == 1
-    assert detail.outline.promise == "Learn the basics"
-
-
-async def test_a_refused_outline_is_not_cached():
-    """So the next visit retries. Caching a refusal makes the blank permanent
-    and gives nothing a way to clear it."""
-    writer = _FakeOutlineWriter(None)
-    cache = _FakeOutlineCache(cached=None)
-    service = CourseService(
-        realized=_FakeRealizedCourses(),
-        outline_writer=writer,
-        outline_cache=cache,
-    )
-    curriculum = _curriculum(_area("warp-drive", "e1", "e2"))
-    catalog = _StubCatalog(_candidate())
 
     detail = await service.detail(uuid4(), curriculum, catalog, "warp-drive")
 
@@ -245,11 +198,7 @@ async def test_a_missing_candidate_yields_no_detail():
     """A version reaching into `RealizedCoursePort` for the title when the
     catalog has nothing would paper over a slug that no longer names a
     cluster -- that is `orphans()`'s job, not `detail`'s."""
-    service = CourseService(
-        realized=_FakeRealizedCourses(),
-        outline_writer=_FakeOutlineWriter(_draft()),
-        outline_cache=_FakeOutlineCache(),
-    )
+    service = CourseService(realized=_FakeRealizedCourses(), outline_cache=_FakeOutlineCache())
     curriculum = _curriculum(_area("other", "e9"))
 
     detail = await service.detail(uuid4(), curriculum, _StubCatalog(), "warp-drive")
@@ -261,9 +210,7 @@ async def test_a_realized_course_reports_its_fit_against_the_current_cluster():
     project_id = uuid4()
     realized = _realized(member_entity_ids=("e1", "e2"))
     service = CourseService(
-        realized=_FakeRealizedCourses(realized),
-        outline_writer=_FakeOutlineWriter(_draft()),
-        outline_cache=_FakeOutlineCache(),
+        realized=_FakeRealizedCourses(realized), outline_cache=_FakeOutlineCache()
     )
     # The live cluster kept e1, dropped e2, and gained e3.
     curriculum = _curriculum(_area("warp-drive", "e1", "e3"))
@@ -286,9 +233,7 @@ async def test_orphans_lists_a_realized_course_whose_slug_names_no_cluster():
     project_id = uuid4()
     stranded = _realized(slug="ancient-rome", member_entity_ids=("e1",))
     service = CourseService(
-        realized=_FakeRealizedCourses(stranded),
-        outline_writer=_FakeOutlineWriter(_draft()),
-        outline_cache=_FakeOutlineCache(),
+        realized=_FakeRealizedCourses(stranded), outline_cache=_FakeOutlineCache()
     )
     # No area named "ancient-rome" in the current curriculum -- re-clustering
     # moved the slug, which is exactly the state orphans() exists to surface.
@@ -304,9 +249,7 @@ async def test_orphans_omits_a_realized_course_whose_slug_still_names_a_cluster(
     project_id = uuid4()
     still_current = _realized(slug="warp-drive", member_entity_ids=("e1", "e2"))
     service = CourseService(
-        realized=_FakeRealizedCourses(still_current),
-        outline_writer=_FakeOutlineWriter(_draft()),
-        outline_cache=_FakeOutlineCache(),
+        realized=_FakeRealizedCourses(still_current), outline_cache=_FakeOutlineCache()
     )
     curriculum = _curriculum(_area("warp-drive", "e1", "e2"))
 

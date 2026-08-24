@@ -6,11 +6,23 @@ frozen.
 in `course_catalog.py` rather than here (Task 4; controller ruling R2) -- this
 module holds only the port over realized courses and the assembler that joins
 a catalog candidate to its frozen counterpart.
+
+**`CourseService` no longer calls `OutlineTextPort.write` at all.** It used
+to, on a cache miss inside the request that renders this page -- a model
+call awaited synchronously behind a click, with no spinner distinguishable
+from a slow network and no way to cancel it, and two readers of the same
+slug racing to pay for two generations. Outline generation now happens only
+in the background sweep (`interfaces/web/blurb_sweep.py`, folded into the
+existing copy sweep rather than a second one beside it -- see its module
+docstring). `_outline_for` here is cache-read-only: a fresh hit is returned,
+anything else -- no row, or a row whose `membership_hash` has drifted -- is
+`None`, exactly the shape `CourseDetail.outline`'s docstring already gives
+"never generated" and "refused".
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -18,7 +30,6 @@ from research_team.application.course_catalog import (
     CachedOutline,
     Catalog,
     OutlineCachePort,
-    OutlineTextPort,
 )
 from research_team.application.curriculum import Curriculum
 from research_team.domain.course import CourseFit, fit_of
@@ -110,11 +121,9 @@ class CourseService:
         self,
         *,
         realized: RealizedCoursePort,
-        outline_writer: OutlineTextPort,
         outline_cache: OutlineCachePort,
     ) -> None:
         self._realized = realized
-        self._outline_writer = outline_writer
         self._outline_cache = outline_cache
 
     async def detail(
@@ -159,40 +168,24 @@ class CourseService:
     async def _outline_for(
         self, project_id: UUID, candidate: CourseCandidate
     ) -> CachedOutline | None:
-        """The cached outline if it is fresh, else a freshly generated one.
+        """The cached outline if it is fresh, else `None` -- never a model
+        call.
 
-        A miss and a stale hit take the same path: write, and cache only a
-        non-refusal (see the module docstring on `CourseDetail.outline` for
-        why a refusal and "never generated" render identically, and the
-        brief's own reasoning for why a refusal must not be cached -- it is
-        usually a bad sample, not a property of the cluster, and caching it
-        would make the card permanently blank with nothing able to retry it).
+        A miss and a stale hit (`membership_hash` disagrees) take the same
+        path: no outline, and nothing generated. This method used to write
+        one on either of those, inside the request that renders this page --
+        a model call awaited behind a click, with two readers of the same
+        slug racing to pay for two generations, and a refusal that must not
+        be cached (see the module docstring on `CourseDetail.outline`)
+        meaning a refusal-prone cluster paid the call again on every view.
+        Generation now happens only in the background sweep; a slug this
+        cache has nothing fresh for renders "no outline yet", exactly what a
+        slug nobody has swept renders.
         """
         cached = await self._outline_cache.get(project_id, candidate.slug)
         if cached is not None and cached.membership_hash == candidate.membership_hash:
             return cached
-
-        draft = await self._outline_writer.write(candidate.title, candidate.anchors)
-        if draft is None:
-            return None
-
-        generated_at = datetime.now(UTC)
-        await self._outline_cache.put(
-            project_id,
-            candidate.slug,
-            draft.promise,
-            draft.sections,
-            candidate.membership_hash,
-            self._outline_writer.model_name,
-            generated_at,
-        )
-        return CachedOutline(
-            promise=draft.promise,
-            sections=draft.sections,
-            membership_hash=candidate.membership_hash,
-            model=self._outline_writer.model_name,
-            generated_at=generated_at,
-        )
+        return None
 
     async def orphans(
         self, project_id: UUID, curriculum: Curriculum

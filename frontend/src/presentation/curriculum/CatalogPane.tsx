@@ -323,6 +323,15 @@ const CandidateSection = ({
  * counts a client-side loop over one document at a time, this counts a
  * server-side background task, so `progress` is `null` only before the first
  * poll has answered rather than for a work list not yet loaded.
+ *
+ * **Writes outlines too, not just copy.** Outline generation used to happen
+ * on the course detail page, awaited inside that request -- a model call
+ * behind a click, with no spinner distinguishable from a slow network. It
+ * now happens only here, folded into this same sweep rather than a second
+ * button beside it: `catalog/blurbs` already walks every candidate an
+ * outline needs and already has this progress channel. A candidate counts
+ * as done only once both its copy and its outline are fresh, so the label
+ * below says both, not just the one this control used to be named for.
  */
 const BlurbSweepControl = ({
   progress,
@@ -337,14 +346,15 @@ const BlurbSweepControl = ({
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-bg-panel p-3">
       <p className="m-0 min-w-0 flex-1 text-xs text-fg-dim">
-        Write catalog copy for every candidate whose blurb is missing or out of date.
+        Write catalog copy and outlines for every candidate whose blurb or outline is missing or out
+        of date.
       </p>
       <Button small onClick={onRun} disabled={running}>
         {running && progress !== null
           ? `Writing ${progress.done} of ${progress.total}`
           : running
             ? 'Writing…'
-            : 'Write the missing copy'}
+            : 'Write the missing copy and outlines'}
       </Button>
       {progress !== null && !running && (
         // `error` present is the one case that must not read as an ordinary
