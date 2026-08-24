@@ -1,0 +1,154 @@
+/* How a subject becomes a course.
+ *
+ * Five phases, over the machinery that carries them.
+ *
+ * Shape carries meaning:
+ *   box      an artifact that persists
+ *   ellipse  a process step
+ *   hexagon  a point where a person decides. No tool reaches the
+ *            network on its own: fetch and fetch_media both floor at
+ *            `ask` (application/autonomy.py, TOOL_FLOORS).
+ *
+ * Render:  dot -Tpng docs/design/pipeline.dot -o docs/design/pipeline.png
+ */
+
+digraph curriculum {
+  rankdir=TB;
+  bgcolor="white";
+  compound=true;
+  fontname="Helvetica";
+  node [fontname="Helvetica", fontsize=10, shape=ellipse, style=filled,
+        fillcolor="#f4f4f4", color="#888888"];
+  edge [fontname="Helvetica", fontsize=9, color="#555555"];
+  graph [fontname="Helvetica", fontsize=11, labeljust="l"];
+
+  /* ---------------------------------------------------------------- */
+  subgraph cluster_subject {
+    label="1  SUBJECT";
+    style=filled; fillcolor="#eef4fb"; color="#9dbfe0";
+
+    project [shape=box, fillcolor="#ffffff",
+             label="Project\nits name is the subject every\nStage 1 prompt is framed against"];
+  }
+
+  /* ---------------------------------------------------------------- */
+  subgraph cluster_topics {
+    label="2  TOPICS  —  what to go and read, watch and hear";
+    style=filled; fillcolor="#eef7f0"; color="#9ecfae";
+
+    seed    [label="seed topics"];
+    search  [label="search\ntext · image · video"];
+    gate_f  [shape=hexagon, fillcolor="#f7f2e4", color="#c9b47e",
+             label="approve the reach\nfetch"];
+    scrape  [label="fetch\nprose, figures, captions"];
+    curate  [label="curate media\nwhat wants to be\nseen or heard"];
+    review  [shape=hexagon, fillcolor="#f7f2e4", color="#c9b47e",
+             label="accept or reject\nwhat is worth watching"];
+    gate_m  [shape=hexagon, fillcolor="#f7f2e4", color="#c9b47e",
+             label="approve the reach\nfetch_media"];
+    captions [label="caption track"];
+    blobs   [shape=box, fillcolor="#ffffff",
+             label="Blob store\ncontent-addressed by digest"];
+  }
+
+  /* ---------------------------------------------------------------- */
+  subgraph cluster_research {
+    label="3  RESEARCH  —  everything becomes text, text becomes a graph";
+    style=filled; fillcolor="#fbf6ec"; color="#e0c79d";
+
+    perceive [label="perceive\ndescribe frames · transcribe audio"];
+    derived  [shape=box, fillcolor="#ffffff",
+              label="Derived text\ncarries char span → timestamp"];
+    store    [shape=box, fillcolor="#ffffff",
+              label="Source\nstored and chunked"];
+    extract  [label="extract\nentities and relations"];
+    consolidate [label="consolidate\nmerge what is one thing"];
+    embed    [label="embed\none vector per entity"];
+    graph_   [shape=box, fillcolor="#ffffff",
+              label="Knowledge graph\nentities · relations · vectors\nfolded from the event log"];
+  }
+
+  /* ---------------------------------------------------------------- */
+  subgraph cluster_structure {
+    label="4  STRUCTURE CURRICULUM";
+    style=filled; fillcolor="#f5eef9"; color="#c4a3d8";
+
+    subgraph cluster_channels {
+      label="clustering channels";
+      style=filled; fillcolor="#ede2f4"; color="#b48fcc";
+      ch_rel [label="relations\nwhat the text linked"];
+      ch_sem [label="semantic\nwhat means the same"];
+      ch_com [label="co-mentions\nwhat is discussed together"];
+    }
+
+    cluster_ [label="greedy modularity\nClauset–Newman–Moore"];
+    areas    [shape=box, fillcolor="#ffffff",
+              label="Learning areas\neach named for what it is about"];
+    order    [label="order into a path\nprerequisite closure"];
+    path     [shape=box, fillcolor="#ffffff", label="Learning path"];
+  }
+
+  /* ---------------------------------------------------------------- */
+  subgraph cluster_lessons {
+    label="5  DEVELOP LESSONS  —  backward design, one area at a time";
+    style=filled; fillcolor="#fdeef0"; color="#e5a3ac";
+
+    s1 [label="Stage 1\ndesired results"];
+    s2 [label="Stage 2\nevidence of understanding"];
+    s3 [label="Stage 3\nlearning plan"];
+
+    unit    [shape=box, fillcolor="#ffffff",
+             label="unit.md\ntransfer · meaning · acquisition,\nthen the evidence that would show it"];
+    lessons [shape=box, fillcolor="#ffffff",
+             label="lesson-01.md …\nprose, resolved widgets,\nfigures and clips in place"];
+    overview [shape=box, fillcolor="#ffffff",
+              label="Path overview\nlinks every unit"];
+  }
+
+  /* ---------------------------------------------------------------- */
+  subgraph cluster_share {
+    label="SHARE";
+    style=filled; fillcolor="#eef2f7"; color="#a8b6c8";
+
+    archive [shape=box, fillcolor="#ffffff",
+             label="Course archive\nmarkdown, ready to read"];
+    picture [shape=box, fillcolor="#ffffff",
+             label="Shareable graph\none file · opens anywhere"];
+  }
+
+  /* ---------------------------------------------------------------- */
+  project -> seed;
+  seed  -> search;
+  search -> gate_f   [label="pages"];
+  gate_f -> scrape;
+  search -> curate   [label="media"];
+  curate -> review -> gate_m -> blobs;
+  review -> captions [label="where a caption\ntrack exists"];
+
+  scrape   -> store;
+  captions -> derived;
+  blobs    -> perceive -> derived;
+  derived  -> store    [label="a transcript is\na source like any other"];
+
+  store -> extract -> consolidate -> embed -> graph_;
+
+  graph_ -> ch_rel;
+  graph_ -> ch_sem;
+  graph_ -> ch_com;
+  ch_rel -> cluster_;
+  ch_sem -> cluster_;
+  ch_com -> cluster_;
+  cluster_ -> areas -> order -> path;
+
+  path -> s1;
+  s1 -> s2 -> s3;
+  s1 -> unit;
+  s2 -> unit  [label="appended"];
+  s3 -> lessons;
+  path -> overview [label="written last"];
+
+  unit    -> archive;
+  lessons -> archive;
+  overview -> archive;
+  graph_  -> picture [constraint=false];
+}
