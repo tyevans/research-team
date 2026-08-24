@@ -4569,6 +4569,31 @@ class AuthoringRunStore:
         found = await self.recent_for_project(project_id, limit=1)
         return found[0] if found else None
 
+    async def authored_session_for(self, project_id: UUID, target: str) -> UUID | None:
+        """Which session holds `target`'s course markdown, or None if no run
+        has ever authored it.
+
+        Scans newest `started_at` first and returns the first match, so a
+        target authored twice resolves to the session its *current* course
+        actually lives in. `recent_for_project`'s own default `limit=2` is
+        wrong here and is not reused: that default is tuned for
+        `AuthoringActivity.last`, which only ever needs the run before the one
+        in flight, but a course's session can have been written many runs
+        ago -- inheriting 2 would make the link vanish the moment a third
+        later run happens, indistinguishable from the course never having
+        been authored. 200 is arbitrary but generous against any project's
+        real run count.
+
+        Filtered in Python, not SQL: `authored` is a JSON column, and a
+        `json_each` query would tie this read to SQLite in a file whose other
+        reads (`Query`/`Filter`) are backend-agnostic.
+        """
+        for row in await self.recent_for_project(project_id, limit=200):
+            for entry in row.authored:
+                if entry.get("target") == target:
+                    return UUID(entry["session_id"])
+        return None
+
     async def truncate(self) -> None:
         await self._connection.execute(f"DELETE FROM {AuthoringRunRow.table_name()}")
         await self._connection.commit()
@@ -4709,6 +4734,9 @@ class AuthoringRunRunner:
         self, project_id: UUID, limit: int = 2
     ) -> list[AuthoringRunRow]:
         return await self._started().recent_for_project(project_id, limit)
+
+    async def authored_session_for(self, project_id: UUID, target: str) -> UUID | None:
+        return await self._started().authored_session_for(project_id, target)
 
     async def rebuild(self) -> None:
         """Truncate and replay. Allowed here for `AskConversationRunner`'s
