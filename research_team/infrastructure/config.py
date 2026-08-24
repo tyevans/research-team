@@ -395,26 +395,33 @@ def catalog_sweep_concurrency() -> int:
     sweep an SVG on top. The measurement disagreed.
 
     Taken 2026-08-24 against the live endpoint over real candidates from a copy
-    of the real database, empty caches so every candidate is a real miss. The
-    ceilings were run **interleaved**, in the order below, with an 8-token
-    completion timed immediately before and after each run so the ambient load
-    is visible per row rather than assumed:
+    of the real database, empty caches so every candidate is a real miss.
+    Ceilings run **interleaved**, in the order below, over the same 24
+    candidates, with an 8-token completion timed immediately before and after
+    each run so the ambient load is a column rather than an assumption:
 
-    ======= ======= ============ ===========
-    ceiling wall    probe before probe after
-    ======= ======= ============ ===========
-    1       149.7s  0.29s        0.66s
-    2       169.5s  0.30s        0.67s
-    4       148.5s  0.30s        0.68s
-    8       148.0s  0.31s        0.69s
-    1       149.5s  0.29s        0.66s
-    ======= ======= ============ ===========
+    ======= ======= ============ =========== ==========
+    ceiling wall    probe before probe after window UTC
+    ======= ======= ============ =========== ==========
+    1       149.7s  0.29s        0.66s       20:14:50 (excluded, see below)
+    2       169.5s  0.30s        0.67s       20:17:2x
+    4       148.5s  0.30s        0.68s       20:20:1x
+    8       148.0s  0.31s        0.69s       20:23:0x
+    1       149.5s  0.29s        0.66s       20:25:5x
+    ======= ======= ============ =========== ==========
 
-    **Ceiling 8 is 1.1% faster than ceiling 1.** The closing repeat of ceiling
-    1 came back 0.13% from the opening one, so the box did not drift under the
-    experiment and the flatness is the endpoint's, not the measurement's. The
-    169.5s at ceiling 2 is the only row off the line and is not explained;
-    treat it as noise rather than as a shape.
+    **The first row is excluded and the last row is the baseline.** Four
+    orphaned probe processes from an unrelated task were killed at 20:14:57Z,
+    about seven seconds into that first run, so it spans two conditions and is
+    not one measurement. Every other row ran entirely after. The closing
+    ceiling-1 run is the clean sequential baseline.
+
+    Against that baseline, **ceiling 8 is 1.0% faster than ceiling 1**
+    (148.0s vs 149.5s). That the excluded row came back within 0.13% of the
+    clean one is worth noting only as evidence that the orphans were
+    contributing no measurable load by then; it is not why the row is excluded.
+    The 169.5s at ceiling 2 is the one row off the line, is unexplained, and
+    should be read as noise rather than as a shape.
 
     The reading: wall clock here is bounded by total generation work, not by
     how many requests are outstanding. This server serialises. Asking it eight
@@ -434,12 +441,15 @@ def catalog_sweep_concurrency() -> int:
 
     **Do not raise this without re-measuring**, and re-measure the way the
     table above was taken -- interleaved, with a latency probe bracketing each
-    run. An earlier pass at this ran the ceilings back to back while another
-    agent was loading the same endpoint and produced ceiling 6 at 274.1s
-    against a 148.5s baseline, which reads as "concurrency is 1.85x slower"
-    and is entirely that agent's traffic. A queued call and a slow call are
-    indistinguishable from the client, which is exactly why the probe rows are
-    part of the table rather than a note beside it.
+    run, and with the probes checked rather than assumed. An earlier pass ran
+    the ceilings back to back while those orphans were alive and produced
+    ceiling 6 at 274.1s against a 148.5s baseline, which reads as "concurrency
+    is 1.85x slower". It is not: ceiling **8** -- higher than 6 -- measures
+    148.0s on a quiet box with a 0.31s probe in front of it, so the sweep's own
+    concurrency does not queue the server harmfully at any ceiling tested. That
+    274.1s was ambient load, and the tell was never in the wall clock. A queued
+    call and a slow call are indistinguishable from the client, which is why
+    the probe columns are part of this table rather than a note beside it.
     """
     return int(
         os.getenv("AGENT_CATALOG_SWEEP_CONCURRENCY", str(DEFAULT_CATALOG_SWEEP_CONCURRENCY))

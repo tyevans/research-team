@@ -187,11 +187,13 @@ def test_the_catalog_sweep_defaults_to_one_candidate_at_a_time(monkeypatch):
     """1, and the number is the finding rather than a failure to finish.
 
     The sweeps can run candidates concurrently; measured interleaved against
-    the live endpoint on 2026-08-24, ceiling 8 came back 1.1% faster than
-    ceiling 1 over the same 24 candidates, with the opening and closing
-    ceiling-1 runs 0.13% apart. This server serialises, so the default asks it
-    for one thing at a time and the mechanism waits for an endpoint that
-    batches. See `config.catalog_sweep_concurrency` for the full table.
+    the live endpoint on 2026-08-24, with a latency probe bracketing every run,
+    ceiling 8 came back 1.0% faster than ceiling 1 over the same 24 candidates
+    (148.0s against a 149.5s clean sequential baseline). This server
+    serialises, so the default asks it for one thing at a time and the
+    mechanism waits for an endpoint that batches. See
+    `config.catalog_sweep_concurrency` for the table, including the row thrown
+    out for straddling a change in ambient load.
 
     Pinned as a value and not merely as `<= extraction_concurrency()`: the
     point of this test is that somebody raising it has to come here, read the
