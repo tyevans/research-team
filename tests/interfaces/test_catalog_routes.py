@@ -61,6 +61,9 @@ class _NoBlurbs:
     async def get(self, project_id, slug):
         return None
 
+    async def all_for_project(self, project_id):
+        return {}
+
     async def put(self, *args, **kwargs) -> None:  # pragma: no cover -- never called here
         raise AssertionError("nothing in this module generates a blurb")
 
@@ -88,9 +91,7 @@ class _OneStaleBlurb:
     def __init__(self, slug: str) -> None:
         self._slug = slug
 
-    async def get(self, project_id, slug):
-        if slug != self._slug:
-            return None
+    def _blurb(self) -> CachedBlurb:
         return CachedBlurb(
             text="a blurb from before",
             title="A course from before",
@@ -98,6 +99,14 @@ class _OneStaleBlurb:
             model="test",
             generated_at=datetime(2020, 1, 1, tzinfo=UTC),
         )
+
+    async def get(self, project_id, slug):
+        if slug != self._slug:
+            return None
+        return self._blurb()
+
+    async def all_for_project(self, project_id):
+        return {self._slug: self._blurb()}
 
     async def put(self, *args, **kwargs) -> None:  # pragma: no cover -- never called here
         raise AssertionError("nothing in this module generates a blurb")

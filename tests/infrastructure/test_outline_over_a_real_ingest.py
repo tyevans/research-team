@@ -116,6 +116,9 @@ class _NoBlurbs:
     async def get(self, project_id, slug):
         return None
 
+    async def all_for_project(self, project_id):
+        return {}
+
     async def put(self, *args, **kwargs) -> None:  # pragma: no cover -- never called here
         raise AssertionError("nothing in this module caches a blurb")
 
