@@ -83,7 +83,11 @@ from research_team.application.media_acquisition import (
     MediaAcceptWorker,
 )
 from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
-from research_team.application.ontology_discovery import OntologyDiscoveryService
+from research_team.application.ontology_discovery import (
+    DISCOVERY_CHUNK_OVERLAP_CHARS,
+    MAX_DISCOVERY_CHUNK_CHARS,
+    OntologyDiscoveryService,
+)
 from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.ports import GateReview
 from research_team.application.prompts import (
@@ -179,6 +183,9 @@ from research_team.infrastructure.knowledge.entity_embeddings import (
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
+from research_team.infrastructure.knowledge.ontology_chunker import (
+    MarkdownAwareDocumentChunker,
+)
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
 from research_team.infrastructure.knowledge.outline_writer import ModelOutlineWriter
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
@@ -3003,6 +3010,13 @@ def build_application(
             model=ChatModelOntologyText(extraction_model, model_name=config.model_name()),
             recorder=EventStoreOntologyRecorder(
                 repository.store, repository.publisher, target_project_id
+            ),
+            # The chunk size lives with the pass rather than with the chunker:
+            # it is derived from the model's context window, which is the
+            # application's constraint, and the chunker has no way to know it.
+            chunker=MarkdownAwareDocumentChunker(
+                chunk_chars=MAX_DISCOVERY_CHUNK_CHARS,
+                overlap_chars=DISCOVERY_CHUNK_OVERLAP_CHARS,
             ),
         )
 
