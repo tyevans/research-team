@@ -243,7 +243,7 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
-from research_team.interfaces.web.art_sweep import ArtSweep
+from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep
 from research_team.interfaces.web.blurb_sweep import BlurbSweep
 from research_team.workflows import PRESETS
 
@@ -545,9 +545,18 @@ class _LazyCandidateArtStore:
         store = await self._opened()
         return await store.get(project_id, slug)
 
-    async def put(self, project_id: UUID, slug: str, art_id: UUID) -> None:
+    async def put(
+        self, project_id: UUID, slug: str, art_id: UUID, membership_hash: str
+    ) -> None:
+        # `membership_hash` is required here rather than defaulted, mirroring
+        # `CandidateArtStore.put`. An assignment recorded without the hash it
+        # was made against is exactly the row drift-detection can never
+        # refresh -- it would compare against `""`, never match, and either
+        # regenerate forever or never, depending on which way the comparison
+        # falls. A default would make that unreachable-by-accident state
+        # reachable by omission.
         store = await self._opened()
-        await store.put(project_id, slug, art_id)
+        await store.put(project_id, slug, art_id, membership_hash)
 
     async def close(self) -> None:
         if self._store is not None:
@@ -1107,6 +1116,12 @@ class Application:
     """One art-generation sweep per project, over `art_store`/
     `_candidate_art_store` -- `blurb_sweep`'s reasoning turned to art: built
     here so a route only has to add one call to `.start()`."""
+
+    art_reroll: ArtReroll
+    """Single-candidate reroll, over the same `art_store`/
+    `_candidate_art_store` pair as `art_sweep` -- see `ArtReroll`'s docstring
+    for why it is a separate tracker rather than `art_sweep` handed a
+    one-candidate list."""
 
     document_extractor: DocumentExtractor
     """Extracts a stored document into its project's graph, without re-fetching.
@@ -3065,6 +3080,7 @@ def build_application(
     # configuration, matching `outline_writer`'s own comment above on why.
     art_generator = ModelSvgArtist(extraction_model)
     art_sweep = ArtSweep(art_store, candidate_art_store)
+    art_reroll = ArtReroll(art_store, candidate_art_store)
 
     # `_course_runner` follows the log the same way `catalog_runner` does,
     # over this application's own store and bus -- see its own docstring for
@@ -3322,6 +3338,7 @@ def build_application(
         art_matcher=art_matcher,
         _candidate_art_store=candidate_art_store,
         art_sweep=art_sweep,
+        art_reroll=art_reroll,
         document_extractor=document_extractor,
         editor=editor,
         perception=resolved_perception,

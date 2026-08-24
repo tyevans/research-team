@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useContainer } from '@app/container-context.tsx'
@@ -50,6 +52,32 @@ export const CoursePage = ({
     onSuccess: () => void invalidate(),
   })
 
+  // Its own key and its own poll, matching `CatalogPane`'s `artSweep`
+  // reasoning: a reroll reports four unrelated counts (always `total: 1`
+  // here) and polling on `courseDetail`'s key would refetch the whole
+  // detail page every two seconds instead of just this.
+  const reroll = useQuery({
+    queryKey: queryKeys.artReroll(projectId, slug),
+    queryFn: () => courses.fetchArtReroll(projectId, slug),
+    refetchInterval: (q) => (q.state.data?.running ? 2_000 : false),
+  })
+
+  const startReroll = useMutation({
+    mutationFn: () => courses.startArtReroll(projectId, slug),
+    onSuccess: (started) => queryClient.setQueryData(queryKeys.artReroll(projectId, slug), started),
+  })
+
+  // A poll transitioning `running: true` -> `false` is the one moment a
+  // fresh `art.url` exists that `courseDetail`'s own cache does not know
+  // about yet -- `CatalogPane`'s `artWasRunning`'s exact reasoning, narrowed
+  // to one candidate.
+  const rerollWasRunning = useRef(false)
+  const rerollRunning = reroll.data?.running ?? false
+  useEffect(() => {
+    if (rerollWasRunning.current && !rerollRunning) void invalidate()
+    rerollWasRunning.current = rerollRunning
+  }, [rerollRunning]) // eslint-disable-line react-hooks/exhaustive-deps -- `invalidate` is a fresh closure every render; only `rerollRunning` should re-run this.
+
   if (query.isPending) return <Loading what="the course" />
   if (query.isError) {
     return (
@@ -82,6 +110,33 @@ export const CoursePage = ({
           // works in this build.
           className="crs-course-art h-[224px] w-full rounded-md object-cover"
         />
+        <div className="flex items-center gap-2">
+          <Button
+            small
+            tone="quiet"
+            onClick={() => startReroll.mutate()}
+            disabled={startReroll.isPending || rerollRunning}
+          >
+            {rerollRunning ? 'Rerolling…' : 'Reroll art'}
+          </Button>
+          {reroll.data !== null &&
+            reroll.data !== undefined &&
+            !rerollRunning &&
+            reroll.data.error !== null && (
+              <p className="crs-course-reroll-error m-0 text-xs text-k-failure">
+                The reroll failed: {reroll.data.error}
+              </p>
+            )}
+          {reroll.data !== null &&
+            reroll.data !== undefined &&
+            !rerollRunning &&
+            reroll.data.error === null &&
+            reroll.data.failed > 0 && (
+              <p className="crs-course-reroll-refused m-0 text-xs text-fg-dim">
+                The model had nothing safe to offer -- the picture is unchanged.
+              </p>
+            )}
+        </div>
         <h2 className="crs-course-title font-semibold text-2xl text-fg">
           {titleCase(candidate.title)}
         </h2>

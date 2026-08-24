@@ -175,7 +175,7 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
-from research_team.interfaces.web.art_sweep import ArtSweep
+from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep, RerollAlreadyActive
 from research_team.interfaces.web.art_sweep import SweepAlreadyActive as ArtSweepAlreadyActive
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.blurb_sweep import BlurbSweep, SweepAlreadyActive
@@ -1033,6 +1033,7 @@ def create_app(
     outline_writer: OutlineTextPort | None = None,
     art_store: ArtStore | None = None,
     art_sweep: ArtSweep | None = None,
+    art_reroll: ArtReroll | None = None,
     art_generator: ArtGeneratorPort | None = None,
     art_matcher: LibraryArtProvider | None = None,
 ) -> FastAPI:
@@ -3271,9 +3272,18 @@ def create_app(
         return art_sweep.progress(project_id)
 
     @app.post("/api/projects/{project_id}/catalog/art", status_code=202)
-    async def start_art_sweep(project_id: UUID):
+    async def start_art_sweep(project_id: UUID, force: bool = False):
         """Generate art for every candidate the library has neither assigned
         nor matched, in the background.
+
+        `force=true` re-illustrates *every* candidate, ignoring an existing
+        assignment (fresh or drifted) and skipping the library-match check
+        too -- see `art_sweep.py`'s module docstring for why a forced sweep
+        has to actually call the model for every card rather than quietly
+        re-matching most of them back to what they already had. The default
+        (`force=False`) is unchanged from before this feature: someone
+        pressing the ordinary "Illustrate the catalog" button must not
+        suddenly pay for a model call per card that already has art.
 
         409 when a sweep is already running on this project, matching
         `start_blurb_sweep`'s reason.
@@ -3284,9 +3294,43 @@ def create_app(
         built = await _catalog(project_id, include_unnamed=True)
         try:
             frame = await art_sweep.start(
-                project_id, built.all_candidates, art_generator, art_matcher
+                project_id, built.all_candidates, art_generator, art_matcher, force=force
             )
         except ArtSweepAlreadyActive as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return JSONResponse(status_code=202, content=frame)
+
+    @app.get("/api/projects/{project_id}/catalog/{slug}/art/reroll")
+    async def read_art_reroll_progress(project_id: UUID, slug: str):
+        """Where the last (or current) reroll of this candidate's art
+        stands. Mirrors `read_art_sweep_progress`, keyed one level narrower
+        -- see `ArtReroll`'s docstring."""
+        await _require_project(project_id)
+        if art_reroll is None:
+            raise HTTPException(status_code=503, detail="art rerolling is not configured")
+        return art_reroll.progress(project_id, slug)
+
+    @app.post("/api/projects/{project_id}/catalog/{slug}/art/reroll", status_code=202)
+    async def start_art_reroll(project_id: UUID, slug: str):
+        """Drop this candidate's art assignment and generate a fresh piece,
+        skipping the library search entirely -- see `ArtReroll`'s docstring
+        for why re-matching would usually hand back the very picture the
+        person is trying to get away from.
+
+        404 for a slug naming no current candidate, matching
+        `read_course_detail`'s reasoning. 409 when this candidate is already
+        mid-reroll.
+        """
+        await _require_project(project_id)
+        if art_reroll is None or art_generator is None:
+            raise HTTPException(status_code=503, detail="art rerolling is not configured")
+        built = await _catalog(project_id, include_unnamed=True)
+        candidate = next((c for c in built.all_candidates if c.slug == slug), None)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail=f"no course {slug!r}")
+        try:
+            frame = await art_reroll.start(project_id, slug, candidate, art_generator)
+        except RerollAlreadyActive as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return JSONResponse(status_code=202, content=frame)
 

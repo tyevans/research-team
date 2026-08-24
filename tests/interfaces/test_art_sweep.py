@@ -15,21 +15,36 @@ from research_team.interfaces.web.art_sweep import ArtSweep, SweepAlreadyActive
 class _FakeArtStore:
     def __init__(self) -> None:
         self.put_calls: list[dict] = []
+        self.decrement_calls: list = []
 
     async def put(self, **kwargs):
         self.put_calls.append(kwargs)
 
+    async def decrement_uses(self, art_id):
+        self.decrement_calls.append(art_id)
+
+
+class _Assignment(SimpleNamespace):
+    """`CandidateArtRow`-shaped enough for the sweep: an `art_id` and the
+    `membership_hash` it was assigned against."""
+
 
 class _FakeCandidateArtStore:
-    def __init__(self, assigned: set[str] | None = None) -> None:
-        self._assigned = assigned or set()
+    def __init__(self, assigned: dict[str, str] | None = None) -> None:
+        # slug -> the membership_hash the (fake) assignment was made
+        # against, so a test can put a slug's assignment out of date with
+        # `_candidate`'s current hash without a real store.
+        self._assigned = assigned or {}
         self.put_calls: list[tuple] = []
 
     async def get(self, project_id, slug):
-        return object() if slug in self._assigned else None
+        if slug not in self._assigned:
+            return None
+        return _Assignment(art_id=object(), membership_hash=self._assigned[slug])
 
-    async def put(self, project_id, slug, art_id):
-        self.put_calls.append((project_id, slug, art_id))
+    async def put(self, project_id, slug, art_id, membership_hash):
+        self.put_calls.append((project_id, slug, art_id, membership_hash))
+        self._assigned[slug] = membership_hash
 
 
 class _FakeMatcher:
@@ -64,11 +79,12 @@ class _RaisingGenerator:
         raise RuntimeError("boom")
 
 
-def _candidate(slug: str, category: str = "work"):
+def _candidate(slug: str, category: str = "work", membership_hash: str = "h"):
     return SimpleNamespace(
         slug=slug,
         title=slug.title(),
         category=category,
+        membership_hash=membership_hash,
         anchors=(
             AreaMember(entity_id=f"{slug}-e", name=slug, entity_type="topic", centrality=1.0),
         ),
@@ -77,7 +93,7 @@ def _candidate(slug: str, category: str = "work"):
 
 async def test_a_candidate_already_assigned_is_skipped_and_counted_done():
     art_store = _FakeArtStore()
-    candidate_art = _FakeCandidateArtStore(assigned={"already"})
+    candidate_art = _FakeCandidateArtStore(assigned={"already": "h"})
     matcher = _FakeMatcher()
     generator = _FakeGenerator()
     sweep = ArtSweep(art_store, candidate_art)
@@ -204,3 +220,51 @@ async def test_progress_for_a_project_never_swept_answers_not_running():
         "total": 0,
         "failed": 0,
     }
+
+
+async def test_a_drifted_assignment_is_regenerated_not_skipped():
+    """A candidate whose assignment predates its current cluster
+    (`membership_hash` disagrees) counts as needing art, exactly like an
+    unassigned one -- the sweep's half of the art-refresh feature."""
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore(assigned={"warp": "old-hash"})
+    matcher = _FakeMatcher()
+    generator = _FakeGenerator()
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(
+        project_id, [_candidate("warp", membership_hash="new-hash")], generator, matcher
+    )
+    await sweep.wait(project_id)
+
+    assert sweep.progress(project_id)["done"] == 1
+    assert generator.calls == ["Warp"]
+    assert len(candidate_art.put_calls) == 1
+    assert candidate_art.put_calls[0][3] == "new-hash"
+    # The old assignment's art loses this candidate's use.
+    assert len(art_store.decrement_calls) == 1
+
+
+async def test_force_regenerates_a_fresh_assignment_and_skips_matching():
+    """`force=True` is what the whole-project "force" route uses: it must
+    call the model even for a candidate whose assignment is already fresh,
+    and must not let a library match short-circuit that -- see the module
+    docstring for why a forced sweep that quietly re-matched most cards back
+    to what they already had would defeat the point of forcing."""
+    art_store = _FakeArtStore()
+    candidate_art = _FakeCandidateArtStore(assigned={"warp": "h"})
+    matcher = _FakeMatcher(matches={"warp"})
+    generator = _FakeGenerator()
+    sweep = ArtSweep(art_store, candidate_art)
+    project_id = uuid4()
+
+    await sweep.start(
+        project_id, [_candidate("warp", membership_hash="h")], generator, matcher, force=True
+    )
+    await sweep.wait(project_id)
+
+    assert sweep.progress(project_id)["done"] == 1
+    assert generator.calls == ["Warp"]
+    assert matcher.calls == []
+    assert len(art_store.decrement_calls) == 1

@@ -87,7 +87,8 @@ export const CatalogPane = ({
   })
 
   const startArtSweep = useMutation({
-    mutationFn: () => courses.startArtSweep(projectId),
+    mutationFn: (force: boolean) =>
+      force ? courses.startArtSweep(projectId, { force: true }) : courses.startArtSweep(projectId),
     onSuccess: (started) => queryClient.setQueryData(queryKeys.artSweep(projectId), started),
   })
 
@@ -189,7 +190,8 @@ export const CatalogPane = ({
       <ArtSweepControl
         progress={artSweep.data ?? null}
         starting={startArtSweep.isPending}
-        onRun={() => startArtSweep.mutate()}
+        onRun={() => startArtSweep.mutate(false)}
+        onForceRun={() => startArtSweep.mutate(true)}
       />
 
       {data.unnamedCount > 0 && (
@@ -389,10 +391,16 @@ const ArtSweepControl = ({
   progress,
   starting,
   onRun,
+  onForceRun,
 }: {
   progress: ArtSweepProgress | null
   starting: boolean
   onRun: () => void
+  /** Re-illustrates every candidate, including one whose art is already
+   *  fresh -- a distinct control from `onRun` on purpose (see
+   *  `CourseRepository.startArtSweep`'s docstring): pressing the ordinary
+   *  button must never suddenly cost a model call per card. */
+  onForceRun: () => void
 }) => {
   const running = starting || (progress?.running ?? false)
   return (
@@ -406,6 +414,9 @@ const ArtSweepControl = ({
           : running
             ? 'Illustrating…'
             : 'Illustrate the catalog'}
+      </Button>
+      <Button small tone="quiet" onClick={onForceRun} disabled={running}>
+        Re-illustrate everything
       </Button>
       {progress !== null && !running && (
         // `error` present is the one case that must not read as an ordinary

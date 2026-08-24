@@ -252,6 +252,7 @@ def main() -> None:
             outline_writer=application.outlines,
             art_store=application.art_store,
             art_sweep=application.art_sweep,
+            art_reroll=application.art_reroll,
             art_generator=application.art_generator,
             art_matcher=application.art_matcher,
         ),

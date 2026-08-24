@@ -187,6 +187,11 @@ export const queryKeys = {
    *  own key, matching `blurbSweep`'s own reasoning above. */
   artSweep: (project: ProjectId) => ['art-sweep', project] as const,
 
+  /** Where the last (or current) reroll of one candidate's art stands --
+   *  keyed by slug, not just project, matching `courseDetail`'s reasoning:
+   *  two cards rerolling at once must not share one poll. */
+  artReroll: (project: ProjectId, slug: string) => ['art-reroll', project, slug] as const,
+
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
   fileHistory: (session: SessionId, path: FilePath) =>

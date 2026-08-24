@@ -105,6 +105,15 @@ const fakeCourses = (over: Partial<CourseRepository> = {}): CourseRepository => 
     throw new Error('startArtSweep was not stubbed for this test')
   }),
   fetchArtSweep: vi.fn<CourseRepository['fetchArtSweep']>().mockResolvedValue(artNotRunning),
+  // `CatalogPane` never calls these -- rerolling lives on `CoursePage` -- so
+  // both throw, matching every other method here nothing in this file
+  // exercises.
+  startArtReroll: vi.fn(() => {
+    throw new Error('startArtReroll was not stubbed for this test')
+  }),
+  fetchArtReroll: vi.fn(() => {
+    throw new Error('fetchArtReroll was not stubbed for this test')
+  }),
   ...over,
 })
 
@@ -355,6 +364,24 @@ describe('CatalogPane', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Illustrate the catalog' }))
 
     await waitFor(() => expect(startArtSweep).toHaveBeenCalledWith(project))
+  })
+
+  it('forces an art sweep with a distinct button, ignoring existing assignments', async () => {
+    const startArtSweep = vi
+      .fn<CourseRepository['startArtSweep']>()
+      .mockResolvedValue({ running: true, done: 0, total: 3, failed: 0, error: null })
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog, null, fakeCourses({ startArtSweep }))
+
+    // The ordinary button must still be present and untouched -- forcing is
+    // a second, distinct affordance, not a change to the first (CLAUDE.md's
+    // "do not change what the existing button does").
+    expect(await screen.findByRole('button', { name: 'Illustrate the catalog' })).toBeVisible()
+    await userEvent.click(await screen.findByRole('button', { name: 'Re-illustrate everything' }))
+
+    await waitFor(() => expect(startArtSweep).toHaveBeenCalledWith(project, { force: true }))
   })
 
   it('shows the four progress counts while an art sweep runs, and names a died sweep distinctly from a slow one', async () => {
