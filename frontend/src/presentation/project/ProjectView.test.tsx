@@ -1,7 +1,13 @@
 import { expect, it } from 'vitest'
 
 import { FACETS } from '../routing/routes.ts'
-import { MATERIAL_TABS, regionOf, type Region } from './ProjectView.tsx'
+import {
+  DEFAULT_MATERIAL,
+  MATERIAL_TABS,
+  regionOf,
+  visibleMaterialTabs,
+  type Region,
+} from './ProjectView.tsx'
 
 /** The region map, held where a JSX tree cannot be.
  *
@@ -114,4 +120,97 @@ it('puts a stage and a topic in the same region, which the old routes did not', 
  * support. */
 it('keeps the material strip at the eleven tabs it was measured to fit', () => {
   expect(MATERIAL_TABS).toHaveLength(11)
+})
+
+const ids = (tabs: readonly { id: string }[]) => tabs.map((tab) => tab.id)
+
+const EVERYTHING = { hasCourse: true, hasSession: true }
+
+/** The default tab, asserted as a value rather than through a render.
+ *
+ * **Two claims, and the second is the one that would be missed.** That the
+ * default is the catalog is the decision; that the catalog has no tab of its
+ * own is the fact that makes the decision cost something -- `MATERIAL_TABS`
+ * declares eleven ids and `catalog` is not among them, so a default set here
+ * and not mapped in `materialTab` selects nothing at all. The rendered proof
+ * that the mapping happens is in `App.test.tsx`; this is the half that fails
+ * at the declaration.
+ *
+ * Reverted to `'session'` the first line goes red. */
+it('defaults to the catalog, which is a facet with no tab of its own', () => {
+  expect(DEFAULT_MATERIAL).toBe('catalog')
+  expect(ids(MATERIAL_TABS)).not.toContain('catalog')
+  // The tab it must be mapped onto. Named here so a rename of `area` fails
+  // beside the default rather than one screen away from it.
+  expect(ids(MATERIAL_TABS)).toContain('area')
+})
+
+/** What a project with everything is offered: everything.
+ *
+ * The control for the three tests below -- without it, "Artifacts is absent"
+ * is satisfied by a filter that drops every tab. */
+it('offers the whole declared strip to a project that has a course and a session', () => {
+  expect(visibleMaterialTabs(EVERYTHING, DEFAULT_MATERIAL)).toEqual(MATERIAL_TABS)
+})
+
+/** Artifacts and Findings are the course's tabs, and there is no `workflow`
+ *  field to test -- `hasCourse` is `!course.isError`, the 409. */
+it('drops Artifacts and Findings when the project has no course', () => {
+  const shown = ids(visibleMaterialTabs({ hasCourse: false, hasSession: true }, DEFAULT_MATERIAL))
+  expect(shown).not.toContain('artifact')
+  expect(shown).not.toContain('finding')
+  // The workspace is a *session's*, not a course's, so it is untouched by
+  // this condition. Written down because folding all three into one flag is
+  // the obvious simplification and it would be wrong.
+  expect(shown).toContain('file')
+})
+
+/** The workspace is the holding session's tree, so nothing holding the
+ *  project means no tab -- independent of the course. */
+it('drops the Workspace when nothing holds the project, and keeps the course tabs', () => {
+  const shown = ids(visibleMaterialTabs({ hasCourse: true, hasSession: false }, DEFAULT_MATERIAL))
+  expect(shown).not.toContain('file')
+  expect(shown).toContain('artifact')
+  expect(shown).toContain('finding')
+})
+
+/** **A tab the route names survives its own condition**, so a link somebody
+ *  sent still lands on a selected tab rather than on a strip with nothing
+ *  chosen.
+ *
+ * Parametrised over the three hideable tabs rather than exercising one,
+ * because the arm being tested is `tab.id === openTab` and a single case
+ * cannot tell it from a special case for whichever tab was picked --
+ * `CLAUDE.md`'s note about tests that sample only the cases the code already
+ * handles.
+ *
+ * Reverted -- that arm deleted -- all three go red. */
+it.each([['artifact'], ['finding'], ['file']])(
+  'keeps the %s tab when the route is open on it, condition or not',
+  (open) => {
+    const shown = ids(
+      visibleMaterialTabs(
+        { hasCourse: false, hasSession: false },
+        open as Parameters<typeof visibleMaterialTabs>[1],
+      ),
+    )
+    expect(shown).toContain(open)
+    // Exactly one of the three survives: the arm is about the open tab and
+    // not about the conditions having stopped applying.
+    expect(shown.filter((id) => ['artifact', 'finding', 'file'].includes(id))).toEqual([open])
+  },
+)
+
+/** The strip keeps its declared order when it is filtered.
+ *
+ * `TabList` renders whatever array it is handed, and a filter that reordered
+ * the tabs would move them under a reader between one project and the next.
+ * `filter` preserves order by definition, which is exactly why this is worth
+ * one line: it pins the property against a future rewrite that builds the
+ * list some other way. */
+it('filters the strip without reordering it', () => {
+  const shown = ids(visibleMaterialTabs({ hasCourse: false, hasSession: false }, DEFAULT_MATERIAL))
+  expect(shown).toEqual(
+    ids(MATERIAL_TABS).filter((id) => !['artifact', 'finding', 'file'].includes(id)),
+  )
 })

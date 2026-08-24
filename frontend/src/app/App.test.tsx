@@ -181,6 +181,45 @@ const containerWith = (over: Record<string, unknown> = {}) =>
       neighborhood: vi.fn().mockResolvedValue({ entities: [], relationships: [] }),
       search: vi.fn().mockResolvedValue({ entities: [], types: [] }),
     },
+    // The Curriculum tab is now the default (`DEFAULT_MATERIAL`), so every
+    // project render in this file mounts `CatalogPane`, which reads these two
+    // ports. An empty catalog rather than a rejecting stub: a rejection paints
+    // `ErrorBox`, and an error page is not what the tests below mean by "the
+    // default tab opened".
+    //
+    // **Checked field by field against `Catalog`, `BlurbSweepProgress` and
+    // `ArtSweepProgress` by hand**, because `containerWith` ends in an `as
+    // unknown as AppContainer` and the compiler checks nothing here. One stub
+    // in this object carried a wrong field name for over a month on exactly
+    // that cast.
+    catalog: {
+      catalog: vi.fn().mockResolvedValue({
+        sections: { hero: [], highlights: [], filed: [] },
+        categories: new Map<string, string>(),
+        unplaceableFeatured: [],
+        unnamedCount: 0,
+        orphanedCourses: [],
+        derivedFrom: { entities: 0, relationships: 0 },
+      }),
+      feature: vi.fn(),
+      unfeature: vi.fn(),
+    },
+    courses: {
+      course: vi.fn(),
+      courseText: vi.fn(),
+      realize: vi.fn(),
+      abandon: vi.fn(),
+      startBlurbSweep: vi.fn(),
+      fetchBlurbSweep: vi
+        .fn()
+        .mockResolvedValue({ running: false, done: 0, total: 0, failed: 0, error: null }),
+      startArtSweep: vi.fn(),
+      fetchArtSweep: vi
+        .fn()
+        .mockResolvedValue({ running: false, done: 0, total: 0, failed: 0, error: null }),
+      startArtReroll: vi.fn(),
+      fetchArtReroll: vi.fn(),
+    },
     health: {
       summaries: vi.fn().mockResolvedValue({ healthy: true, following: true, failedEvents: 0 }),
       rebuildSummaries: vi.fn(),
@@ -757,8 +796,10 @@ it.each([
   ['#/nonsense', 'home'],
   [`#/s/${HOLDER}`, 'session'],
   // No selection: the facet is `ProjectView`'s `DEFAULT_MATERIAL`, which
-  // `viewNameOf` now imports rather than repeats.
-  [`#/p/${ATLAS}`, 'project/session'],
+  // `viewNameOf` now imports rather than repeats. It was `project/session`
+  // until the default moved to the catalog, and the log's own dwell figures
+  // are what moved it -- see `DEFAULT_MATERIAL`.
+  [`#/p/${ATLAS}`, 'project/catalog'],
   [`#/p/${ATLAS}/entity/e1`, 'project/entity'],
   [`#/p/${ATLAS}/doc/d1`, 'project/doc'],
   [`#/p/${ATLAS}/ask`, 'project/ask'],
@@ -816,4 +857,129 @@ it('says why the Findings tab has nothing, rather than loading forever', async (
   expect(
     within(screen.getByRole('tabpanel', { name: 'Findings' })).queryByText(/loading findings/),
   ).not.toBeInTheDocument()
+})
+
+/** The tab a bare project link opens.
+ *
+ * **This is the assertion the change is about, and it is deliberately about
+ * *which tab is selected* rather than about the page rendering.** "The project
+ * page came up" passes with `DEFAULT_MATERIAL` reverted to `session` and with
+ * the whole change reverted; it proves the router works and nothing else.
+ *
+ * Proved red before it was trusted green: with `DEFAULT_MATERIAL` set back to
+ * `'session'` this fails on the first line -- `expect(element).toHaveAttribute
+ * ("aria-selected", "true")` against `aria-selected="false"` on the Curriculum
+ * tab -- and the second line fails too, which is the pair that makes it a
+ * statement about *the* default rather than about one tab happening to be on.
+ *
+ * `catalog` is a facet with no tab of its own, so this is also the test that
+ * the default reaches `'area'` through `materialTab`'s mapping. Without that
+ * mapping Radix holds a `value` no trigger carries and **no** tab is selected
+ * -- which the first line catches and a `queryByRole` on the panel would not.
+ */
+it('opens a bare project link on the catalog, not the holding session', async () => {
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp()
+
+  const curriculum = await screen.findByRole('tab', { name: 'Curriculum' })
+  expect(curriculum).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('tab', { name: 'Holding session' })).toHaveAttribute(
+    'aria-selected',
+    'false',
+  )
+})
+
+/** A project nothing is holding has no workspace, so it is offered no
+ *  Workspace tab.
+ *
+ * `COURSE` above carries `holdingSessionId: null`, which is the condition --
+ * a project's files belong to the session holding it, and with none there is
+ * no tree to show rather than an empty one. The tab's own panel already said
+ * so in an `EmptyState`; what the interaction log measured is that saying so
+ * costs a reader a click, 0.7s and a departure, 14 times out of 14.
+ *
+ * The second assertion is what stops this passing vacuously: a strip that
+ * failed to render at all would satisfy the `queryByRole` alone.
+ *
+ * Reverted -- `TabList` given `MATERIAL_TABS` again -- this fails on the
+ * first line, because the trigger is rendered whatever the panel would say. */
+it('offers no Workspace tab when nothing is holding the project', async () => {
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp()
+
+  await screen.findByRole('tab', { name: 'Curriculum' })
+  expect(screen.queryByRole('tab', { name: 'Workspace' })).not.toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: 'Documents' })).toBeInTheDocument()
+})
+
+/** A project that runs no workflow is offered no Artifacts or Findings tab.
+ *
+ * The same 409 the Findings test above measured against the running console:
+ * `/api/projects/<id>/course` answers "this project runs no workflow", the
+ * query is `retry: false`, and both panels can only ever say so. There is no
+ * `workflow` field on `Course` to test -- the query's own failure *is* the
+ * condition, which is why `visibleMaterialTabs` takes `hasCourse` rather than
+ * a course.
+ *
+ * `waitFor`, because the strip is honest about not knowing yet: the tabs are
+ * present until the query settles, which is the flicker `DEFAULT_MATERIAL`'s
+ * neighbouring docstring chooses over rearranging the strip during every
+ * load.
+ *
+ * Graph is asserted present in the same breath so this cannot pass by the
+ * strip having emptied. */
+it('offers no Artifacts or Findings tab on a project that runs no workflow', async () => {
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp(
+    containerWith({
+      projects: {
+        ...(containerWith().projects as object),
+        course: vi.fn().mockRejectedValue(new ApiError('this project runs no workflow', 409)),
+      },
+    }),
+  )
+
+  await waitFor(() =>
+    expect(screen.queryByRole('tab', { name: 'Artifacts' })).not.toBeInTheDocument(),
+  )
+  expect(screen.queryByRole('tab', { name: 'Findings' })).not.toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: 'Graph' })).toBeInTheDocument()
+})
+
+/** A link to a hidden tab still opens it, with its trigger.
+ *
+ * The alternative was measured against the primitive rather than guessed:
+ * Radix selects the trigger whose `value` matches, so a `value` with no
+ * trigger leaves **every** tab unselected while the panel below is open --
+ * a strip that has visibly lost its place. Somebody sent this link; the
+ * honest answer is the tab, selected, saying why it is empty.
+ *
+ * This is the arm of `visibleMaterialTabs` that takes `openTab`, and it is the
+ * one that would rot silently: nothing else in the suite navigates to a tab
+ * that the same render has decided to hide.
+ *
+ * Reverted -- the `tab.id === openTab` line removed -- this fails on the first
+ * assertion, and the third would fail too. */
+it('keeps a hidden tab that the route explicitly names, and selects it', async () => {
+  window.location.hash = `#/p/${ATLAS}/finding`
+  renderApp(
+    containerWith({
+      projects: {
+        ...(containerWith().projects as object),
+        course: vi.fn().mockRejectedValue(new ApiError('this project runs no workflow', 409)),
+      },
+    }),
+  )
+
+  // Waited on **first**, and the order is the whole test. Every tab is present
+  // until the course query settles, so a `findByRole('tab', { name:
+  // 'Findings' })` up here resolves against the pre-settle paint and passes
+  // with the `openTab` arm deleted entirely -- measured, on the first draft of
+  // this test. Artifacts disappearing is the signal that the condition has
+  // fired; only after that does "Findings is still here" mean anything.
+  await waitFor(() =>
+    expect(screen.queryByRole('tab', { name: 'Artifacts' })).not.toBeInTheDocument(),
+  )
+  const findings = screen.getByRole('tab', { name: 'Findings' })
+  expect(findings).toHaveAttribute('aria-selected', 'true')
 })

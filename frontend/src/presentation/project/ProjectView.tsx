@@ -132,14 +132,21 @@ export const regionOf = (facet: Facet): Region => {
 
 /** Which facets MATERIAL offers, in the order it offers them.
  *
- * **The default tab is loaded on every project page, so what sits first is a
- * bundle decision as much as a taste one.** `GraphCanvas` is `React.lazy` over
- * ~60 kB of `react-force-graph-2d` and `TimelineCanvas` is lazy too, so
- * `entity` and `timeline` are kept out of the first position and sit last.
- * `artifact` held that position until the holding session took it; the swap
- * costs nothing, because the session's panels were a permanent region until
- * this slice and are all in the main chunk already. Checked rather than
- * assumed — `npm run size` after the change: app 75.1 kB of 80.
+ * **Order and default came apart, and this docstring used to assume they were
+ * one decision.** It read "the default tab is loaded on every project page, so
+ * what sits first is a bundle decision" — still true of the bundle, no
+ * longer true of the position. `DEFAULT_MATERIAL` is `catalog` now, which is
+ * the *last* tab's default reading, so first place is a reading-order decision
+ * and the bundle argument moved to `DEFAULT_MATERIAL`'s own docstring, where
+ * the choice is actually made.
+ *
+ * The bundle argument itself survives and still shapes this list: `GraphCanvas`
+ * is `React.lazy` over ~60 kB of `react-force-graph-2d` and `TimelineCanvas` is
+ * lazy too, so neither may be the default. What changed is that sitting last no
+ * longer achieves that on its own — the default is a named facet, and it is
+ * the only thing now keeping either canvas off a cold project page. Checked
+ * rather than assumed when the session took first place — `npm run size`:
+ * app 75.1 kB of 80.
  *
  * **Artifacts then Workspace, and the order is an argument rather than an
  * accident.**
@@ -167,17 +174,22 @@ type MaterialFacet =
  *  measures against the strip that was declared — a count taken from the
  *  rendered row alone cannot tell "eight tabs" from "eight of nine rendered". */
 export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
-  // First, and therefore the default, which reverses the argument the two
-  // paragraphs above make for `artifact`. Both halves of that argument survive:
-  // the default tab is the one loaded on every project page, and `entity` and
-  // `timeline` are still kept out of the position for exactly that reason. What
-  // changed is that the holding session is no longer *optional* content — it
-  // was a permanent region until this slice, so every panel it renders is
-  // already in the main chunk and defaulting to it pulls nothing new.
+  // First, and no longer the default. The argument for first place was that
+  // this is "what the page is about: a reader opening a project is asking what
+  // is happening to it". The interaction log disagreed: 118 entries at a 2.3s
+  // median with 55% bouncing under three seconds is what a default tab people
+  // leave looks like, not what a reader asking a question looks like.
+  // `DEFAULT_MATERIAL` carries the measurement and the replacement.
   //
-  // First rather than merely present because it is what the page is about: a
-  // reader opening a project is asking what is happening to it, and the answer
-  // used to be the middle third of the screen.
+  // Kept first anyway, and that is a claim rather than inertia: dwell measures
+  // what readers were *handed*, not what they would pick, so it can say the
+  // holding session is a bad default without saying it is a bad first tab.
+  // Costing it one click is this change; demoting it down the strip would be a
+  // second change nothing here has measured.
+  //
+  // Still free to sit here, which is the half of the old argument that
+  // survives: the session's panels were a permanent region before they became
+  // a tab, so every one of them is in the main chunk already.
   { id: 'session', label: 'Holding session' },
   { id: 'artifact', label: 'Artifacts' },
   { id: 'file', label: 'Workspace' },
@@ -231,10 +243,100 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   { id: 'area', label: 'Curriculum' },
 ]
 
+/** Which tabs the strip offers, given what this project actually has.
+ *
+ * **A tab whose panel can only say "there is nothing here" is worse than no
+ * tab**, because a reader cannot tell it apart from one that might have
+ * something until they have spent the click. Measured over
+ * `~/.research-team/interactions.db` on 2026-08-23 (2,476 events): Artifacts
+ * 13 entries at 0.8s median and 85% bounce, Findings 17 at 0.9s and 88%,
+ * Workspace 14 at 0.7s and **100%** — every single visit under three seconds.
+ * Those are not readers finding a page thin; that is what arriving at an
+ * `EmptyState` and leaving looks like in aggregate.
+ *
+ * **The condition is the query's, not a field's.** There is no `workflow` on
+ * `Course` to test — a project that runs no workflow gets a **409** from
+ * `/api/projects/<id>/course` (see `CourseTab`, which exists because of it),
+ * so "this project has no course" is `course.isError` and nothing else.
+ * `isError` rather than `!course.data` deliberately: `data` is `undefined`
+ * while the request is in flight too, and hiding three tabs during a load
+ * would make the strip rearrange itself under a reader's cursor. The cost of
+ * waiting for the query to settle is the reverse — the three tabs are present
+ * for one paint on a project that has no course, and then go. That is the
+ * cheaper of the two flickers.
+ *
+ * The workspace's condition is a different one and is not folded in: a
+ * project's files belong to the session holding it, so the tab is dead when
+ * nothing holds the project, which is true of plenty of projects that do have
+ * a course.
+ *
+ * **A tab the route explicitly names is always offered**, whatever the two
+ * conditions say. `#/p/<id>/artifact/objectives.md` is a link somebody sent,
+ * and the alternatives are both worse than a tab reading "No course to show.":
+ * dropping the tab leaves Radix with a selected value no trigger carries, so
+ * the strip shows nothing chosen while a panel is open below it; and
+ * redirecting would swallow the link. `openTab` is that facet already mapped
+ * through `materialTab`, so a `catalog` selection compares as `area` here.
+ *
+ * **Not a deletion.** `BACKLOG` B147 covers removing these panes and is
+ * blocked on other work; every module, panel and route stays exactly where it
+ * was and a typed address still reaches it.
+ */
+export const visibleMaterialTabs = (
+  {
+    hasCourse,
+    hasSession,
+  }: {
+    hasCourse: boolean
+    hasSession: boolean
+  },
+  openTab: Facet,
+): readonly { id: MaterialFacet; label: string }[] =>
+  MATERIAL_TABS.filter((tab) => {
+    if (tab.id === openTab) return true
+    if (tab.id === 'artifact' || tab.id === 'finding') return hasCourse
+    if (tab.id === 'file') return hasSession
+    return true
+  })
+
 /** The tab a bare `#/p/<id>` opens. Exported because `App.tsx`'s
  *  `viewNameOf` names the same facet in the interaction log, and a duplicated
- *  literal there would go quietly wrong the day this changes. */
-export const DEFAULT_MATERIAL: Facet = 'session'
+ *  literal there would go quietly wrong the day this changes.
+ *
+ * **`catalog` rather than `session`, and this is a measurement overturning the
+ * argument two comments above it.** `MATERIAL_TABS` says the holding session
+ * is first because "it is what the page is about: a reader opening a project is
+ * asking what is happening to it". Gross dwell over the real interaction log on
+ * 2026-08-23 says readers disagree: `project/session` took **118 entries — the
+ * second most-entered view in the product — at a 2.3s median with 55% bouncing
+ * under three seconds**. Most of those entries are not a choice; it is the
+ * default tab, so they are arrivals followed by departures. Against it,
+ * `project/catalog` took 82 entries at a 20.6s median and **14% bounce, the
+ * lowest of any view measured**.
+ *
+ * **The graph was the other candidate and was rejected on two grounds.** It
+ * holds more raw attention (209 entries, 42.2s median) — but `MATERIAL_TABS`'s
+ * own opening paragraph is the deciding argument: `GraphCanvas` is
+ * `React.lazy` over ~60 kB of `react-force-graph-2d`, and the default tab is
+ * loaded on every project page anybody opens, so defaulting to it would pull
+ * that chunk for every reader including the ones who came to read a course.
+ * The second ground is what the two views are for: the graph is a tool a
+ * reader reaches for with a question already in hand, and its dwell is the
+ * dwell of people who chose it. `CatalogPane` is statically imported and costs
+ * the first paint nothing.
+ *
+ * **Unconditional, deliberately.** The obvious worry is a project with nothing
+ * extracted landing on a blank page, and it was checked rather than assumed:
+ * `CatalogPane`'s empty branch renders the blurb and art sweep controls above a
+ * `role="status"` line that names how many candidates are waiting — an empty
+ * catalog is the one screen that tells a reader what to press. A default that
+ * changed with the project's state would be harder to reason about than this
+ * one, and there is nothing here to buy with it.
+ *
+ * This is a `Facet` with no tab of its own — `catalog` is the Curriculum tab's
+ * default reading — so `materialTab` below maps it, exactly as it maps a
+ * `catalog` selection that arrives from the route. */
+export const DEFAULT_MATERIAL: Facet = 'catalog'
 
 /** A project, whole: one page with a sidebar and a content area, instead of two
  *  pages.
@@ -381,21 +483,34 @@ export const ProjectView = ({
   const openTopic =
     selection?.facet === 'topic' && selection.id !== null ? TopicId(selection.id) : null
 
+  /** The facet the tab strip is showing, which is the route's when the route
+   *  names one this region draws and `DEFAULT_MATERIAL`'s otherwise.
+   *
+   * Resolved *before* the mapping below rather than inside its last arm, which
+   * is the change that lets the default be a facet with no tab. `catalog` is
+   * one, and it reaches `'area'` through the same arm a `catalog` selection
+   * from the route does — one mapping for both, instead of a default that has
+   * to be a tab id and a route facet that does not. */
+  /** What this project has, which decides which tabs are offered. Read here
+   *  rather than inside the strip so the two conditions sit beside the
+   *  queries that answer them: `course.isError` is the 409 `CourseTab`
+   *  documents, and `sessionId` is already resolved above. */
+  const has = { hasCourse: !course.isError, hasSession: sessionId !== null }
+
+  const openFacet: Facet =
+    selection && regionOf(selection.facet) === 'material' ? selection.facet : DEFAULT_MATERIAL
+
   const materialTab: Facet =
-    selection?.facet === 'session' && selection.path !== null
+    openFacet === 'session' && selection?.facet === 'session' && selection.path !== null
       ? 'file'
       : // `path`, `catalog` and `course` are facets with no tab of their own:
         // all three are readings of the Curriculum tab, chosen by a toggle
         // (or a card) inside the pane rather than by the strip. Mapped here
         // rather than given a tab because eleven tabs is where the strip
         // stops fitting -- see `MATERIAL_TABS`.
-        selection?.facet === 'path' ||
-          selection?.facet === 'catalog' ||
-          selection?.facet === 'course'
+        openFacet === 'path' || openFacet === 'catalog' || openFacet === 'course'
         ? 'area'
-        : selection && regionOf(selection.facet) === 'material'
-          ? selection.facet
-          : DEFAULT_MATERIAL
+        : openFacet
 
   /** Replaced rather than pushed by default, which is the rule the course
    *  page's stage toggle and the graph's entity selection both already follow:
@@ -520,7 +635,13 @@ export const ProjectView = ({
           }}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <TabList label="Material" options={MATERIAL_TABS} />
+          {/* The declared strip, filtered by what this project has — see
+              `visibleMaterialTabs` for the measurement and for why a tab the
+              route names is offered regardless. The `TabPanel`s below are all
+              still rendered: hiding a trigger is what this does, and a panel
+              removed with it would break the deep links that keep their
+              triggers. */}
+          <TabList label="Material" options={visibleMaterialTabs(has, materialTab)} />
 
           {/* The old HOLDER region, whole, one level further in.
 

@@ -39,7 +39,20 @@ export const App = () => (
  *
  * The fallback is `ProjectView`'s own `DEFAULT_MATERIAL`, imported rather than
  * repeated: a bare `#/p/<id>` opens that tab, and a literal `'session'` here
- * would keep saying so silently on the day the default moves. Exported for
+ * would keep saying so silently on the day the default moves. **That day
+ * came** -- the default is `catalog` now -- and the import is why nothing had
+ * to be found and changed here.
+ *
+ * What it costs the log, stated because the log is what moved the default and
+ * somebody will read it again: `project/catalog` now covers both "arrived on a
+ * bare project link" and "chose the Curriculum tab", where those were two
+ * different view names before. Rows written from 2026-08-24 onward cannot be
+ * compared against earlier ones on entry count, and the same confound that
+ * made `project/session`'s 2.3s median hard to read now sits on
+ * `project/catalog` instead. Distinguishing them needs a field saying whether
+ * the facet was chosen or defaulted, which is not this change's to add.
+ *
+ * Exported for
  * `App.test.tsx`, which is the only place a route shape can be named without
  * driving the whole console. */
 export const viewNameOf = (route: Route): string => {
