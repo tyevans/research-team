@@ -335,3 +335,75 @@ export const edgesOf = (view: GraphView, id: string): readonly GraphEdgeView[] =
     return [edge]
   })
 }
+
+/** How many links touch each node, keyed by id, with a zero for the nodes
+ *  nothing touches.
+ *
+ * The zeroes are the point: the callers of this count nodes *below* a
+ * threshold, so a map that simply omitted the unconnected ones would answer
+ * `undefined` for exactly the case being asked about.
+ *
+ * A link counts once for each end it has here, so a self-loop scores two on
+ * its one node. Nothing in this graph writes self-loops today, and defining
+ * them away would be a rule maintained against no case.
+ */
+export const degrees = (view: GraphView): ReadonlyMap<string, number> => {
+  const counts = new Map(view.nodes.map((node) => [node.id, 0]))
+  for (const link of view.links) {
+    const source = endpointId(link.source)
+    const target = endpointId(link.target)
+    // Both ends have to be drawn, not just the one being counted. A link
+    // reaching out of the view is not a connection the reader can see, and
+    // scoring its near end for it would keep a visibly unconnected dot on a
+    // canvas filtered to hide exactly those.
+    if (!counts.has(source) || !counts.has(target)) continue
+    counts.set(source, (counts.get(source) ?? 0) + 1)
+    counts.set(target, (counts.get(target) ?? 0) + 1)
+  }
+  return counts
+}
+
+/** The drawing with every node of fewer than `min` connections taken off it,
+ *  and every link left dangling by their going.
+ *
+ * Filtering rather than removal (`remove`, above) is the distinction worth
+ * holding on to: `remove` is a reader's edit to the graph they are browsing
+ * and takes stranded neighbours with it, while this is a lens over whatever
+ * the graph currently is. It keeps `expanded` whole, so lifting the threshold
+ * back down redraws exactly what was there and costs no request.
+ *
+ * Degrees are counted once, against the graph as it arrived, and the filter is
+ * a single pass -- so at `min` of 2 a kept node may end up drawn with one line,
+ * because the node at the other end of its second link fell below the
+ * threshold itself. The alternative is iterating to a fixed point, which reads
+ * as "nodes in a subgraph where everything has N connections" rather than
+ * "nodes with N connections", and at a threshold of 3 or more it collapses
+ * most real graphs to nothing in a way no reader would predict from the
+ * control they turned.
+ *
+ * `min <= 0` returns the view unchanged, by identity -- the canvas memoises on
+ * `view`, so a filter that rebuilt an equal object at the default threshold
+ * would reheat the simulation on every render.
+ */
+export const withMinDegree = (
+  view: GraphView,
+  min: number,
+  /** Ids the threshold does not apply to -- today, whatever the reader has
+   *  selected. A node chosen by name out of the search results has to be drawn
+   *  whatever its degree: the alternative is that picking an entity nothing was
+   *  ever related to blanks the stage and the panel describes something the
+   *  canvas does not show. This is `remove`'s rule in another form -- the graph
+   *  keeps what you asked for. */
+  keep: ReadonlySet<string> = new Set(),
+): GraphView => {
+  if (min <= 0) return view
+
+  const counts = degrees(view)
+  const nodes = view.nodes.filter((node) => keep.has(node.id) || (counts.get(node.id) ?? 0) >= min)
+  const kept = new Set(nodes.map((node) => node.id))
+  const links = view.links.filter(
+    (link) => kept.has(endpointId(link.source)) && kept.has(endpointId(link.target)),
+  )
+
+  return { nodes, links, expanded: view.expanded }
+}
