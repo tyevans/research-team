@@ -44,13 +44,39 @@ async def test_the_writer_returns_a_title_and_a_blurb_from_one_call():
 async def test_a_title_naming_an_entity_the_cluster_does_not_hold_refuses_both():
     """The title is grounded on the same terms as the blurb. Refusing only the
     title would leave a card with grounded copy under an invented name, which
-    is the more prominent of the two."""
+    is the more prominent of the two.
+
+    The title here is sentence case, not Title Case, and that is the property
+    under test, not an accident of phrasing. `ungrounded_runs` treats its
+    input as a sentence: a Title Case reply has every word capitalised, so the
+    whole title reads as one ungrounded run regardless of content, and a title
+    refused *for being Title Case* would pass this test on an implementation
+    that refuses every Title Case reply, grounded or not -- sentence case is
+    also the only shape the prompt asks for, so it is the only shape this
+    check will ever meet in production. `test_a_sentence_case_title_that_is_invented_but_grounded_is_accepted`
+    below is the companion this test needs: together they separate "refuses
+    ungrounded" from "refuses everything", which this test alone cannot do.
+    """
     writer = _writer(
-        "Captain Kirk's Legacy\n"
+        "The legacy of Captain Kirk\n"
         "Follow Zefram Cochrane and the Warp drive that changed everything."
     )
 
     assert await writer.write("Warp drive", ANCHORS) is None
+
+
+async def test_a_sentence_case_title_that_is_invented_but_grounded_is_accepted():
+    """The companion the test above needs. A title in the same sentence-case
+    shape, inventing its own phrasing but naming nothing outside the anchors,
+    must be accepted -- otherwise the check above could be passing because it
+    refuses every title in this shape, not because it refuses ungrounded
+    ones."""
+    writer = _writer(
+        "The story of first contact\n"
+        "Follow Zefram Cochrane and the Warp drive that changed everything."
+    )
+
+    assert await writer.write("Warp drive", ANCHORS) is not None
 
 
 async def test_a_reply_with_a_blurb_and_no_title_is_refused():

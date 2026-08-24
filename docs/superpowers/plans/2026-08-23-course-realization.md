@@ -930,6 +930,27 @@ git commit -am "Present the fit, the outline's own hash, and the stranded course
 - Create: `frontend/src/presentation/curriculum/CoursePage.tsx`
 - Test: `frontend/src/presentation/curriculum/CoursePage.test.tsx`
 - Modify: the route table (find it with `grep -rn "catalog/:key\|categories/:key" frontend/src`)
+- Create: `frontend/src/domain/knowledge/title-case.ts` + its test
+
+**Title casing happens here, at display time, and nowhere else.** The generated
+title is stored in **sentence case**, because `grounding.ungrounded_runs` finds
+invented entity names by capitalisation and a Title Case string collapses into
+one capitalised run that no anchor contains — so a fully grounded Title Case
+title is refused along with an invented one (measured 2026-08-23). Sentence
+case is the only shape the grounding check can read.
+
+The string reaching the frontend has therefore **already passed grounding**, so
+casting it cosmetically carries no trust risk at all. Write
+`titleCase(s: string): string` — capitalise each word except a small stop-word
+list (`of`, `the`, `and`, `a`, `an`, `in`, `to`, `for`), and never the first
+word's exception. Apply it in `CourseCard` and `CoursePage`.
+
+**Do not lowercase a title before grounding it, ever.** That was considered and
+is a trap: down-casing the input leaves no capitalised runs, so
+`ungrounded_runs` returns `[]` for every title, grounded or invented. It does
+not weaken the check, it deletes it — a no-op wearing the shape of a working
+one, which is the failure CLAUDE.md's `RING_INWARD` and co-mention entries are
+both about.
 
 **Interfaces:**
 - Consumes: Task 11's repository and types; `CourseCard.tsx` for the art treatment.
