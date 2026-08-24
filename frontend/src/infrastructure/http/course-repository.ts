@@ -15,7 +15,10 @@ export class HttpCourseRepository implements CourseRepository {
 
   async course(projectId: ProjectId, slug: string): Promise<CourseDetail> {
     return toCourseDetail(
-      await this.http.get(`/api/projects/${seg(projectId)}/catalog/${seg(slug)}`, dto.courseDetailDto),
+      await this.http.get(
+        `/api/projects/${seg(projectId)}/catalog/${seg(slug)}`,
+        dto.courseDetailDto,
+      ),
     )
   }
 

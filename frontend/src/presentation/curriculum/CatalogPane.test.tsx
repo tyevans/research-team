@@ -75,9 +75,15 @@ const wrapperFor = (
 }
 
 const show = (catalog: CatalogRepository, categoryKey: string | null = null) =>
-  render(<CatalogPane projectId={project} categoryKey={categoryKey} onCategory={() => {}} />, {
-    wrapper: wrapperFor(catalog),
-  })
+  render(
+    <CatalogPane
+      projectId={project}
+      categoryKey={categoryKey}
+      onCategory={() => {}}
+      onCourse={() => {}}
+    />,
+    { wrapper: wrapperFor(catalog) },
+  )
 
 describe('CatalogPane', () => {
   it('renders the three sections, each with its cards, from a stubbed repository', async () => {

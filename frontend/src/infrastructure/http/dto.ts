@@ -1172,5 +1172,8 @@ export const blurbSweepProgressDto = z.object({
   done: z.number().default(0),
   total: z.number().default(0),
   failed: z.number().default(0),
-  error: z.string().nullish().transform((v) => v ?? null),
+  error: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 })

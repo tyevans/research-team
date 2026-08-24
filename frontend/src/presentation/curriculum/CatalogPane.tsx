@@ -25,6 +25,7 @@ export const CatalogPane = ({
   projectId,
   categoryKey,
   onCategory,
+  onCourse,
 }: {
   projectId: ProjectId
   /** The category open on the category page, or `null` for the front page.
@@ -32,6 +33,11 @@ export const CatalogPane = ({
    *  selection here is: a category is worth sending to somebody. */
   categoryKey: string | null
   onCategory: (key: string | null) => void
+  /** Opens a candidate's own course page. Replaces the placeholder that used
+   *  to send a card's own click back into its category -- see this file's
+   *  git history for the reasoning that placeholder carried while no
+   *  standalone course view existed. */
+  onCourse: (slug: string) => void
 }) => {
   const { catalog } = useContainer()
   const queryClient = useQueryClient()
@@ -91,11 +97,7 @@ export const CatalogPane = ({
     return (
       <CategoryPage
         category={category}
-        // Same placeholder as the front page's cards (see `CandidateSection`
-        // below): no standalone candidate-detail view exists yet, so opening
-        // a card here re-opens its own category -- a no-op the reader already
-        // sees, chosen over wiring the button to nothing.
-        onOpen={() => onCategory(categoryKey)}
+        onOpen={onCourse}
         onBack={() => onCategory(null)}
         onFeature={onFeature}
         onUnfeature={onUnfeature}
@@ -131,7 +133,7 @@ export const CatalogPane = ({
         heading="Hero"
         candidates={data.sections.hero}
         size="hero"
-        onOpenCategory={onCategory}
+        onOpen={onCourse}
         onFeature={onFeature}
         onUnfeature={onUnfeature}
       />
@@ -139,7 +141,7 @@ export const CatalogPane = ({
         heading="Highlights"
         candidates={data.sections.highlights}
         size="highlight"
-        onOpenCategory={onCategory}
+        onOpen={onCourse}
         onFeature={onFeature}
         onUnfeature={onUnfeature}
       />
@@ -166,14 +168,14 @@ const CandidateSection = ({
   heading,
   candidates,
   size,
-  onOpenCategory,
+  onOpen,
   onFeature,
   onUnfeature,
 }: {
   heading: string
   candidates: readonly CourseCandidate[]
   size: 'hero' | 'highlight'
-  onOpenCategory: (key: string) => void
+  onOpen: (slug: string) => void
   onFeature: (candidate: CourseCandidate) => void
   onUnfeature: (slug: string) => void
 }) => (
@@ -185,17 +187,7 @@ const CandidateSection = ({
       <div className="flex flex-wrap gap-3">
         {candidates.map((candidate) => (
           <div key={candidate.slug} className="flex flex-col items-stretch gap-1">
-            {/* Placeholder for a candidate-detail view that does not exist
-                yet (see `CourseCard`'s own docstring) -- a later increment of
-                this design, not this task's. Until then, "opening" a card
-                drills into its own category, a real destination rather than a
-                dead click. Ignores the slug `CourseCard` hands back: the
-                candidate is already in this closure. */}
-            <CourseCard
-              candidate={candidate}
-              size={size}
-              onOpen={() => onOpenCategory(candidate.category)}
-            />
+            <CourseCard candidate={candidate} size={size} onOpen={onOpen} />
             {candidate.featuredRank === null ? (
               <Button small onClick={() => onFeature(candidate)}>
                 Feature

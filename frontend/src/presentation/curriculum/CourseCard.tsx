@@ -2,6 +2,7 @@ import clsx from 'clsx'
 
 import type { CourseCandidate } from '@domain/knowledge/catalog.ts'
 import { blurbAge } from '@domain/knowledge/catalog.ts'
+import { titleCase } from '@domain/knowledge/title-case.ts'
 
 /** One course candidate, drawn as a card, in one of three densities.
  *
@@ -16,11 +17,9 @@ import { blurbAge } from '@domain/knowledge/catalog.ts'
  * a button is what a screen reader announces correctly for an in-page action
  * rather than a page change.
  *
- * There is no candidate-detail view to open into yet -- that is a later
- * increment of this design, not something this component or its current
- * caller (`CatalogPane`) provides. `CatalogPane` presently uses `onOpen` as a
- * placeholder that drills into the candidate's own category; see its own
- * comment at the call site for why.
+ * `onOpen` opens the candidate's own course page (`CoursePage.tsx`),
+ * `#/p/<id>/course/<slug>` -- the standalone detail view this docstring used
+ * to say did not exist yet.
  */
 export const CourseCard = ({
   candidate,
@@ -73,7 +72,7 @@ export const CourseCard = ({
             Featured
           </span>
         )}
-        <span className="crs-card-title font-semibold text-fg">{candidate.title}</span>
+        <span className="crs-card-title font-semibold text-fg">{titleCase(candidate.title)}</span>
         {candidate.blurb !== null && (
           <p className="crs-card-blurb text-fg-muted text-sm">
             {candidate.blurb.text}

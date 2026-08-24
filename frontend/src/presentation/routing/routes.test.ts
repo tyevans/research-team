@@ -181,6 +181,14 @@ describe('the facet grammar', () => {
       selection: { facet: 'catalog', id: 'antiquity' },
       hash: '#/p/abc/catalog/antiquity',
     },
+    {
+      // A candidate slug, not a category key -- `catalog`'s own comment
+      // above states why this is a facet of its own rather than folded into
+      // `catalog`'s id.
+      facet: 'course',
+      selection: { facet: 'course', id: 'the-fall-of-rome' },
+      hash: '#/p/abc/course/the-fall-of-rome',
+    },
     { facet: 'doc', selection: { facet: 'doc', id: 'd1' }, hash: '#/p/abc/doc/d1' },
     { facet: 'media', selection: { facet: 'media', id: 'p1' }, hash: '#/p/abc/media/p1' },
     {
@@ -255,7 +263,7 @@ describe('an unrecognised facet', () => {
   it('does not quietly become the project page', () => {
     // The tempting fallback, and the wrong one: a dead link would then answer
     // a question nobody asked, and look like it worked.
-    expect(parseRoute('#/p/abc/course')).not.toMatchObject({ name: 'project' })
+    expect(parseRoute('#/p/abc/wonderland')).not.toMatchObject({ name: 'project' })
   })
 })
 
