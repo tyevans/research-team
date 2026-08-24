@@ -65,7 +65,8 @@ from research_team.domain.learning_area import AreaMember, LearningArea
 
 def _area(slug: str, ids: list[str]) -> LearningArea:
     members = tuple(
-        AreaMember(entity_id=i, name=i.title(), centrality=1.0) for i in ids
+        AreaMember(entity_id=i, name=i.title(), entity_type="concept", centrality=1.0)
+        for i in ids
     )
     return LearningArea(slug=slug, members=members)
 
@@ -229,7 +230,7 @@ Finally the `Course(DeciderAggregate[CourseState, CourseCommand])` subclass, mir
 Run: `uv run pytest tests/domain/test_course.py -v`
 Expected: PASS, 7 tests.
 
-Then check the `LearningArea` constructor signature actually matches the `_area` helper above — read `research_team/domain/learning_area.py` and fix the helper if the real signature needs more fields. Do not change the production code to fit the helper.
+The helper above matches the real signatures, checked in pre-flight: `LearningArea(slug, members, title=None, summary=None)` with `anchors`/`size`/`display_name()` as properties, and `AreaMember(entity_id, name, entity_type, centrality, temporal=None)`. If anything disagrees, fix the helper — never the production code.
 
 - [ ] **Step 5: Commit**
 
@@ -470,7 +471,7 @@ git commit -m "The outline cache, and why it is not a kind column on blurbs"
 - Create: `research_team/infrastructure/knowledge/grounding.py`
 - Modify: `research_team/infrastructure/knowledge/blurb_writer.py` (import the shared predicate; delete the local copy)
 - Create: `research_team/infrastructure/knowledge/outline_writer.py`
-- Modify: `research_team/application/course_catalog.py` (add `OutlineTextPort`)
+- Modify: `research_team/application/course_catalog.py` (add `OutlineTextPort` **and** `OutlineCachePort` + `CachedOutline` — see Global Constraints)
 - Test: `tests/infrastructure/test_outline_writer.py`
 - Test: `tests/infrastructure/test_blurb_writer.py` (existing — must stay green unchanged)
 
@@ -603,9 +604,8 @@ git commit -am "Which session holds a target's course, newest run first"
 **Interfaces:**
 - Consumes: Task 1's `Course`, `RealizeCourse`, `AbandonCourse`, `fit_of`, `CourseFit`; `application/curriculum.Curriculum`; `application/course_catalog.CourseCandidate` via `CatalogService`.
 - Produces:
-  - `OutlineCachePort` (Protocol): `get(project_id, slug) -> CachedOutline | None`, `put(project_id, slug, promise, sections, membership_hash, model, generated_at)`.
   - `RealizedCoursePort` (Protocol): `for_project(project_id) -> Sequence[RealizedCourse]`, `get(project_id, slug) -> RealizedCourse | None`.
-  - `CachedOutline`, `RealizedCourse` — this layer's own frozen dataclasses, **not** the `read_models` row types, for `CachedBlurb`'s stated reason (`tests/test_architecture.py` keeps `infrastructure.persistence` out of `application/`).
+  - `RealizedCourse` — this layer's own frozen dataclass (`CachedOutline` lives in `course_catalog.py`; see R2), **not** the `read_models` row types, for `CachedBlurb`'s stated reason (`tests/test_architecture.py` keeps `infrastructure.persistence` out of `application/`).
   - `CourseService.detail(project_id, curriculum, catalog, slug) -> CourseDetail | None`
   - `CourseService.orphans(project_id, curriculum) -> tuple[RealizedCourse, ...]`
   - `CourseDetail(candidate, outline, members, course)` where `course` is `None | RealizedCourseView(realized_at, membership_hash, fit, authored_session_id)`.
@@ -780,6 +780,8 @@ git commit -am "Wire the course projection, the outline writer and the blurb swe
   - `GET  /api/projects/{project_id}/catalog/blurbs` → progress
 
 **Route ordering.** `/catalog/blurbs` is a literal one-segment path that collides with `/catalog/{slug}` on method and segment count for the GET. **Register `/catalog/blurbs` above `/catalog/{slug}`** or FastAPI's declaration-order matching reads `blurbs` as a slug. The `/catalog/categories/{key}` block already carries this comment; extend it rather than writing a second one.
+
+**Where the frozen membership comes from.** `CourseCandidate` carries `anchors` only — at most 12 members. The realize route must resolve the `LearningArea` from `curriculum.projection.areas` by slug and freeze `tuple(m.entity_id for m in area.members)`, the **full** membership. `membership_hash` comes from the candidate. Freezing anchors instead would make every course a 12-member course and make fit report drift that is an artifact of the anchor cap.
 
 **Extract `_one`** out of `author_courses` into a closure both it and the realize route call, so there is one call into `CourseAuthor` and not two copies.
 
