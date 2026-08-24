@@ -91,6 +91,7 @@ from research_team.domain.ask_conversation import (
     AskTurnRecorded,
 )
 from research_team.domain.catalog_curation import CourseFeatured, CourseUnfeatured
+from research_team.domain.course import CourseAbandoned, CourseRealized
 from research_team.domain.course_authoring_run import (
     COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
     CourseAuthored,
@@ -2425,6 +2426,172 @@ class CatalogFeatureProjection(DeclarativeProjection):
     @handles(CourseUnfeatured)
     async def _unfeatured(self, event: CourseUnfeatured) -> None:
         await self._store.unfeature(event.project_id, event.slug)
+
+
+class CourseRow(ReadModel):
+    """A realized course: the frozen membership `CourseRealized` carried,
+    kept so it survives a restart without folding the log.
+
+    Keyed by `(project_id, slug)` through `row_id`, exactly like
+    `CourseBlurbRow` and `CatalogFeatureRow` -- all three share
+    `CATALOG_NAMESPACE` and hash the same pair, so the `course:` prefix below
+    is what keeps this row's id from colliding with theirs.
+    """
+
+    __table_name__ = "courses"
+
+    project_id: UUID
+    slug: str
+    title: str
+    member_entity_ids: list[str] = Field(default_factory=list)
+    membership_hash: str
+    realized_at: datetime
+    abandoned: bool = False
+    """Marked rather than deleted, so a rebuild replaying `CourseRealized`
+    then `CourseAbandoned` lands where a rebuild replaying only the first
+    does not. A delete would make abandonment invisible to the replay that
+    follows it: a rebuild that stops (or starts) between the two events
+    would resurrect a course whose row was removed rather than flagged."""
+
+    @field_validator("member_entity_ids", mode="before")
+    @classmethod
+    def _decode_json_list(cls, value: object) -> object:
+        # `AuthoringRunRow._decode_json_list`'s pattern: SQLite has no list
+        # column, so `member_entity_ids` round-trips through this table as a
+        # JSON string and needs decoding back on the way out.
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+    @staticmethod
+    def row_id(project_id: UUID, slug: str) -> UUID:
+        # `course:` for the reason `CourseBlurbRow` gives for `blurb:` --
+        # three row types now share CATALOG_NAMESPACE over the same
+        # {project}:{slug} pair.
+        return uuid5(CATALOG_NAMESPACE, f"course:{project_id}:{slug}")
+
+
+class CourseStore:
+    """The courses table and the connection it owns."""
+
+    def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
+        self._connection = connection
+        self._rows = rows
+
+    @classmethod
+    async def open(cls, db_path: str, tracer=None) -> "CourseStore":
+        connection = await aiosqlite.connect(db_path)
+        await apply_schema(connection, CourseRow)
+        # `apply_schema` reconciles columns, not indexes -- the same note
+        # `CourseBlurbStore.open` carries, for the same reason: every read
+        # here is project-scoped.
+        await connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_courses_project "
+            f"ON {CourseRow.table_name()}(project_id)"
+        )
+        await connection.commit()
+        rows = SQLiteReadModelRepository(connection, CourseRow, tracer)
+        return cls(connection, rows)
+
+    async def get(self, project_id: UUID, slug: str) -> CourseRow | None:
+        """The row for this slug, regardless of `abandoned`, or None if it
+        has never been realized.
+
+        `row.project_id != project_id` cannot happen through this class's
+        own `row_id` -- the pair is baked into the id -- but is checked
+        anyway for the reason `CourseBlurbStore.get` checks it: a row reached
+        by id alone makes no claim about which project asked.
+        """
+        row = await self._rows.get(CourseRow.row_id(project_id, slug))
+        if row is None or row.project_id != project_id:
+            return None
+        return row
+
+    async def for_project(self, project_id: UUID) -> list[CourseRow]:
+        """Every non-abandoned course in this project. `abandoned` rows are
+        omitted here rather than absent from the table -- see `CourseRow`."""
+        return await self._rows.find(
+            Query(
+                filters=[
+                    Filter.eq("project_id", str(project_id)),
+                    Filter.eq("abandoned", False),
+                ]
+            )
+        )
+
+    async def realize(
+        self,
+        project_id: UUID,
+        slug: str,
+        title: str,
+        member_entity_ids: list[str],
+        membership_hash: str,
+        realized_at: datetime,
+    ) -> None:
+        """Write (or rewrite) the row -- `save` writes by id, and `row_id`
+        is stable per `(project_id, slug)`, so a second `CourseRealized` for
+        an already-abandoned slug reinstates it rather than duplicating."""
+        await self._rows.save(
+            CourseRow(
+                id=CourseRow.row_id(project_id, slug),
+                project_id=project_id,
+                slug=slug,
+                title=title,
+                member_entity_ids=member_entity_ids,
+                membership_hash=membership_hash,
+                realized_at=realized_at,
+                abandoned=False,
+            )
+        )
+
+    async def abandon(self, project_id: UUID, slug: str) -> None:
+        """Mark the row abandoned rather than deleting it -- see `CourseRow`
+        for why. A no-op if the slug was never realized: a rebuild from an
+        arbitrary checkpoint may replay an abandon whose realize predates the
+        checkpoint, and raising here would put a routine replay in the
+        dead-letter queue (the same reasoning `CatalogFeatureStore.unfeature`
+        gives for tolerating a delete of something absent)."""
+        row = await self.get(project_id, slug)
+        if row is None:
+            return
+        await self._rows.save(row.model_copy(update={"abandoned": True}))
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
+class CourseProjection(DeclarativeProjection):
+    """Keeps `courses` level with the realization events."""
+
+    def __init__(
+        self,
+        store: CourseStore,
+        checkpoint_repo=None,
+        dlq_repo=None,
+        tracer=None,
+    ) -> None:
+        self._store = store
+        super().__init__(
+            checkpoint_repo=checkpoint_repo,
+            dlq_repo=dlq_repo,
+            retry_policy=LOCAL_RETRY_POLICY,
+            tracer=tracer,
+        )
+
+    @handles(CourseRealized)
+    async def _realized(self, event: CourseRealized) -> None:
+        await self._store.realize(
+            event.project_id,
+            event.slug,
+            event.title,
+            event.member_entity_ids,
+            event.membership_hash,
+            event.realized_at,
+        )
+
+    @handles(CourseAbandoned)
+    async def _abandoned(self, event: CourseAbandoned) -> None:
+        await self._store.abandon(event.project_id, event.slug)
 
 
 class OntologyRunner:
