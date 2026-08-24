@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { createGraphStore } from '@application/research/graph-store.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { useInteractionLog } from '@app/interaction-log-provider.tsx'
-import type { GraphNode, GraphView } from '@domain/knowledge/graph.ts'
+import { withMinDegree, type GraphNode, type GraphView } from '@domain/knowledge/graph.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
@@ -32,6 +32,19 @@ const GraphCanvas = lazy(() =>
 // firing on every keystroke expensive well before the corpus is large --
 // this is how many keystrokes of silence the pane waits for before asking.
 const SEARCH_DEBOUNCE_MS = 300
+
+/** How many connections a node needs before it is drawn, until the reader says
+ *  otherwise.
+ *
+ * One rather than zero, which is a deliberate default rather than a neutral
+ * one. Extraction leaves a long tail of entities nothing was ever related to
+ * -- measured against a real ingest, most of a project's node count -- and
+ * they draw as a field of loose dots that pushes the connected part of the
+ * graph, the part worth reading, into a corner of the stage. Nothing is
+ * hidden silently: the control shows the threshold, and the count of what it
+ * is holding back sits beside it.
+ */
+const DEFAULT_MIN_DEGREE = 1
 
 /** The stage's faint graph-paper field, so an empty stage reads as somewhere a
  *  graph goes rather than as a panel that failed to load, and a sparse graph
@@ -107,6 +120,7 @@ export const GraphPane = ({
   const { graphs, exports } = useContainer()
   const [term, setTerm] = useState('')
   const [entityType, setEntityType] = useState('')
+  const [minDegree, setMinDegree] = useState(DEFAULT_MIN_DEGREE)
 
   const log = useInteractionLog()
   const store = useMemo(
@@ -228,8 +242,10 @@ export const GraphPane = ({
       entity={entity}
       term={term}
       entityType={entityType}
+      minDegree={minDegree}
       onTerm={setTerm}
       onEntityType={setEntityType}
+      onMinDegree={setMinDegree}
       onEntity={onEntity}
       onPick={pick}
       onReset={() => {
@@ -286,8 +302,10 @@ export const GraphBrowser = ({
   entity,
   term,
   entityType,
+  minDegree,
   onTerm,
   onEntityType,
+  onMinDegree,
   onEntity,
   onPick,
   onReset,
@@ -314,8 +332,11 @@ export const GraphBrowser = ({
   entity: string | null
   term: string
   entityType: string
+  /** How many connections a node needs to be drawn. */
+  minDegree: number
   onTerm: (value: string) => void
   onEntityType: (value: string) => void
+  onMinDegree: (value: number) => void
   onEntity: (id: string | null) => void
   /** A result was chosen: select it *and* close the list over the canvas. */
   onPick: (id: string) => void
@@ -328,6 +349,13 @@ export const GraphBrowser = ({
    *  container. */
   graphUrl: (format: 'html' | 'json' | 'graphml', entityId: string | null) => string
 }) => {
+  // The filter is a lens over the drawing, not an edit to it: `view` stays the
+  // graph the store holds, and everything that answers "what is in this
+  // project" -- the export bar, the detail panel's edge list, the notices
+  // about capping -- keeps reading it. Only what is *drawn* is narrowed.
+  const drawn = withMinDegree(view, minDegree, entity === null ? undefined : new Set([entity]))
+  const hidden = view.nodes.length - drawn.nodes.length
+
   return (
     // `relative` is load-bearing rather than decorative: it is the containing
     // block every float below positions against, and `GraphCanvas`'s
@@ -344,6 +372,15 @@ export const GraphBrowser = ({
       <div className="flex min-h-0 flex-1 items-center justify-center" style={STAGE_FIELD}>
         {loading && view.nodes.length === 0 ? (
           <Loading what="the knowledge graph" />
+        ) : view.nodes.length > 0 && drawn.nodes.length === 0 ? (
+          // Not "this graph is empty": it is not, and saying so would send a
+          // reader off to ingest documents they already have. The stage is
+          // blank because of a control three lines above it, and this is what
+          // points back at it.
+          <EmptyState
+            heading="Nothing is connected enough to draw"
+            detail={`No entity has ${minDegree} or more connections. Lower the minimum to see the rest of the graph.`}
+          />
         ) : view.nodes.length === 0 ? (
           // Nothing drawn now means nothing extracted, not "you have not
           // searched yet" -- the pane has already asked for everything.
@@ -359,10 +396,10 @@ export const GraphBrowser = ({
           />
         ) : (
           <Suspense fallback={<Loading what="the graph canvas" />}>
-            <GraphCanvas view={view} selected={entity} onNodeClick={onEntity} />
+            <GraphCanvas view={drawn} selected={entity} onNodeClick={onEntity} />
           </Suspense>
         )}
-        <GraphLegend view={view} />
+        <GraphLegend view={drawn} />
       </div>
 
       {/* Bounded rather than stretched: a bar running the full width of the
@@ -415,6 +452,46 @@ export const GraphBrowser = ({
             </button>
           ) : null}
         </div>
+
+        {/* Its own row rather than a fourth control in the bar above: that
+            bar is capped at 320px and already holds a search box, a type menu
+            and a button, and a numeric field squeezed in beside them loses its
+            label -- which is the one part that explains what the graph is
+            hiding.
+
+            A number field rather than a slider: the useful thresholds are 0, 1
+            and 2, and a slider makes the reader aim at them. `min={0}` because
+            zero is a real answer -- "show me the loose entities too" is how
+            somebody finds an entity extraction never related to anything. */}
+        {view.nodes.length > 0 ? (
+          <div className={`flex items-center gap-2 px-2 py-[6px] ${PANEL}`}>
+            <label className="shrink-0 text-xs text-fg-dim" htmlFor="graph-min-degree">
+              Min. connections
+            </label>
+            <input
+              id="graph-min-degree"
+              type="number"
+              min={0}
+              step={1}
+              className="input w-[64px] shrink-0"
+              value={minDegree}
+              onChange={(event) => {
+                // An empty box parses as NaN while it is being retyped, and a
+                // NaN threshold compares false against every degree and blanks
+                // the stage. Falling back to zero draws everything, which is
+                // the state closest to "no filter" for a control mid-edit.
+                const parsed = Number.parseInt(event.target.value, 10)
+                onMinDegree(Number.isNaN(parsed) ? 0 : Math.max(0, parsed))
+              }}
+            />
+            {/* The count is what keeps the filter from being a silent one: a
+                threshold with nothing behind it and one hiding half the
+                project look identical on the stage. */}
+            <span className="min-w-0 text-xs text-fg-dim">
+              {hidden > 0 ? `${hidden} hidden` : 'nothing hidden'}
+            </span>
+          </div>
+        ) : null}
 
         {/* Only once there is something to export. An export of an empty graph
             is a valid file nobody wants, and offering it on a stage that says

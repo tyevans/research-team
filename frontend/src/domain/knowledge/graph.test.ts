@@ -7,6 +7,7 @@ import {
   isExpanded,
   loadWhole,
   remove,
+  withMinDegree,
   type GraphView,
   type Neighborhood,
   type WholeGraph,
@@ -300,5 +301,73 @@ describe('loadWhole', () => {
       expect(ids).toContain(link.source)
       expect(ids).toContain(link.target)
     }
+  })
+})
+
+describe('withMinDegree', () => {
+  // Two connected nodes and one nothing reaches -- the shape extraction leaves
+  // behind, and the only one where a threshold of 1 does any work.
+  const pair: GraphView = {
+    nodes: ['a', 'b', 'loose'].map((id) => ({ id, name: id, entityType: 'concept' })),
+    links: [{ source: 'a', target: 'b', relationshipType: 'advised' }],
+    expanded: new Set(['a']),
+  }
+
+  it('drops the node nothing reaches at the default threshold', () => {
+    const drawn = withMinDegree(pair, 1)
+
+    expect(drawn.nodes.map((node) => node.id)).toEqual(['a', 'b'])
+    expect(drawn.links).toHaveLength(1)
+  })
+
+  it('returns the same object at zero, so the canvas does not reheat', () => {
+    // Identity, not equality: `GraphCanvas` memoises its d3 data on `view`, so
+    // an equal-but-new object at the no-op threshold restarts the simulation
+    // on every render of the pane. `toEqual` would pass against that.
+    expect(withMinDegree(pair, 0)).toBe(pair)
+  })
+
+  it('keeps expansion, so lowering the threshold costs no request', () => {
+    expect(withMinDegree(pair, 1).expanded).toBe(pair.expanded)
+  })
+
+  it('takes the links of a node it dropped with it', () => {
+    // `b` has one connection and `a` two, so a threshold of 2 drops `b` --
+    // and the a-b link has nowhere to land. d3-force throws on a link whose
+    // end is not in the node set, so this is a crash rather than a cosmetic
+    // defect.
+    const triangle: GraphView = {
+      nodes: ['a', 'b', 'c'].map((id) => ({ id, name: id, entityType: 'concept' })),
+      links: [
+        { source: 'a', target: 'b', relationshipType: 'advised' },
+        { source: 'a', target: 'c', relationshipType: 'advised' },
+        { source: 'c', target: 'a', relationshipType: 'cites' },
+      ],
+      expanded: new Set(),
+    }
+
+    const drawn = withMinDegree(triangle, 2)
+    const ids = new Set(drawn.nodes.map((node) => node.id))
+
+    expect(ids).toEqual(new Set(['a', 'c']))
+    for (const link of drawn.links) {
+      expect(ids).toContain(link.source)
+      expect(ids).toContain(link.target)
+    }
+  })
+
+  it('ignores a link to a node that is not drawn', () => {
+    // d3-force rewrites a link's ends into node objects in place, and the
+    // store's own `remove` leaves links whose far end has gone. A degree
+    // counted off such a link would keep a visibly unconnected dot on a canvas
+    // filtered to hide exactly those. Written with a string end because that
+    // is the form a fixture can state; `endpointId` covers the other.
+    const stranded: GraphView = {
+      nodes: [{ id: 'a', name: 'a', entityType: 'concept' }],
+      links: [{ source: 'a', target: 'gone', relationshipType: 'advised' }],
+      expanded: new Set(),
+    }
+
+    expect(withMinDegree(stranded, 1).nodes).toEqual([])
   })
 })

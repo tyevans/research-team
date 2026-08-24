@@ -172,8 +172,13 @@ const containerWith = (over: Record<string, unknown> = {}) =>
     topics: { queue: vi.fn().mockResolvedValue([]), open: vi.fn() },
     documents: { list: vi.fn().mockResolvedValue([]) },
     graphs: {
-      whole: vi.fn().mockResolvedValue({ entities: [], relations: [], truncated: false }),
-      neighborhood: vi.fn().mockResolvedValue({ entities: [], relations: [] }),
+      whole: vi.fn().mockResolvedValue({
+        entities: [],
+        relationships: [],
+        truncated: false,
+        inferredTruncated: false,
+      }),
+      neighborhood: vi.fn().mockResolvedValue({ entities: [], relationships: [] }),
       search: vi.fn().mockResolvedValue({ entities: [], types: [] }),
     },
     health: {
@@ -364,12 +369,17 @@ it('hands the selected entity to the graph, not just the view', async () => {
   // The id has to survive the facet, not only the route: a dispatch that
   // reached `ResearchView` with `entity` hard-null would satisfy the test
   // above and draw the wrong graph.
-  const neighborhood = vi.fn().mockResolvedValue({ entities: [], relations: [] })
+  const neighborhood = vi.fn().mockResolvedValue({ entities: [], relationships: [] })
   window.location.hash = `#/p/${ATLAS}/entity/e1`
   renderApp(
     containerWith({
       graphs: {
-        whole: vi.fn().mockResolvedValue({ entities: [], relations: [], truncated: false }),
+        whole: vi.fn().mockResolvedValue({
+          entities: [],
+          relationships: [],
+          truncated: false,
+          inferredTruncated: false,
+        }),
         neighborhood,
         search: vi.fn().mockResolvedValue({ entities: [], types: [] }),
       },

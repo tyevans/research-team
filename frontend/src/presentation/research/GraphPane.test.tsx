@@ -10,7 +10,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import { ApiError } from '@application/ports/errors.ts'
 import type { GraphRepository, UsagesRepository } from '@application/ports/repositories.ts'
-import type { GraphNode, Neighborhood } from '@domain/knowledge/graph.ts'
+import type { GraphNode, GraphView, Neighborhood } from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
@@ -21,9 +21,17 @@ import { GraphPane } from './GraphPane.tsx'
 // Asserting on canvas pixels would test the library, not this pane -- the
 // canvas is mocked to a stub that exposes what the pane hands it, so these
 // tests can drive expansion through it without a real d3-force simulation.
+// The stub also lists the ids it was handed, which is the only way from here
+// to see *which* nodes reached the drawing -- the degree filter's whole
+// observable effect is the difference between the view the store holds and
+// the one the canvas is given.
 vi.mock('./GraphCanvas.tsx', () => ({
-  GraphCanvas: ({ onNodeClick }: { onNodeClick: (id: string) => void }) => (
-    <button type="button" onClick={() => onNodeClick('ada')}>
+  GraphCanvas: ({ view, onNodeClick }: { view: GraphView; onNodeClick: (id: string) => void }) => (
+    <button
+      type="button"
+      onClick={() => onNodeClick('ada')}
+      data-drawn={view.nodes.map((n) => n.id).join(',')}
+    >
       canvas
     </button>
   ),
@@ -39,6 +47,20 @@ const node = (over: Partial<GraphNode> = {}): GraphNode => ({
 })
 
 const hoodOf = (root: GraphNode): Neighborhood => ({ root, entities: [root], relationships: [] })
+
+/** The same neighbourhood with something on the other end of a line.
+ *
+ * The drawing hides nodes below `DEFAULT_MIN_DEGREE` connections, so a test
+ * that wants a node still drawn *after* it is deselected has to give it an
+ * edge -- an unconnected one is drawn only while it is the selection, which is
+ * the exemption `withMinDegree`'s `keep` argument exists for. Tests about the
+ * detail panel are not tests of the filter, and this keeps them from
+ * accidentally becoming so. */
+const hoodLinked = (root: GraphNode): Neighborhood => ({
+  root,
+  entities: [root, node({ id: 'babbage', name: 'Charles Babbage' })],
+  relationships: [{ source: root.id, target: 'babbage', relationshipType: 'advised' }],
+})
 
 const fakeGraphs = (over: Partial<GraphRepository> = {}): GraphRepository => ({
   // Empty by default so the existing search-and-expand tests still start from
@@ -303,7 +325,7 @@ it('closes the detail panel without disturbing the drawing', async () => {
   const ada = node()
   const graphs = fakeGraphs({
     search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
-    neighborhood: vi.fn().mockResolvedValue(hoodOf(ada)),
+    neighborhood: vi.fn().mockResolvedValue(hoodLinked(ada)),
   })
   const user = userEvent.setup()
 
@@ -514,7 +536,7 @@ it('closes the detail panel on Escape, the way the drawers do', async () => {
   const ada = node()
   const graphs = fakeGraphs({
     search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
-    neighborhood: vi.fn().mockResolvedValue(hoodOf(ada)),
+    neighborhood: vi.fn().mockResolvedValue(hoodLinked(ada)),
   })
   const user = userEvent.setup()
 
@@ -623,7 +645,13 @@ it('draws an entity extracted after the page loaded, without a reload', async ()
   const whole = vi
     .fn()
     .mockResolvedValueOnce({ entities: [], relationships: [], truncated: false })
-    .mockResolvedValue({ entities: [ada], relationships: [], truncated: false })
+    // Connected, because the drawing hides an entity with no relationships:
+    // this test is about the subscription, not about the degree filter.
+    .mockResolvedValue({
+      entities: [ada, node({ id: 'babbage', name: 'Charles Babbage' })],
+      relationships: [{ source: 'ada', target: 'babbage', relationshipType: 'advised' }],
+      truncated: false,
+    })
   const graphs = fakeGraphs({ whole })
   const feed = fakeStream()
 
@@ -675,4 +703,56 @@ it('ignores another project’s graph frame, and a corpus frame', async () => {
 
   await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
   expect(whole).toHaveBeenCalledTimes(1)
+})
+
+// A whole graph of two related entities and one nothing reaches -- the shape
+// extraction leaves behind, and the reason the drawing filters by degree at
+// all.
+const withLooseNode = () =>
+  fakeGraphs({
+    whole: vi.fn().mockResolvedValue({
+      entities: [
+        node({ id: 'ada', name: 'Ada Lovelace' }),
+        node({ id: 'babbage', name: 'Charles Babbage' }),
+        node({ id: 'loose', name: 'Unrelated Thing' }),
+      ],
+      relationships: [{ source: 'ada', target: 'babbage', relationshipType: 'advised' }],
+      truncated: false,
+      inferredTruncated: false,
+    }),
+  })
+
+it('draws only connected entities by default, and says how many it held back', async () => {
+  renderWithContainer(<RoutedGraphPane />, { graphs: withLooseNode() })
+
+  const canvas = await screen.findByRole('button', { name: 'canvas' })
+  await waitFor(() => expect(canvas).toHaveAttribute('data-drawn', 'ada,babbage'))
+  expect(screen.getByText('1 hidden')).toBeInTheDocument()
+})
+
+it('draws the loose entity once the minimum is lowered to zero', async () => {
+  const user = userEvent.setup()
+  renderWithContainer(<RoutedGraphPane />, { graphs: withLooseNode() })
+
+  const field = await screen.findByLabelText(/min\. connections/i)
+  await user.clear(field)
+  await user.type(field, '0')
+
+  const canvas = screen.getByRole('button', { name: 'canvas' })
+  await waitFor(() => expect(canvas).toHaveAttribute('data-drawn', 'ada,babbage,loose'))
+  expect(screen.getByText('nothing hidden')).toBeInTheDocument()
+})
+
+it('blames the threshold rather than the project when it hides everything', async () => {
+  const user = userEvent.setup()
+  renderWithContainer(<RoutedGraphPane />, { graphs: withLooseNode() })
+
+  const field = await screen.findByLabelText(/min\. connections/i)
+  await user.clear(field)
+  await user.type(field, '5')
+
+  // Not "this graph is empty": it is not, and a reader told that would go off
+  // to ingest documents they already have.
+  expect(await screen.findByText(/nothing is connected enough to draw/i)).toBeInTheDocument()
+  expect(screen.queryByText(/this graph is empty/i)).not.toBeInTheDocument()
 })

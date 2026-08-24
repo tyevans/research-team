@@ -93,6 +93,8 @@ const Mounted = () => (
           view={view}
           results={NODES}
           knownTypes={['Person']}
+          minDegree={0}
+          onMinDegree={() => {}}
           truncated={false}
           searching={false}
           error={null}
