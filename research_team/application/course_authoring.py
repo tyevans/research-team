@@ -25,11 +25,15 @@ components it writes resolve against the same project.
 
 import textwrap
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from research_team.application.authoring_checkpoints import (
     AREAS_DIR,
+    check_assessment,
+    check_lessons,
+    check_stage_one,
+    check_stage_two,
     lesson_paths,
     review_path,
     unit_path,
@@ -515,7 +519,20 @@ class CourseAuthor:
         lesson_count: int = 3,
         run_id: UUID | None = None,
     ) -> AuthoredCourse:
-        """Stage 1, then 2, then 3, in one session, in that order."""
+        """Four phases, in order, each asserted on before the next begins.
+
+        The phase boundary is the whole point. A single agent holding the
+        `task` tool would end when it stopped talking, and a run that
+        dispatched two drafters instead of five, or skipped the prose critic,
+        produces a complete-looking unit and the same settled event. Between
+        phases there is somewhere for Python to look.
+
+        The parent's lesson plan is not persisted, and that is a real cost: a
+        phase 3 that dies re-plans from scratch, possibly differently. Writing
+        it to a file would buy resumability and reintroduce the shared-pool
+        problem for anything later that reads it. A phase 3 that dies has
+        usually left a half-written unit worth discarding anyway.
+        """
         run_id = run_id or uuid4()
         session_id = await self._session.start_in_project(
             project_id, SessionPurpose.COURSE_AUTHORING
@@ -523,14 +540,24 @@ class CourseAuthor:
         replies: list[str] = []
         try:
             await self._session.attach_project(project_id)
+
             first = await self._turns.run(session_id, desired_results_prompt(area, subject))
             replies.append(first.reply)
+            check_stage_one(await self._files(session_id), area.slug)
+
             second = await self._turns.run(session_id, evidence_prompt(area, first.reply))
             replies.append(second.reply)
+            check_stage_two(await self._files(session_id), area.slug)
+
             third = await self._turns.run(
                 session_id, learning_plan_prompt(area, first.reply, lesson_count)
             )
             replies.append(third.reply)
+            check_lessons(await self._files(session_id), area.slug, lesson_count)
+
+            fourth = await self._turns.run(session_id, assessment_prompt(area, lesson_count))
+            replies.append(fourth.reply)
+            check_assessment(await self._files(session_id), area.slug, lesson_count)
         finally:
             await self._session.release_project(session_id)
 
@@ -541,6 +568,16 @@ class CourseAuthor:
             run_id=run_id,
             replies=tuple(replies),
         )
+
+    async def _files(self, session_id: UUID) -> dict[str, Any]:
+        """This session's workspace, re-read after every phase.
+
+        Re-read rather than accumulated, because the subagents wrote through
+        the same backend and their writes are on the session, not in anything
+        this object holds.
+        """
+        session = await self._session.load(session_id)
+        return dict(session.state.files)
 
     async def author_path(
         self,
