@@ -981,6 +981,7 @@ export const toCourseText = (raw: Dto<typeof dto.courseTextDto>): CourseText => 
   slug: raw.slug,
   state: raw.state,
   sessionId: raw.sessionId,
+  unitPath: raw.unitPath,
   unit: raw.unit,
   lessons: raw.lessons.map((file) => ({ path: file.path, markdown: file.markdown })),
 })

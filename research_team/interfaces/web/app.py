@@ -3409,6 +3409,18 @@ def create_app(
         tells this reader nothing about theirs, and "being written right now"
         about a course nobody queued is a promise the system will not keep.
 
+        **`unitPath` is here so the console can render widgets.** The lessons
+        already carried their workspace paths; the unit carried only its text,
+        because the first reader of this payload put both through a plain
+        markdown renderer. That reader was wrong -- a lesson's
+        ```component:mcq``` fence is not markdown, and rendering it as one
+        prints the widget's yaml source as a code block. The console now asks
+        `GET /api/sessions/{id}/files/parsed` for each file, which needs a
+        session id and a *path*, and the unit had no path to give. Measured on
+        2026-08-24 against the `resolution` course: 19 component blocks, 10 of
+        them in the unit, so a fix that reached only the lessons would have
+        left more than half of them raw.
+
         503 when authoring is unwired, matching `read_course_detail` beside
         it: a build with no authoring cannot answer any of the three states
         truthfully, and `unauthored` would read as a fact about the course.
@@ -3432,6 +3444,7 @@ def create_app(
                     "slug": slug,
                     "state": "authored",
                     "sessionId": str(session_id),
+                    "unitPath": path_file(slug),
                     "unit": entry.get("content", ""),
                     "lessons": [],
                 }
@@ -3441,6 +3454,7 @@ def create_app(
                     "slug": slug,
                     "state": "authored",
                     "sessionId": str(session_id),
+                    "unitPath": None if unit is None else unit[0],
                     "unit": None if unit is None else unit[1],
                     "lessons": [
                         {"path": path, "markdown": content} for path, content in lessons
@@ -3453,6 +3467,7 @@ def create_app(
                 "slug": slug,
                 "state": "authoring",
                 "sessionId": None,
+                "unitPath": None,
                 "unit": None,
                 "lessons": [],
             }
@@ -3461,6 +3476,7 @@ def create_app(
             "slug": slug,
             "state": "unauthored",
             "sessionId": None,
+            "unitPath": None,
             "unit": None,
             "lessons": [],
         }

@@ -1161,6 +1161,10 @@ export const courseTextDto = z.object({
   slug: z.string(),
   state: z.enum(['authored', 'authoring', 'unauthored']),
   sessionId: z.string().nullable().default(null),
+  /** The unit's workspace path, so the console can ask the parse route for it.
+   *  Nullable for the same reason `unit` is: a run whose framing turn did not
+   *  land has lessons and no unit. */
+  unitPath: z.string().nullable().default(null),
   unit: z.string().nullable().default(null),
   lessons: z.array(z.object({ path: z.string(), markdown: z.string() })).default([]),
 })

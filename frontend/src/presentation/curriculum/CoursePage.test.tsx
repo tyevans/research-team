@@ -33,6 +33,7 @@ const aText = (over: Partial<CourseText> = {}): CourseText => ({
   slug: 'roman-succession',
   state: 'unauthored',
   sessionId: null,
+  unitPath: null,
   unit: null,
   lessons: [],
   ...over,

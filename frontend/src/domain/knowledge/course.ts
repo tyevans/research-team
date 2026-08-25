@@ -108,6 +108,11 @@ export interface CourseText {
   readonly slug: string
   readonly state: CourseTextState
   readonly sessionId: string | null
+  /** Where the unit lives in the authoring session's workspace. Needed because
+   *  a course's widgets are parsed by the server, and the parse route is keyed
+   *  on session plus path -- the markdown alone cannot be turned into widgets
+   *  by the client. */
+  readonly unitPath: string | null
   readonly unit: string | null
   readonly lessons: readonly AuthoredFile[]
 }

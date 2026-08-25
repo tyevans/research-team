@@ -147,6 +147,15 @@ async def test_a_recorded_unit_file_comes_back_as_text_after_a_real_run(app_and_
     assert body["lessons"][0]["path"] == "/course/areas/roman-law/lesson-01.md"
     assert body["state"] == "authored"
     assert body["sessionId"] == str(written["roman-law"])
+    # The unit's *path*, not just its text. The console asks
+    # `/api/sessions/{id}/files/parsed` for each course file so its widgets
+    # render as widgets rather than as their own yaml, and that route is keyed
+    # on session plus path. A payload that carried the unit's markdown and not
+    # its path left the unit's widgets unrenderable while every lesson's
+    # worked -- measured on the `resolution` course, 10 of its 19 component
+    # blocks are in the unit. Asserting the value, not merely the key: a
+    # `None` here would put the console back on the prose fallback silently.
+    assert body["unitPath"] == "/course/areas/roman-law/unit.md"
 
 
 async def test_a_slug_no_run_ever_wrote_is_unauthored_rather_than_empty(app_and_client):
