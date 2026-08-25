@@ -98,6 +98,24 @@ export interface ToggleResult {
  * been seeded" with no seeding control anywhere on screen. There is no case
  * for the permissive arm, so there is no flag for it. A layout with nothing in
  * it has no way back except a toggle you can no longer see.
+ *
+ * **A pane the layout no longer has is dropped rather than counted, and this
+ * used to be the opposite.** The stored set is written by whatever shape the
+ * view had when a reader last folded something, and views lose panes: the
+ * project page had `queue`/`holder`/`material` and now has two tracks, under
+ * the same preference group. Anyone who had folded `holder` before that slice
+ * carried a set of size 1 into a two-track layout, so folding the sidebar
+ * reached size 2 and was refused -- reported as "I can never collapse the
+ * queue", with a toast about a rule the layout was not actually up against.
+ *
+ * The old code counted the stale entry deliberately, on the reasoning that an
+ * equality check "would let the last real pane close on the strength of a
+ * stale entry". That is the right worry and it was defended on the wrong side:
+ * a stale id can no more close a pane than keep one open once it is not in the
+ * count at all. Filtering to the ids `tracks` actually declares answers both,
+ * and the pruned set is what is returned, so the dead entry is written out of
+ * storage the first time a reader touches the layout rather than sitting there
+ * until they clear the browser.
  */
 export const toggleCollapsed = ({
   tracks,
@@ -108,15 +126,20 @@ export const toggleCollapsed = ({
   collapsed: ReadonlySet<string>
   id: string
 }): ToggleResult => {
-  const next = new Set(collapsed)
+  // Only ids this layout declares. Anything else is a fold remembered from a
+  // shape the view no longer has, and it is neither open nor closed here.
+  const declared = new Set(tracks.map((track) => track.id))
+  const next = new Set([...collapsed].filter((folded) => declared.has(folded)))
   if (next.has(id)) {
     next.delete(id)
     return { collapsed: next, refused: false }
   }
   next.add(id)
-  // `>=` rather than `===`: a caller can hand in a collapsed set naming a pane
-  // that no longer exists, and an equality check would let the last real pane
-  // close on the strength of a stale entry.
-  if (next.size >= tracks.length) return { collapsed, refused: true }
+  // `>=` rather than `===` still, though the filter above means the two now
+  // agree on every input: an id not in `tracks` cannot inflate the count, and
+  // `id` itself is the only way `next` can exceed it. Kept because the cost of
+  // the loose comparison is nothing and the cost of being wrong is a layout
+  // with no pane open and no control to reopen one.
+  if (next.size >= declared.size) return { collapsed, refused: true }
   return { collapsed: next, refused: false }
 }

@@ -1891,6 +1891,16 @@ class OntologyClassRow(ReadModel):
     """JSON array of `{name, reason}`. A string column for the same reason
     `EntityDefinitionRow.citations` is one: it is handed whole to a browser
     that renders it, and decoding here would be work with no reader."""
+    evidence_quoted: bool = True
+    """Whether `evidence_start`/`evidence_end` are the model's located quote or
+    a lenient pass's fallback to a member occurrence. See
+    `DiscoveredClass.evidence_quoted`.
+
+    Defaulted True, which is what makes it an additive column `apply_schema`
+    can `ALTER` onto a database that predates it. The rows already there were
+    all written by a strict pass -- there was no other kind -- so the default
+    is the true value for them rather than a convenient one, and no backfill is
+    owed."""
     model: str = ""
     generated_at: str = ""
     stale: bool = False
@@ -2039,6 +2049,7 @@ class OntologyStore:
                     rejected_members=json.dumps(
                         [rejected.model_dump() for rejected in klass.rejected_members]
                     ),
+                    evidence_quoted=klass.evidence_quoted,
                     model=model,
                     generated_at=generated_at,
                 )

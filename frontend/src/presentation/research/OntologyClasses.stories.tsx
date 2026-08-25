@@ -46,6 +46,7 @@ const klass = (over: Partial<OntologyClass> & { id: string; name: string }): Ont
   evidence: { sourceId: 'src-1', start: 120, end: 260 },
   parentClassId: null,
   stale: false,
+  evidenceQuoted: true,
   complete: true,
   ...over,
 })

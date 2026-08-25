@@ -511,8 +511,20 @@ export interface OntologyRepository {
    * `null` means the document was not read -- an unreadable reply, or one over
    * the server's size ceiling -- where `0` means it was read and states none.
    * The two are kept apart because only one of them should stop anyone
-   * retrying. */
-  discover(projectId: ProjectId, sourceId: string): Promise<number | null>
+   * retrying.
+   *
+   * `strict: false` reads the document under a weaker rule: a class whose
+   * quoted sentence is not in the text survives if all its members are, cited
+   * to the first member's occurrence and returned with `evidenceQuoted: false`.
+   * It supersedes whatever a strict pass stored for that document, which is
+   * both how it is meant to be used and its hazard. Default strict, because a
+   * reader who has not asked for it must not be handed classes the document may
+   * never have grouped. */
+  discover(
+    projectId: ProjectId,
+    sourceId: string,
+    options?: { readonly strict?: boolean },
+  ): Promise<number | null>
 
   /** Every extracted document no discovery pass has read yet, in listing order.
    *
@@ -523,8 +535,19 @@ export interface OntologyRepository {
    * would re-read every barren document at model cost on every press.
    *
    * Empty means finished, and can be trusted: the server answers 503 rather
-   * than an empty list when discovery is unwired. */
-  ungrouped(projectId: ProjectId): Promise<readonly string[]>
+   * than an empty list when discovery is unwired.
+   *
+   * `includeExamined` asks the other question: every extracted document,
+   * whether a pass has read it or not. It is what a re-read is driven from, and
+   * it exists because "examined" is not "examined correctly" -- a class the
+   * verifier refused and a document that genuinely states none are recorded
+   * identically, so the default list retires both forever. Unextracted
+   * documents and media stay excluded either way; neither is something a pass
+   * could have got wrong. */
+  ungrouped(
+    projectId: ProjectId,
+    options?: { readonly includeExamined?: boolean },
+  ): Promise<readonly string[]>
 }
 
 /** A window over the project's timeline. Every part optional: the whole

@@ -350,6 +350,32 @@ async def test_the_ungrouped_sweep_lists_extracted_documents_no_pass_has_examine
     assert response.json() == {"sourceIds": ["s1"]}
 
 
+async def test_include_examined_puts_a_document_already_read_back_on_the_list(queue):
+    """The re-read lever. `s3` is extracted and examined, so the default list
+    excludes it forever -- and "examined" is not "examined correctly": a class
+    the verifier refused and a document that states none are recorded
+    identically.
+
+    Asserts the *contents*, not the length. A route that ignored the parameter
+    and answered `["s1"]` has the right count for the wrong reason on a
+    two-document corpus, which is what `s2` (unextracted, and still excluded
+    either way) is here to keep honest.
+    """
+    api = _app(
+        Runner(("s1", True), ("s2", False), ("s3", True)),
+        queue,
+        ontology=Ontology("s3"),
+    )
+
+    async with await _client(api) as http:
+        response = await http.get(
+            f"/api/projects/{PROJECT}/sources/ungrouped?include_examined=true"
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"sourceIds": ["s1", "s3"]}
+
+
 async def test_a_document_read_and_found_barren_stays_off_the_sweep(queue):
     """`examined` is not `has classes`, and this is the assertion that says so.
 

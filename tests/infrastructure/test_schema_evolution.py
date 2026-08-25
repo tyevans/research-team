@@ -1116,6 +1116,11 @@ async def test_an_ontology_written_before_rejected_members_existed_still_loads(s
     discovered = events[0]
     assert isinstance(discovered, OntologyDiscovered)
     assert discovered.classes[0].rejected_members == []
+    # `evidence_quoted` is the same shape of change, added 2026-08-24, and this
+    # payload omits it for free. True is the truthful default rather than a
+    # convenient one: a build with no lenient pass could not have stored a
+    # class whose span was anything but a located quote.
+    assert discovered.classes[0].evidence_quoted is True
     # The rest of the payload survives the default filling in, which is what
     # separates "the field defaulted" from "the whole class failed to parse".
     assert discovered.classes[0].name == "Difficulty"

@@ -60,9 +60,52 @@ describe('OntologyPane', () => {
 
     await waitFor(() => expect(discover).toHaveBeenCalledTimes(2))
     expect(discover.mock.calls).toEqual([
-      [project, 'a'],
-      [project, 'b'],
+      // `strict: true` travels on every ordinary press, rather than being left
+      // to the repository's default. The lever has two settings and the pane is
+      // what chooses; a call with the option absent would be the pane declining
+      // to choose and the answer coming from somewhere else.
+      [project, 'a', { strict: true }],
+      [project, 'b', { strict: true }],
     ])
+  })
+
+  it('re-reads every extracted document, not the pending list, when asked again', async () => {
+    // The work list has to come from a *fresh* fetch with `includeExamined`.
+    // Reusing the pending list is the obvious implementation and is exactly
+    // wrong: that list excludes the documents a re-read is for, so the button
+    // would run over the same documents the ordinary press does and appear to
+    // work.
+    const ungrouped = vi
+      .fn<OntologyRepository['ungrouped']>()
+      .mockResolvedValueOnce(['a'])
+      .mockResolvedValue(['a', 'b', 'c'])
+    const discover = vi.fn<OntologyRepository['discover']>().mockResolvedValue(0)
+    show(fakeOntology({ ungrouped, discover }))
+
+    await userEvent.click(await screen.findByRole('button', { name: /read every document again/i }))
+
+    await waitFor(() => expect(discover).toHaveBeenCalledTimes(3))
+    // `toHaveBeenCalledWith`, not `LastCalledWith`: the sweep invalidates the
+    // pending query on settle, so the last call is react-query refetching the
+    // ordinary list.
+    expect(ungrouped).toHaveBeenCalledWith(project, { includeExamined: true })
+  })
+
+  it('passes the lenient setting through to every pass in the sweep', async () => {
+    // Checked here rather than only in `DiscoverySweep.test.tsx`, because the
+    // checkbox reaching `onRun` proves nothing about the pane turning it into
+    // `strict: false` on the request that actually reads a document.
+    const discover = vi.fn<OntologyRepository['discover']>().mockResolvedValue(1)
+    const ontology = fakeOntology({
+      ungrouped: vi.fn<OntologyRepository['ungrouped']>().mockResolvedValue(['a']),
+      discover,
+    })
+    show(ontology)
+
+    await userEvent.click(await screen.findByRole('checkbox'))
+    await userEvent.click(await screen.findByRole('button', { name: /read 1 document/i }))
+
+    await waitFor(() => expect(discover).toHaveBeenCalledWith(project, 'a', { strict: false }))
   })
 
   it('separates a document it could not read from one that states nothing', async () => {

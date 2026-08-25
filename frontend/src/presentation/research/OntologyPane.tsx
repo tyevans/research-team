@@ -8,7 +8,7 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { ErrorBox, Loading } from '../common/primitives.tsx'
 import { projectHref } from '../routing/routes.ts'
-import { DiscoverySweep, type SweepProgress } from './DiscoverySweep.tsx'
+import { DiscoverySweep, type SweepProgress, type SweepRequest } from './DiscoverySweep.tsx'
 import { OntologyClasses } from './OntologyClasses.tsx'
 
 /** The classes a discovery pass has found in this project.
@@ -39,8 +39,14 @@ export const OntologyPane = ({ projectId }: { projectId: ProjectId }) => {
   const [progress, setProgress] = useState<SweepProgress | null>(null)
 
   const sweep = useMutation({
-    mutationFn: async () => {
-      const work = pending.data ?? []
+    mutationFn: async ({ again, lenient }: SweepRequest) => {
+      // Fetched here rather than read off `pending.data` when the reader asked
+      // for a re-read: that query holds the *unexamined* list, and the whole
+      // point of `again` is the documents it excludes. Fetching it inside the
+      // mutation also means the work list is as fresh as the press.
+      const work = again
+        ? await ontology.ungrouped(projectId, { includeExamined: true })
+        : (pending.data ?? [])
       let found = 0
       let barren = 0
       let declined = 0
@@ -48,7 +54,7 @@ export const OntologyPane = ({ projectId }: { projectId: ProjectId }) => {
       for (const [index, sourceId] of work.entries()) {
         // Sequential and deliberately not `Promise.all`: see `DiscoverySweep`.
         // Each pass is one model call over a whole document.
-        const count = await ontology.discover(projectId, sourceId)
+        const count = await ontology.discover(projectId, sourceId, { strict: !lenient })
         if (count === null) declined += 1
         else if (count === 0) barren += 1
         else found += 1
@@ -92,7 +98,7 @@ export const OntologyPane = ({ projectId }: { projectId: ProjectId }) => {
               ? 'The sweep stopped.'
               : null
         }
-        onRun={() => sweep.mutate()}
+        onRun={(request) => sweep.mutate(request)}
       />
       <OntologyClasses
         classes={query.data}

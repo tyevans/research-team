@@ -106,6 +106,27 @@ class DiscoveredClass(BaseModel):
     """
     parent_name: str | None = None
     rejected_members: list[RejectedMember] = Field(default_factory=list)
+    evidence_quoted: bool = True
+    """Whether `evidence` is where the model's quoted sentence was found, or a
+    fallback to where one member occurs.
+
+    True is the strict pass and the only thing that existed before 2026-08-24:
+    the model quoted a sentence, `_span` located it verbatim, and the offsets
+    are that sentence. False is a lenient pass -- the quote was **not** in the
+    document, every member was, and the class was kept anyway with the first
+    member's occurrence cited instead. So the span still opens text the
+    document contains; what it no longer promises is that the text *states the
+    class*.
+
+    Stored per class rather than per pass because it is what a reader judges. A
+    lenient sweep produces both kinds in one press -- most classes quote
+    correctly and a few do not -- and a flag on the pass would mark the honest
+    ones as doubtful along with the rest.
+
+    Defaults True so an event written before the field existed reads as what it
+    was: every class stored by an older build had its quote located, because a
+    build with no lenient path could not store one that had not.
+    """
 
 
 @register_event

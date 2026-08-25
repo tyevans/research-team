@@ -295,6 +295,7 @@ def verify_classes(
     document_text: str,
     source_id: str,
     chunk: DocumentChunk | None = None,
+    strict: bool = True,
 ) -> list[DiscoveredClass]:
     """Only what the document actually supports.
 
@@ -324,6 +325,32 @@ def verify_classes(
     answer to that, and it stays. Same code, same severity, an entirely
     different population reaching it -- and the value of the change is in the
     spans that *pass*, not in the ones this refuses.
+
+    **`strict=False` keeps a class whose quote is absent, and cites a member
+    instead.** The evidence drop above is the right default and it is not the
+    right *only* answer, because the population it refuses is not one thing.
+    Measured 2026-08-24 on the owner's corpus: the single class the pass found
+    in `github-com-tyevans-research-team` -- `interactive components` {mcq,
+    cloze, flashcard}, all three members present verbatim -- was dropped
+    because the document hard-wraps and the model quoted the sentence with its
+    line break flattened to a space. `four seas`, recorded in `_span`, was
+    dropped for Wikipedia's inline citation markup. Neither model invented
+    anything; both quotes are what a *reader* sees.
+
+    So the lenient pass asks a weaker question and says so in the answer. A
+    class survives an unfindable quote only when it still has members, all of
+    which were found verbatim, and its `evidence` becomes the first member's
+    own occurrence with `evidence_quoted=False`. A reader following it lands on
+    text the document contains, at the right place, and is told the span is a
+    member rather than the sentence that states the class.
+
+    What that costs, stated rather than implied: the check the strict pass
+    makes -- "the document has a sentence introducing these as a group" -- is
+    simply not made. A model that pattern-matches three real terms into a class
+    the document never groups passes here, and that is the exact failure the
+    module docstring says this feature is arranged against. It is a lever a
+    reader pulls per pass, never a default, and the flag on each class is what
+    keeps the two populations apart afterwards.
 
     A class with an unrecognised **kind** is dropped whole because `kind`
     selects the entire rendering. Coercing it to `unordered_set` would be
@@ -360,18 +387,34 @@ def verify_classes(
         if not isinstance(name, str) or not name.strip() or kind not in _KINDS:
             continue
 
+        # Members before evidence, where it used to be the other way round: the
+        # lenient fallback cites a member, so there is nothing to fall back to
+        # until they have been verified. The strict path is unchanged by the
+        # reordering -- both gates still have to pass, and neither has a side
+        # effect the other can see.
+        members, rejected = _members(proposal.get("members"), search_text)
+        if not members:
+            continue
+
+        quoted = True
         span = _span(proposal.get("evidence"), search_text)
         if span is None:
-            continue
+            if strict:
+                continue
+            # `members[0]`, not the earliest of them in the text. The model
+            # lists members in the order the document does, so the first is the
+            # one nearest where the class is stated; picking the earliest
+            # occurrence would drag the citation to an unrelated mention of a
+            # common word somewhere above.
+            span = _span(members[0].name, search_text)
+            if span is None:  # pragma: no cover - `_members` proved it is there
+                continue
+            quoted = False
         if chunk is not None:
             translated = _to_document_span(span, chunk, document_text)
             if translated is None:
                 continue
             span = translated
-
-        members, rejected = _members(proposal.get("members"), search_text)
-        if not members:
-            continue
 
         declared = proposal.get("declared_count")
         parent = proposal.get("parent_name")
@@ -384,6 +427,7 @@ def verify_classes(
                 declared_count=declared if isinstance(declared, int) else None,
                 parent_name=parent if isinstance(parent, str) and parent.strip() else None,
                 rejected_members=rejected,
+                evidence_quoted=quoted,
             )
         )
     return verified
@@ -552,7 +596,14 @@ def merge_classes(per_chunk: list[list[DiscoveredClass]]) -> list[DiscoveredClas
 
     * `evidence` -- the first place in the document that states the class, which
       is what a reader wants to open. A later chunk's span is a repetition of
-      the same header.
+      the same header. **With one exception, and it is the only rule here that
+      is not "earliest wins":** a located quote beats a lenient pass's member
+      fallback, whichever chunk each came from. Both are real offsets, but one
+      points at a sentence stating the class and the other at a bare member
+      occurrence, and preferring the weaker one because it arrived first would
+      throw away the better citation the document actually contains. The class
+      keeps `evidence_quoted` from whichever span it kept -- the flag and the
+      offsets cannot disagree.
     * `kind`, `declared_count`, `parent_name` -- first non-`None`, so a chunk
       that saw the sentence stating "there are six" wins over the chunks that
       only saw rows. `kind` is taken from the first chunk outright rather than
@@ -572,8 +623,17 @@ def merge_classes(per_chunk: list[list[DiscoveredClass]]) -> list[DiscoveredClas
             if existing is None:
                 merged[found.name] = found
                 continue
+            # A later chunk's evidence is taken only when it is a quote and the
+            # one held is a fallback -- see the docstring. `model_copy` with
+            # both keys together keeps the span and its flag inseparable.
+            upgrade = (
+                {"evidence": found.evidence, "evidence_quoted": True}
+                if found.evidence_quoted and not existing.evidence_quoted
+                else {}
+            )
             merged[found.name] = existing.model_copy(
                 update={
+                    **upgrade,
                     "members": _merge_members(existing.members, found.members),
                     "declared_count": (
                         existing.declared_count
@@ -705,8 +765,22 @@ class OntologyDiscoveryService:
         self._recorder = recorder
         self._chunker = chunker
 
-    async def discover(self, source_id: str) -> int | None:
+    async def discover(self, source_id: str, *, strict: bool = True) -> int | None:
         """How many classes were recorded, or `None` when nothing was.
+
+        **`strict=False` is a reader's lever, passed straight through to
+        `verify_classes`** -- see there for what it stops checking and what it
+        costs. It is a parameter rather than configuration because the choice
+        belongs to whoever is looking at the result: a corpus of hard-wrapped
+        markdown wants a lenient re-read, and the same build serving a corpus
+        of prose should not have been switched over with it.
+
+        A lenient pass over a document a strict pass already examined
+        supersedes it, because `OntologyDiscovered` replaces a source's classes
+        wholesale. That is the intended way to use it -- read strictly, see the
+        gaps, read the gaps again leniently -- and it is also the hazard: the
+        strict result is gone afterwards, and only `evidence_quoted` on each
+        surviving class says which pass it came from.
 
         **An empty result is recorded, and that is not the same as `None`.**
         Zero says "examined, states no classes" and takes the document off the
@@ -773,6 +847,7 @@ class OntologyDiscoveryService:
                     document_text=document.text,
                     source_id=source_id,
                     chunk=chunk,
+                    strict=strict,
                 )
             )
 

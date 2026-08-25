@@ -167,3 +167,112 @@ async def test_an_unwired_build_is_503_rather_than_an_empty_200(composed):
         assert (await client.get(f"/api/projects/{project_id}/ontology")).status_code == 503
         posted = await client.post(f"/api/projects/{project_id}/sources/songs/ontology")
         assert posted.status_code == 503
+
+
+# --- the lenient lever --------------------------------------------------------
+
+WRAPPED = (
+    "The agent answering that page may write an mcq, cloze, or flashcard component\n"
+    "into its reply instead of just prose."
+)
+"""Hard-wrapped, which is the whole fixture: measured 2026-08-24 on the owner's
+corpus, this exact sentence cost the only real class the pass had ever found,
+because the model quotes it the way a reader reads it."""
+
+WRAPPED_QUOTE = (
+    "The agent answering that page may write an mcq, cloze, or flashcard component "
+    "into its reply instead of just prose"
+)
+"""The same sentence with the newline flattened to a space -- not in the
+document, and not a fabrication either."""
+
+WRAPPED_FOUND = AIMessage(
+    content=(
+        '{"classes": [{"name": "interactive components", "kind": "unordered_set", '
+        '"evidence": "' + WRAPPED_QUOTE + '", '
+        '"members": [{"name": "mcq"}, {"name": "cloze"}, {"name": "flashcard"}]}]}'
+    )
+)
+
+
+@pytest.fixture
+async def wrapped(db_path):
+    """`composed`, over a hard-wrapped document and a model that quotes it flat.
+
+    A second fixture rather than a parameter on the first, because the model's
+    reply has to quote *this* document and `FakeMessagesListChatModel` is
+    handed its replies at construction.
+    """
+    application = build_application(
+        model=FakeMessagesListChatModel(responses=[WRAPPED_FOUND] * 4), db_path=db_path
+    )
+    await application.start()
+    try:
+        transport = ASGITransport(app=_api(application))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            created = await client.post("/api/projects", json={"name": f"ont-{uuid4()}"})
+            assert created.status_code == 200
+            project_id = UUID(created.json()["id"])
+            await application.editor.store(project_id, "readme", WRAPPED)
+            for _ in range(500):
+                if await application.corpus.get(project_id, "readme") is not None:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                raise AssertionError("the readme document never reached the corpus table")
+            yield application, client, project_id
+    finally:
+        await application.close()
+
+
+async def test_the_default_pass_refuses_a_class_whose_quote_the_document_wraps(wrapped):
+    """The route's default is strict, and this is what that costs.
+
+    Asserted at this layer and not only in `test_ontology_discovery.py` because
+    the default lives in the route signature, where a `strict: bool = False`
+    typo would be invisible to every application-layer test.
+    """
+    _application, client, project_id = wrapped
+
+    response = await client.post(f"/api/projects/{project_id}/sources/readme/ontology")
+
+    assert response.json() == {"sourceId": "readme", "found": 0}
+
+
+async def test_strict_false_keeps_it_and_says_the_span_is_a_member(wrapped):
+    """The lever, end to end: query parameter, service, verifier, event,
+    projection, payload. Every one of those has to carry `evidence_quoted` for
+    this to pass, and the projection is the half most likely to drop it --
+    a column that is never written defaults to `True` and looks like a class
+    whose sentence was located.
+
+    Proved red against the column: with `evidence_quoted` removed from the
+    `OntologyClassRow(...)` construction, `found` is still 1 and only the last
+    assertion fails.
+    """
+    application, client, project_id = wrapped
+
+    response = await client.post(
+        f"/api/projects/{project_id}/sources/readme/ontology?strict=false"
+    )
+    assert response.json() == {"sourceId": "readme", "found": 1}
+    await application.ontology.caught_up()
+
+    (klass,) = (await client.get(f"/api/projects/{project_id}/ontology")).json()["classes"]
+    assert klass["name"] == "interactive components"
+    # The first member's own occurrence, which is text the document contains.
+    start, end = klass["evidence"]["start"], klass["evidence"]["end"]
+    assert WRAPPED[start:end] == "mcq"
+    assert klass["evidenceQuoted"] is False
+
+
+async def test_a_located_quote_is_reported_as_quoted(composed):
+    """The other value of the flag, on the ordinary document. Without this the
+    payload could be hard-coded `False` and the test above would still pass."""
+    application, client, project_id = composed
+    await client.post(f"/api/projects/{project_id}/sources/songs/ontology")
+    await application.ontology.caught_up()
+
+    (klass,) = (await client.get(f"/api/projects/{project_id}/ontology")).json()["classes"]
+
+    assert klass["evidenceQuoted"] is True
