@@ -53,6 +53,7 @@ from research_team.application import (
     build_fork_tree,
 )
 from research_team.application.area_projection import GraphTooLarge
+from research_team.application.artifacts import parse_frontmatter
 from research_team.application.ask import (
     AskAnswer,
     AskConversationOpened,
@@ -3490,12 +3491,22 @@ def create_app(
                 # one file, no lessons. Asked of the workspace rather than
                 # inferred from the slug, for `is_path_file`'s reason.
                 entry = session.state.files.get(path_file(slug)) or {}
+                # `stage_artifact_instructions` puts a YAML frontmatter block on
+                # every course artifact, and markdown reads a `key: value` line
+                # immediately followed by `---` as a setext heading -- so a
+                # reader handed the raw file sees a fabricated `<h2>` made of
+                # the frontmatter's own fields sitting above the real `# `
+                # heading the file opens with. `parse_frontmatter` already
+                # exists for `application/components.py`'s parser and for the
+                # checks in `application/course.py`; using it here rather than
+                # a second notion of "what frontmatter is" in the console.
+                _, body = parse_frontmatter(entry.get("content", ""))
                 return {
                     "slug": slug,
                     "state": "authored",
                     "sessionId": str(session_id),
                     "unitPath": path_file(slug),
-                    "unit": entry.get("content", ""),
+                    "unit": body,
                     "lessons": [],
                 }
             unit, lessons = split_area(session, slug)
@@ -3505,9 +3516,10 @@ def create_app(
                     "state": "authored",
                     "sessionId": str(session_id),
                     "unitPath": None if unit is None else unit[0],
-                    "unit": None if unit is None else unit[1],
+                    "unit": None if unit is None else parse_frontmatter(unit[1])[1],
                     "lessons": [
-                        {"path": path, "markdown": content} for path, content in lessons
+                        {"path": path, "markdown": parse_frontmatter(content)[1]}
+                        for path, content in lessons
                     ],
                 }
 
