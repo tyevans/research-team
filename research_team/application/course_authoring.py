@@ -32,8 +32,11 @@ from uuid import UUID, uuid4
 
 from research_team.application.authoring_checkpoints import (
     AREAS_DIR,
+    BUILDS_TOWARD_FIELD,
+    COMPONENT_FENCE,
     ESSENTIAL_QUESTIONS_HEADING,
     EVIDENCE_HEADING,
+    PERFORMANCE_TASK_MARKER,
     UNDERSTANDINGS_HEADING,
     check_assessment,
     check_lessons,
@@ -125,9 +128,12 @@ def _area_header(area: LearningArea) -> str:
 
 _COMPONENT_GUIDE_TEMPLATE = """\
 Lessons may carry interactive components. A component is a fenced block whose
-info string names its type, and its body is YAML:
+info string names its type, and its body is YAML. The example below is indented
+only to sit inside these instructions -- **write the fence at the left
+margin**, because an indented fence is a plain code block and the reader meets
+the YAML raw:
 
-    ```component:mcq
+    {fence}mcq
     id: actium-1
     prompt: What did the battle of Actium decide?
     options:
@@ -206,7 +212,9 @@ def _id_field_lines() -> str:
     )
 
 
-COMPONENT_GUIDE = _COMPONENT_GUIDE_TEMPLATE.format(id_fields=_id_field_lines())
+COMPONENT_GUIDE = _COMPONENT_GUIDE_TEMPLATE.format(
+    id_fields=_id_field_lines(), fence=COMPONENT_FENCE
+)
 
 
 def desired_results_prompt(area: LearningArea, subject: str) -> str:
@@ -288,7 +296,11 @@ def evidence_prompt(area: LearningArea, stage_one: str) -> str:
         f"Append to `{AREAS_DIR}/{area.slug}/unit.md` a "
         f"`{EVIDENCE_HEADING} — Evidence` section holding:\n"
         f"- One **performance task** per enduring understanding: a paragraph "
-        f"describing what the learner produces and what would make it good.\n"
+        f"describing what the learner produces and what would make it good. "
+        f"**Open each one with `{PERFORMANCE_TASK_MARKER}` verbatim**, bold "
+        f"and full stop included, before the paragraph. A later phase counts "
+        f"that exact string to check you wrote one per understanding, and "
+        f"reads a task marked any other way as no task at all.\n"
         f"- A set of **check-for-understanding items** as components: at least "
         f"one `mcq` and one `cloze` per understanding, and a `flashcards` deck "
         f"over the vocabulary a learner needs.\n\n"
@@ -346,7 +358,7 @@ def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) 
         f"**Act 1 — write the plan, in your reply, before you dispatch "
         f"anything.** One slot per lesson, in teaching order, each carrying:\n"
         f"- its title;\n"
-        f"- its `builds_toward`: the Stage 2 assessment it serves, named;\n"
+        f"- its `{BUILDS_TOWARD_FIELD}`: the Stage 2 assessment it serves, named;\n"
         f"- the single **claim** it owns -- one sentence, and no other lesson "
         f"owns it;\n"
         f"- its **opening move**: what the first paragraph does;\n"
@@ -397,7 +409,8 @@ def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) 
         f"lesson gets cleaner and emptier.\n\n"
         f"Each lesson, whoever writes it:\n"
         f"- opens with frontmatter carrying `title`, `area`, and "
-        f"`builds_toward` (the assessment it serves);\n"
+        f"`{BUILDS_TOWARD_FIELD}` (the assessment it serves, named exactly as "
+        f"that field, because the next phase looks for it by name);\n"
         f"- teaches in prose, with real explanation rather than a summary of "
         f"what the learner will learn;\n"
         f"- quotes the corpus where the corpus says it better, with a citation;\n"

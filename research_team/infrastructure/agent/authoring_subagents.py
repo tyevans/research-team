@@ -42,6 +42,7 @@ plan is a control, not a proof -- the reason `prose-critic` and `unit-reviewer`
 exist is that it is expected to leak.
 """
 
+from research_team.application.authoring_checkpoints import BUILDS_TOWARD_FIELD
 from research_team.application.authoring_dispatch import (
     ANECDOTE_HUNTER_NAME,
     AUTHORING_DISPATCH_PROMPT,
@@ -150,6 +151,11 @@ LESSON_DRAFTER = {
     "system_prompt": (
         _SUBAGENT_PREAMBLE + "OBJECTIVE. Write exactly one lesson file at the path you were "
         "given. You own that file and nothing else writes it.\n\n"
+        "FRONTMATTER FIRST. Open the file with frontmatter carrying `title`, "
+        "`area`, and `" + BUILDS_TOWARD_FIELD + "` -- the Stage 2 assessment "
+        "from your slot, under that exact field name. A checkpoint after this "
+        "phase looks for the field by name and reads its absence as a lesson "
+        "that names no assessment, however well the lesson reads.\n\n"
         "THE SLOT IS NOT A SUGGESTION. You were given a claim to teach, an "
         "opening move, and what the reader already knows from earlier "
         "lessons. Those were decided across the whole unit, and changing one "

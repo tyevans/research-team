@@ -13,8 +13,11 @@ wrote no lesson returns a reply like any other. Only the files tell the truth.
 import pytest
 
 from research_team.application.authoring_checkpoints import (
+    BUILDS_TOWARD_FIELD,
+    COMPONENT_FENCE,
     ESSENTIAL_QUESTIONS_HEADING,
     EVIDENCE_HEADING,
+    PERFORMANCE_TASK_MARKER,
     UNDERSTANDINGS_HEADING,
     CheckpointFailed,
     check_assessment,
@@ -26,8 +29,10 @@ from research_team.application.authoring_checkpoints import (
     unit_text,
 )
 from research_team.application.course_authoring import (
+    assessment_prompt,
     desired_results_prompt,
     evidence_prompt,
+    learning_plan_prompt,
 )
 from research_team.domain.learning_area import AreaMember, LearningArea
 
@@ -235,36 +240,93 @@ def test_assessment_passes_when_a_lesson_gained_a_component():
     check_assessment(present, SLUG, lesson_count=1, before=(1,))
 
 
-@pytest.mark.parametrize(
-    "heading", [UNDERSTANDINGS_HEADING, ESSENTIAL_QUESTIONS_HEADING, EVIDENCE_HEADING]
+AREA = LearningArea(
+    slug=SLUG,
+    members=(
+        AreaMember(entity_id="e1", name="Augustus", entity_type="person", centrality=1.0),
+    ),
 )
-def test_every_heading_a_checkpoint_searches_for_is_named_in_its_prompt(heading):
-    """The pair that shipped drifted, and nothing here could see it.
 
-    `check_stage_one` finds `## Enduring Understandings` by literal text, and
-    `desired_results_prompt` asked for "2-4 **enduring understandings**" and
-    named no heading at all -- so a model that satisfied the prompt exactly
-    failed the checkpoint at `0 enduring understanding(s), wanted 2`. Every
-    fixture above hand-writes the headings, which is precisely why: the fixture
-    was supplying the contract the prompt was supposed to state.
+
+@pytest.mark.parametrize(
+    ("marker", "phase"),
+    [
+        (UNDERSTANDINGS_HEADING, "stage_one"),
+        (ESSENTIAL_QUESTIONS_HEADING, "stage_one"),
+        (EVIDENCE_HEADING, "stage_two"),
+        (PERFORMANCE_TASK_MARKER, "stage_two"),
+        (BUILDS_TOWARD_FIELD, "lessons"),
+        (COMPONENT_FENCE, "lessons"),
+    ],
+)
+def test_every_marker_a_checkpoint_searches_for_is_named_in_its_prompt(marker, phase):
+    """One defect, found three times: a checkpoint asserting on a shape no
+    prompt demands.
+
+    A shape the prompt does not ask for is a shape the model has no reason to
+    produce, so the failure is a *correct* phase refused -- and no fixture can
+    see it, because the fixture is written by whoever wrote the checkpoint and
+    supplies the shape by hand. C1 (the two Stage 1 headings) was latent; C2
+    (`PERFORMANCE_TASK_MARKER`) killed a live run on 2026-08-25.
 
     This asserts the constants reach the prompts, not that the prompts are
-    good. It fails on the edit that caused the defect -- a heading hard-coded
-    at the `find` call, or a prompt that stops interpolating it.
+    good. It fails on the edit that caused all three: a literal typed at the
+    `find` call, or a prompt that stops interpolating it.
 
-    Proved red by re-typing `"## Enduring Understandings"` at the `_section`
-    call in `check_stage_one` and dropping the interpolation from the prompt.
+    Proved red per case by dropping each interpolation in turn.
+
+    `lesson-drafter` carries the last two as well and is asserted separately in
+    `tests/infrastructure/test_authoring_subagents.py` -- since the fan-out it
+    writes the lessons, and this file cannot reach infrastructure's roster.
     """
-    area = LearningArea(
-        slug=SLUG,
-        members=(
-            AreaMember(entity_id="e1", name="Augustus", entity_type="person", centrality=1.0),
-        ),
+    prompts = {
+        "stage_one": desired_results_prompt(AREA, "Ancient Rome"),
+        "stage_two": evidence_prompt(AREA, "STAGE ONE"),
+        "lessons": learning_plan_prompt(AREA, "STAGE ONE", 3),
+        "assessment": assessment_prompt(AREA, 3),
+    }
+    assert marker in prompts[phase]
+
+
+def test_stage_two_refuses_the_shape_that_killed_the_live_run():
+    """The measured input, not an invented one.
+
+    Taken from a live authoring run on 2026-08-25 against the `research-team`
+    project's `agent-interaction-log` area: phase 2 wrote four correct tasks as
+    `**PT1 —**`..`**PT4 —**` under a `### Performance tasks` heading, and the
+    old case-insensitive grep for "performance task" found two -- one in the
+    intro sentence, one in the heading. `2 performance task(s) for 4
+    understanding(s)`, on output that was right.
+
+    What this pins is the *refusal*, not the old false negative. The run is
+    still refused, because the marker the prompt now demands is absent, and
+    that is the correct reading: the counting rule and the instruction agree,
+    so a model that follows the prompt passes. Asserting that the old shape now
+    passes would mean the pattern had been loosened to guess at formatting,
+    which is the fix that was rejected.
+
+    The first half would pass with the old grep restored, for the wrong reason
+    -- it counts 2 and also refuses. The half with teeth is the second: the
+    same content, marked as the prompt asks, passes.
+    """
+    understandings = "\n".join(f"- Understanding {n}." for n in range(1, 5))
+    written = (
+        f"{UNDERSTANDINGS_HEADING}\n{understandings}\n\n"
+        f"{ESSENTIAL_QUESTIONS_HEADING}\n- One?\n- Two?\n- Three?\n\n"
+        f"{EVIDENCE_HEADING} — Evidence\n\n"
+        "For each, the performance task asks for something a learner who had "
+        "merely memorised the material could not do.\n\n"
+        "### Performance tasks\n\n"
+        + "\n".join(f"**PT{n} —** A paragraph.\n" for n in range(1, 5))
     )
-    if heading == EVIDENCE_HEADING:
-        assert heading in evidence_prompt(area, "STAGE ONE")
-    else:
-        assert heading in desired_results_prompt(area, "Ancient Rome")
+    with pytest.raises(CheckpointFailed) as caught:
+        check_stage_two(files(**{UNIT: written}), SLUG)
+    assert caught.value.reason == "0 performance task(s) for 4 understanding(s)"
+
+    marked = written
+    for n in range(1, 5):
+        marked = marked.replace(f"**PT{n} —**", PERFORMANCE_TASK_MARKER)
+    check_stage_two(files(**{UNIT: marked}), SLUG)
 
 
 def test_lesson_paths_are_zero_padded_and_one_based():

@@ -66,7 +66,40 @@ AREAS_DIR = "/course/areas"
 MIN_UNDERSTANDINGS = 2
 MIN_ESSENTIAL_QUESTIONS = 3
 
-#: The three headings a checkpoint searches for by literal text.
+#: Every literal a checkpoint searches for, and every one is interpolated into
+#: the prompt meant to produce it.
+#:
+#: **This is one defect found three times, twice of them shipping.** A
+#: checkpoint asserts on a *shape*, and a shape the prompt does not demand is a
+#: shape the model has no reason to produce -- so the failure is always a
+#: correct phase refused, and it is always invisible to the suite, because a
+#: fixture is written by whoever wrote the checkpoint and supplies the shape by
+#: hand.
+#:
+#: - `UNDERSTANDINGS_HEADING` / `ESSENTIAL_QUESTIONS_HEADING`:
+#:   `desired_results_prompt` asked for "2-4 **enduring understandings**" and
+#:   named no heading. Latent -- caught by review on 2026-08-24, and a live run
+#:   the next day happened to write both headings unprompted.
+#:
+#: - `PERFORMANCE_TASK_MARKER`: `evidence_prompt` asked for "One **performance
+#:   task** per enduring understanding" and said nothing about how to mark one;
+#:   the check counted the case-insensitive phrase "performance task".
+#:   **Measured, not reasoned**: a live run on 2026-08-25 over the
+#:   `research-team` project's `agent-interaction-log` area wrote four correct
+#:   tasks as `**PT1 —**`..`**PT4 —**` under a `### Performance tasks` heading,
+#:   and the phrase occurred twice -- once in an intro sentence, once in the
+#:   heading. The run died on `2 performance task(s) for 4 understanding(s)`.
+#:
+#: - `BUILDS_TOWARD_FIELD` / `COMPONENT_FENCE`: found by auditing for the same
+#:   shape after the second. Both are named in the parent's prompt, and since
+#:   the fan-out neither was named to `lesson-drafter`, which is the thing that
+#:   writes them and cannot see the parent's prompt.
+#:
+#: The rule for anything added here: if a checkpoint greps for it, a prompt
+#: must interpolate it, and
+#: `test_every_marker_a_checkpoint_searches_for_is_named_in_its_prompt` must
+#: hold the pair. Do not answer a miss by loosening the pattern -- a looser
+#: pattern guesses at the model's formatting, which is how this failed.
 #:
 #: Constants rather than literals at the `find` call because the prompt that is
 #: meant to produce each one interpolates the same name. A heading typed twice
@@ -82,9 +115,24 @@ UNDERSTANDINGS_HEADING = "## Enduring Understandings"
 ESSENTIAL_QUESTIONS_HEADING = "## Essential Questions"
 EVIDENCE_HEADING = "## Stage 2"
 
+#: Opens each performance task, counted verbatim and case-sensitively.
+#:
+#: The bold and the full stop are load-bearing rather than decorative: they are
+#: what stops the intro sentence that killed the 2026-08-25 run ("the
+#: performance task asks for something...") from counting as a task. A marker a
+#: model can write by accident in prose is a marker that over-counts as readily
+#: as the old pattern under-counted.
+PERFORMANCE_TASK_MARKER = "**Performance task.**"
+
+#: The frontmatter field naming the Stage 2 assessment a lesson serves.
+BUILDS_TOWARD_FIELD = "builds_toward"
+
+#: A component block's opening fence, which must start at the left margin --
+#: an indented fence is a code block, and the reader meets the YAML raw.
+COMPONENT_FENCE = "```component:"
+
 _BULLET = re.compile(r"^\s*[-*]\s+\S", re.MULTILINE)
-_COMPONENT = re.compile(r"^```component:", re.MULTILINE)
-_PERFORMANCE_TASK = re.compile(r"performance task", re.IGNORECASE)
+_COMPONENT = re.compile(rf"^{re.escape(COMPONENT_FENCE)}", re.MULTILINE)
 
 
 class CheckpointFailed(Exception):
@@ -179,10 +227,19 @@ def understanding_count(files: Mapping[str, Any], area_slug: str) -> int:
 def check_stage_two(files: Mapping[str, Any], area_slug: str) -> None:
     """Phase 2 wrote one performance task per enduring understanding.
 
-    Counting the phrase rather than parsing structure, on purpose: the prompt
-    asks for a paragraph per task and does not fix a heading, so anything
-    stricter would fail correct output. What it does catch is the real failure
-    -- a phase that wrote the section and one task and stopped.
+    Counting one marker the prompt demands verbatim, rather than parsing
+    structure: the prompt asks for a paragraph per task and fixes no heading,
+    so anything that reasoned about document shape would fail correct output.
+    What it catches is the real failure -- a phase that wrote the section, one
+    task, and stopped.
+
+    **It counted the case-insensitive phrase "performance task" until
+    2026-08-25, and that refused a correct run.** See the note above
+    `PERFORMANCE_TASK_MARKER`: four tasks written, two counted, both of the two
+    in prose rather than on a task. The fix is that `evidence_prompt` now
+    interpolates the marker and this counts it; the fix that was rejected is a
+    cleverer regex, which guesses at a format the prompt never specified and
+    fails again the next time a model picks a different one.
     """
     text = unit_text(files, area_slug)
     evidence = _section(text, EVIDENCE_HEADING)
@@ -190,7 +247,7 @@ def check_stage_two(files: Mapping[str, Any], area_slug: str) -> None:
         raise CheckpointFailed(
             "stage_two", f"no '{EVIDENCE_HEADING}' section in {unit_path(area_slug)}"
         )
-    tasks = len(_PERFORMANCE_TASK.findall(evidence))
+    tasks = evidence.count(PERFORMANCE_TASK_MARKER)
     wanted = understanding_count(files, area_slug)
     if tasks < wanted:
         raise CheckpointFailed(
@@ -212,8 +269,10 @@ def check_lessons(files: Mapping[str, Any], area_slug: str, lesson_count: int) -
         text = _content(files, path)
         if not text.strip():
             raise CheckpointFailed("lessons", f"{path} was not written")
-        if "builds_toward" not in text:
-            raise CheckpointFailed("lessons", f"{path} names no assessment in builds_toward")
+        if BUILDS_TOWARD_FIELD not in text:
+            raise CheckpointFailed(
+                "lessons", f"{path} names no assessment in {BUILDS_TOWARD_FIELD}"
+            )
 
 
 def component_counts(

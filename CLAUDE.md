@@ -282,6 +282,55 @@ that test cannot detect the invocation being dropped. Write at least one test
 per code path that starts from a fixture that has *not* made the call the
 code is responsible for making.
 
+## Checkpoints over model output
+
+**A checkpoint asserting on a shape no prompt demands refuses correct work,
+and the suite cannot see it.** Course authoring's four phases each end in a
+Python check over the files the phase left behind (`authoring_checkpoints.py`),
+and every one of those checks greps for a literal. Three of them greped for a
+literal the prompt never asked for. The failure is always the same and always
+the wrong way round: the model does exactly what it was told, the checkpoint
+sees nothing, and the run dies naming a count.
+
+It is invisible to tests for a reason worth naming separately, because it is
+the CLAUDE.md fixture rule one level up: **the fixture supplies the contract
+the prompt was supposed to state.** Whoever writes the checkpoint writes the
+fixture in the same hour and hand-writes the shape into it, so the test proves
+the checkpoint can read a document nobody asked the model to write.
+
+The instances, in the order they were found:
+
+- `## Enduring Understandings` / `## Essential Questions`, required by
+  `check_stage_one`, named nowhere in `desired_results_prompt`. Found by
+  review on 2026-08-24; latent, because the model happened to pick those
+  headings unprompted on the run the next day.
+- "performance task", counted case-insensitively by `check_stage_two`, with
+  `evidence_prompt` saying nothing about how to mark a task. **Measured on
+  2026-08-25**, on a live run over the `research-team` project's
+  `agent-interaction-log` area: four correct tasks written as `**PT1 —**`
+  through `**PT4 —**`, the phrase occurring twice (an intro sentence and a
+  heading), and the run refused at `2 performance task(s) for 4
+  understanding(s)`.
+- `builds_toward` and the ```` ```component: ```` fence, named in the parent's
+  prompt and -- after the fan-out that made `lesson-drafter` the only thing
+  writing a lesson -- named to nothing that writes one. Found by auditing for
+  the shape after the second, which is the only one of the three that cost
+  nothing.
+
+The fix in all three is one shape: **the literal is a constant, the prompt
+interpolates it, and a test holds the pair**
+(`test_every_marker_a_checkpoint_searches_for_is_named_in_its_prompt`). The
+fix that was rejected each time is a looser pattern -- it guesses at the
+model's formatting, which is precisely what went wrong, and the next model
+picks a different format. Loosening also costs the checkpoint its job: a check
+that matches anything cannot tell a phase that worked from one that stopped,
+which is the whole reason the phases are separate.
+
+The general rule, and it outlives course authoring: **anywhere Python asserts
+on text a model produced, the assertion is half a contract.** Write the other
+half into the prompt, from the same constant, or the assertion is a guess
+about a stranger's formatting habits.
+
 ## Extraction
 
 **The model files its answer where the schema's other fields live, not where

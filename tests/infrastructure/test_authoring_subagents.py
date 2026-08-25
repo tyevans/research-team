@@ -15,6 +15,10 @@ import pytest
 from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from research_team.application.authoring_checkpoints import (
+    BUILDS_TOWARD_FIELD,
+    COMPONENT_FENCE,
+)
 from research_team.application.authoring_dispatch import AUTHORING_SUBAGENT_NAMES
 from research_team.application.course_authoring import COMPONENT_GUIDE
 from research_team.application.prose_rubric import critic_reporting_contract
@@ -189,3 +193,22 @@ def test_the_drafter_carries_the_component_guide():
     drafter = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "lesson-drafter")
     assert COMPONENT_GUIDE in drafter["system_prompt"]
     assert "`entity_id:` is the id, copied exactly" in drafter["system_prompt"]
+
+
+@pytest.mark.parametrize("marker", [BUILDS_TOWARD_FIELD, COMPONENT_FENCE])
+def test_the_drafter_is_told_the_markers_its_checkpoints_search_for(marker):
+    """The parent's prompt names both; since the fan-out the parent writes no
+    lesson.
+
+    `check_lessons` greps each lesson for `builds_toward` and
+    `check_assessment` for the component fence, and the only thing writing a
+    lesson is a subagent that cannot see the prompt those requirements were
+    stated in. That is the C1/C2 shape one layer down -- a checkpoint asserting
+    on a shape its actual writer was never asked for -- and it is why the
+    marker constants are shared rather than typed at each site.
+
+    Proved red by removing the FRONTMATTER FIRST clause and the
+    `COMPONENT_GUIDE` interpolation in turn.
+    """
+    drafter = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "lesson-drafter")
+    assert marker in drafter["system_prompt"]

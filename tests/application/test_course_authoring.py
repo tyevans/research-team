@@ -14,7 +14,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.authoring_checkpoints import CheckpointFailed, lesson_paths
+from research_team.application.authoring_checkpoints import (
+    PERFORMANCE_TASK_MARKER,
+    CheckpointFailed,
+    lesson_paths,
+)
 from research_team.application.components import REGISTRY
 from research_team.application.course_authoring import (
     AREAS_DIR,
@@ -70,7 +74,8 @@ class RecordingTurns:
             }
         elif n == 2:
             self.files[unit_path]["content"] += (
-                "\n## Stage 2 — Evidence\nperformance task\nperformance task\n"
+                f"\n## Stage 2 — Evidence\n"
+                f"{PERFORMANCE_TASK_MARKER} One.\n{PERFORMANCE_TASK_MARKER} Two.\n"
             )
         elif n == 3:
             for path in lesson_paths(AREA.slug, 3):
@@ -290,7 +295,11 @@ async def test_the_four_phases_run_in_order():
     stage_one = (
         "## Enduring Understandings\n- a\n- b\n\n## Essential Questions\n- a\n- b\n- c\n"
     )
-    stage_two = stage_one + "\n## Stage 2 — Evidence\nperformance task\nperformance task\n"
+    stage_two = (
+        stage_one
+        + "\n## Stage 2 — Evidence\n"
+        + f"{PERFORMANCE_TASK_MARKER} One.\n{PERFORMANCE_TASK_MARKER} Two.\n"
+    )
     lesson_01, lesson_02, lesson_03 = lesson_paths(AREA.slug, 3)
     lessons_written = "builds_toward: x\n"
     turns = WritingTurns(
