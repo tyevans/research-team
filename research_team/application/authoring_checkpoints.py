@@ -16,8 +16,21 @@ returned would reproduce it.
 **The counts are floors, not shapes.** `check_stage_one` wants two
 understandings because the prompt asks for two to four, and a model that has
 run out of corpus writes one. It does not check that the understandings are
-good; nothing here can, and `prompts/course/prose_rubric.md` plus the
-`prose-critic` are where that judgement lives.
+good; nothing here can, and `research_team/application/prose_rubric.md` plus
+the `prose-critic` are where that judgement lives. (That path was written as
+`prompts/course/prose_rubric.md` until 2026-08-24, against a plan the branch
+abandoned: `test_no_prompt_file_is_orphaned` refuses a file under `prompts/`
+that no prompt names, and `prose_rubric.py`'s docstring records why the rubric
+sits beside its loader instead.)
+
+**The headings the checks search for are constants, and the prompts
+interpolate them.** `check_stage_one` is a `str.find` for a literal heading, so
+a heading the prompt never asked for makes correct output read as zero bullets
+and aborts phase 1. That shipped: the two headings below were hard-coded here
+and named nowhere in `desired_results_prompt`, and no test could see it because
+every fixture in this repository hand-writes them --
+`test_every_heading_a_checkpoint_searches_for_is_named_in_its_prompt` is the
+one assertion that ties the pair together.
 """
 
 import re
@@ -53,6 +66,20 @@ AREAS_DIR = "/course/areas"
 MIN_UNDERSTANDINGS = 2
 MIN_ESSENTIAL_QUESTIONS = 3
 
+#: The three headings a checkpoint searches for by literal text.
+#:
+#: Constants rather than literals at the `find` call because the prompt that is
+#: meant to produce each one interpolates the same name. A heading typed twice
+#: is a heading that drifts in one place, and the drift is silent in the worst
+#: direction: `_section` returns `""` for an absent heading, so a phase that
+#: did exactly what it was asked reads as a phase that produced nothing.
+#:
+#: `EVIDENCE_HEADING` is a prefix of what `evidence_prompt` asks for
+#: (`## Stage 2 — Evidence`) rather than the whole of it. Deliberate: the em
+#: dash and the word after it are the prompt's business, and matching on the
+#: stage number is what makes a model that wrote `## Stage 2: Evidence` pass.
+UNDERSTANDINGS_HEADING = "## Enduring Understandings"
+ESSENTIAL_QUESTIONS_HEADING = "## Essential Questions"
 EVIDENCE_HEADING = "## Stage 2"
 
 _BULLET = re.compile(r"^\s*[-*]\s+\S", re.MULTILINE)
@@ -131,13 +158,13 @@ def check_stage_one(files: Mapping[str, Any], area_slug: str) -> None:
     text = unit_text(files, area_slug)
     if not text.strip():
         raise CheckpointFailed("stage_one", f"{unit_path(area_slug)} was not written")
-    understandings = _bullets(_section(text, "## Enduring Understandings"))
+    understandings = _bullets(_section(text, UNDERSTANDINGS_HEADING))
     if understandings < MIN_UNDERSTANDINGS:
         raise CheckpointFailed(
             "stage_one",
             f"{understandings} enduring understanding(s), wanted {MIN_UNDERSTANDINGS}",
         )
-    questions = _bullets(_section(text, "## Essential Questions"))
+    questions = _bullets(_section(text, ESSENTIAL_QUESTIONS_HEADING))
     if questions < MIN_ESSENTIAL_QUESTIONS:
         raise CheckpointFailed(
             "stage_one",
@@ -146,7 +173,7 @@ def check_stage_one(files: Mapping[str, Any], area_slug: str) -> None:
 
 
 def understanding_count(files: Mapping[str, Any], area_slug: str) -> int:
-    return _bullets(_section(unit_text(files, area_slug), "## Enduring Understandings"))
+    return _bullets(_section(unit_text(files, area_slug), UNDERSTANDINGS_HEADING))
 
 
 def check_stage_two(files: Mapping[str, Any], area_slug: str) -> None:
@@ -189,10 +216,60 @@ def check_lessons(files: Mapping[str, Any], area_slug: str, lesson_count: int) -
             raise CheckpointFailed("lessons", f"{path} names no assessment in builds_toward")
 
 
-def check_assessment(files: Mapping[str, Any], area_slug: str, lesson_count: int) -> None:
-    """Phase 4 left a component in every lesson and a unit review."""
-    for path in lesson_paths(area_slug, lesson_count):
-        if not _COMPONENT.search(_content(files, path)):
+def component_counts(
+    files: Mapping[str, Any], area_slug: str, lesson_count: int
+) -> tuple[int, ...]:
+    """Each lesson's component-fence count, for `check_assessment` to compare against.
+
+    Taken after phase 3 and handed to phase 4's checkpoint, because a count is
+    only evidence of phase 4 having done something if there is an earlier count
+    to hold it against. A lesson that was never written counts 0, which is the
+    right reading: phase 4 adding the first component to it is still growth.
+    """
+    return tuple(
+        len(_COMPONENT.findall(_content(files, path)))
+        for path in lesson_paths(area_slug, lesson_count)
+    )
+
+
+def check_assessment(
+    files: Mapping[str, Any],
+    area_slug: str,
+    lesson_count: int,
+    *,
+    before: tuple[int, ...],
+) -> None:
+    """Phase 4 added components to every lesson and wrote the unit review.
+
+    **`before` is what makes this a check on phase 4 rather than on phase 3.**
+    Until 2026-08-24 this asked only whether each lesson carried a
+    `component:` fence -- which `learning_plan_prompt` already requires of every
+    drafter, so a run in which every `quiz-writer` was skipped, failed or wrote
+    nothing passed unchanged provided `unit-reviewer` left a `review.md`. The
+    docstring claimed otherwise. Requiring growth against the counts taken
+    after `check_lessons` is the cheapest thing that can fail on phase 4's own
+    subject.
+
+    The cost, stated plainly: a `quiz-writer` that *replaced* a drafter's
+    components rather than appending to them now fails a run that produced
+    usable output. That is accepted because appending is the only thing its
+    prompt permits ("Append only. Do not edit the lesson's prose"), so the
+    replacement case is a subagent that already disobeyed.
+
+    What it still cannot see, and this is the honest residue: it cannot tell a
+    `quiz-writer` from the parent writing the items itself. Nothing in the
+    files distinguishes them -- `assessment_prompt`'s docstring says the same.
+    """
+    counts = component_counts(files, area_slug, lesson_count)
+    for path, count, prior in zip(
+        lesson_paths(area_slug, lesson_count), counts, before, strict=True
+    ):
+        if count == 0:
             raise CheckpointFailed("assessment", f"{path} carries no component block")
+        if count <= prior:
+            raise CheckpointFailed(
+                "assessment",
+                f"{path} carries {count} component(s), the same {prior} phase 3 left",
+            )
     if not _content(files, review_path(area_slug)).strip():
         raise CheckpointFailed("assessment", f"{review_path(area_slug)} was not written")

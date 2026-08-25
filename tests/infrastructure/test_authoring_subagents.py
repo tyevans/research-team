@@ -16,6 +16,7 @@ from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from research_team.application.authoring_dispatch import AUTHORING_SUBAGENT_NAMES
+from research_team.application.course_authoring import COMPONENT_GUIDE
 from research_team.application.prose_rubric import critic_reporting_contract
 from research_team.infrastructure.agent.authoring_subagents import (
     AUTHORING_DISPATCH_PROMPT,
@@ -44,9 +45,18 @@ def test_every_spec_builds_through_create_deep_agent():
 
 def test_no_subagent_carries_orchestration_tools():
     """A subagent that could dispatch another would make the phase's fan-out
-    unbounded and unobservable. deepagents builds subagents without
-    SubAgentMiddleware, so this is the library's guarantee -- asserted here
-    because the design depends on it and a future version could change it."""
+    unbounded and unobservable.
+
+    **This would pass with deepagents replaced by a library that hands every
+    subagent a `task` tool, and it should say so.** No spec in the roster has
+    a `tools` key, so `spec.get("tools", ())` is always empty and every
+    assertion below is about our own literal -- it fires only if someone adds
+    an explicit `task` tool to a spec, which is the deliberate act, not the
+    silent one. The library's guarantee (deepagents 0.7.6 builds subagents
+    with plain `create_agent` and no `SubAgentMiddleware`) is asserted nowhere;
+    catching a version that changed it would mean building through
+    `create_deep_agent` and reading the compiled subagent's tool names, which
+    is what to write if this ever matters more than it does today."""
     for spec in AUTHORING_SUBAGENTS:
         names = {getattr(tool, "name", "") for tool in spec.get("tools", ())}
         assert "task" not in names, spec["name"]
@@ -156,3 +166,26 @@ def test_neither_prompt_carries_the_rubrics_editors_note():
     for spec in AUTHORING_SUBAGENTS:
         assert "<!--" not in spec["system_prompt"], spec["name"]
         assert "whoever edits the file" not in spec["system_prompt"], spec["name"]
+
+
+def test_the_drafter_carries_the_component_guide():
+    """The drafter is the only thing writing lesson components since the fan-out.
+
+    Before this, its whole instruction on the subject was "Carry at least two
+    components, of which at least one resolves against the project" -- no fence
+    syntax, no list of the ten types, and no `entity:`/`entity_id:` split,
+    which is the distinction `COMPONENT_GUIDE` exists for and which
+    `course_authoring` records as its defect 1. A subagent cannot read a file
+    the caller did not name, so a guide it does not carry is a guide it does
+    not have.
+
+    Asserts the guide's generated tail, not only its opening line: an
+    interpolation that produced the template with an empty `{id_fields}` would
+    leave every other test in this file green.
+
+    Proved red by removing the `COMPONENT_GUIDE` interpolation from
+    `LESSON_DRAFTER`'s system prompt.
+    """
+    drafter = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "lesson-drafter")
+    assert COMPONENT_GUIDE in drafter["system_prompt"]
+    assert "`entity_id:` is the id, copied exactly" in drafter["system_prompt"]

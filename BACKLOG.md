@@ -4727,8 +4727,13 @@ holds it -- and neither is currently covered.
 ### B150. The authoring-subagents branch owes a live run, and five things only that run can answer
 
 `authoring-subagents` replaces course authoring's three-turn model with four
-Python-ordered phases (plan, draft, prose-critic, unit-review) fanning out
-across six named subagents plus one deepagents always inserts. Every task in
+Python-ordered phases -- Stage 1 desired results, Stage 2 evidence, Stage 3
+plan-and-draft, phase 4 assessment, which is what `author_area` runs and what
+`authoring_checkpoints` names (`stage_one`, `stage_two`, `lessons`,
+`assessment`) -- fanning out across six named subagents plus one deepagents
+always inserts. (This paragraph named "plan, draft, prose-critic, unit-review"
+as the four phases until 2026-08-24. Those are the four *acts inside phase 3*;
+the mistake would send whoever does the live run below to the wrong files.) Every task in
 the plan (`docs/superpowers/plans/2026-08-24-course-authoring-subagents.md`)
 shipped with tests, and none of the five items below is a test -- each is
 answerable only by reading what a real session produces, and none has been
@@ -4787,8 +4792,9 @@ prose past `prose-critic` and `unit-reviewer`.
 
 **5. Two generations of assessment items, left in the same unit on purpose.**
 Stage 2 (pre-existing, untouched by this branch) writes check-for-understanding
-items into `unit.md`; phase 4's `unit-reviewer` writes a second, better set
-into the individual lessons. Nothing deletes the first set, so a finished
+items into `unit.md`; phase 4's `quiz-writer` -- one per lesson, not
+`unit-reviewer`, whose prompt says to write `review.md` and nothing else --
+appends a second, better set to the individual lessons. Nothing deletes the first set, so a finished
 unit carries both. This is not an oversight the plan missed -- deleting one
 phase's output from inside another phase's prompt is the reconciliation
 problem this whole design exists to avoid (the plan and design doc both

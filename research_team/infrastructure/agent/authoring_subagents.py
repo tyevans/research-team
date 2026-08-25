@@ -22,6 +22,20 @@ None of the six gets the `task` tool, and that costs nothing to arrange:
 deepagents builds each subagent with plain `create_agent` and no
 `SubAgentMiddleware`, so nesting is impossible by construction in 0.7.6.
 
+**The drafter carries `COMPONENT_GUIDE` for the same reason it carries the
+prose rules: it cannot read a file the caller did not name.** Before the
+fan-out the parent wrote the lessons and had the guide in its own prompt. After
+it, the only thing writing a component is a subagent that had neither the fence
+syntax nor the `entity:`/`entity_id:` split -- which is `course_authoring`'s
+recorded defect 1 rebuilt one layer down, and its symptom is a widget that
+renders `unavailable` forever with nothing warning anyone. The ids themselves
+cannot come from here; Act 3 of `learning_plan_prompt` hands each drafter the
+area's anchor list, because only the parent knows the area.
+
+Importing an application module from infrastructure is the allowed direction
+(`tests/test_architecture.py`), and it is the same arrangement `prose_rubric`
+already uses.
+
 What this does not buy: the parent still cannot check a drafter's working, and
 a slot the plan states vaguely is a slot each drafter reads differently. The
 plan is a control, not a proof -- the reason `prose-critic` and `unit-reviewer`
@@ -37,6 +51,7 @@ from research_team.application.authoring_dispatch import (
     UNIT_CRITIC_NAME,
     UNIT_REVIEWER_NAME,
 )
+from research_team.application.course_authoring import COMPONENT_GUIDE
 from research_team.application.prose_rubric import (
     critic_reporting_contract,
     prose_rules,
@@ -151,6 +166,10 @@ LESSON_DRAFTER = {
         "GROUNDING. Quote the corpus where the corpus says it better, with a "
         "citation. Carry at least two components, of which at least one "
         "resolves against the project.\n\n"
+        "COMPONENTS. The guide below is the whole syntax; you have no other "
+        'copy of it, and where it says "the list above" it means the anchor '
+        "list your caller gave you -- there is no other list and you cannot "
+        "go and find one.\n\n" + COMPONENT_GUIDE + "\n"
         "OUTPUT. Reply with the path you wrote and nothing else. Do not "
         "summarise the lesson back; the caller can read it."
     ),

@@ -132,8 +132,24 @@ def prompt_acts(prompt: str) -> str:
     Both tails carry fixed numerals -- "two fields", "six subagents" -- that
     have nothing to do with `lesson_count`, and a numeral ban applied to them
     would fail correct text.
+
+    Partitioned on `COMPONENT_GUIDE`'s own opening rather than on a copy of its
+    first sentence, and it raises rather than returning the whole prompt when
+    the marker is missing. The literal copy failed *open*: `str.split` on an
+    absent separator returns one element, so a reword of the guide silently
+    widened this slice to the entire prompt with nothing going red. Today that
+    would still pass -- neither tail contains "N drafters" or "N ways" -- which
+    is exactly the problem, because the boundary test would have stopped
+    testing a boundary and said nothing. A prefix, not the whole constant, so
+    the marker survives a change to the guide's body.
     """
-    return prompt.split("Lessons may carry interactive components")[0]
+    marker = COMPONENT_GUIDE[:40]
+    head, found, _ = prompt.partition(marker)
+    if not found:
+        raise AssertionError(
+            f"the prompt does not carry COMPONENT_GUIDE's opening: {marker!r}"
+        )
+    return head
 
 
 AREA = LearningArea(
@@ -299,7 +315,11 @@ async def test_the_four_phases_run_in_order():
     await author.author_area(uuid4(), AREA, "Rome")
 
     assert len(turns.prompts) == 4
-    assert "Enduring Understandings" not in turns.prompts[0]  # nothing to be faithful to yet
+    # Phase 1 has no prior stage to be faithful to. Asserted as the absence of
+    # any earlier *reply* rather than of the heading text: since 2026-08-24
+    # `desired_results_prompt` names `## Enduring Understandings` itself, so
+    # the old assertion on the heading would now fail on correct output.
+    assert "REPLY-" not in turns.prompts[0]
     assert "REPLY-1" in turns.prompts[1]  # stage 2 given stage 1's reply
     assert unit_path in turns.prompts[2]  # stage 3 reads stage 2 off the file
     assert lesson_01 in turns.prompts[3]  # phase 4 named the lessons it expects, by path
@@ -320,6 +340,30 @@ async def test_the_project_is_released_when_a_checkpoint_fails():
         await author.author_area(uuid4(), AREA, "Rome")
 
     assert sessions.released, "a failed checkpoint left the project locked"
+
+
+def test_act_three_hands_every_drafter_the_anchor_ids():
+    """A drafter that was not given the ids invents them, and the widget is dead.
+
+    `COMPONENT_GUIDE` is in `lesson-drafter`'s own system prompt, but the ids
+    are per-area and only the parent has them: Act 3's "give it **nothing
+    else**" was written to keep one lesson's slot away from another drafter,
+    and before 2026-08-24 it also withheld the anchor list, because the anchors
+    live in `_area_header` and Act 3 did not list them. The result is
+    `course_authoring`'s own defect 1 one layer down -- an invented id renders
+    `unavailable` forever and nothing warns.
+
+    Asserts the ids reach the acts body, not the tail: `prompt_acts` cuts
+    `COMPONENT_GUIDE` and the roster off, so this cannot pass on the guide's
+    mention of ids.
+
+    Proved red by deleting the `_anchor_lines(area)` interpolation from Act 3.
+    """
+    acts = prompt_acts(learning_plan_prompt(AREA, "STAGE ONE", 3))
+    named = [m for m in AREA.members if f"id `{m.entity_id}`" in acts]
+    assert named, "Act 3 named no entity id"
+    assert len(named) == PROMPT_ANCHORS
+    assert AREA.members[0].name in acts
 
 
 def test_the_prompt_caps_how_many_anchors_it_names():

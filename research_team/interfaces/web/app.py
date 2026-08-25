@@ -862,8 +862,8 @@ class NewAuthoring(BaseModel):
     would make "write everything" the thing a caller reaches by omission from
     a field they have to know exists.
 
-    `lessons` is capped as well as floored. Three model turns per area is the
-    fixed cost; a request for forty lessons is three turns asked to produce
+    `lessons` is capped as well as floored. Four model turns per area is the
+    fixed cost; a request for forty lessons is four turns asked to produce
     forty files, which no local model does well and which nobody reads. Twelve
     is where a unit stops being a unit.
     """
@@ -3852,7 +3852,7 @@ def create_app(
 
         409 when this project already has an authoring run in flight. One at a
         time, refused up front, for `AuthoringActivity`'s reason: a path is up
-        to three model turns per area and a second run would interleave with
+        to four model turns per area and a second run would interleave with
         the first on the same project.
         """
         if course_author is None or authoring is None:

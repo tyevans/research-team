@@ -23,8 +23,8 @@ worth naming because it decides what a reader is told after a restart:
   assert work is in progress when none is.
 
 **One run per project, not one per area**, and that is a product decision
-rather than a concurrency convenience. Authoring an area is three model turns;
-authoring a path is three per area and can be thirty. Letting a person start
+rather than a concurrency convenience. Authoring an area is four model turns;
+authoring a path is four per area and can be forty. Letting a person start
 several at once means a browser tab can commit an unbounded amount of a local
 model's time with no way to see the total, and the second run's turns would
 interleave with the first's on the same project. Refused up front, the way
@@ -32,7 +32,7 @@ interleave with the first's on the same project. Refused up front, the way
 
 **Progress is per area, and that is the difference from `SeedingActivity`.** A
 seeding run is one turn and is either running or not; an authoring run over
-eight areas is up to twenty-four turns and can sit at "running" for a very
+eight areas is up to thirty-two turns and can sit at "running" for a very
 long time. A panel that could only say "running" for twenty minutes is
 indistinguishable from one that has hung, so the frame carries which area is
 in hand and how many are done.

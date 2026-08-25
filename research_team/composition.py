@@ -3269,7 +3269,7 @@ def build_application(
     # through -- a seeding turn is a turn like any other, and `TopicSeeder`
     # joins and releases the project the same way `start_research_run` does.
     topic_seeder = TopicSeeder(service, turns)
-    # Same `service` and `turns` a third time. An authoring run is three turns
+    # Same `service` and `turns` a third time. An authoring run is four turns
     # rather than one, but they are ordinary turns against a joined project --
     # which is the point: a lesson can quote the corpus because the agent
     # writing it has the same tools every other turn has.

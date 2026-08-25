@@ -13,14 +13,23 @@ wrote no lesson returns a reply like any other. Only the files tell the truth.
 import pytest
 
 from research_team.application.authoring_checkpoints import (
+    ESSENTIAL_QUESTIONS_HEADING,
+    EVIDENCE_HEADING,
+    UNDERSTANDINGS_HEADING,
     CheckpointFailed,
     check_assessment,
     check_lessons,
     check_stage_one,
     check_stage_two,
+    component_counts,
     lesson_paths,
     unit_text,
 )
+from research_team.application.course_authoring import (
+    desired_results_prompt,
+    evidence_prompt,
+)
+from research_team.domain.learning_area import AreaMember, LearningArea
 
 SLUG = "the-principate"
 UNIT = f"/course/areas/{SLUG}/unit.md"
@@ -153,7 +162,7 @@ def test_assessment_fails_when_the_review_file_is_absent():
         }
     )
     with pytest.raises(CheckpointFailed) as caught:
-        check_assessment(present, SLUG, lesson_count=1)
+        check_assessment(present, SLUG, lesson_count=1, before=(0,))
     assert "review.md" in caught.value.reason
 
 
@@ -166,7 +175,7 @@ def test_assessment_fails_when_a_lesson_carries_no_component():
         }
     )
     with pytest.raises(CheckpointFailed):
-        check_assessment(present, SLUG, lesson_count=1)
+        check_assessment(present, SLUG, lesson_count=1, before=(0,))
 
 
 def test_assessment_passes_with_a_component_in_every_lesson_and_a_review():
@@ -179,7 +188,83 @@ def test_assessment_passes_with_a_component_in_every_lesson_and_a_review():
             f"/course/areas/{SLUG}/review.md": "# Unit review\n",
         }
     )
-    check_assessment(present, SLUG, lesson_count=1)
+    check_assessment(present, SLUG, lesson_count=1, before=(0,))
+
+
+def test_assessment_fails_when_phase_four_added_nothing_to_a_lesson():
+    """The one assertion in this file that is about phase 4 rather than phase 3.
+
+    Until 2026-08-24 `check_assessment` asked only whether a `component:` fence
+    existed -- which `learning_plan_prompt` already requires of every drafter,
+    so a run in which every `quiz-writer` did nothing passed as long as
+    `unit-reviewer` left a `review.md`. This is that run: the lesson carries
+    exactly the one component phase 3 left, and `before` says so.
+
+    Proved red by reverting the growth comparison in `check_assessment`, not
+    by trusting the green: with only the fence check in place this input
+    passes.
+    """
+    lesson = "builds_toward: republic\n\n```component:mcq\nid: a\n```\n"
+    present = files(
+        **{
+            UNIT: STAGE_ONE + STAGE_TWO,
+            f"/course/areas/{SLUG}/lesson-01.md": lesson,
+            f"/course/areas/{SLUG}/review.md": "# Unit review\n",
+        }
+    )
+    before = component_counts(present, SLUG, lesson_count=1)
+    assert before == (1,)
+
+    with pytest.raises(CheckpointFailed) as caught:
+        check_assessment(present, SLUG, lesson_count=1, before=before)
+    assert "lesson-01.md" in caught.value.reason
+
+
+def test_assessment_passes_when_a_lesson_gained_a_component():
+    """The other side of the growth check: the same lesson, one item appended."""
+    lesson = "builds_toward: republic\n\n```component:mcq\nid: a\n```\n"
+    present = files(
+        **{
+            UNIT: STAGE_ONE + STAGE_TWO,
+            f"/course/areas/{SLUG}/lesson-01.md": (
+                lesson + "\n```component:cloze\nid: b\n```\n"
+            ),
+            f"/course/areas/{SLUG}/review.md": "# Unit review\n",
+        }
+    )
+    check_assessment(present, SLUG, lesson_count=1, before=(1,))
+
+
+@pytest.mark.parametrize(
+    "heading", [UNDERSTANDINGS_HEADING, ESSENTIAL_QUESTIONS_HEADING, EVIDENCE_HEADING]
+)
+def test_every_heading_a_checkpoint_searches_for_is_named_in_its_prompt(heading):
+    """The pair that shipped drifted, and nothing here could see it.
+
+    `check_stage_one` finds `## Enduring Understandings` by literal text, and
+    `desired_results_prompt` asked for "2-4 **enduring understandings**" and
+    named no heading at all -- so a model that satisfied the prompt exactly
+    failed the checkpoint at `0 enduring understanding(s), wanted 2`. Every
+    fixture above hand-writes the headings, which is precisely why: the fixture
+    was supplying the contract the prompt was supposed to state.
+
+    This asserts the constants reach the prompts, not that the prompts are
+    good. It fails on the edit that caused the defect -- a heading hard-coded
+    at the `find` call, or a prompt that stops interpolating it.
+
+    Proved red by re-typing `"## Enduring Understandings"` at the `_section`
+    call in `check_stage_one` and dropping the interpolation from the prompt.
+    """
+    area = LearningArea(
+        slug=SLUG,
+        members=(
+            AreaMember(entity_id="e1", name="Augustus", entity_type="person", centrality=1.0),
+        ),
+    )
+    if heading == EVIDENCE_HEADING:
+        assert heading in evidence_prompt(area, "STAGE ONE")
+    else:
+        assert heading in desired_results_prompt(area, "Ancient Rome")
 
 
 def test_lesson_paths_are_zero_padded_and_one_based():

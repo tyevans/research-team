@@ -6,15 +6,17 @@ assumes a teacher who will do the producing." This module is that teacher, and
 going past Stage 3 into materials is a departure from the preset recorded here
 rather than smuggled into it. The preset is untouched; nothing below reads it.
 
-**Backward design is enforced by sequencing, not by asking for it.** Three
-turns run in order, and each is given only what the stages before it produced:
-desired results, then evidence *given the results*, then the learning plan
-*given both*. A model asked for all three at once writes the lessons first and
-reverse-engineers understandings to match them -- fluently, and with every
-section present, so the output is indistinguishable from the real thing by
-inspection. That is the precise failure UbD exists to prevent, and three calls
-rather than one is what it costs to actually prevent it rather than to request
-it politely.
+**Backward design is enforced by sequencing, not by asking for it.** Four
+phases run in order, and each of the first three is given only what the stages
+before it produced: desired results, then evidence *given the results*, then
+the learning plan *given Stage 1's reply and Stage 2 off the file*. Phase 4 is
+given neither reply -- it is written against the lessons as they ended up, and
+that is the whole reason it is separate. A model asked for all of it at once
+writes the lessons first and reverse-engineers understandings to match them --
+fluently, and with every section present, so the output is indistinguishable
+from the real thing by inspection. That is the precise failure UbD exists to
+prevent, and four calls rather than one is what it costs to actually prevent it
+rather than to request it politely.
 
 **Every turn runs against a project the agent has joined**, so its graph and
 corpus tools are bound and a lesson can quote the material it is teaching.
@@ -30,10 +32,14 @@ from uuid import UUID, uuid4
 
 from research_team.application.authoring_checkpoints import (
     AREAS_DIR,
+    ESSENTIAL_QUESTIONS_HEADING,
+    EVIDENCE_HEADING,
+    UNDERSTANDINGS_HEADING,
     check_assessment,
     check_lessons,
     check_stage_one,
     check_stage_two,
+    component_counts,
     lesson_paths,
     review_path,
     unit_path,
@@ -211,6 +217,17 @@ def desired_results_prompt(area: LearningArea, subject: str) -> str:
     distinction is not pedantic: a model asked for enduring understandings
     about Rome writes excellent ones about Rome, none of which the corpus
     supports, and the resulting unit assesses things the project cannot teach.
+
+    **The two headings are interpolated from `authoring_checkpoints`, not
+    typed.** `check_stage_one` finds them by literal text, and until
+    2026-08-24 this prompt asked for "2-4 **enduring understandings**" and
+    named no heading at all -- so a model that satisfied it exactly, writing
+    `## Understandings` or one `## Stage 1` section with both lists under
+    bolded lead-ins, aborted the run at `0 enduring understanding(s), wanted
+    2`. Every fixture in the suite hand-writes the headings, which is why
+    nothing caught it;
+    `test_every_heading_a_checkpoint_searches_for_is_named_in_its_prompt`
+    is what fails now if the pair drifts.
     """
     return (
         f"You are designing a unit by Understanding by Design, Stage 1 only.\n\n"
@@ -222,11 +239,16 @@ def desired_results_prompt(area: LearningArea, subject: str) -> str:
         f"before writing.\n\n"
         f"Write `{AREAS_DIR}/{area.slug}/unit.md` containing **Stage 1 only**:\n"
         f"- A title for the area, and two or three sentences on what it is.\n"
-        f"- 2-4 **enduring understandings**: full sentences stating what a "
+        f"- A `{UNDERSTANDINGS_HEADING}` section holding 2-4 **enduring "
+        f"understandings** as a bulleted list: full sentences stating what a "
         f"learner should still understand in a year. Not topics.\n"
-        f"- 3-5 **essential questions**: open, arguable, not answerable by "
-        f"recall.\n"
+        f"- An `{ESSENTIAL_QUESTIONS_HEADING}` section holding 3-5 "
+        f"**essential questions** as a bulleted list: open, arguable, not "
+        f"answerable by recall.\n"
         f"- **Knowledge** and **Skills** as two separate lists.\n\n"
+        f"Use those two headings verbatim, at that level, with one bullet per "
+        f"item. A later phase reads them by name to check this one finished, "
+        f"and reads a renamed heading as nothing written at all.\n\n"
         f"Do not write assessments and do not write lessons. A later turn does "
         f"each, and it will be given what you write here. Anything you add now "
         f"is work that turn will contradict.\n\n"
@@ -263,8 +285,8 @@ def evidence_prompt(area: LearningArea, stage_one: str) -> str:
         f"understandings. **Work from the understandings, not from the topic.** "
         f"For each enduring understanding, say what a learner who had it could "
         f"do that one who had merely memorised the material could not.\n\n"
-        f"Append to `{AREAS_DIR}/{area.slug}/unit.md` a `## Stage 2 — Evidence` "
-        f"section holding:\n"
+        f"Append to `{AREAS_DIR}/{area.slug}/unit.md` a "
+        f"`{EVIDENCE_HEADING} — Evidence` section holding:\n"
         f"- One **performance task** per enduring understanding: a paragraph "
         f"describing what the learner produces and what would make it good.\n"
         f"- A set of **check-for-understanding items** as components: at least "
@@ -313,7 +335,7 @@ def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) 
     return (
         f"Understanding by Design, Stage 3, for the area `{area.slug}`.\n\n"
         f"Stage 1 produced this:\n\n---\n{stage_one}\n---\n\n"
-        f"Read the `## Stage 2 — Evidence` section of "
+        f"Read the `{EVIDENCE_HEADING} — Evidence` section of "
         f"`{unit_path(area.slug)}` before you begin. **Every lesson must build "
         f"toward a specific assessment there.**\n\n"
         f"You are writing {lesson_count} lessons:\n"
@@ -353,10 +375,17 @@ def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) 
         f"is what the lesson opens on and the claim is argued from.\n\n"
         f"**Act 3 — dispatch one `lesson-drafter` per slot, in parallel.** Give "
         f"each one its own path, its slot verbatim, the anecdotes you assigned "
-        f"it, the unit's voice, and the enduring understandings. Give it "
-        f"**nothing else** -- not the other slots, not the other lessons. A "
-        f"drafter handed the whole plan writes toward the whole plan and "
-        f"restates its neighbours' claims.\n\n"
+        f"it, the unit's voice, the enduring understandings, and the anchor "
+        f"list below copied verbatim, entity ids and all:\n\n"
+        f"{_anchor_lines(area)}\n\n"
+        f"The anchor list goes to every drafter unchanged. A drafter cannot "
+        f"see this conversation, and a resolved component whose id the drafter "
+        f"invented renders as unavailable forever with nothing warning you -- "
+        f"so an id it was not given is an id it will make up.\n\n"
+        f"**Nothing else**: no other lesson's slot, no other lesson's "
+        f"anecdotes, no other lesson's draft. A drafter handed the whole plan "
+        f"writes toward the whole plan and restates its neighbours' "
+        f"claims.\n\n"
         f"**Act 4 — one `prose-critic` per lesson, then the same lesson's own "
         f"drafter to revise.** The critic returns failed rule numbers and the "
         f"passages; hand those to a `lesson-drafter` for that same path. Do not "
@@ -410,9 +439,11 @@ def assessment_prompt(area: LearningArea, lesson_count: int) -> str:
     thing to want, since it is the only phase that needs nothing from Stage 1's
     reply -- the parent arrives with no roster and will most likely write the
     items itself. What comes out is a plausible unit with no `quiz-writer`
-    involved and nothing raising, because `check_assessment` only asks whether
-    each lesson carries a component and cannot tell who wrote it. Append the
-    roster here if that wiring ever changes.
+    involved: `check_assessment` requires every lesson to have *gained*
+    components in this phase, so a phase that wrote nothing does raise -- but a
+    parent that wrote the items itself does not, because nothing in the files
+    distinguishes an author. Append the roster here if that wiring ever
+    changes.
 
     Lesson paths come from `lesson_paths` rather than a format string built
     here. CLAUDE.md records `AREAS_DIR` reaching three independent copies; a
@@ -494,16 +525,16 @@ def path_overview_prompt(path: LearningPath, areas: dict[str, LearningArea]) -> 
 
 
 class CourseAuthor:
-    """Runs an area's three authoring turns, joining and releasing around them.
+    """Runs an area's four authoring phases, joining and releasing around them.
 
     The join/release shape is `TopicSeeder.seed`'s exactly, including
     `release_project` in `finally` for its reason: a run that dies holding the
     project locks out every later turn over a crash that produced nothing.
 
-    **One session for all three turns**, not one per stage. The turns are a
-    single piece of work whose second and third steps read what the first
-    wrote, and splitting them across sessions would put Stage 2's reading of
-    Stage 1 across a workspace boundary -- the file would not be there.
+    **One session for all four phases**, not one per stage. The turns are a
+    single piece of work whose later steps read what the earlier ones wrote,
+    and splitting them across sessions would put Stage 2's reading of Stage 1
+    across a workspace boundary -- the file would not be there.
     """
 
     def __init__(self, session: SessionService, turns: TurnRunner) -> None:
@@ -553,11 +584,20 @@ class CourseAuthor:
                 session_id, learning_plan_prompt(area, first.reply, lesson_count)
             )
             replies.append(third.reply)
-            check_lessons(await self._files(session_id), area.slug, lesson_count)
+            after_lessons = await self._files(session_id)
+            check_lessons(after_lessons, area.slug, lesson_count)
+            # Read before phase 4 runs, because phase 4's checkpoint has no
+            # other way to tell its own contribution from phase 3's: every
+            # lesson already carries components by then, so an unconditional
+            # "carries a component" check passes a run in which every
+            # `quiz-writer` did nothing.
+            before = component_counts(after_lessons, area.slug, lesson_count)
 
             fourth = await self._turns.run(session_id, assessment_prompt(area, lesson_count))
             replies.append(fourth.reply)
-            check_assessment(await self._files(session_id), area.slug, lesson_count)
+            check_assessment(
+                await self._files(session_id), area.slug, lesson_count, before=before
+            )
         finally:
             await self._session.release_project(session_id)
 

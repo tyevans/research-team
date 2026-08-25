@@ -36,7 +36,7 @@ pytestmark = pytest.mark.asyncio
 class StubAuthor:
     """A `CourseAuthor` that records its asks and runs no turns.
 
-    The real one is three model turns per area against a joined project, and a
+    The real one is four model turns per area against a joined project, and a
     route test that drove it would be testing `TurnSupervisor` -- slowly, and
     while leaving a background task running past the fixture that owns the
     application. `test_course_authoring.py` owns the sequencing; what can only
