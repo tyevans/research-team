@@ -4807,3 +4807,51 @@ None of the above blocks a merge; all of it blocks trusting the branch's
 central claims without having read a real unit. See also **B149**, whose
 deleted restart tests are the nearest sibling: coverage a live system needs
 that a unit test cannot supply.
+
+### B151. One learning area deterministically ends its first authoring turn with an empty completion
+
+Measured on 2026-08-25, against the real database and
+`qwen3.8-27b-64k-txt` at `192.168.1.14:8080`, twice, byte-identical:
+
+```
+POST /api/projects/9337d734.../curriculum/author  {"area": "knowledge-graph"}
+-> CourseAuthoringFailed: stage_one: 0 enduring understanding(s), wanted 2
+```
+
+Both runs made the same 14 tool calls across 7 assistant messages -- 6
+`graph_search`, 5 `read_source`, 1 `list_sources`, 1 `graph_describe`, 1 `ls`
+-- and then emitted a final completion with **empty content and
+`finish_reason: "stop"`**. `unit.md` was never written. Two consecutive
+identical results is this repository's stated bar for "this is real", and this
+cleared it.
+
+**The obvious explanation is wrong, and was tested rather than assumed.** The
+first hypothesis was that `desired_results_prompt`'s unbounded "Read the
+material with your graph and corpus tools before writing" lets the model read
+until it has nothing left to give. The discriminating run says no: the
+`session` area -- 44 entities against `knowledge-graph`'s 30 -- made **16**
+`read_source` calls and 15 `task` dispatches across 50 assistant messages and
+finished with `CourseAuthored`. Three times the reading, and it worked. Read
+volume is not the cause, and neither is area size.
+
+So the trigger is something specific to this area's context, and it is not yet
+known. Do not fix this by capping reads in the prompt; that was the hypothesis
+the measurement killed, and shipping it would be the `parse_temporal` mistake
+this file records above -- a reproducible fix for a defect that is not the one
+you have.
+
+**What the incident does establish, and it is the more valuable half.** The
+phase checkpoints work, on a real failure, within hours of merging. Without
+`check_stage_one` this run produced an `AssistantMessageAdded`, a
+`TurnCompleted` and a `CourseAuthoringRunSettled` with nothing on disk -- it
+would have read as a completed authoring run to every surface in the system.
+That is the exact failure the four-phase design was built to make visible, and
+it is now demonstrated rather than argued.
+
+**A mitigation worth considering separately from the root cause.** A turn that
+returns empty content with `finish_reason: "stop"` and writes no file is a
+retryable condition, and `research_team/application/retry.py` already exists. A
+single retry would likely have carried both of these runs. That is a change to
+turn supervision rather than to authoring, it would mask the underlying trigger
+as well as recover from it, and it should not be made without deciding which of
+those two things is wanted.
