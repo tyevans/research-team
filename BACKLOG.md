@@ -4855,3 +4855,46 @@ single retry would likely have carried both of these runs. That is a change to
 turn supervision rather than to authoring, it would mask the underlying trigger
 as well as recover from it, and it should not be made without deciding which of
 those two things is wanted.
+
+### B152
+
+**The interaction explorer's first read raises three questions about the data,
+not about the reader.** Measured 2026-08-25 against the real
+`~/.research-team/interactions.db`: 3,683 events, 211 browser sessions, 9
+installs, no dead-lettered events. Nothing in the reader is wrong. These are
+things the numbers say that nobody had a way to see before.
+
+**Five kinds have never been emitted once.** `ActionUndone`, `ActionRetried`,
+`EmptyResultEncountered`, `DispatchRequested` and `ExtractionCancelled` are all
+at zero across the whole log. **This was checked and they are all wired** --
+each has a real emitter call site (`use-media-proposals.ts`, `ask-store.ts`,
+`graph-store.ts`, `use-dispatch.ts`, `use-extraction-queue.ts`), so the zeros
+are unexercised paths rather than missing plumbing, which is the opposite of
+what the shape suggests. Worth restating because the guess was wrong and
+someone will make it again: three of those five are the friction half of the
+vocabulary, and the friction block will read all zeros until somebody undoes
+something. That does not mean the console is frictionless; it means this
+corpus is one person's, mostly navigating.
+
+**`expanded_details` is false on all 30 approvals.** Either nobody has ever
+opened Edit or Respond before deciding, or the sticky flag in `Approvals.tsx`
+does not set. The two are indistinguishable from the log alone, and the field's
+own docstring already warns that the name overstates what it measures. The
+cheapest resolution is a deliberate approval with the details opened, then one
+read of the explorer -- worth doing before anyone cites the deliberation split.
+
+**Nine installs for one user on one machine.** `install_id` is documented as
+surviving restarts so a count can say "on nine separate days" rather than "in
+nine separate tabs". Nine of them suggests it is not surviving what it is
+supposed to survive -- cleared storage, or an origin that differs between the
+dev server and the built console. Until that is understood, `install_count` is
+not a count of anything, and any future per-install analysis inherits the
+error.
+
+**Two known warts on the surface itself,** neither worth churning the branch
+for. `/events` returns the `ReadModel` envelope (`id`, `created_at`,
+`updated_at`, `version`, `deleted_at`) alongside the fields anyone wants;
+`created_at` is the row's write time and sits one line from `occurred_at`,
+which is a confusion waiting to happen on the one surface whose job is
+clarity. And `by_decision` has only ever held `approve`, so the rejection path
+of that chart has never rendered with data in it.
