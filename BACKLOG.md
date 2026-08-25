@@ -4723,3 +4723,81 @@ Related: **B148**, which is about the same store's `authored_session_for` losing
 a link past its scan window. B148 and this entry are the read side and the
 durability side of one question -- can a course still find the session that
 holds it -- and neither is currently covered.
+
+### B150. The authoring-subagents branch owes a live run, and five things only that run can answer
+
+`authoring-subagents` replaces course authoring's three-turn model with four
+Python-ordered phases (plan, draft, prose-critic, unit-review) fanning out
+across six named subagents plus one deepagents always inserts. Every task in
+the plan (`docs/superpowers/plans/2026-08-24-course-authoring-subagents.md`)
+shipped with tests, and none of the five items below is a test -- each is
+answerable only by reading what a real session produces, and none has been
+answered yet. This entry exists so the questions survive to the first live
+run rather than being reconstructed from memory once the branch has merged.
+
+**1. The anecdote yield.** `research_team/infrastructure/agent/authoring_subagents.py`
+names an `anecdote-hunter` subagent whose whole purpose is opening a lesson
+with a real incident from the corpus rather than a definition. The design's
+central bet is that the corpus holds one per lesson slot worth finding.
+Nothing in this branch counts how often it does. The measurement is the same
+shape as the `properties`-lift entry above (extraction's 0.3% temporal
+rate, found by tracing what the model actually returned rather than
+reasoning about the code downstream of it): run authoring over a real
+project, then count, per lesson slot, whether `anecdote-hunter` supplied a
+genuine incident, fell back to a surprising number, or reported a
+disagreement with no anecdote at all. A yield near zero means the bet is
+wrong and phase 2 should stop asking for one; nothing short of the count
+distinguishes that from "the lessons still read a bit flat," which is too
+vague to act on.
+
+**2. Whether four phases actually read better than three turns.** The old
+three-turn output is still in the event log and is the only honest baseline
+-- `/tmp/lessons` from any manual trial is not durable and will not survive
+the session that wrote it. Read a unit from before this branch and a unit
+authored after it, same project if possible, and say plainly whether the
+four-phase version's lessons are better, indistinguishable, or worse. No
+test in this branch makes that comparison, because none can.
+
+**3. No test asserts prose quality, and none can be written cheaply.** The
+prose rubric (`research_team/application/prose_rubric.md`, six rules) is
+read by the drafter and the prose-critic prompts, and every test that
+touches it (`tests/application/test_prose_rubric.py` and the checkpoint
+tests) checks that the file loads and that a checkpoint fails when a phase
+wrote nothing -- never that what a phase wrote is good. A regex banning "By
+definition" or requiring a lesson not open with a defined term passes
+forever the first time the model learns to avoid exactly that phrase while
+opening every lesson the same other way. This is not a gap to close later;
+it is the reason item 2 above has to be a person reading two units, and
+will stay that way.
+
+**4. The seventh subagent cannot be disabled.** deepagents 0.7.6 inserts an
+undescribed `general-purpose` subagent alongside the six the authoring
+prompts name (`d8b2eef`), and the keyword argument the spec and the plan
+both assumed would suppress it (`general_purpose_subagent=`) does not exist
+in this version -- `e3cd719` corrected both documents after task 7 found the
+mismatch by reading the installed library rather than its docstring.
+`test_general_purpose_cannot_be_disabled_through_create_deep_agent` pins the
+absence and is written to fail on the first deepagents version that adds
+the keyword; that failure is the signal to re-decide whether to spend a
+maintained spec suppressing it, not a regression to silence. Until then,
+every authoring session carries a seventh subagent with the main agent's
+full capabilities and no line in any prompt saying when to use it, next to
+six that exist specifically to keep the lesson plan from leaking un-critiqued
+prose past `prose-critic` and `unit-reviewer`.
+
+**5. Two generations of assessment items, left in the same unit on purpose.**
+Stage 2 (pre-existing, untouched by this branch) writes check-for-understanding
+items into `unit.md`; phase 4's `unit-reviewer` writes a second, better set
+into the individual lessons. Nothing deletes the first set, so a finished
+unit carries both. This is not an oversight the plan missed -- deleting one
+phase's output from inside another phase's prompt is the reconciliation
+problem this whole design exists to avoid (the plan and design doc both
+frame Python-ordered phases against model-owned fan-out on exactly that
+ground). Whether the duplication reads as redundant or as two honestly
+different passes is item 2's question again, not a new one -- it should be
+part of the same read.
+
+None of the above blocks a merge; all of it blocks trusting the branch's
+central claims without having read a real unit. See also **B149**, whose
+deleted restart tests are the nearest sibling: coverage a live system needs
+that a unit test cannot supply.
