@@ -287,7 +287,7 @@ code is responsible for making.
 **A checkpoint asserting on a shape no prompt demands refuses correct work,
 and the suite cannot see it.** Course authoring's four phases each end in a
 Python check over the files the phase left behind (`authoring_checkpoints.py`),
-and every one of those checks greps for a literal. Three of them greped for a
+and every one of those checks greps for a literal. Three of them grepped for a
 literal the prompt never asked for. The failure is always the same and always
 the wrong way round: the model does exactly what it was told, the checkpoint
 sees nothing, and the run dies naming a count.
@@ -330,6 +330,23 @@ The general rule, and it outlives course authoring: **anywhere Python asserts
 on text a model produced, the assertion is half a contract.** Write the other
 half into the prompt, from the same constant, or the assertion is a guess
 about a stranger's formatting habits.
+
+**This entry did not stop the fourth instance, which was written in the same
+wave that wrote the entry.** Closing the "phase 4 cannot fail on its own work"
+gap meant a new rule -- every lesson's component count must rise in phase 4 --
+gating `quiz-writer`, the one subagent deliberately left without the component
+syntax, from a prompt that stated no floor. Both halves of a fresh contract,
+missing, hours after the paragraph above was written by the same person.
+
+So the durable part is not the prose. It is
+`test_every_marker_a_checkpoint_searches_for_is_named_in_its_prompt`,
+parametrised from `CHECKPOINT_MARKERS` in `authoring_checkpoints.py`, plus
+`test_the_marker_registry_covers_every_literal_constant`, which derives the
+registry's coverage from the module's own constants by introspection so a
+seventh marker fails at collection. The pairs were a hand-written list for
+exactly one commit, and that is the commit the fourth instance entered in.
+**A contract that has to be remembered is documentation; the test is the
+contract.** Read this section when the test fails, not instead of it.
 
 ## Extraction
 

@@ -449,7 +449,7 @@ GET is both cheaper and simpler than the machinery that would let somebody
 trigger it.
 
 What *is* explicit is authoring, and for the reason the earlier draft gave
-about projection: it costs three model turns per area, and a run started
+about projection: it costs four model turns per area, and a run started
 without somebody asking would commit a local model to twenty minutes. Nothing
 re-projects and nothing re-authors on extraction, so a curriculum somebody is
 halfway through is never rewritten underneath them.

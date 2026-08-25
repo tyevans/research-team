@@ -131,6 +131,33 @@ BUILDS_TOWARD_FIELD = "builds_toward"
 #: an indented fence is a code block, and the reader meets the YAML raw.
 COMPONENT_FENCE = "```component:"
 
+#: Which phase's prompt must name which marker, as one object a test reads.
+#:
+#: The list was six hand-written pairs inside the test until 2026-08-25, and a
+#: seventh marker added without a prompt would have been missed silently --
+#: which is how the fourth instance of this defect got in, at the end of the
+#: very wave that fixed the first three. `test_the_marker_registry_covers_every
+#: _literal_constant` closes that: it compares this mapping against the
+#: module's own string constants by introspection, so a new one fails at
+#: collection rather than waiting to be remembered.
+#:
+#: The checkpoints keep reading the named constants rather than indexing this
+#: -- a checkpoint that reached in by phase and position would be less legible
+#: and no safer. This is a registry for the contract test, and the honest limit
+#: is that it says which prompt must *name* a marker, not that the prompt uses
+#: it correctly.
+CHECKPOINT_MARKERS: Mapping[str, tuple[str, ...]] = {
+    "stage_one": (UNDERSTANDINGS_HEADING, ESSENTIAL_QUESTIONS_HEADING),
+    "stage_two": (EVIDENCE_HEADING, PERFORMANCE_TASK_MARKER),
+    "lessons": (BUILDS_TOWARD_FIELD, COMPONENT_FENCE),
+    "assessment": (COMPONENT_FENCE,),
+}
+
+#: String constants here that no checkpoint greps for, and so owe no prompt.
+#: Named rather than inferred, because "not a marker" is a judgement and the
+#: completeness test must not be able to make it for you.
+NON_MARKER_CONSTANTS = frozenset({"AREAS_DIR"})
+
 _BULLET = re.compile(r"^\s*[-*]\s+\S", re.MULTILINE)
 _COMPONENT = re.compile(rf"^{re.escape(COMPONENT_FENCE)}", re.MULTILINE)
 

@@ -12,11 +12,12 @@ wrote no lesson returns a reply like any other. Only the files tell the truth.
 
 import pytest
 
+from research_team.application import authoring_checkpoints
 from research_team.application.authoring_checkpoints import (
-    BUILDS_TOWARD_FIELD,
-    COMPONENT_FENCE,
+    CHECKPOINT_MARKERS,
     ESSENTIAL_QUESTIONS_HEADING,
     EVIDENCE_HEADING,
+    NON_MARKER_CONSTANTS,
     PERFORMANCE_TASK_MARKER,
     UNDERSTANDINGS_HEADING,
     CheckpointFailed,
@@ -250,34 +251,35 @@ AREA = LearningArea(
 
 @pytest.mark.parametrize(
     ("marker", "phase"),
-    [
-        (UNDERSTANDINGS_HEADING, "stage_one"),
-        (ESSENTIAL_QUESTIONS_HEADING, "stage_one"),
-        (EVIDENCE_HEADING, "stage_two"),
-        (PERFORMANCE_TASK_MARKER, "stage_two"),
-        (BUILDS_TOWARD_FIELD, "lessons"),
-        (COMPONENT_FENCE, "lessons"),
-    ],
+    [(marker, phase) for phase, markers in CHECKPOINT_MARKERS.items() for marker in markers],
+    ids=lambda value: value,
 )
 def test_every_marker_a_checkpoint_searches_for_is_named_in_its_prompt(marker, phase):
-    """One defect, found three times: a checkpoint asserting on a shape no
+    """One defect, found four times: a checkpoint asserting on a shape no
     prompt demands.
 
     A shape the prompt does not ask for is a shape the model has no reason to
     produce, so the failure is a *correct* phase refused -- and no fixture can
     see it, because the fixture is written by whoever wrote the checkpoint and
     supplies the shape by hand. C1 (the two Stage 1 headings) was latent; C2
-    (`PERFORMANCE_TASK_MARKER`) killed a live run on 2026-08-25.
+    (`PERFORMANCE_TASK_MARKER`) killed a live run on 2026-08-25;
+    `BUILDS_TOWARD_FIELD` and `COMPONENT_FENCE` were orphaned by the fan-out.
+
+    Parametrised from `CHECKPOINT_MARKERS` rather than from a hand-written list
+    of pairs, and that is the whole point of the registry. The list was written
+    by hand for one commit, and in that same commit a fourth instance was
+    created -- `check_assessment`'s growth rule, gating a `quiz-writer` that
+    had never been shown the fence. A pair that has to be *remembered* is not a
+    contract; `test_the_marker_registry_covers_every_literal_constant` is what
+    stops the registry itself from going stale.
 
     This asserts the constants reach the prompts, not that the prompts are
-    good. It fails on the edit that caused all three: a literal typed at the
-    `find` call, or a prompt that stops interpolating it.
+    good. Proved red per case by dropping each interpolation in turn.
 
-    Proved red per case by dropping each interpolation in turn.
-
-    `lesson-drafter` carries the last two as well and is asserted separately in
-    `tests/infrastructure/test_authoring_subagents.py` -- since the fan-out it
-    writes the lessons, and this file cannot reach infrastructure's roster.
+    `lesson-drafter` and `quiz-writer` carry the markers they must write and
+    are asserted separately in
+    `tests/infrastructure/test_authoring_subagents.py` -- since the fan-out
+    they do the writing, and this file cannot reach infrastructure's roster.
     """
     prompts = {
         "stage_one": desired_results_prompt(AREA, "Ancient Rome"),
@@ -286,6 +288,32 @@ def test_every_marker_a_checkpoint_searches_for_is_named_in_its_prompt(marker, p
         "assessment": assessment_prompt(AREA, 3),
     }
     assert marker in prompts[phase]
+
+
+def test_the_marker_registry_covers_every_literal_constant():
+    """A seventh marker must fail here rather than wait to be noticed.
+
+    Derived by introspection over the module's own public string constants,
+    because the failure this whole section exists for is a literal that some
+    checkpoint greps for and no prompt names -- and the six pairs above cannot
+    detect their own incompleteness. Anything genuinely not a marker goes in
+    `NON_MARKER_CONSTANTS` by name, so excusing a constant is a deliberate act
+    with somewhere to write the reason.
+
+    Proved red by adding a `SPARE_HEADING = "## Spare"` constant to the module.
+    """
+    declared = {
+        name
+        for name, value in vars(authoring_checkpoints).items()
+        if name.isupper() and isinstance(value, str) and not name.startswith("_")
+    }
+    registered = {
+        name
+        for name in declared
+        if getattr(authoring_checkpoints, name)
+        in {marker for markers in CHECKPOINT_MARKERS.values() for marker in markers}
+    }
+    assert declared - registered - NON_MARKER_CONSTANTS == set()
 
 
 def test_stage_two_refuses_the_shape_that_killed_the_live_run():

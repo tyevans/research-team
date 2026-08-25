@@ -626,3 +626,17 @@ def test_the_first_phase_allows_exactly_one_critique_round():
     assert "unit-critic" in prompt
     assert "once" in prompt
     assert "blander, not truer" in prompt
+
+
+def test_the_assessment_prompt_states_the_floor_its_checkpoint_enforces():
+    """`check_assessment` refuses a lesson that gained nothing in phase 4; the
+    parent chooses how many items each `quiz-writer` adds.
+
+    Until 2026-08-25 the growth rule was in Python and in no prompt, so a
+    parent that judged one short lesson needed no items aborted a run that had
+    produced usable output. The fourth instance of the shape CLAUDE.md's
+    "Checkpoints over model output" section describes, created by the fix wave
+    that closed the first three.
+    """
+    prompt = assessment_prompt(AREA, 3)
+    assert "Every lesson must gain at least one item" in prompt

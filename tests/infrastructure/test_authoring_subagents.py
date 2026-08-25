@@ -195,20 +195,52 @@ def test_the_drafter_carries_the_component_guide():
     assert "`entity_id:` is the id, copied exactly" in drafter["system_prompt"]
 
 
-@pytest.mark.parametrize("marker", [BUILDS_TOWARD_FIELD, COMPONENT_FENCE])
-def test_the_drafter_is_told_the_markers_its_checkpoints_search_for(marker):
-    """The parent's prompt names both; since the fan-out the parent writes no
-    lesson.
+#: Which subagent writes which checkpointed marker, since the fan-out.
+#:
+#: `quiz-writer` is on this list because of `check_assessment`'s growth rule,
+#: which is newer than the roster: it requires every lesson's component count
+#: to rise in phase 4, so the fence stopped being style advice and became a
+#: gate. The final review graded the writer's missing syntax "genuinely minor
+#: -- it can copy the fence style from the lesson it reads", which was true
+#: while nothing gated it and is a guess about the model's formatting now that
+#: something does.
+_MARKER_WRITERS = {
+    "lesson-drafter": (BUILDS_TOWARD_FIELD, COMPONENT_FENCE),
+    "quiz-writer": (COMPONENT_FENCE,),
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "marker"),
+    [(name, marker) for name, markers in _MARKER_WRITERS.items() for marker in markers],
+)
+def test_the_writers_are_told_the_markers_their_checkpoints_search_for(name, marker):
+    """The parent's prompts name all of these; since the fan-out the parent
+    writes no lesson and appends no item.
 
     `check_lessons` greps each lesson for `builds_toward` and
-    `check_assessment` for the component fence, and the only thing writing a
-    lesson is a subagent that cannot see the prompt those requirements were
-    stated in. That is the C1/C2 shape one layer down -- a checkpoint asserting
-    on a shape its actual writer was never asked for -- and it is why the
-    marker constants are shared rather than typed at each site.
+    `check_assessment` for the component fence, twice over -- once for
+    presence, once for growth. The things that satisfy those are subagents that
+    cannot see the prompt the requirements were stated in. That is the C1/C2
+    shape one layer down, and the fourth instance of it was written into
+    `check_assessment` by the fix wave that closed the first three: the growth
+    rule shipped a day before `quiz-writer` was told what a component fence
+    looks like.
 
-    Proved red by removing the FRONTMATTER FIRST clause and the
+    Proved red by removing the FRONTMATTER FIRST clause and each
     `COMPONENT_GUIDE` interpolation in turn.
     """
-    drafter = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "lesson-drafter")
-    assert marker in drafter["system_prompt"]
+    spec = next(s for s in AUTHORING_SUBAGENTS if s["name"] == name)
+    assert marker in spec["system_prompt"]
+
+
+def test_the_quiz_writer_is_told_the_floor_the_checkpoint_enforces():
+    """The fence is half of it; the other half is that zero items fails.
+
+    `assessment_prompt` lets the parent say how many items to add and, before
+    2026-08-25, nothing told either the parent or the writer that a lesson
+    gaining nothing aborts the phase. A writer that judged a short lesson
+    already well covered would have failed a run that produced usable output.
+    """
+    writer = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "quiz-writer")
+    assert "APPEND AT LEAST ONE ITEM." in writer["system_prompt"]
