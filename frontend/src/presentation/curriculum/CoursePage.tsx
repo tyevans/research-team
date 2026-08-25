@@ -11,11 +11,12 @@ import { SessionId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button, ErrorBox, Loading } from '../common/primitives.tsx'
 import { projectHref, sessionSelection } from '../routing/routes.ts'
+import { CourseMembers } from './CourseMembers.tsx'
 import { CourseUnit } from './CourseUnit.tsx'
 
 /** One cluster's course page: art and title, blurb, an outline, either
- *  "Make this course" or the realized state, and the cluster's full
- *  membership -- what `#/p/<id>/course/<slug>` opens into.
+ *  "Make this course" or the realized state, and the cluster's membership as
+ *  a fold -- what `#/p/<id>/course/<slug>` opens into.
  *
  * Its own component and its own fetch, matching `AreaDetail`'s reasoning: a
  * course's detail is a different response shape (`CourseDetail`, not
@@ -239,23 +240,7 @@ export const CoursePage = ({
         )
       )}
 
-      <section className="crs-course-members flex flex-col gap-1">
-        <h3 className="font-medium m-0 text-sm">{members.length} entities in this cluster</h3>
-        <ul className="m-0 flex list-none flex-col gap-1 p-0">
-          {members.map((member) => (
-            <li key={member.entityId} className="flex items-baseline gap-2 text-xs">
-              <a
-                href={projectHref(projectId, { facet: 'entity', id: member.entityId })}
-                className="focus-visible:lay-ring-inward text-fg no-underline hover:underline"
-              >
-                {member.name}
-              </a>
-              <span className="text-fg-faint">{member.entityType}</span>
-              {member.temporal !== null && <span className="text-fg-faint">{member.temporal}</span>}
-            </li>
-          ))}
-        </ul>
-      </section>
+      <CourseMembers projectId={projectId} members={members} />
     </div>
   )
 }
