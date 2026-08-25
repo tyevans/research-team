@@ -99,14 +99,55 @@ it('refuses to hide the last open pane, and says that it refused', () => {
 })
 
 it('refuses even when the collapsed set names a pane that no longer exists', () => {
-  // Fails with `>=` changed to `===`: the stale entry makes the set look one
-  // short, and the last real pane closes. Collapsed state is persisted across
-  // reloads in this console, so a set naming a pane from a previous layout is
-  // an ordinary occurrence rather than a contrived one.
+  // The stale entry must not buy an extra fold. Every *real* pane here is
+  // already folded, so the refusal is right whether or not the removed one is
+  // counted -- which is what the test below is for. Collapsed state is
+  // persisted across reloads in this console, so a set naming a pane from a
+  // previous layout is ordinary rather than contrived.
   const collapsed = new Set(['timeline', 'workspace', 'a-pane-that-was-removed'])
   const result = toggleCollapsed({ tracks: TRACKS, collapsed, id: 'conversation' })
 
   expect(result.refused).toBe(true)
+})
+
+it('lets a pane close when the only thing in the way is a pane that was removed', () => {
+  // The bug this was reported as: "I can never collapse the queue". The
+  // project page's stored group still holds `holder` from when it had three
+  // columns, and counting it made a two-track layout look full at one fold.
+  // The reader is told a rule the layout is not up against, on a page where
+  // nothing is folded at all.
+  //
+  // Fails against the old count, which was `next.size >= tracks.length` over
+  // an unfiltered set.
+  const tracks: readonly Track[] = [
+    { id: 'queue', min: 344, max: '25%' },
+    { id: 'material', min: 784, weight: 1 },
+  ]
+  const collapsed = new Set(['holder'])
+
+  const result = toggleCollapsed({ tracks, collapsed, id: 'queue' })
+
+  expect(result.refused).toBe(false)
+  // And the dead entry is gone from what gets stored, rather than waiting to
+  // confuse the next count.
+  expect([...result.collapsed]).toEqual(['queue'])
+})
+
+it('drops a removed pane from the set when one is expanded', () => {
+  // The other path out of `toggleCollapsed`, which returns early and would
+  // keep the stale entry if the filter were applied only on the closing side.
+  const tracks: readonly Track[] = [
+    { id: 'queue', min: 344, max: '25%' },
+    { id: 'material', min: 784, weight: 1 },
+  ]
+
+  const result = toggleCollapsed({
+    tracks,
+    collapsed: new Set(['holder', 'queue']),
+    id: 'queue',
+  })
+
+  expect([...result.collapsed]).toEqual([])
 })
 
 it('never mutates the set it was given', () => {
