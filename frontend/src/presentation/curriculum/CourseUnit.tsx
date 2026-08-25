@@ -6,6 +6,7 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Markdown } from '../common/content.tsx'
 import { ErrorBox, Loading } from '../common/primitives.tsx'
+import { CourseFile } from './CourseFile.tsx'
 
 /** What the three UbD authoring turns actually wrote for a realized course,
  *  on the page rather than in a zip.
@@ -80,19 +81,43 @@ export const CourseUnit = ({ projectId, slug }: { projectId: ProjectId; slug: st
         <p className="crs-course-no-unit m-0 text-sm text-fg-faint">
           The framing for this course was not written -- its lessons are below.
         </p>
-      ) : (
+      ) : text.sessionId === null || text.unitPath === null ? (
+        // Both are non-null for every `authored` course this build writes, so
+        // this branch is for a payload from a server that predates `unitPath`.
+        // Prose is the honest answer there: the widgets cannot be parsed
+        // without a path, and refusing the whole unit over it would trade a
+        // readable course for a strictly worse page.
         <Markdown source={text.unit} projectId={projectId} className="crs-course-unit" />
+      ) : (
+        <CourseFile
+          projectId={projectId}
+          sessionId={text.sessionId}
+          path={text.unitPath}
+          markdown={text.unit}
+          className="crs-course-unit"
+        />
       )}
-      {text.lessons.map((lesson) => (
+      {text.lessons.map((lesson) =>
         // Keyed on the workspace path, not on the heading: two lessons can
         // open with the same words, and a heading key would collapse them.
-        <Markdown
-          key={lesson.path}
-          source={lesson.markdown}
-          projectId={projectId}
-          className="crs-course-lesson"
-        />
-      ))}
+        text.sessionId === null ? (
+          <Markdown
+            key={lesson.path}
+            source={lesson.markdown}
+            projectId={projectId}
+            className="crs-course-lesson"
+          />
+        ) : (
+          <CourseFile
+            key={lesson.path}
+            projectId={projectId}
+            sessionId={text.sessionId}
+            path={lesson.path}
+            markdown={lesson.markdown}
+            className="crs-course-lesson"
+          />
+        ),
+      )}
     </article>
   )
 }
