@@ -253,7 +253,7 @@ async def test_a_phase_that_wrote_nothing_fails_the_run():
 async def test_the_four_phases_run_in_order():
     """Each phase is asserted checkpoint-valid before the next is dispatched,
     and phases 1-3's prompts each carry a fragment of what the phase before
-    them wrote -- the same backward-design guarantee the three-turn tests
+    them wrote -- the same backward-design guarantee the sequencing tests
     above pin.
 
     Would pass if the phases ran in the wrong order but each still happened to
