@@ -1,7 +1,15 @@
 import type { ComponentAudience } from '@domain/lesson/document.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import type { ProjectId, SessionId, SourceId, TopicId } from '@domain/shared/identifier.ts'
+import type {
+  BrowserSessionId,
+  ProjectId,
+  SessionId,
+  SourceId,
+  TopicId,
+} from '@domain/shared/identifier.ts'
+import type { InteractionFilters } from '@domain/interaction/filters.ts'
+import type { InteractionWindow } from '@application/ports/repositories.ts'
 
 /** Cache keys, in one place.
  *
@@ -11,6 +19,33 @@ import type { ProjectId, SessionId, SourceId, TopicId } from '@domain/shared/ide
  * heading. And every key is built here rather than spelled out at the call
  * site, because an invalidation that misspells a key silently does nothing.
  */
+/** A filter, flattened into a stable key fragment.
+ *
+ * Every field, in a fixed order, so two structurally equal filters produce
+ * equal keys whatever order their object literals were written in --
+ * React Query hashes the key structurally, and an object spread in a
+ * different order would be a cache miss that looks like a stale render.
+ * The arrays go in as arrays rather than joined: a `views` of `['a,b']` and
+ * one of `['a', 'b']` are different filters, and joining would collapse them. */
+const filterKey = (filters: InteractionFilters) =>
+  [
+    filters.kinds,
+    filters.views,
+    filters.projectId,
+    filters.installId,
+    filters.browserSessionId,
+    filters.since,
+    filters.until,
+  ] as const
+
+/** `null` for each absent field rather than an absent key, so an unwindowed
+ *  read and one that happens to ask for the server's own default are still
+ *  distinguishable -- they are different requests (`page` in
+ *  `interaction-log-query-repository.ts` omits rather than defaults) and
+ *  collapsing them would serve one under the other. */
+const windowKey = (window?: InteractionWindow) =>
+  [window?.limit ?? null, window?.offset ?? null, window?.order ?? null] as const
+
 export const queryKeys = {
   sessions: () => ['sessions'] as const,
   tree: () => ['tree'] as const,
@@ -198,6 +233,38 @@ export const queryKeys = {
    *  keyed by slug, not just project, matching `courseDetail`'s reasoning:
    *  two cards rerolling at once must not share one poll. */
   artReroll: (project: ProjectId, slug: string) => ['art-reroll', project, slug] as const,
+
+  /** The interaction log's read side, all under one prefix.
+   *
+   * A namespace rather than five top-level keys, so the explorer's refetch
+   * interval invalidates the page with `['interactions']` and nothing else on
+   * the app has to be listed. Nested under it rather than beside it for
+   * `runningAgents`' reason: one prefix, one invalidation.
+   *
+   * Every filtered key carries the whole filter, serialised the same way the
+   * URL carries it. Two windows over the same log are two different answers,
+   * and a key on the route name alone would show last Tuesday's counts under
+   * this hour's heading -- the mistake `document`'s range key and `timeline`'s
+   * window key both exist to avoid. */
+  interactions: {
+    all: () => ['interactions'] as const,
+    /** Unfiltered on purpose: health is a fact about the whole log, and a
+     *  filtered reading of it would be a different question wearing the same
+     *  word. One cache entry, whatever the filter bar says. */
+    health: () => ['interactions', 'health'] as const,
+    sessions: (filters: InteractionFilters, window?: InteractionWindow) =>
+      ['interactions', 'sessions', filterKey(filters), windowKey(window)] as const,
+    /** One browser session's stream. Keyed by id alone -- the drill-down is
+     *  unfiltered and unpaged, so there is nothing else that could change the
+     *  answer. */
+    session: (id: BrowserSessionId) => ['interactions', 'session', id] as const,
+    events: (filters: InteractionFilters, window?: InteractionWindow) =>
+      ['interactions', 'events', filterKey(filters), windowKey(window)] as const,
+    /** No window: the summary is over the filtered set, not over a page, so
+     *  scrolling the feed must not refetch it. */
+    summary: (filters: InteractionFilters) =>
+      ['interactions', 'summary', filterKey(filters)] as const,
+  },
 
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,

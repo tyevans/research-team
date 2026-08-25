@@ -33,6 +33,19 @@ import type {
   RealizedCourse,
 } from '@domain/knowledge/course.ts'
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
+import type {
+  ApprovalSummary,
+  BrowserSession,
+  BrowserSessionPage,
+  FrictionSummary,
+  InteractionLogHealth,
+  InteractionPage,
+  InteractionSummary,
+  KindCount,
+  LoggedInteraction,
+  ProjectionFailure,
+  ViewDwell,
+} from '@domain/interaction/log.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
 import type {
   Course,
@@ -71,7 +84,9 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import {
   ApprovalId,
+  BrowserSessionId,
   ComponentId,
+  InstallId,
   MessageId,
   ProjectId,
   RunId,
@@ -991,4 +1006,125 @@ export const toCourseDetail = (raw: Dto<typeof dto.courseDetailDto>): CourseDeta
   outline: raw.outline === null ? null : toOutline(raw.outline),
   members: raw.members.map(toAreaMember),
   course: raw.course === null ? null : toRealizedCourse(raw.course),
+})
+
+/* The interaction log's read side. */
+
+/** A validated instant string to a `Date`.
+ *
+ * Total, because `dto.ts`'s `instant` refinement has already rejected
+ * anything `Date.parse` cannot read -- the check is there rather than here so
+ * the failure names the endpoint and the field. */
+const toInstant = (raw: string): Date => new Date(raw)
+
+const toMaybeInstant = (raw: string | null): Date | null => (raw === null ? null : new Date(raw))
+
+/** A `{name: count}` record to an ordered array.
+ *
+ * `Object.entries` and not a sort: the server sends `kinds` in its own
+ * vocabulary order, zeros included, and that order is the readability of the
+ * pane. Sorting here -- by name, or by count -- would throw away the one thing
+ * the server took care to send, and would move a kind up the list on the day
+ * somebody happened to use it. */
+const toCounts = (raw: Readonly<Record<string, number>>): readonly KindCount[] =>
+  Object.entries(raw).map(([kind, count]) => ({ kind, count }))
+
+export const toProjectionFailure = (
+  raw: Dto<typeof dto.interactionFailureDto>,
+): ProjectionFailure => ({
+  id: raw.id,
+  eventType: raw.event_type,
+  error: raw.error,
+  failedAt: toMaybeInstant(raw.failed_at),
+})
+
+export const toInteractionLogHealth = (
+  raw: Dto<typeof dto.interactionHealthDto>,
+): InteractionLogHealth => ({
+  collecting: raw.collecting,
+  total: raw.total,
+  firstAt: toMaybeInstant(raw.first_at),
+  lastAt: toMaybeInstant(raw.last_at),
+  kinds: toCounts(raw.kinds),
+  failures: raw.failures.map(toProjectionFailure),
+  installCount: raw.install_count,
+  sessionCount: raw.session_count,
+})
+
+export const toLoggedInteraction = (
+  raw: Dto<typeof dto.interactionEventDto>,
+): LoggedInteraction => ({
+  browserSessionId: BrowserSessionId(raw.browser_session_id),
+  installId: InstallId(raw.install_id),
+  seq: raw.seq,
+  kind: raw.kind,
+  view: raw.view,
+  occurredAt: toInstant(raw.occurred_at),
+  receivedAt: toMaybeInstant(raw.received_at),
+  projectId: raw.project_id === null ? null : ProjectId(raw.project_id),
+  sessionId: raw.session_id === null ? null : SessionId(raw.session_id),
+  payload: raw.payload,
+})
+
+export const toBrowserSession = (raw: Dto<typeof dto.browserSessionRowDto>): BrowserSession => ({
+  browserSessionId: BrowserSessionId(raw.browser_session_id),
+  installId: InstallId(raw.install_id),
+  startedAt: toMaybeInstant(raw.started_at),
+  endedAt: toMaybeInstant(raw.ended_at),
+  eventCount: raw.event_count,
+  maxSeq: raw.max_seq,
+  views: raw.views,
+  projectIds: raw.project_ids.map(ProjectId),
+  kinds: toCounts(raw.kinds),
+})
+
+export const toBrowserSessionPage = (
+  raw: Dto<typeof dto.browserSessionPageDto>,
+): BrowserSessionPage => ({
+  sessions: raw.sessions.map(toBrowserSession),
+  total: raw.total,
+})
+
+export const toInteractionPage = (
+  raw: Dto<typeof dto.interactionEventPageDto>,
+): InteractionPage => ({
+  events: raw.events.map(toLoggedInteraction),
+  total: raw.total,
+  limit: raw.limit,
+  offset: raw.offset,
+})
+
+export const toViewDwell = (raw: Dto<typeof dto.viewDwellDto>): ViewDwell => ({
+  view: raw.view,
+  entries: raw.entries,
+  exits: raw.exits,
+  dwellMsMedian: raw.dwell_ms_median,
+  dwellMsP90: raw.dwell_ms_p90,
+  hiddenMsMedian: raw.hidden_ms_median,
+})
+
+export const toFrictionSummary = (raw: Dto<typeof dto.frictionSummaryDto>): FrictionSummary => ({
+  undone: raw.undone,
+  retried: raw.retried,
+  emptyResults: raw.empty_results,
+  emptyByWhere: raw.empty_by_where.map((place) => ({ where: place.where, count: place.count })),
+  repeatSearches: raw.repeat_searches,
+})
+
+export const toApprovalSummary = (raw: Dto<typeof dto.approvalSummaryDto>): ApprovalSummary => ({
+  total: raw.total,
+  expanded: raw.expanded,
+  medianLatencyMs: raw.median_latency_ms,
+  medianLatencyMsExpanded: raw.median_latency_ms_expanded,
+  medianLatencyMsPlain: raw.median_latency_ms_plain,
+  byDecision: Object.entries(raw.by_decision).map(([decision, count]) => ({ decision, count })),
+})
+
+export const toInteractionSummary = (
+  raw: Dto<typeof dto.interactionSummaryDto>,
+): InteractionSummary => ({
+  byKind: toCounts(raw.by_kind),
+  byView: raw.by_view.map(toViewDwell),
+  friction: toFrictionSummary(raw.friction),
+  approvals: toApprovalSummary(raw.approvals),
 })

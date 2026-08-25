@@ -18,6 +18,12 @@ export type SourceId = Branded<string, 'SourceId'>
 export type ComponentId = Branded<string, 'ComponentId'>
 export type MessageId = Branded<string, 'MessageId'>
 export type TopicId = Branded<string, 'TopicId'>
+/** One tab's life, minted in the browser. Branded apart from `InstallId`
+ *  because the interaction log carries both on every row and they are the same
+ *  shape -- swapping them filters a feed to nothing rather than failing. */
+export type BrowserSessionId = Branded<string, 'BrowserSessionId'>
+/** One browser profile, persisted across tabs. See `BrowserSessionId`. */
+export type InstallId = Branded<string, 'InstallId'>
 
 export const SessionId = (raw: string): SessionId => raw as SessionId
 export const ProjectId = (raw: string): ProjectId => raw as ProjectId
@@ -27,6 +33,8 @@ export const SourceId = (raw: string): SourceId => raw as SourceId
 export const ComponentId = (raw: string): ComponentId => raw as ComponentId
 export const MessageId = (raw: string): MessageId => raw as MessageId
 export const TopicId = (raw: string): TopicId => raw as TopicId
+export const BrowserSessionId = (raw: string): BrowserSessionId => raw as BrowserSessionId
+export const InstallId = (raw: string): InstallId => raw as InstallId
 
 /** The leading octet of a UUID, which is what every surface here displays.
  *

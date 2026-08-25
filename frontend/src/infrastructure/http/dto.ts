@@ -1224,3 +1224,157 @@ export const artSweepProgressDto = z.object({
     .nullish()
     .transform((v) => v ?? null),
 })
+
+/* The interaction log's read side -- `/api/interactions/{health,sessions,events,summary}`.
+ *
+ * These mirror the pydantic models in
+ * `infrastructure/persistence/interaction_log.py`, which are the wire
+ * contract. The write side's `interactionReceiptDto` above is a different
+ * shape for a different route and is deliberately not shared.
+ */
+
+/** An instant, checked here rather than in the mapper.
+ *
+ * Every other date in this file is carried through as an opaque string. These
+ * become `Date`s (see `@domain/interaction/log.ts` for why), and `new Date` on
+ * a string it cannot parse returns an `Invalid Date` rather than throwing --
+ * which then renders as the literal text "Invalid Date" in a feed row and
+ * poisons every subtraction it takes part in, with nothing naming the field.
+ * A refinement here fails as a `ContractError` naming the endpoint instead. */
+const instant = z.string().refine((raw) => !Number.isNaN(Date.parse(raw)), {
+  message: 'not a parsable instant',
+})
+
+/** A dead-lettered event, as the health route projects it.
+ *
+ * Four keys out of `DLQEntry`'s thirteen: the route picks, so this describes
+ * the projection rather than the entry. `id` tolerates a number because
+ * `DLQEntry.id` is `int | str` and which one arrives depends on the DLQ
+ * backend, not on anything this console can see. */
+export const interactionFailureDto = z.object({
+  id: z.union([z.string(), z.number()]).transform(String),
+  event_type: z.string().default(''),
+  error: z.string().default(''),
+  failed_at: maybe(instant),
+})
+
+/** `kinds` and `by_kind` and `by_decision`: an open record, because the
+ *  vocabulary is the server's and a console that dropped a kind it did not
+ *  recognise would hide exactly the event worth noticing. */
+const countsDto = z.record(z.string(), z.number())
+
+export const interactionHealthDto = z.object({
+  collecting: z.boolean(),
+  total: z.number().default(0),
+  /** Null on an empty log. Not defaulted to a string: there is no honest
+   *  instant to substitute, and any placeholder would render as a real one. */
+  first_at: maybe(instant),
+  last_at: maybe(instant),
+  kinds: countsDto.default({}),
+  failures: z.array(interactionFailureDto).default([]),
+  install_count: z.number().default(0),
+  session_count: z.number().default(0),
+})
+
+/** One stored interaction.
+ *
+ * Ten fields, and the server sends fifteen. `InteractionEventRow` extends
+ * eventsource's `ReadModel`, so every row also carries `id`, `version`,
+ * `created_at`, `updated_at` and `deleted_at` -- read-model bookkeeping that
+ * means nothing to the explorer. They are left undeclared, which makes zod
+ * strip them at this boundary rather than pass them inward.
+ *
+ * Not merely tidiness. `created_at` is when the *row* was written and is
+ * **not** when the interaction happened -- `occurred_at` is -- and the two are
+ * both plausible-looking instants on the same object. Binding a feed row or a
+ * dwell calculation to `created_at` would produce times that are wrong by the
+ * projection's lag and wrong in a way no reader could see. Declaring the field
+ * is the first step down that road, so it is not declared, and
+ * `interaction-mappers.test.ts` fails if the five ever start arriving in the
+ * domain object. Do not make this schema `.strict()` either: the server is
+ * versioned separately, and a field it grows must not break the console. */
+export const interactionEventDto = z.object({
+  browser_session_id: z.string(),
+  install_id: z.string(),
+  seq: z.number(),
+  kind: z.string(),
+  view: z.string(),
+  occurred_at: instant,
+  received_at: maybe(instant),
+  project_id: maybe(z.string()),
+  session_id: maybe(z.string()),
+  payload: z.record(z.string(), z.unknown()).default({}),
+})
+
+export const browserSessionRowDto = z.object({
+  browser_session_id: z.string(),
+  install_id: z.string(),
+  started_at: maybe(instant),
+  ended_at: maybe(instant),
+  event_count: z.number().default(0),
+  max_seq: z.number().default(0),
+  views: z.array(z.string()).default([]),
+  project_ids: z.array(z.string()).default([]),
+  kinds: countsDto.default({}),
+})
+
+export const browserSessionPageDto = z.object({
+  sessions: z.array(browserSessionRowDto).default([]),
+  total: z.number().default(0),
+})
+
+export const interactionEventPageDto = z.object({
+  events: z.array(interactionEventDto).default([]),
+  total: z.number().default(0),
+  limit: z.number().default(0),
+  offset: z.number().default(0),
+})
+
+/** One browser session's whole stream. No `total`, `limit` or `offset`: the
+ *  route does not page, because a browser session is bounded by a tab's life.
+ *  A separate schema rather than reusing `interactionEventPageDto` with
+ *  defaults, so a route that quietly started paging fails a test here rather
+ *  than reading as a session with three events in it. */
+export const interactionStreamDto = z.object({
+  events: z.array(interactionEventDto).default([]),
+})
+
+export const viewDwellDto = z.object({
+  view: z.string(),
+  entries: z.number().default(0),
+  exits: z.number().default(0),
+  /** Nullable rather than defaulted to 0. A view entered and never exited has
+   *  no median, and 0 would read as a page nobody stayed on. */
+  dwell_ms_median: maybe(z.number()),
+  dwell_ms_p90: maybe(z.number()),
+  hidden_ms_median: maybe(z.number()),
+})
+
+export const emptyResultPlaceDto = z.object({
+  where: z.string(),
+  count: z.number().default(0),
+})
+
+export const frictionSummaryDto = z.object({
+  undone: z.number().default(0),
+  retried: z.number().default(0),
+  empty_results: z.number().default(0),
+  empty_by_where: z.array(emptyResultPlaceDto).default([]),
+  repeat_searches: z.number().default(0),
+})
+
+export const approvalSummaryDto = z.object({
+  total: z.number().default(0),
+  expanded: z.number().default(0),
+  median_latency_ms: maybe(z.number()),
+  median_latency_ms_expanded: maybe(z.number()),
+  median_latency_ms_plain: maybe(z.number()),
+  by_decision: countsDto.default({}),
+})
+
+export const interactionSummaryDto = z.object({
+  by_kind: countsDto.default({}),
+  by_view: z.array(viewDwellDto).default([]),
+  friction: frictionSummaryDto,
+  approvals: approvalSummaryDto,
+})

@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError, OptimisticLockError
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.ports.dlq import DLQEntry
 from fastapi import (
     FastAPI,
     File,
@@ -163,7 +164,14 @@ from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
-from research_team.infrastructure.persistence.interaction_log import ENVELOPE_FIELDS
+from research_team.infrastructure.persistence.interaction_log import (
+    ENVELOPE_FIELDS,
+    BrowserSessionPage,
+    InteractionEventPage,
+    InteractionEventRow,
+    InteractionLogReader,
+    InteractionSummary,
+)
 from research_team.infrastructure.persistence.read_models import (
     ArtStore,
     AskConversationRunner,
@@ -489,6 +497,32 @@ only the callable means the early read is not expressible here.
 
 The cost is three call sites that already had an open store having to wrap it
 in a lambda, and one more indirection per request -- an attribute read.
+"""
+
+
+InteractionReaders = Callable[[], InteractionLogReader | None]
+"""The interaction log's reader, resolved when a request needs it.
+
+A getter for exactly `CatalogFeatures`'s reason, one layer along:
+`InteractionLogRunner.reader` *raises* until `start()` has run, and `start()`
+runs in the server's lifespan -- after `web.py` has called `create_app`. The
+spec says `create_app` gains `interaction_reader: InteractionLogReader | None`,
+and taking the value is not expressible from the entrypoint without either
+starting the runner early or swallowing that `RuntimeError` at wiring time.
+Taking only the callable also means the early read cannot be written.
+
+Returning `None` is legal and means "no reader was wired", which is the 503.
+"""
+
+
+InteractionFailures = Callable[[], Awaitable[list[DLQEntry]]]
+"""The interaction projection's dead letters, and nothing else.
+
+`InteractionLogRunner.failures` bound, rather than the runner: the health
+route needs the DLQ and none of the subscription, checkpoint repository or
+lifecycle beside it, and a route holding the runner is a route that could
+restart a projection. The narrower seam also lets a test supply a list without
+building one.
 """
 
 
@@ -1025,6 +1059,8 @@ def create_app(
     curation_text: MediaCurationTextPort | None = None,
     curation_search: MediaSearchPort | None = None,
     interactions: EventStoreInteractionRecorder | None = None,
+    interaction_reader: InteractionReaders | None = None,
+    interaction_failures: InteractionFailures | None = None,
     curriculum: CurriculumService | None = None,
     course_author: CourseAuthor | None = None,
     authoring: AuthoringActivity | None = None,
@@ -2160,6 +2196,223 @@ def create_app(
         return JSONResponse(
             status_code=202,
             content={"accepted": accepted, "rejected": rejected},
+        )
+
+    def _interaction_log_reader() -> InteractionLogReader:
+        """The reader, or 503 naming why there is none.
+
+        Gated on the *reader*, never on `interactions`: `AGENT_INTERACTION_LOG=0`
+        switches off the recorder while the runner still starts and the table
+        still exists, and the honest answer there is an empty log with
+        `collecting: false`. 503ing on the recorder's absence would make
+        "switched off" and "broken" the same response, which is the one
+        distinction this whole surface exists to draw.
+        """
+        reader = interaction_reader() if interaction_reader is not None else None
+        if reader is None:
+            raise HTTPException(
+                status_code=503, detail="the interaction log reader is not configured"
+            )
+        return reader
+
+    def _interaction_kind_filter(kinds: list[str] | None) -> list[str] | None:
+        """The requested kinds, or 422 naming the one that is not a kind.
+
+        422 rather than returning nothing, because on the server an
+        unrecognised kind is a caller error and an empty page is what a
+        *correct* filter over a quiet log looks like. Silence here would be
+        indistinguishable from the instrument having stopped -- the exact
+        confusion this surface is for.
+        """
+        if not kinds:
+            return None
+        unknown = [kind for kind in kinds if kind not in _interaction_kinds]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown interaction kind(s): {', '.join(sorted(unknown))}",
+            )
+        return kinds
+
+    def _interaction_window(
+        since: str | None, until: str | None
+    ) -> tuple[datetime | None, datetime | None]:
+        """`since`/`until` as instants, naive spellings read as UTC.
+
+        The reader calls `astimezone` on both bounds, which reads a naive
+        datetime as *local* time -- so a bare `2026-08-25T00:00:00` would
+        select a different window on a laptop in Berlin than on one in UTC,
+        and neither would look wrong. Pinned here rather than in the reader
+        because this is the seam where a string becomes a datetime.
+        """
+        bounds = []
+        for name, raw in (("since", since), ("until", until)):
+            moment = _instant(name, raw)
+            if moment is not None and moment.tzinfo is None:
+                moment = moment.replace(tzinfo=UTC)
+            bounds.append(moment)
+        return bounds[0], bounds[1]
+
+    @app.get("/api/interactions/health")
+    async def read_interaction_health():
+        """Is the instrument working, and how much has it seen.
+
+        Three sources, and the split is deliberate. `collecting` is whether the
+        *recorder* was wired -- a fact about `AGENT_INTERACTION_LOG` that only
+        this layer can see. `failures` is the projection's DLQ, which belongs
+        to the runner. Everything else is a query over the table. A reader that
+        reported all three would be guessing at two of them.
+
+        `kinds` carries every name in `INTERACTION_EVENTS`, zeros included:
+        that is the reader's doing, and the test derives the expected set from
+        the tuple rather than listing it.
+        """
+        reader = _interaction_log_reader()
+        health = await reader.health()
+        failures = await interaction_failures() if interaction_failures is not None else []
+        return {
+            "collecting": interactions is not None,
+            "total": health.total,
+            "first_at": health.first_at,
+            "last_at": health.last_at,
+            "kinds": health.kinds,
+            "failures": [
+                {
+                    "id": str(entry.id),
+                    "event_type": entry.event_type,
+                    "error": entry.error_message,
+                    "failed_at": entry.last_failed_at or entry.first_failed_at,
+                }
+                for entry in failures
+            ],
+            "install_count": health.install_count,
+            "session_count": health.session_count,
+        }
+
+    @app.get("/api/interactions/sessions")
+    async def read_interaction_sessions(
+        limit: int = Query(default=50, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        install_id: UUID | None = None,
+        project_id: UUID | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> BrowserSessionPage:
+        """One row per browser session, newest first.
+
+        `limit` over 500 is a 422 rather than a clamp, and the choice is not
+        the one `read_timeline` made. There, `truncated` in the body tells the
+        caller the clamp happened; here a clamped page and a complete one are
+        the same JSON, so a caller asking for 800 and receiving 500 would read
+        it as the whole answer.
+        """
+        reader = _interaction_log_reader()
+        window_since, window_until = _interaction_window(since, until)
+        return await reader.sessions(
+            limit=limit,
+            offset=offset,
+            install_id=install_id,
+            project_id=project_id,
+            since=window_since,
+            until=window_until,
+        )
+
+    @app.get("/api/interactions/sessions/{browser_session_id}")
+    async def read_interaction_session(
+        browser_session_id: UUID,
+    ) -> dict[str, list[InteractionEventRow]]:
+        """One browser session's whole stream, `seq` ascending.
+
+        404 when no row carries that id -- the reader answers `None` rather
+        than `[]` precisely so this route can tell an unknown session from a
+        real one, and a bare empty list could not.
+
+        Unpaged, per the spec: a browser session is bounded by a tab's life.
+        There is still an `events` envelope rather than a bare JSON array,
+        matching `/events` and `/sessions`: three collection routes under one
+        prefix that disagree about their outermost shape is a decoder written
+        twice, and the spec's own example bodies are objects throughout. It
+        also leaves somewhere for a later `total` or a truncation flag to go
+        without breaking a client, which a top-level array does not.
+        """
+        reader = _interaction_log_reader()
+        events = await reader.session(browser_session_id)
+        if events is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no interactions for browser session {browser_session_id}",
+            )
+        return {"events": events}
+
+    @app.get("/api/interactions/events")
+    async def read_interaction_events(
+        kind: Annotated[list[str] | None, Query()] = None,
+        view: Annotated[list[str] | None, Query()] = None,
+        project_id: UUID | None = None,
+        session_id: UUID | None = None,
+        install_id: UUID | None = None,
+        browser_session_id: UUID | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = Query(default=200, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+        order: Literal["newest", "oldest"] = "newest",
+    ) -> InteractionEventPage:
+        """A page of events under the filters, with the count under the same
+        filters beside it.
+
+        `total` is not the page length: a reader who cannot tell 200-of-200
+        from 200-of-9000 cannot tell a filter that found everything from one
+        that hit the cap.
+
+        `kind` and `view` repeat. An unknown `kind` is 422; an unknown `view`
+        is not, because the view vocabulary is the console's route names rather
+        than a closed tuple, and a view that no longer exists is a legitimate
+        thing to ask an old log about.
+        """
+        reader = _interaction_log_reader()
+        window_since, window_until = _interaction_window(since, until)
+        return await reader.events(
+            kinds=_interaction_kind_filter(kind),
+            views=view or None,
+            project_id=project_id,
+            session_id=session_id,
+            install_id=install_id,
+            browser_session_id=browser_session_id,
+            since=window_since,
+            until=window_until,
+            limit=limit,
+            offset=offset,
+            order=order,
+        )
+
+    @app.get("/api/interactions/summary")
+    async def read_interaction_summary(
+        kind: Annotated[list[str] | None, Query()] = None,
+        view: Annotated[list[str] | None, Query()] = None,
+        project_id: UUID | None = None,
+        session_id: UUID | None = None,
+        install_id: UUID | None = None,
+        browser_session_id: UUID | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> InteractionSummary:
+        """Aggregates over the same window `/events` pages.
+
+        No `limit`: the aggregate is over every matching row, and a paged
+        aggregate would be a different number wearing the same name.
+        """
+        reader = _interaction_log_reader()
+        window_since, window_until = _interaction_window(since, until)
+        return await reader.summary(
+            kinds=_interaction_kind_filter(kind),
+            views=view or None,
+            project_id=project_id,
+            session_id=session_id,
+            install_id=install_id,
+            browser_session_id=browser_session_id,
+            since=window_since,
+            until=window_until,
         )
 
     @app.post("/api/projects/{project_id}/topics/seed")
