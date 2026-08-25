@@ -80,6 +80,20 @@ ToolProvider = Callable[[Session], Awaitable[Sequence[BaseTool]]]
 #: the rest of the reasoning, including why that is affordable.
 SourcesProvider = Callable[[Session], Awaitable[dict[str, Any]]]
 
+SubagentProvider = Callable[[Session], Awaitable[Sequence[dict]]]
+"""The subagents this turn may dispatch, chosen from the session.
+
+The fourth of the executor's per-turn seams, and it exists for a reason the
+other three do not have: a subagent appears in the system prompt whether or not
+it is ever called. A roster built for course authoring, offered to every chat
+turn, is six paragraphs of instruction about work that turn cannot do -- so the
+cost of a static list is paid on every session, not just on the ones that would
+have used it.
+
+Defaults to nothing, so an executor wired without one builds precisely the
+agent it built before this existed.
+"""
+
 
 def build_model() -> BaseChatModel:
     """The local OpenAI-compatible endpoint, fully env-overridable."""
@@ -275,6 +289,7 @@ class DeepAgentTurnExecutor:
         middleware_provider: MiddlewareProvider | None = None,
         tools_provider: ToolProvider | None = None,
         sources_provider: SourcesProvider | None = None,
+        subagents_provider: SubagentProvider | None = None,
         gate_reviewer: GateReviewer | None = None,
         grants: GrantRegistry | None = None,
     ) -> None:
@@ -299,6 +314,7 @@ class DeepAgentTurnExecutor:
         # executor makes the same argument required, because it has one
         # composition site and no test that constructs it bare.
         self._sources_provider = sources_provider
+        self._subagents_provider = subagents_provider
         # Consulted per gated call, before the human is. Optional for the same
         # reason the two providers above are: an executor wired without a
         # workflow has nothing to review and poses exactly the approvals it
@@ -409,8 +425,11 @@ class DeepAgentTurnExecutor:
             checkpointer=MemorySaver(),
             # Subagents share this backend, so their file writes land in the
             # same event log as everything else -- delegated work stays as
-            # auditable as work the main agent does itself.
-            subagents=self._subagents or None,
+            # auditable as work the main agent does itself. The roster itself
+            # is chosen per turn (see `SubagentProvider`): the `or None` below
+            # is deepagents' own contract -- an empty sequence and `None` are
+            # not the same thing to it.
+            subagents=list(await self._turn_subagents(session)) or None,
             # Ahead of the tail deepagents appends, so anything here runs
             # *outside* `HumanInTheLoopMiddleware`: a stage narrows the tool
             # list first, and the gate then poses approvals over what survived.
@@ -506,6 +525,11 @@ class DeepAgentTurnExecutor:
         if self._sources_provider is None:
             return {}
         return await self._sources_provider(session)
+
+    async def _turn_subagents(self, session: Session) -> Sequence[dict]:
+        if self._subagents_provider is None:
+            return self._subagents
+        return await self._subagents_provider(session)
 
     async def _settle(self, session: Session, interrupts: Sequence[Any]) -> list[dict]:
         """One decision per interrupted call, in the order they were requested.
