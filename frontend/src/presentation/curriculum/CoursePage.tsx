@@ -96,7 +96,13 @@ export const CoursePage = ({
   const outlineStale = outlineAge(detail) === 'stale'
 
   return (
-    <div className="flex flex-col gap-3 p-3">
+    // `min-h-0` and `overflow-y-auto`, exactly as `CatalogPane` and
+    // `CurriculumPane` carry them: the `area` TabPanel owns no scroller, so a
+    // page taller than the pane simply ran off the bottom with no way to
+    // reach it. Shipped that way -- a realized course renders its whole unit
+    // and every lesson here, which is the first content on this tab long
+    // enough for the absence to matter.
+    <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
       <Button small onClick={onBack}>
         Back to catalog
       </Button>
