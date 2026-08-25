@@ -293,19 +293,37 @@ def test_every_marker_a_checkpoint_searches_for_is_named_in_its_prompt(marker, p
 def test_the_marker_registry_covers_every_literal_constant():
     """A seventh marker must fail here rather than wait to be noticed.
 
-    Derived by introspection over the module's own public string constants,
-    because the failure this whole section exists for is a literal that some
-    checkpoint greps for and no prompt names -- and the six pairs above cannot
-    detect their own incompleteness. Anything genuinely not a marker goes in
+    Derived by introspection over the module's own string constants, because
+    the failure this whole section exists for is a literal that some checkpoint
+    greps for and no prompt names -- and the pairs above cannot detect their own
+    incompleteness. Anything genuinely not a marker goes in
     `NON_MARKER_CONSTANTS` by name, so excusing a constant is a deliberate act
     with somewhere to write the reason.
 
-    Proved red by adding a `SPARE_HEADING = "## Spare"` constant to the module.
+    **Private names are included on purpose.** The first draft filtered on
+    `not name.startswith("_")` and `_SPARE_HEADING = "## Spare"` walked
+    straight past it -- measured, by adding one. The filter bought nothing:
+    `_BULLET` and `_COMPONENT` are compiled patterns, already excluded by the
+    `isinstance` check, and this module holds no private string constant. If
+    one ever does exist and is not a marker, name it in
+    `NON_MARKER_CONSTANTS` rather than restoring the filter.
+
+    **What this cannot see, and it is the original shape:** a literal typed
+    inline at a `find` or `count` call is not a module constant, so no
+    introspection over this namespace will ever reach it. That is C1 exactly --
+    `_section(text, "## Enduring Understandings")` was an inline literal until
+    it was fixed. This guarantees that a constant declared here is paired with
+    a prompt; it cannot guarantee that a checkpoint greps only for constants.
+    Reading the checkpoint bodies is still the only thing that catches that,
+    which is why the module docstring states the rule in prose as well.
+
+    Proved red by adding a `SPARE_HEADING = "## Spare"` constant to the module,
+    and again with `_SPARE_HEADING` once the filter came out.
     """
     declared = {
         name
         for name, value in vars(authoring_checkpoints).items()
-        if name.isupper() and isinstance(value, str) and not name.startswith("_")
+        if name.isupper() and isinstance(value, str)
     }
     registered = {
         name

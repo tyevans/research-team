@@ -197,6 +197,20 @@ def test_the_drafter_carries_the_component_guide():
 
 #: Which subagent writes which checkpointed marker, since the fan-out.
 #:
+#: **A remembered list, not a derived one, and it does not carry
+#: `CHECKPOINT_MARKERS`' guarantee.** That registry is checked for
+#: completeness against the module's own constants, so a seventh marker fails
+#: at collection. Nothing equivalent is possible here: which subagent produces
+#: which marker is a judgement about six prose prompts, not a fact
+#: `AUTHORING_SUBAGENTS` states, so a seventh subagent that writes a
+#: checkpointed marker is missed silently until a run dies on it. Inventing a
+#: mechanical check -- greping every prompt for every marker, say -- would
+#: assert that `unit-critic` writes components, which is false.
+#:
+#: So: when you add a subagent that writes to a lesson, add it here. That
+#: instruction is the whole control, and this branch has already proved four
+#: times over that a remembered instruction is the weakest kind.
+#:
 #: `quiz-writer` is on this list because of `check_assessment`'s growth rule,
 #: which is newer than the roster: it requires every lesson's component count
 #: to rise in phase 4, so the fence stopped being style advice and became a
