@@ -34,13 +34,11 @@ from research_team.application.authoring_checkpoints import (
     review_path,
     unit_path,
 )
+from research_team.application.authoring_dispatch import AUTHORING_DISPATCH_PROMPT
 from research_team.application.components import REGISTRY
 from research_team.application.session_service import SessionService
 from research_team.domain import SessionPurpose
 from research_team.domain.learning_area import LearningArea, LearningPath
-from research_team.infrastructure.agent.authoring_subagents import (
-    AUTHORING_DISPATCH_PROMPT,
-)
 
 #: How many of an area's anchors are named in a prompt.
 #:

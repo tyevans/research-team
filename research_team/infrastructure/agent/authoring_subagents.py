@@ -28,6 +28,15 @@ plan is a control, not a proof -- the reason `prose-critic` and `unit-reviewer`
 exist is that it is expected to leak.
 """
 
+from research_team.application.authoring_dispatch import (
+    ANECDOTE_HUNTER_NAME,
+    AUTHORING_DISPATCH_PROMPT,
+    LESSON_DRAFTER_NAME,
+    PROSE_CRITIC_NAME,
+    QUIZ_WRITER_NAME,
+    UNIT_CRITIC_NAME,
+    UNIT_REVIEWER_NAME,
+)
 from research_team.application.prose_rubric import (
     critic_reporting_contract,
     prose_rules,
@@ -48,7 +57,7 @@ _SUBAGENT_PREAMBLE = (
 )
 
 UNIT_CRITIC = {
-    "name": "unit-critic",
+    "name": UNIT_CRITIC_NAME,
     "description": (
         "Judges a unit's enduring understandings against the corpus before any "
         "lesson is drafted. Dispatch once, after `unit.md` is written and "
@@ -80,7 +89,7 @@ UNIT_CRITIC = {
 }
 
 ANECDOTE_HUNTER = {
-    "name": "anecdote-hunter",
+    "name": ANECDOTE_HUNTER_NAME,
     "description": (
         "Searches the corpus and the graph for concrete incidents a lesson "
         "could open on. Dispatch once per unit, before drafting, so the plan "
@@ -116,7 +125,7 @@ ANECDOTE_HUNTER = {
 }
 
 LESSON_DRAFTER = {
-    "name": "lesson-drafter",
+    "name": LESSON_DRAFTER_NAME,
     "description": (
         "Writes one lesson file from a plan slot and the anecdotes assigned to "
         "it. Dispatch one per lesson, in parallel. Give it the slot verbatim, "
@@ -148,7 +157,7 @@ LESSON_DRAFTER = {
 }
 
 PROSE_CRITIC = {
-    "name": "prose-critic",
+    "name": PROSE_CRITIC_NAME,
     "description": (
         "Judges one drafted lesson against the prose rules and returns the "
         "rule numbers it fails. Dispatch one per lesson, after drafting. Name "
@@ -179,7 +188,7 @@ PROSE_CRITIC = {
 }
 
 QUIZ_WRITER = {
-    "name": "quiz-writer",
+    "name": QUIZ_WRITER_NAME,
     "description": (
         "Appends check-for-understanding components to one drafted lesson. "
         "Dispatch one per lesson, after the lesson is final. Name the lesson "
@@ -210,7 +219,7 @@ QUIZ_WRITER = {
 }
 
 UNIT_REVIEWER = {
-    "name": "unit-reviewer",
+    "name": UNIT_REVIEWER_NAME,
     "description": (
         "Reads every lesson in a unit plus its Stage 2 tasks and writes "
         "`review.md`, one assessment across the whole unit. Dispatch once, "
@@ -249,33 +258,9 @@ AUTHORING_SUBAGENTS = (
     UNIT_REVIEWER,
 )
 
-AUTHORING_DISPATCH_PROMPT = (
-    "\n\nYou can hand scoped authoring work to six subagents with the `task` "
-    "tool. Each starts with none of this conversation and returns only its "
-    "conclusion, so brief it as you would someone who has read nothing: state "
-    "the objective, name every file by path, and paste anything it needs that "
-    "is not on disk.\n\n"
-    "In roughly this order:\n"
-    "- `unit-critic`, once, after `unit.md` exists and before you fix the "
-    "plan. It judges each enduring understanding as arguable, central and "
-    "corpus-supported. Revise `unit.md` yourself from what it returns.\n"
-    "- `anecdote-hunter`, once, before drafting, so the plan can assign each "
-    "find to a lesson. It may return nothing, and nothing is an acceptable "
-    "answer -- do not send it back to look harder.\n"
-    "- `lesson-drafter`, one per lesson, in parallel. Only after the plan "
-    "fixes every shared decision: the claim each lesson owns, its opening "
-    "move, what it may assume from earlier lessons, and which anecdotes are "
-    "its own. Whatever you leave open, each drafter answers differently.\n"
-    "- `prose-critic`, one per lesson, after drafting. It returns failed rule "
-    "numbers and passages. Send those back to a `lesson-drafter` for the same "
-    "path; do not edit the lesson yourself.\n"
-    "- `quiz-writer`, one per lesson, only once that lesson is final. It "
-    "writes from the lesson as it stands, so a lesson still in revision gets "
-    "items for prose that is about to change.\n"
-    "- `unit-reviewer`, once, last. It writes `review.md` across the whole "
-    "unit.\n\n"
-    "One writer per path per phase. Never run two subagents that write the "
-    "same file, and never dispatch a drafter for a lesson while a "
-    "`quiz-writer` is on it. The subagents cannot see each other, so a "
-    "collision is yours to prevent, not theirs to detect."
-)
+#: Re-exported, not defined: `application/authoring_dispatch.py` owns it, so
+#: `course_authoring.py` can reach it without importing infrastructure --
+#: which `tests/test_architecture.py` forbids, and which was a real failure
+#: rather than a hypothetical one. Callers already importing it from here keep
+#: working, and there is exactly one definition behind the two names.
+__all__ = ["AUTHORING_DISPATCH_PROMPT", "AUTHORING_SUBAGENTS"]

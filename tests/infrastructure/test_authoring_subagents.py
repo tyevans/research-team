@@ -15,6 +15,7 @@ import pytest
 from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from research_team.application.authoring_dispatch import AUTHORING_SUBAGENT_NAMES
 from research_team.application.prose_rubric import critic_reporting_contract
 from research_team.infrastructure.agent.authoring_subagents import (
     AUTHORING_DISPATCH_PROMPT,
@@ -64,23 +65,46 @@ def test_names_are_unique():
     assert len(set(names)) == len(names)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "unit-critic",
-        "anecdote-hunter",
-        "lesson-drafter",
-        "prose-critic",
-        "quiz-writer",
-        "unit-reviewer",
-    ],
-)
+@pytest.mark.parametrize("name", AUTHORING_SUBAGENT_NAMES)
 def test_the_dispatch_prompt_names_every_subagent(name):
     """A subagent the primary agent is never told about is a subagent that is
     never called, and the run still settles -- so this is the assertion that
-    stops a roster entry being dead weight."""
+    stops a roster entry being dead weight.
+
+    Parametrised over `AUTHORING_SUBAGENT_NAMES` rather than over a literal
+    list, which is a real change and not a tidy-up: the literal was a third
+    copy of the six names, and a spec renamed in two places out of three left
+    this test asserting something true about a name nothing used.
+    """
     assert name in AUTHORING_DISPATCH_PROMPT
     assert any(spec["name"] == name for spec in AUTHORING_SUBAGENTS)
+
+
+def test_the_names_and_the_specs_agree_in_both_directions():
+    """Neither list may hold a name the other does not.
+
+    Both directions, because both fail silently and differently. A name in the
+    dispatch prompt with no spec behind it is a subagent the parent tries to
+    call and cannot -- deepagents has no such subagent, and what comes back is
+    a tool error mid-run rather than anything naming the roster. A spec no
+    prompt mentions is never dispatched at all, and the run settles with that
+    phase's work simply absent, which looks exactly like a phase that had
+    nothing to do.
+
+    What it deliberately cannot catch, measured rather than assumed: renaming
+    a constant fails nothing here, because the constant feeds both the spec and
+    the prompt and they stay agreed. That is the point of the constants, not a
+    gap in the test -- but it means this test only fires when someone
+    reintroduces a literal or drops a spec. Proved red on both: a spec's `name`
+    set to a divergent literal, and a spec removed from the tuple.
+
+    Sets, not sequences: the order of `AUTHORING_SUBAGENT_NAMES` is the order
+    the prompt reads in and the specs are free to be declared in any order.
+    That is asserted separately in `test_names_are_unique`, which is what
+    stops a set comparison hiding a duplicate.
+    """
+    assert set(AUTHORING_SUBAGENT_NAMES) == {spec["name"] for spec in AUTHORING_SUBAGENTS}
+    assert len(AUTHORING_SUBAGENT_NAMES) == len(AUTHORING_SUBAGENTS)
 
 
 def test_the_two_rubric_carrying_prompts_hold_the_rules_themselves():
