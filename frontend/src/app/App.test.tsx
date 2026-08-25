@@ -810,6 +810,12 @@ it.each([
   // An unrecognised facet parses as home rather than as a project route, so
   // the log cannot grow a view name nobody chose.
   [`#/p/${ATLAS}/wat`, 'home'],
+  // The explorer files its own rows under its own name. Deliberate, and
+  // argued at `viewNameOf`: a reader who sees `interactions` high in a view
+  // count is seeing themselves, which is honest, where filtering it out would
+  // leave the one view whose figures are known to be wrong unfalsifiable.
+  ['#/i', 'interactions'],
+  ['#/i?kind=ViewExited', 'interactions'],
 ])('names the view for %s', (hash, expected) => {
   expect(viewNameOf(parseRoute(hash))).toBe(expected)
 })
@@ -982,4 +988,29 @@ it('keeps a hidden tab that the route explicitly names, and selects it', async (
   )
   const findings = screen.getByRole('tab', { name: 'Findings' })
   expect(findings).toHaveAttribute('aria-selected', 'true')
+})
+
+/** The header link, and then the page it reaches.
+ *
+ * Both halves in one test on purpose. A link with the right `href` that leads
+ * to a route nothing renders is the defect the dialogue-page comment above
+ * records in reverse -- there, a working page with no link; here, the link is
+ * the easy half and the route switch is the half that can silently answer
+ * `TreeView`, because that is what the switch does with every name it does not
+ * know.
+ *
+ * Proved red by removing the `route.name === 'interactions'` arm from
+ * `CurrentView`: the link is still found and still clicked, and the heading
+ * never appears -- the landing page renders instead.
+ */
+it('reaches the interaction log from the header, beside the brand', async () => {
+  renderApp()
+
+  const banner = await screen.findByRole('banner')
+  const link = within(banner).getByRole('link', { name: /^log$/i })
+  expect(link).toHaveAttribute('href', '#/i')
+
+  await userEvent.click(link)
+
+  expect(await screen.findByRole('heading', { name: /interaction log/i })).toBeInTheDocument()
 })

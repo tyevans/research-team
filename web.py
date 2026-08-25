@@ -236,6 +236,23 @@ def main() -> None:
             interactions=(
                 application.interaction_recorder if config.interaction_log_enabled() else None
             ),
+            # A getter, not `application.interaction_log.reader`, and not
+            # gated on the flag above. `InteractionLogRunner.reader` raises
+            # until `start()` has run, and `start()` runs in the lifespan --
+            # after this call. Reading the attribute here would raise at
+            # wiring time and the server would not come up at all, which is
+            # `catalog_features`'s bug one degree worse. The lambda is only
+            # ever called from inside a request, by which point the lifespan
+            # has run.
+            #
+            # Ungated on purpose: `AGENT_INTERACTION_LOG=0` stops the
+            # *recorder*, and the explorer's whole job is to say so -- 200
+            # with an empty log and `collecting: false`, rather than a 503
+            # that reads identically to a broken instrument.
+            interaction_reader=lambda: application.interaction_log.reader,
+            # Bound method rather than the runner: the health route needs the
+            # dead letters and none of the lifecycle beside them.
+            interaction_failures=application.interaction_log.failures,
             # The write side of Task 9's routes: `course_repository` is what
             # `RealizeCourse`/`AbandonCourse` execute against, `course_service`
             # is what the detail route reads through, and `blurb_sweep`/

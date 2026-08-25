@@ -51,6 +51,22 @@ export type Route =
        * it is what the page is. */
       readonly selection: Selection | null
     }
+  /** The interaction log's reader, with its filter state.
+   *
+   * A route, not a facet on the project page, and the reason is what the view
+   * is *about*: the log spans projects and installs, and the questions it
+   * answers -- did the recorder stop, what did one browser session do, where
+   * is the friction -- are questions about the console rather than about any
+   * one project. A facet would force a project id onto that view, and the
+   * first thing a reader would have to do is pick a project to ignore.
+   *
+   * Reached from the header beside the brand, for the same reason. There is
+   * nowhere on a project page this belongs.
+   *
+   * `filters` rather than `Selection`: the project route selects one thing at
+   * a time, which is what that page is, and this one narrows a stream by
+   * several independent axes at once. */
+  | { readonly name: 'interactions'; readonly filters: InteractionFilters }
 
 /** What kind of thing is selected on a project page.
  *
@@ -153,6 +169,85 @@ export type Selection =
 const isFacet = (raw: string | undefined): raw is Facet =>
   raw !== undefined && (FACETS as readonly string[]).includes(raw)
 
+/** One kind of interaction event, as the log's vocabulary names it.
+ *
+ * A closed set here for the reason `FACETS` is a closed set: the filter is
+ * built from the vocabulary rather than from the data, so a kind that was
+ * never emitted and a kind that does not exist stay distinguishable. A filter
+ * offering only what the table happens to hold cannot show that the recorder
+ * stopped, which is the first question the explorer exists to answer.
+ *
+ * It is a hand-kept copy of `INTERACTION_EVENTS` in
+ * `research_team/domain/interaction.py`, and that is a cost worth naming: the
+ * two are in different languages, so nothing in either gate compares them. A
+ * kind added on the server and not here is a kind this route drops from a
+ * URL -- silently, because dropping an unrecognised kind is also how a typo
+ * is handled. The health route answers with every kind it knows, so the
+ * cheapest check available is that this list and that response agree; nothing
+ * asserts it yet.
+ *
+ * Exported so a test asserts coverage against the list rather than a copy. */
+export const INTERACTION_KINDS = [
+  'ViewEntered',
+  'ViewExited',
+  'AttentionLost',
+  'AttentionRegained',
+  'EntityOpened',
+  'ProjectSwitched',
+  'ExtractionQueued',
+  'ExtractionCancelled',
+  'DispatchRequested',
+  'SearchPerformed',
+  'AskSubmitted',
+  'ApprovalDecided',
+  'ActionUndone',
+  'ActionRetried',
+  'EmptyResultEncountered',
+] as const
+
+export type InteractionKind = (typeof INTERACTION_KINDS)[number]
+
+const isInteractionKind = (raw: string): raw is InteractionKind =>
+  (INTERACTION_KINDS as readonly string[]).includes(raw)
+
+/** The filter bar's state, and every field of it is in the URL.
+ *
+ * The grammar's own rule, applied: a linkable state is a bookmark. A filtered
+ * reading of the log is exactly the thing somebody wants to send -- "the four
+ * empty searches on the catalog last Tuesday" is a link or it is a paragraph
+ * of instructions.
+ *
+ * Arrays rather than sets for the two multi-selects, because a `Set` is not
+ * structurally comparable and every test here is `toEqual`. Order is the
+ * order the URL carried, which the printer and the parser both preserve, so
+ * the round trip is an identity rather than a normalisation.
+ *
+ * `since` and `until` are the raw strings from the URL, kept as strings
+ * rather than parsed into `Date`s: they go back out to the server as query
+ * parameters, and a parse-and-reformat here would be a second date format for
+ * nobody's benefit. They are validated on the way in -- see
+ * `parseInteractionFilters`. */
+export interface InteractionFilters {
+  readonly kinds: readonly InteractionKind[]
+  readonly views: readonly string[]
+  readonly projectId: string | null
+  readonly installId: string | null
+  readonly browserSessionId: string | null
+  readonly since: string | null
+  readonly until: string | null
+}
+
+/** The unfiltered log, which is what `#/i` with no query means. */
+export const NO_INTERACTION_FILTERS: InteractionFilters = {
+  kinds: [],
+  views: [],
+  projectId: null,
+  installId: null,
+  browserSessionId: null,
+  since: null,
+  until: null,
+}
+
 /** The one query string this app's hash routes carry -- `?t=<seconds>`, the
  *  seek a citation link put on a `doc` route (see `references.ts`'s
  *  `expandReferences` and `GraphDetail`'s citation links, the two things that
@@ -195,11 +290,21 @@ export const parseSeekSeconds = (hash: string): number | null => {
 }
 
 export const parseRoute = (hash: string): Route => {
-  const parts = splitQuery(hash)
-    .path.replace(/^#?\/?/, '')
+  const { path, query } = splitQuery(hash)
+  const parts = path
+    .replace(/^#?\/?/, '')
     .split('/')
     .filter(Boolean)
     .map(decodeURIComponent)
+
+  // The only route whose state lives in the query rather than in the path.
+  // `parts.length === 1` rather than a prefix match: `#/i/anything` is a typo
+  // or a dead link, and it falls through to `home` exactly as an unrecognised
+  // facet does. Nothing after `i` means anything, so accepting it would be
+  // answering a question nobody asked.
+  if (parts[0] === 'i' && parts.length === 1) {
+    return { name: 'interactions', filters: parseInteractionFilters(query) }
+  }
 
   if (parts[0] === 's' && parts[1]) {
     const { at, path } = parseSessionTail(parts.slice(2))
@@ -269,6 +374,74 @@ const parseSelection = (segments: readonly string[]): Selection | null => {
 }
 
 export const homeHref = (): string => '#/'
+
+/** `#/i`, with the filters in the query part.
+ *
+ * Repeatable keys for the two multi-selects (`?kind=A&kind=B`) rather than a
+ * comma-joined list: a view name is a free string that a future route segment
+ * could contain a comma in, and `URLSearchParams` already encodes and decodes
+ * repetition without anybody writing a splitter.
+ *
+ * Empty filters print as a bare `#/i`, so the unfiltered log has one spelling
+ * rather than one with an empty query on the end. Duplicates are dropped, so
+ * the printed form is canonical: for any `f` this function can produce,
+ * `parseRoute(interactionsHref(f))` is `{ name: 'interactions', filters: f }`. */
+export const interactionsHref = (filters: InteractionFilters = NO_INTERACTION_FILTERS): string => {
+  const query = new URLSearchParams()
+  for (const kind of unique(filters.kinds)) query.append('kind', kind)
+  for (const view of unique(filters.views)) query.append('view', view)
+  if (filters.projectId) query.set('project', filters.projectId)
+  if (filters.installId) query.set('install', filters.installId)
+  if (filters.browserSessionId) query.set('session', filters.browserSessionId)
+  if (filters.since) query.set('since', filters.since)
+  if (filters.until) query.set('until', filters.until)
+  const printed = query.toString()
+  return printed === '' ? '#/i' : `#/i?${printed}`
+}
+
+const unique = <T>(values: readonly T[]): readonly T[] => [...new Set(values)]
+
+/** Total, and defensive in the way the rest of this parser is -- with one
+ *  difference from the facet parser worth stating, because it is the opposite
+ *  choice.
+ *
+ * An unrecognised *facet* fails the whole route to `home`: a facet decides
+ * which page renders, so a typo there means the console has no idea what to
+ * show. A bad *filter* does not. `#/i?kind=Nonsense&kind=ViewExited` is a
+ * reader who mistyped one of two kinds, and dropping the bad one leaves a
+ * page that answers most of what they asked; falling back to `home` would
+ * throw away the other kind, the time window and the whole visit. So a
+ * malformed value is dropped from the filter, the rest survives, and `#/i`
+ * with nothing recognisable left is the unfiltered log rather than an error.
+ *
+ * A date is kept only if `Date.parse` reads it. That is deliberately the
+ * loosest check available -- the value goes to a server that parses it again
+ * and is the real authority -- and it is enough to stop `since=yesterday`
+ * from reaching a comparison as `NaN`, which is the failure this guards.
+ * The string is stored as it arrived rather than reformatted, so the round
+ * trip is exact.
+ */
+export const parseInteractionFilters = (query: string | null): InteractionFilters => {
+  if (query === null || query === '') return NO_INTERACTION_FILTERS
+  const params = new URLSearchParams(query)
+  const one = (key: string): string | null => {
+    const raw = params.get(key)
+    return raw === null || raw === '' ? null : raw
+  }
+  const instant = (key: string): string | null => {
+    const raw = one(key)
+    return raw !== null && Number.isFinite(Date.parse(raw)) ? raw : null
+  }
+  return {
+    kinds: unique(params.getAll('kind').filter(isInteractionKind)),
+    views: unique(params.getAll('view').filter((view) => view !== '')),
+    projectId: one('project'),
+    installId: one('install'),
+    browserSessionId: one('session'),
+    since: instant('since'),
+    until: instant('until'),
+  }
+}
 
 /** The scrub point and the open file are both in the URL, and both are
  *  optional.

@@ -14,6 +14,7 @@ import type {
   ExtractionRepository,
   GraphRepository,
   HealthRepository,
+  InteractionLogRepository,
   LessonRepository,
   MediaProposalRepository,
   ProjectRepository,
@@ -39,6 +40,7 @@ import { HttpDocumentRepository } from '@infrastructure/http/document-repository
 import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
 import { HttpClient } from '@infrastructure/http/http-client.ts'
 import { HttpInteractionSink } from '@infrastructure/http/interaction-log-repository.ts'
+import { HttpInteractionLogRepository } from '@infrastructure/http/interaction-log-query-repository.ts'
 import { HttpMediaProposalRepository } from '@infrastructure/http/media-proposal-repository.ts'
 import {
   HttpExtractionRepository,
@@ -106,6 +108,10 @@ export interface Container {
   /** Where the interaction log is reported to. Capture only; nothing reads
    *  it back, so there is no query hook and no repository beside this. */
   readonly interactions: InteractionSink
+  /** Reading the log back. Separate from `interactions` above and named for
+   *  the direction, because the sink swallows every error by design and a
+   *  debugging surface must not. */
+  readonly interactionLog: InteractionLogRepository
   /** Injected so tests can drive it, and so nothing below reaches for the
    *  global clock directly. */
   readonly now: () => number
@@ -144,6 +150,7 @@ export const createContainer = (baseUrl = ''): Container => {
     stream: new SseEventStream(`${baseUrl}/api/stream`),
     preferences: new LocalPreferenceStore(),
     interactions: new HttpInteractionSink(http),
+    interactionLog: new HttpInteractionLogRepository(http),
     now: () => Date.now(),
   }
 }

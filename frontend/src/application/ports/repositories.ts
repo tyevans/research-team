@@ -1,4 +1,12 @@
 import type { Approval, ApprovalAnswer } from '@domain/approval/approval.ts'
+import type {
+  BrowserSessionPage,
+  InteractionLogHealth,
+  InteractionPage,
+  InteractionSummary,
+  LoggedInteraction,
+} from '@domain/interaction/log.ts'
+import type { InteractionFilters } from '@domain/interaction/filters.ts'
 import type { AskEvent } from '@domain/ask/conversation.ts'
 import type { DialogueEvent } from '@domain/dialogue/conversation.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
@@ -44,6 +52,7 @@ import type { FileRevision } from '@domain/workspace/workspace-file.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import type {
   ApprovalId,
+  BrowserSessionId,
   ComponentId,
   ProjectId,
   SessionId,
@@ -955,4 +964,53 @@ export interface SummaryHealth {
   /** `false` means the projection stopped — a browser cannot fix that. */
   readonly following: boolean
   readonly failedEvents: number
+}
+
+/** How much of the log to read, beside *which* of it.
+ *
+ * Separate from `InteractionFilters` rather than folded into it, because the
+ * two have different lifetimes: a filter is in the URL and is a bookmark, and
+ * a page cursor is the pane scrolling. Putting `offset` in the route would put
+ * a scroll position in every link somebody sent.
+ */
+export interface InteractionWindow {
+  readonly limit?: number
+  readonly offset?: number
+  /** `newest` is the server's default and the feed's. `oldest` is the session
+   *  drill-down, where a visit reads as a story only in the order it
+   *  happened. */
+  readonly order?: 'newest' | 'oldest'
+}
+
+/** Reading the interaction log back.
+ *
+ * Its own port rather than methods on `InteractionSink`
+ * (`@application/ports/interaction-log.ts`): the sink batches, drops on
+ * failure and runs on a timer, and this fetches on demand and reports its
+ * errors. One object would have two reasons to change, and the sink's
+ * deliberate error-swallowing is the last behaviour a read path should
+ * inherit.
+ */
+export interface InteractionLogRepository {
+  /** Is the instrument working. Takes no filters: the answer is about the
+   *  whole log, and a filtered health reading would be a different question
+   *  wearing the same word. */
+  health(): Promise<InteractionLogHealth>
+  /** Browser sessions, newest first.
+   *
+   * Takes the same `InteractionFilters` the rest of the page carries, and
+   * sends only the four axes this route understands -- install, project and
+   * the time window. `kinds` and `views` are dropped rather than passed: the
+   * server ignores a parameter it does not know, so passing them would answer
+   * the unfiltered question while the filter bar showed a narrowed one. */
+  sessions(filters: InteractionFilters, window?: InteractionWindow): Promise<BrowserSessionPage>
+  /** One browser session's whole ordered stream. Unpaged, and unfiltered:
+   *  the drill-down is a visit read end to end, and a filter over it would
+   *  hide the gaps that make it a story. */
+  session(id: BrowserSessionId): Promise<readonly LoggedInteraction[]>
+  events(filters: InteractionFilters, window?: InteractionWindow): Promise<InteractionPage>
+  /** Aggregates over the same window as `events`. No `InteractionWindow`:
+   *  a summary of a page rather than of the filtered set would be a number
+   *  that changed as somebody scrolled. */
+  summary(filters: InteractionFilters): Promise<InteractionSummary>
 }

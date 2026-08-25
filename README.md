@@ -162,9 +162,20 @@ switch failed. **The remedy for data already collected is deleting that file**
 — `rm ~/.research-team/interactions.db`. Nothing reads it back and nothing
 migrates it, which is what makes deleting it safe.
 
-The log has no reader today: no read API, no browser view, nothing consumes it
-yet. It exists to build a real corpus before later work designs friction
-detection against it.
+**The log has a reader: `#/i` in the console, and five GETs under
+`/api/interactions`.** The page opens on whether the instrument is working —
+event count, the age of the last one, and a failures block that appears only
+when the projection has dead-lettered something. Below that: counts by kind,
+per-view dwell medians, the friction signals, and the approval deliberation
+split, with every number a link that applies itself as a filter to the feed.
+The feed renders each event as prose rather than as JSON, and one browser
+session can be read on its own, in order, as a visit.
+
+Two things to know before reading numbers off it. Collection being off is
+reported as `collecting: false` with an empty log and a 200, never as an
+error, because "switched off" and "broken" have to be tellable apart. And the
+explorer records its own use — `interactions` appears in the view counts, and
+that row is you.
 
 **[`docs/configuration.md`](docs/configuration.md) has the rest** — the graph,
 vector and chunk stores, embeddings, Neo4j and pgvector, tracing, and the two
