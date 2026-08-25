@@ -15,6 +15,7 @@ import pytest
 from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
+from research_team.application.prose_rubric import critic_reporting_contract
 from research_team.infrastructure.agent.authoring_subagents import (
     AUTHORING_DISPATCH_PROMPT,
     AUTHORING_SUBAGENTS,
@@ -90,8 +91,44 @@ def test_the_two_rubric_carrying_prompts_hold_the_rules_themselves():
     produced an empty string would leave every other test in this file green:
     the spec still builds, the names are still unique, and the run still
     answers, having judged nothing.
+
+    The counter is the second half of that: a filter inside a loop with no
+    counter passes when the filter matches nothing, so renaming a spec or
+    dropping one from the tuple would skip the body and stay green.
     """
+    checked = 0
     for spec in AUTHORING_SUBAGENTS:
         if spec["name"] in {"lesson-drafter", "prose-critic"}:
+            checked += 1
             assert "Opens with a problem, not a thesis" in spec["system_prompt"]
             assert "Varied section shape" in spec["system_prompt"]
+    assert checked == 2
+
+
+def test_only_the_critic_is_given_the_critics_reporting_contract():
+    """The drafter gets the rules; it must not get the tail that follows them.
+
+    The tail says to judge the lesson, to report nothing else, and not to
+    rewrite it. In a drafter's prompt those fight the one instruction it has,
+    and its OUTPUT clause competes with the real one below it -- the likely
+    result being a critique where a lesson should be. Nothing else here would
+    notice: a drafter handed the whole file still builds, still has a unique
+    name, and still holds all six rules.
+    """
+    contract = critic_reporting_contract()
+    assert contract.strip()
+    drafter = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "lesson-drafter")
+    critic = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "prose-critic")
+    assert contract not in drafter["system_prompt"]
+    assert "Report nothing else" not in drafter["system_prompt"]
+    assert contract in critic["system_prompt"]
+
+
+def test_neither_prompt_carries_the_rubrics_editors_note():
+    """The HTML comment at the top of the rubric names both subagents and what
+    each is given. A drafter told what the critic receives has been told
+    something it can only act on wrongly, and it is maintenance prose either
+    way -- tokens spent on nothing the subagent does."""
+    for spec in AUTHORING_SUBAGENTS:
+        assert "<!--" not in spec["system_prompt"], spec["name"]
+        assert "whoever edits the file" not in spec["system_prompt"], spec["name"]

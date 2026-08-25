@@ -28,9 +28,17 @@ plan is a control, not a proof -- the reason `prose-critic` and `unit-reviewer`
 exist is that it is expected to leak.
 """
 
-from research_team.application.prose_rubric import prose_rules
+from research_team.application.prose_rubric import (
+    critic_reporting_contract,
+    prose_rules,
+)
 
+# Bound at import, which costs the rubric file its edit-without-restart
+# property for these two prompts. Accepted: the specs are a constant table, and
+# making them lazy would change their type from `dict` to something
+# `create_deep_agent` has not been checked against.
 _PROSE_RULES = prose_rules()
+_CRITIC_CONTRACT = critic_reporting_contract()
 
 _SUBAGENT_PREAMBLE = (
     "You are a subagent. You cannot see the conversation that dispatched you, "
@@ -127,6 +135,10 @@ LESSON_DRAFTER = {
         "not a standard to clear afterwards. A draft that ignores them and "
         "gets corrected is a wasted round.\n\n"
         "PROSE RULES.\n" + _PROSE_RULES + "\n\n"
+        "The rules are all you are given of the rubric. The critic that reads "
+        "your lesson afterwards has a reporting contract you do not: judging "
+        "your own draft is not your job, and a self-assessment appended to the "
+        "lesson is text a reader has to skip.\n\n"
         "GROUNDING. Quote the corpus where the corpus says it better, with a "
         "citation. Carry at least two components, of which at least one "
         "resolves against the project.\n\n"
@@ -154,6 +166,7 @@ PROSE_CRITIC = {
         "the drafter would either paste it in and break the unit's voice or "
         "spend a round arguing with it.\n\n"
         "PROSE RULES.\n" + _PROSE_RULES + "\n\n"
+        "REPORTING.\n" + _CRITIC_CONTRACT + "\n\n"
         "BOUNDARIES. Write nothing. You do not edit the lesson, you do not "
         "read the other lessons, and you do not judge whether the lesson is "
         "correct -- `unit-reviewer` covers the unit and the corpus covers the "
