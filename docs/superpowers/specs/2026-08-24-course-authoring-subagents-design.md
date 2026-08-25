@@ -149,9 +149,15 @@ Plan and draft share a turn because the plan is the parent's working state.
 Spilling it to a file and re-reading it in a new turn is how the
 reconciliation gets lost.
 
-*Checkpoint:* the plan names N lessons; N lesson files exist; every
-`builds_toward` resolves to a real Stage 2 item; every understanding is
-claimed by at least one lesson.
+*Checkpoint:* `lesson_count` lesson files exist; every `builds_toward`
+resolves to a real Stage 2 item; every understanding is claimed by at least
+one lesson.
+
+The count comes from `lesson_count`, the parameter `author_area` already
+takes, and not from the plan -- the plan lives in the parent's context and
+Python cannot read it. So the checkpoint asserts on what is on disk. The
+plan's own internal consistency is the parent's job and is unverifiable from
+here, which is the price of not persisting it.
 
 **Phase 4 -- Assessment.** One `quiz-writer` per lesson, given the lesson as
 written rather than as planned -- so items test what was taught. Then one
