@@ -255,11 +255,37 @@ production actually raises on is a spec missing `name` or `system_prompt`,
 which `graph.py` subscripts directly.
 
 **Note for the roster:** `create_deep_agent` inserts a `general-purpose`
-subagent unless `general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)`
-is passed. The authoring roster will therefore be seven entries, not six,
-unless that is turned off. Today's `delegate` mode already carries the extra
-one, so leaving it is consistent; the plan should decide deliberately rather
-than inherit it by accident.
+subagent, so the authoring roster is seven entries at runtime, not six.
+
+**It cannot be turned off from the call site, and an earlier draft of this
+section said it could.** That draft named
+`general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)` as the
+switch. That keyword does not exist in deepagents 0.7.6 -- measured on
+2026-08-24 by reading `inspect.signature(create_deep_agent)`, whose parameters
+are `model, tools, system_prompt, middleware, subagents, skills, memory,
+permissions, backend, interrupt_on, response_format, state_schema,
+context_schema, checkpointer, store, debug, name, cache`. The field lives on a
+*harness profile*, and the profile is selected from the model in `graph.py`
+rather than passed in. The library's own docstring advertises the keyword
+anyway, and this document, the implementation plan and the task brief all
+repeated it from there -- three documents agreeing, all descended from one
+wrong line, which is the shape `CLAUDE.md` warns about under comments that turn
+a defect into a decision nobody questions.
+
+The only caller-side lever is that `graph.py` skips the auto-insert when the
+roster already contains a spec named `general-purpose` -- which is still a
+seventh subagent. So the choice is our seventh or theirs, and theirs wins: our
+own spec would buy a wording change and cost a spec to maintain against a
+pre-1.0 library that will rename around it.
+
+The cost stands and is not small. The authoring prompts name six subagents and
+say when to use each; an undescribed seventh with the main agent's capabilities
+invites routing work around the roster, past `prose-critic` and
+`unit-reviewer`, which exist precisely because the lesson plan is expected to
+leak. It is an escape hatch worth its risk only because it cannot be closed.
+`test_general_purpose_cannot_be_disabled_through_create_deep_agent` asserts the
+keyword is absent, so it fails on the first deepagents version that adds one --
+which is when to re-take this decision rather than inherit it.
 
 **3. A live run, which is not a gate.** The acceptance test is reading three
 lessons and seeing whether they catch the reader. It runs against the real

@@ -1505,11 +1505,19 @@ def _subagents_for(session: Session, default: Sequence[dict]) -> Sequence[dict]:
 and pass an `async def` wrapper as `subagents_provider=` to the executor.
 
 **Decide the general-purpose question here and record it.** `create_deep_agent`
-inserts a `general-purpose` subagent unless
-`general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)` is
-passed. Today's `delegate` mode already carries the extra one. Either keep it
-for consistency or disable it for authoring turns — but say which you chose and
-why in the commit message. Inheriting it by accident is the thing to avoid.
+inserts a `general-purpose` subagent, so the roster is seven at runtime.
+
+**This paragraph used to say it could be disabled with
+`general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)`. That
+keyword does not exist in deepagents 0.7.6** — measured by reading
+`inspect.signature(create_deep_agent)`, not reasoned. It comes from the
+library's own docstring, which advertises a parameter the function does not
+take; the spec and this plan both repeated it from there. The only lever is
+that `graph.py` skips the auto-insert when the roster already contains a spec
+named `general-purpose` — which is still a seventh subagent. Keep theirs, say
+why in the commit message, and write down the cost: an undescribed seventh
+subagent carrying the main agent's capabilities, sitting beside six the prompts
+describe by name, is an invitation to route work around them.
 
 - [ ] **Step 4: Run the tests**
 
