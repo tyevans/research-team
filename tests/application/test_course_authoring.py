@@ -14,13 +14,16 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from research_team.application.authoring_checkpoints import lesson_paths
 from research_team.application.components import REGISTRY
 from research_team.application.course_authoring import (
     AREAS_DIR,
     COMPONENT_GUIDE,
     PROMPT_ANCHORS,
     CourseAuthor,
+    assessment_prompt,
     desired_results_prompt,
+    learning_plan_prompt,
     path_overview_prompt,
 )
 from research_team.domain import SessionPurpose
@@ -233,3 +236,105 @@ def test_the_guide_names_the_id_field_of_every_type_that_has_one():
     for name in nameless:
         assert f"`{name}`" in COMPONENT_GUIDE
     assert "no id at all" in COMPONENT_GUIDE
+
+
+def test_the_learning_plan_prompt_orders_planning_before_drafting():
+    """Anecdotes gathered after drafting are decoration; gathered before, they
+    are the opening. The prompt has to say which comes first, because a model
+    reading a list of things to do will do the cheapest one first.
+
+    Weak by nature, and worth saying plainly: this is an assertion about where
+    three literal strings sit in a template, not about what a model does with
+    them. It catches the acts being reordered in the source; it cannot catch a
+    prompt that states the order and is ignored. The reason for the order is
+    carried by `test_the_learning_plan_prompt_says_why_the_plan_comes_first`,
+    which is the half a model actually obeys.
+    """
+    prompt = learning_plan_prompt(AREA, "STAGE ONE", 3)
+    assert prompt.index("anecdote-hunter") < prompt.index("lesson-drafter")
+    assert prompt.index("lesson-drafter") < prompt.index("prose-critic")
+
+
+def test_the_learning_plan_prompt_fixes_the_shared_decisions_before_fan_out():
+    """The four decisions that must be made once or get made three times.
+
+    Same weakness as above -- these are substring checks -- but the failure
+    they catch is real and has a shape: someone trimming the prompt drops one
+    of the four from the slot template, three drafters then answer it
+    independently, and the unit reads like three people wrote it with nothing
+    raising anywhere.
+    """
+    prompt = learning_plan_prompt(AREA, "STAGE ONE", 3)
+    for shared in ("voice", "assume", "opening move", "claim"):
+        assert shared in prompt
+
+
+def test_the_learning_plan_prompt_says_why_the_plan_comes_first():
+    """An order without a reason gets reordered by a model that knows better.
+
+    This is the assertion the ordering test above cannot make. Proved red by
+    deleting the sentence: the ordering test stayed green, because the acts
+    were still in sequence and only the reason for the sequence was gone --
+    which is exactly the edit that would look harmless in review.
+    """
+    prompt = learning_plan_prompt(AREA, "STAGE ONE", 3)
+    assert "three ways" in prompt
+
+
+def test_the_learning_plan_prompt_permits_an_empty_hunt():
+    """A slot with no anecdote falls back; it does not get drama invented for it.
+
+    The hunter's own prompt already says it may return nothing. This asserts
+    the parent was told the same thing, because a parent that reads an empty
+    hunt as a failure re-dispatches until it gets something, and what it gets
+    on the third try is manufactured.
+    """
+    prompt = learning_plan_prompt(AREA, "STAGE ONE", 3)
+    assert "may return nothing" in prompt
+    assert "Never invent drama" in prompt
+
+
+def test_the_assessment_prompt_is_given_the_lessons_as_written():
+    """Items written from a plan test what was planned. The whole reason phase
+    4 is separate is that the prose exists by the time it runs.
+
+    The path assertions are the load-bearing half: they fail if this prompt
+    ever grows its own `lesson-NN.md` format string instead of calling
+    `lesson_paths`, which is the fourth-copy failure CLAUDE.md records against
+    `AREAS_DIR`.
+    """
+    prompt = assessment_prompt(AREA, 2)
+    assert "as they are written" in prompt
+    assert "lesson-01.md" in prompt and "lesson-02.md" in prompt
+
+
+def test_the_assessment_prompt_names_every_lesson_it_was_given():
+    """Every path the checkpoint will look for is a path the prompt named.
+
+    Honest about what this cannot do: it will not separate `lesson_paths` from
+    a correct hand-written copy of the same format string, because a correct
+    copy produces the same paths. What it does catch is the pattern *moving* --
+    a rename of the directory or of the `lesson-NN.md` shape that updates
+    `authoring_checkpoints` and not this prompt. The expectation is derived
+    from `lesson_paths` rather than written out, so the two cannot drift apart
+    silently, and the drift is the failure: `check_assessment` looks for a
+    component in a path the `quiz-writer` was never sent to.
+    """
+    prompt = assessment_prompt(AREA, 10)
+    for path in lesson_paths(AREA.slug, 10):
+        assert path in prompt
+
+
+def test_the_first_phase_allows_exactly_one_critique_round():
+    """Weak by nature: substring checks over prompt text.
+
+    `"once"` is the weakest assertion in this file -- it matches any sentence
+    containing the word. It is kept because the sentence it stands for is the
+    one that stops a parent looping the critic, and something naming it is
+    better than nothing. `unit-critic` is the assertion with teeth: it fails
+    if the dispatch is dropped.
+    """
+    prompt = desired_results_prompt(AREA, "Rome")
+    assert "unit-critic" in prompt
+    assert "once" in prompt
+    assert "blander, not truer" in prompt

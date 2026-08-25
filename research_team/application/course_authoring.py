@@ -28,11 +28,19 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID, uuid4
 
-from research_team.application.authoring_checkpoints import AREAS_DIR
+from research_team.application.authoring_checkpoints import (
+    AREAS_DIR,
+    lesson_paths,
+    review_path,
+    unit_path,
+)
 from research_team.application.components import REGISTRY
 from research_team.application.session_service import SessionService
 from research_team.domain import SessionPurpose
 from research_team.domain.learning_area import LearningArea, LearningPath
+from research_team.infrastructure.agent.authoring_subagents import (
+    AUTHORING_DISPATCH_PROMPT,
+)
 
 #: How many of an area's anchors are named in a prompt.
 #:
@@ -221,7 +229,18 @@ def desired_results_prompt(area: LearningArea, subject: str) -> str:
         f"each, and it will be given what you write here. Anything you add now "
         f"is work that turn will contradict.\n\n"
         f"Ground every understanding in the corpus. Where a claim rests on a "
-        f"source, cite it."
+        f"source, cite it.\n\n"
+        f"Then dispatch `unit-critic` **once**, giving it "
+        f"`{unit_path(area.slug)}` by path and naming the corpus the unit was "
+        f"built from. It judges each enduring understanding on three counts: "
+        f"arguable, central, corpus-supported. Revise `unit.md` yourself from "
+        f"what it returns -- it writes nothing.\n\n"
+        f"Revise once and stop. A second round makes the understandings "
+        f"blander, not truer: the first pass removes the ones the corpus "
+        f"cannot carry, which is the whole win, and every pass after it is "
+        f"answering objections by hedging. An understanding nobody can "
+        f"disagree with survives any number of critics and teaches nothing."
+        + AUTHORING_DISPATCH_PROMPT
     )
 
 
@@ -257,23 +276,86 @@ def evidence_prompt(area: LearningArea, stage_one: str) -> str:
 
 
 def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) -> str:
-    """UbD Stage 3: the lessons, given both prior stages.
+    """UbD Stage 3: plan the unit, then fan out to draft it.
 
     Lessons are separate files rather than sections of `unit.md` because a
     lesson is the thing a person reads *one of*, and because the file routes
     and `LessonDocument` already render a markdown file with components in it.
     One long unit file would render identically and be unnavigable.
+
+    **Four acts in a fixed order, and each act says why it is where it is.**
+    An order given without a reason is an order a model reorders: told to plan,
+    hunt, draft and critique, it starts drafting, because drafting is the thing
+    it is confident about and the plan looks like preamble. The reasons are
+    therefore in the prompt text rather than in this docstring, which the model
+    never sees. `test_the_learning_plan_prompt_says_why_the_plan_comes_first`
+    fails if the reason is trimmed while the sequence is left standing -- which
+    is the edit that looks harmless.
+
+    What this cannot do: nothing here forces the acts to actually run in order,
+    and `authoring_checkpoints` only sees the files at the end. A turn that
+    drafted first and wrote a plan afterwards leaves output this module cannot
+    distinguish from the real thing.
     """
+    paths = lesson_paths(area.slug, lesson_count)
     return (
         f"Understanding by Design, Stage 3, for the area `{area.slug}`.\n\n"
         f"Stage 1 produced this:\n\n---\n{stage_one}\n---\n\n"
         f"Read the `## Stage 2 — Evidence` section of "
-        f"`{AREAS_DIR}/{area.slug}/unit.md` before you begin. **Every lesson "
-        f"must build toward a specific assessment there.** Name which one at "
-        f"the top of each lesson.\n\n"
-        f"Write {lesson_count} lesson files, "
-        f"`{AREAS_DIR}/{area.slug}/lesson-01.md` upward, numbered in teaching "
-        f"order. Each lesson:\n"
+        f"`{unit_path(area.slug)}` before you begin. **Every lesson must build "
+        f"toward a specific assessment there.**\n\n"
+        f"You are writing {lesson_count} lessons:\n"
+        + "\n".join(f"- `{path}`" for path in paths)
+        + f"\n\nDo this in four acts, in this order. The order is the whole "
+        f"design of this phase; read the reason under each act before you "
+        f"decide it does not apply to you.\n\n"
+        f"**Act 1 — write the plan, in your reply, before you dispatch "
+        f"anything.** One slot per lesson, in teaching order, each carrying:\n"
+        f"- its title;\n"
+        f"- its `builds_toward`: the Stage 2 assessment it serves, named;\n"
+        f"- the single **claim** it owns -- one sentence, and no other lesson "
+        f"owns it;\n"
+        f"- its **opening move**: what the first paragraph does;\n"
+        f"- what it may **assume** the reader already has from earlier lessons.\n"
+        f"Fix the **voice** of the unit here too, in one sentence, and give it "
+        f"to every drafter.\n\n"
+        f"Why first: in Act 3 you dispatch {lesson_count} drafters at once, and "
+        f"they cannot see each other or this conversation. Every decision this "
+        f"plan leaves open gets answered {lesson_count} times, differently, and "
+        f"the unit then reads like {lesson_count} people wrote it -- because "
+        f"{lesson_count} did. Three drafters given an open question answer it "
+        f"three ways. The plan is the only place a shared decision can be made "
+        f"once.\n\n"
+        f"**Act 2 — dispatch `anecdote-hunter`, then assign what it returns.** "
+        f"Give it the enduring understandings and name the corpus. Each find it "
+        f"returns goes to **exactly one** slot; two lessons opening on the same "
+        f"incident is the reader meeting it twice as if new.\n\n"
+        f"It **may return nothing**, and nothing is a complete answer -- do not "
+        f"send it back to look harder. A slot with no anecdote opens on a "
+        f"surprising number or on two sources that disagree, both of which are "
+        f"in the corpus if the incident is not. **Never invent drama.** An "
+        f"invented stake reads as false to a reader who knows the material and "
+        f"discredits the lesson around it, which is a worse outcome than a flat "
+        f"opening.\n\n"
+        f"Why before drafting: an anecdote found after a lesson is written can "
+        f"only be pasted on top of it, where it is decoration. Found first, it "
+        f"is what the lesson opens on and the claim is argued from.\n\n"
+        f"**Act 3 — dispatch one `lesson-drafter` per slot, in parallel.** Give "
+        f"each one its own path, its slot verbatim, the anecdotes you assigned "
+        f"it, the unit's voice, and the enduring understandings. Give it "
+        f"**nothing else** -- not the other slots, not the other lessons. A "
+        f"drafter handed the whole plan writes toward the whole plan and "
+        f"restates its neighbours' claims.\n\n"
+        f"**Act 4 — one `prose-critic` per lesson, then the same lesson's own "
+        f"drafter to revise.** The critic returns failed rule numbers and the "
+        f"passages; hand those to a `lesson-drafter` for that same path. Do not "
+        f"edit a lesson yourself and do not send one lesson's findings to "
+        f"another lesson's drafter.\n\n"
+        f"**Exactly one round.** Critique, revise, stop. A second round trades "
+        f"a rule failure for blandness: the passages a critic can name are the "
+        f"specific ones, so each pass sands off what was concrete and the "
+        f"lesson gets cleaner and emptier.\n\n"
+        f"Each lesson, whoever writes it:\n"
         f"- opens with frontmatter carrying `title`, `area`, and "
         f"`builds_toward` (the assessment it serves);\n"
         f"- teaches in prose, with real explanation rather than a summary of "
@@ -281,10 +363,67 @@ def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) 
         f"- quotes the corpus where the corpus says it better, with a citation;\n"
         f"- carries at least two components, of which at least one resolves "
         f"against the project (`definition`, `evidence`, `graph`, `timeline`, "
-        f"`explorer` or `compare`) so the learner meets the actual material;\n"
-        f"- ends with a short retrieval-practice block.\n\n"
+        f"`explorer` or `compare`) so the learner meets the actual material.\n\n"
+        f"Do not write the check-for-understanding items here. A later phase "
+        f"writes them from the lessons as they end up, and anything you add now "
+        f"is written from a plan.\n\n"
         f"{COMPONENT_GUIDE}\n"
-        f"Write the files. Do not summarise them back to me."
+        f"Write the files. Do not summarise them back to me." + AUTHORING_DISPATCH_PROMPT
+    )
+
+
+def assessment_prompt(area: LearningArea, lesson_count: int) -> str:
+    """Phase 4: the items, written against lessons that now exist.
+
+    This phase exists only because of *when* it runs. Stage 2 already asked for
+    check-for-understanding items and got them -- before a single lesson was
+    drafted, so they are written from the understandings and read as furniture:
+    correct, unattached, and asking about points the drafts did not make. The
+    items here are written from the prose a reader will actually meet.
+
+    The cost is a fourth turn per area, and a real risk this phase does not
+    remove: Stage 2's items are still in `unit.md` and nothing deletes them, so
+    a unit carries two generations of items. That is left undone deliberately
+    -- deleting another phase's output from a prompt is the reconciliation
+    problem this design is arranged to avoid.
+
+    Lesson paths come from `lesson_paths` rather than a format string built
+    here. CLAUDE.md records `AREAS_DIR` reaching three independent copies; a
+    fourth resolver for the `lesson-NN.md` pattern is the same failure, and its
+    symptom is a `quiz-writer` dispatched at a path nothing wrote, which
+    returns an empty page rather than an error.
+    """
+    paths = lesson_paths(area.slug, lesson_count)
+    return (
+        f"Phase 4 for the area `{area.slug}`: the check-for-understanding "
+        f"items, and one review of the unit.\n\n"
+        f"The {lesson_count} lessons are written:\n"
+        + "\n".join(f"- `{path}`" for path in paths)
+        + f"\n\nDispatch one `quiz-writer` per lesson, in parallel, naming "
+        f"that lesson by path and saying how many items to add. **Give it the "
+        f"path and nothing else -- not the plan, not the other lessons.** It "
+        f"writes from the lessons **as they are written**, not as they were "
+        f"planned.\n\n"
+        f"That distinction is the reason this is a separate phase. What a "
+        f"lesson intended to teach and what it teaches are different things, "
+        f"and the reader only ever meets the second. An item written from a "
+        f"plan asks about a point the draft dropped, which reads to the learner "
+        f"as a question about something they were never shown -- and it looks "
+        f"correct to everyone except the person taking it.\n\n"
+        f"Then, once every `quiz-writer` has returned, dispatch "
+        f"`unit-reviewer` **once**. Give it `{AREAS_DIR}/{area.slug}` as the "
+        f"unit directory, the lesson paths above, and "
+        f"`{unit_path(area.slug)}` for the Stage 2 tasks. It writes "
+        f"`{review_path(area.slug)}` and nothing else.\n\n"
+        f"Last, and not in parallel with the writers: it judges what happens "
+        f"*between* the lessons -- a claim two of them both make as if new, a "
+        f"lesson assuming something no earlier lesson taught, an understanding "
+        f"the tasks assess that no lesson covers. Run it while a `quiz-writer` "
+        f"is still appending and it reads a unit that is half one version.\n\n"
+        f"Do not draft or revise lesson prose in this phase, and do not "
+        f"dispatch a `lesson-drafter`. The lessons are final; this phase adds "
+        f"items to the end of them and writes one file of its own.\n\n"
+        f"{COMPONENT_GUIDE}"
     )
 
 
