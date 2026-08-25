@@ -4,6 +4,7 @@ import {
   endingOf,
   isRunning,
   progressOf,
+  TURNS_PER_AREA,
   type AuthoringStatus,
 } from '@domain/knowledge/authoring.ts'
 import { SessionId } from '@domain/shared/identifier.ts'
@@ -21,12 +22,13 @@ import { sessionHref } from '../routing/routes.ts'
  * would put the expensive action behind a selection nobody made.
  *
  * **The cost is stated before the click, not after.** Authoring an area is
- * three model turns; a path of eight is twenty-four. A button that said only
- * "Write courses" would commit a local model to twenty minutes on one click,
- * and the person who clicked it would find out by waiting.
+ * `TURNS_PER_AREA` model turns; a path of eight is thirty-two, plus one for
+ * the path's own overview. A button that said only "Write courses" would
+ * commit a local model to twenty minutes on one click, and the person who
+ * clicked it would find out by waiting.
  *
- * **And it can be taken back.** A path run is up to thirty model turns against
- * a local endpoint; without a stop control the only way out was killing the
+ * **And it can be taken back.** A path run is up to thirty-three model turns
+ * against a local endpoint; without a stop control the only way out was killing the
  * server, which used to also lose the mapping from each written course to the
  * session holding it. The stop appears only while a run is in flight, beside
  * the buttons that are disabled for exactly that period — so the one control
@@ -75,7 +77,8 @@ export const AuthoringBar = ({
               Counted rather than rounded away: the number's whole job is that
               the cost is known before the click, and an estimate a reader can
               catch being wrong is worse than none. */}
-          Write every course ({pathLength} areas and an overview, ~{pathLength * 3 + 1} model turns)
+          Write every course ({pathLength} areas and an overview, ~{pathLength * TURNS_PER_AREA + 1}{' '}
+          model turns)
         </button>
         {areaSlug !== null && (
           <button
@@ -84,7 +87,7 @@ export const AuthoringBar = ({
             onClick={() => onAuthor({ area: areaSlug })}
             className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
           >
-            Write “{areaTitle ?? areaSlug}” (~3 model turns)
+            Write “{areaTitle ?? areaSlug}” (~{TURNS_PER_AREA} model turns)
           </button>
         )}
         {running && (
