@@ -801,6 +801,11 @@ const ontologyClassDto = z.object({
   evidence: z.object({ sourceId: z.string(), start: z.number(), end: z.number() }),
   rejectedMembers: z.array(z.object({ name: z.string(), reason: z.string() })).default([]),
   stale: z.boolean().default(false),
+  // Defaulted true, and the default is the truthful reading rather than a
+  // lenient one: a server that predates the flag had no lenient pass, so every
+  // class it stored was cited to a located quote. Defaulting false would mark
+  // an older build's whole ontology as doubtful.
+  evidenceQuoted: z.boolean().default(true),
   members: z.array(ontologyMemberDto).default([]),
 })
 

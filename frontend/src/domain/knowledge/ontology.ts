@@ -52,6 +52,13 @@ export interface OntologyClass {
   readonly parentClassId: string | null
   /** Whether the graph beneath this class has moved since it was found. */
   readonly stale: boolean
+  /** Whether `evidence` is the sentence the model quoted, located in the
+   *  document, or a lenient pass's fallback to where the first member occurs.
+   *
+   *  `false` is a weaker claim and the view has to say so: the span still opens
+   *  real text, but nothing checked that the document groups these members at
+   *  all. Only a pass a reader ran with the lever pulled produces it. */
+  readonly evidenceQuoted: boolean
   /** Whether the members found match the count the document stated.
    *
    * `true` when no count was stated -- there is nothing to disagree with, and
@@ -73,6 +80,7 @@ export interface OntologyPayload {
     readonly evidence: Evidence
     readonly rejectedMembers: readonly RejectedMember[]
     readonly stale: boolean
+    readonly evidenceQuoted: boolean
     readonly members: readonly { readonly name: string; readonly ordinal: number | null }[]
   }[]
 }
@@ -124,6 +132,7 @@ export const foldOntology = (payload: OntologyPayload): readonly OntologyClass[]
       evidence: raw.evidence,
       parentClassId: raw.parentClassId,
       stale: raw.stale,
+      evidenceQuoted: raw.evidenceQuoted,
       // Against the members actually returned, not the server's `memberCount`.
       // The two agree today; if they ever stop, the list in front of the
       // reader is the honest thing to check a stated count against.

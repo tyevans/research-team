@@ -13,6 +13,7 @@ const aClass = (over: Partial<OntologyPayload['classes'][number]> = {}) => ({
   evidence: { sourceId: 'songs', start: 0, end: 66 },
   rejectedMembers: [],
   stale: false,
+  evidenceQuoted: true,
   members: [],
   ...over,
 })

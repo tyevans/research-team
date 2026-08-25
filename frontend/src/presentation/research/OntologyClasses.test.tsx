@@ -18,6 +18,7 @@ const aClass = (over: Partial<OntologyClass> = {}): OntologyClass => ({
   evidence: { sourceId: 'songs', start: 0, end: 66 },
   parentClassId: null,
   stale: false,
+  evidenceQuoted: true,
   complete: true,
   ...over,
 })
@@ -136,6 +137,27 @@ it('says when the graph moved under a class', () => {
   render(<OntologyClasses classes={[aClass({ stale: true })]} sourceHref={href} />)
 
   expect(screen.getByText(/re-extracted since this was found/i)).toBeInTheDocument()
+})
+
+it('says when no sentence stating the class was found', () => {
+  // A lenient pass kept this class on its members alone. Both halves are
+  // asserted, because either on its own leaves a reader misled: the warning
+  // says the grouping is unchecked, and the link stops calling a bare member
+  // occurrence "evidence".
+  render(<OntologyClasses classes={[aClass({ evidenceQuoted: false })]} sourceHref={href} />)
+
+  expect(screen.getByText(/no sentence stating this group was found/i)).toBeInTheDocument()
+  expect(screen.getByRole('link')).toHaveTextContent(/^a member in/)
+})
+
+it('calls the link evidence when the sentence was located', () => {
+  // The default, and the reason the test above is not enough on its own: a
+  // card that always warned would pass it and would be wrong about every
+  // ordinary class.
+  render(<OntologyClasses classes={[aClass({})]} sourceHref={href} />)
+
+  expect(screen.queryByText(/no sentence stating this group/i)).not.toBeInTheDocument()
+  expect(screen.getByRole('link')).toHaveTextContent(/^evidence in/)
 })
 
 it('nests a subclass under its parent', () => {

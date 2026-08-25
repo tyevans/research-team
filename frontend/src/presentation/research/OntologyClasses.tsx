@@ -152,11 +152,29 @@ const ClassCard = ({
           <Checksum klass={klass} />
           <a className="text-xs text-fg-dim underline" href={sourceHref(klass.evidence)}>
             {/* Names the document, because a reader with several open needs to
-                know which one this came from before deciding to follow it. */}
-            evidence in {klass.evidence.sourceId}
+                know which one this came from before deciding to follow it.
+
+                And says what the link leads to when that is not a sentence: a
+                lenient pass cites the first member's occurrence, so the reader
+                lands on the word rather than on anything stating the group.
+                Written into the link's own text rather than as a badge beside
+                it, because the difference is a fact about *this link* and a
+                reader following it should not have to have read a legend. */}
+            {klass.evidenceQuoted ? 'evidence' : 'a member'} in {klass.evidence.sourceId}
           </a>
         </div>
       </div>
+      {!klass.evidenceQuoted && (
+        <p className="text-k-warning m-0 mt-1 mb-1 text-xs">
+          {/* The strongest warning on this card, and the only one about whether
+              the class is real rather than current. `stale` below says the
+              graph moved; this says nothing ever checked that the document
+              groups these members at all -- it survived on its members alone,
+              because a reader ran the pass with that lever pulled. */}
+          No sentence stating this group was found. Its members are in the document; the grouping is
+          the model&apos;s.
+        </p>
+      )}
       {klass.stale && (
         <p className="m-0 mt-1 mb-1 text-xs text-fg-dim">
           {/* Shown, not hidden: the text still describes something, and a

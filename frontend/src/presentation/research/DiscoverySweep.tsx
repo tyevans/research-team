@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 /** What one sweep has done so far, as counts rather than as a list.
  *
  * `declined` is separate from `barren` because the server keeps them separate,
@@ -16,6 +18,24 @@ export type SweepProgress = {
   readonly declined: number
 }
 
+/** How a press of the sweep should read the corpus.
+ *
+ * Two independent axes, and they are separate because they answer different
+ * questions. `again` is *which documents* -- the unread ones, or every
+ * extracted one including those a pass has already retired. `lenient` is *what
+ * counts as a class* once a document is being read.
+ *
+ * They are usually pulled together, because the reason to re-read a document
+ * that was recorded as barren is usually that the strict pass refused
+ * something. They are still not one flag: a lenient first pass over a fresh
+ * corpus is legitimate, and so is re-reading everything strictly against a
+ * model that has since been changed.
+ */
+export type SweepRequest = {
+  readonly again: boolean
+  readonly lenient: boolean
+}
+
 /** Read every ungrouped document for the classes it states.
  *
  * **Why a person has to press this, and why the pane was empty without it.**
@@ -30,6 +50,21 @@ export type SweepProgress = {
  * records a measured case of a 19,644-character prompt not returning within
  * 500 seconds against a local model. Thirty-seven of those in parallel is a
  * serving stack falling over rather than a faster sweep.
+ *
+ * **A second press can read what the first one already retired.** "Read every
+ * document again" lifts the one exclusion a pass can be wrong about: a
+ * document is recorded as examined whether it stated no classes or stated some
+ * the verifier refused, and only the first of those is finished. Measured
+ * 2026-08-24 on the owner's corpus, both examined documents rendered as "states
+ * no classes" and one of them had a real class dropped for a quote that spanned
+ * a line wrap. Without this control there was no way back to it from the
+ * console at all.
+ *
+ * **The lenient checkbox is the other half and is deliberately not the same
+ * control.** Re-reading strictly is worth having on its own -- the model is not
+ * deterministic, and it may have been changed since. Reading leniently stops
+ * checking that the document states the class at all, which is a claim a reader
+ * has to opt into rather than get for pressing a button labelled "again".
  *
  * **Nothing resumes it.** Closing the tab stops the sweep where it stands,
  * and that is acceptable only because pressing again is safe: an examined
@@ -54,8 +89,13 @@ export const DiscoverySweep = ({
   running: boolean
   progress: SweepProgress | null
   error: string | null
-  onRun: () => void
+  onRun: (request: SweepRequest) => void
 }) => {
+  /** Held here rather than in the pane: it is a setting of this control, read
+   *  only when a button in it is pressed, and lifting it would make the pane
+   *  re-render on a checkbox. */
+  const [lenient, setLenient] = useState(false)
+
   if (pending === null) return null
 
   return (
@@ -64,7 +104,9 @@ export const DiscoverySweep = ({
         {pending.length === 0 ? (
           <>
             Every extracted document has been read for the classes it states. A document that states
-            none is read once and stays read, so this stays empty until the corpus grows.
+            none is read once and stays read, so this stays empty until the corpus grows — but
+            &ldquo;states none&rdquo; also covers a class the reading refused, which is what reading
+            again is for.
           </>
         ) : (
           <>
@@ -77,7 +119,7 @@ export const DiscoverySweep = ({
       {pending.length > 0 && (
         <button
           type="button"
-          onClick={onRun}
+          onClick={() => onRun({ again: false, lenient })}
           disabled={running}
           className="focus-visible:lay-ring-inward shrink-0 rounded-md border border-line bg-bg-raise px-2 py-1 text-xs text-fg hover:bg-bg-hover disabled:opacity-60"
         >
@@ -86,6 +128,34 @@ export const DiscoverySweep = ({
             : `Read ${pending.length} ${pending.length === 1 ? 'document' : 'documents'}`}
         </button>
       )}
+      {/* Always offered, including with documents still pending: a reader who
+          has just changed the checkbox wants the whole corpus read under it,
+          not only the part no pass has reached. The count is deliberately
+          absent from the label -- this component is handed the *pending* list
+          and does not know how many extracted documents there are, and a
+          number guessed from the wrong list would be worse than none. */}
+      <button
+        type="button"
+        onClick={() => onRun({ again: true, lenient })}
+        disabled={running}
+        className="focus-visible:lay-ring-inward shrink-0 rounded-md border border-line px-2 py-1 text-xs text-fg-dim hover:bg-bg-hover disabled:opacity-60"
+      >
+        Read every document again
+      </button>
+      <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-fg-dim">
+        <input
+          type="checkbox"
+          checked={lenient}
+          disabled={running}
+          onChange={(event) => setLenient(event.target.checked)}
+          className="focus-visible:lay-ring-inward accent-accent"
+        />
+        {/* Says what stops being checked, not what is gained. A label reading
+            "find more classes" would be an accurate description of the effect
+            and a dishonest one of the trade: what this gives up is the only
+            evidence that the document groups these members at all. */}
+        Keep a class whose members are in the document even if the sentence quoted for it is not
+      </label>
       {progress !== null && !running && (
         <p className="m-0 w-full text-xs text-fg-dim">
           {/* Three counts rather than one, and never a bare "done": a sweep

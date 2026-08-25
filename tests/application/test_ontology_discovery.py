@@ -141,6 +141,113 @@ def test_evidence_the_document_does_not_contain_drops_the_class_whole():
     assert verify_classes(proposals, document_text=SONGS, source_id="songs") == []
 
 
+WRAPPED = (
+    "The agent answering that page may write an mcq, cloze, or flashcard component\n"
+    "into its reply instead of just prose, and the block renders live."
+)
+"""A hard-wrapped sentence, which is what killed the only real class this pass
+ever found on the owner's corpus. Measured 2026-08-24: the model quoted it as a
+reader sees it, with the line break flattened to a space, so `str.find` did not
+hold it and `interactive components` {mcq, cloze, flashcard} -- all three
+members present verbatim -- was dropped whole. The newline is the fixture."""
+
+FLATTENED = (
+    "The agent answering that page may write an mcq, cloze, or flashcard component "
+    "into its reply instead of just prose"
+)
+
+
+def test_a_quote_the_document_wraps_is_still_refused_by_the_strict_pass():
+    """The strict default is unchanged, and this is the assertion that says so.
+
+    It is also the case that *distinguishes* the two settings: a fixture whose
+    quote is findable passes under strict and lenient alike and would prove
+    nothing about either. The whole difference between the settings is what
+    happens to this input, so it is the input both tests are written on.
+    """
+    proposals = [
+        {
+            "name": "interactive components",
+            "kind": "unordered_set",
+            "evidence": FLATTENED,
+            "members": [{"name": "mcq"}, {"name": "cloze"}, {"name": "flashcard"}],
+        }
+    ]
+
+    assert verify_classes(proposals, document_text=WRAPPED, source_id="readme") == []
+
+
+def test_the_lenient_pass_keeps_that_class_and_cites_a_member_instead():
+    """What `strict=False` buys, on the document that motivated it.
+
+    Three assertions and none is redundant: the class survives, its span is the
+    first member's own occurrence rather than anything near the absent quote,
+    and `evidence_quoted` says so. Without the third a lenient class is
+    indistinguishable on read from one whose sentence was located, which is the
+    silence this lever would otherwise add rather than remove.
+    """
+    proposals = [
+        {
+            "name": "interactive components",
+            "kind": "unordered_set",
+            "evidence": FLATTENED,
+            "members": [{"name": "mcq"}, {"name": "cloze"}, {"name": "flashcard"}],
+        }
+    ]
+
+    (klass,) = verify_classes(
+        proposals, document_text=WRAPPED, source_id="readme", strict=False
+    )
+
+    assert [member.name for member in klass.members] == ["mcq", "cloze", "flashcard"]
+    assert WRAPPED[klass.evidence.start : klass.evidence.end] == "mcq"
+    assert klass.evidence_quoted is False
+
+
+def test_a_lenient_pass_still_refuses_a_class_whose_members_are_all_invented():
+    """Lenient drops one gate, not both. A class that keeps no member has
+    nothing left in the document at all -- no quote and no name -- so there is
+    no honest span to cite and nothing for a reader to open.
+
+    Proved red by removing the `if not members: continue` guard, which is the
+    only line standing between this and a class cited at offset 0.
+    """
+    proposals = [
+        {
+            "name": "interactive components",
+            "kind": "unordered_set",
+            "evidence": FLATTENED,
+            "members": [{"name": "carousel"}, {"name": "slider"}],
+        }
+    ]
+
+    assert (
+        verify_classes(proposals, document_text=WRAPPED, source_id="readme", strict=False)
+        == []
+    )
+
+
+def test_a_lenient_pass_still_marks_a_located_quote_as_quoted():
+    """The flag tracks the span, not the setting. A lenient sweep finds mostly
+    ordinary classes, and marking those doubtful because of the setting they
+    were found under would make the flag useless for the thing it exists for --
+    telling the two populations apart afterwards.
+    """
+    proposals = [
+        {
+            "name": "Difficulty",
+            "kind": "ordered_scale",
+            "evidence": "There are six difficulties available in the game",
+            "members": [{"name": "EASY", "ordinal": 0}],
+        }
+    ]
+
+    (klass,) = verify_classes(proposals, document_text=SONGS, source_id="songs", strict=False)
+
+    assert klass.evidence_quoted is True
+    assert SONGS[klass.evidence.start : klass.evidence.end].startswith("There are six")
+
+
 def test_evidence_given_as_character_offsets_is_refused():
     """The shape the prompt asked for until 2026-08-24, kept as a test rather
     than as a code path. A live model handed the new prompt still answers with
@@ -742,6 +849,37 @@ def test_a_count_stated_in_one_chunk_survives_the_chunks_that_did_not_state_it()
     )
 
     assert merged[0].declared_count == 6
+
+
+def test_a_quoted_span_replaces_a_fallback_the_earlier_chunk_cited():
+    """The one exception to "earliest chunk wins", and it only exists on a
+    lenient pass. The first chunk kept a member occurrence because the quote
+    was not in it; a later chunk of the same table held the header and located
+    it. Both spans are real, and one names the class.
+
+    Fails on a merge that takes `existing` unconditionally -- which is every
+    other field's rule, and is why this needs its own test rather than riding
+    on `test_a_merged_class_cites_the_first_chunk_that_stated_it`.
+    """
+    fallback = _class("Rank", ["S rank"], start=30).model_copy(
+        update={"evidence_quoted": False}
+    )
+    merged = merge_classes([[fallback], [_class("Rank", ["A rank"], start=900)]])
+
+    assert merged[0].evidence.start == 900
+    assert merged[0].evidence_quoted is True
+
+
+def test_a_fallback_does_not_displace_a_quote_an_earlier_chunk_located():
+    """The other direction, which the same `if` decides and which a test on one
+    arm alone would not pin: a lenient class arriving later must not overwrite
+    a located quote with a member occurrence.
+    """
+    later = _class("Rank", ["A rank"], start=900).model_copy(update={"evidence_quoted": False})
+    merged = merge_classes([[_class("Rank", ["S rank"], start=30)], [later]])
+
+    assert merged[0].evidence.start == 30
+    assert merged[0].evidence_quoted is True
 
 
 def test_two_differently_named_classes_are_not_merged():

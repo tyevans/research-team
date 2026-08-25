@@ -19,14 +19,35 @@ describe('DiscoverySweep', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /read 3 documents/i }))
 
-    expect(onRun).toHaveBeenCalledOnce()
+    expect(onRun).toHaveBeenCalledWith({ again: false, lenient: false })
   })
 
-  it('says a fully-read corpus is finished, and offers no button', () => {
-    render(<DiscoverySweep {...props} pending={[]} />)
+  it('says a fully-read corpus is finished, and still offers a re-read', async () => {
+    // The half of this that changed on 2026-08-24: it used to offer *no*
+    // button, which made a corpus whose classes were all refused a dead end --
+    // the pane said everything had been read and there was nothing to press.
+    const onRun = vi.fn()
+    render(<DiscoverySweep {...props} pending={[]} onRun={onRun} />)
 
     expect(screen.getByText(/every extracted document has been read/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^read \d+ documents?$/i })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /read every document again/i }))
+
+    expect(onRun).toHaveBeenCalledWith({ again: true, lenient: false })
+  })
+
+  it('sends the lenient setting with whichever button was pressed', async () => {
+    // Both halves: the checkbox is read at press time, and it does not turn an
+    // ordinary press into a re-read. A single boolean covering both would make
+    // "read the pending documents leniently" unreachable.
+    const onRun = vi.fn()
+    render(<DiscoverySweep {...props} pending={['a']} onRun={onRun} />)
+
+    await userEvent.click(screen.getByRole('checkbox'))
+    await userEvent.click(screen.getByRole('button', { name: /read 1 document/i }))
+
+    expect(onRun).toHaveBeenCalledWith({ again: false, lenient: true })
   })
 
   it('counts progress against the total while the sweep runs', () => {
@@ -40,7 +61,10 @@ describe('DiscoverySweep', () => {
     )
 
     expect(screen.getByText(/1 of 3/)).toBeInTheDocument()
-    expect(screen.getByRole('button')).toBeDisabled()
+    // Every control, not `getByRole('button')`: a running sweep that left the
+    // re-read pressable would start a second one over the same corpus.
+    for (const control of screen.getAllByRole('button')) expect(control).toBeDisabled()
+    expect(screen.getByRole('checkbox')).toBeDisabled()
   })
 
   it('reports documents that were declined apart from documents that state nothing', () => {

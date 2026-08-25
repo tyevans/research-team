@@ -1712,8 +1712,38 @@ def create_app(
         return {"indexed": await extractor.reindex(project_id)}
 
     @app.get("/api/projects/{project_id}/sources/ungrouped")
-    async def ungrouped_sources(project_id: UUID):
+    async def ungrouped_sources(project_id: UUID, include_examined: bool = False):
         """Every extracted document no ontology pass has read. 200, it is a read.
+
+        **`include_examined=true` answers a different question on purpose: every
+        extracted document, examined or not.** It is what a re-read is driven
+        from, and it exists because "examined" is not "correctly examined". A
+        pass records a document as read whether the model stated no classes,
+        stated some the verifier refused, or stated some in a chunk whose reply
+        was unreadable -- `OntologyDiscoveryService.discover` names all three
+        and keeps none of them apart on the event. Measured 2026-08-24 on the
+        owner's corpus: of two examined documents, one genuinely stated none and
+        one stated `interactive components` {mcq, cloze, flashcard} and had it
+        dropped because the quoted evidence spanned a hard line wrap and so was
+        not found verbatim. Both render as "states no classes" and neither is
+        reachable from the default list ever again.
+
+        So the parameter is the cheap half of that fix: it does not make the
+        verifier better, it makes a second attempt possible after someone has.
+        The expensive half -- a locator that tolerates wrapping -- is a separate
+        change, and this one is worth having without it because the model is
+        not deterministic either.
+
+        The name is `include_examined` rather than `all`, because it says which
+        exclusion is being lifted. The other two -- unextracted, and media --
+        still apply, and a re-read wants them to: neither is a document a pass
+        could have got wrong.
+
+        Re-reading is safe rather than merely permitted. `OntologyDiscovered`
+        replaces a source's classes wholesale and the projection keys on
+        `source_id`, so a second pass over a document that already has classes
+        supersedes them rather than duplicating them. What it costs is one model
+        call per document, which is why nothing does this on a schedule.
 
         Registered inside the literal-segment block above for that block's
         reason: `ungrouped` would otherwise be read as a `{source_id}` by
@@ -1745,7 +1775,9 @@ def create_app(
         if extractor is None or ontology is None:
             raise HTTPException(status_code=503, detail="ontology discovery is not configured")
         await _require_project(project_id)
-        examined = await ontology.sources_with_classes(project_id)
+        examined: set[str] = set()
+        if not include_examined:
+            examined = await ontology.sources_with_classes(project_id)
         pending = await extractor.ungrouped(project_id, examined=examined)
         return {"sourceIds": list(pending)}
 
@@ -2941,7 +2973,7 @@ def create_app(
         return definition_view(definition, served)
 
     @app.post("/api/projects/{project_id}/sources/{source_id}/ontology")
-    async def discover_ontology(project_id: UUID, source_id: str):
+    async def discover_ontology(project_id: UUID, source_id: str, strict: bool = True):
         """Read one document for the classes it states. 200, because it has run.
 
         **Synchronous, unlike extraction, and for `read_graph_definition`'s
@@ -2960,6 +2992,19 @@ def create_app(
         happen", when what is going to happen is the extraction, not the pass.
         Making it fit means changing a component another lane owns.
 
+        **`strict=false` reads the document under the weaker rule** that
+        `verify_classes` documents: a class whose quoted sentence is not in the
+        text survives if all its members are, cited to the first member's
+        occurrence and flagged `evidenceQuoted: false` on the way back out.
+        Default true, because a reader who has not asked for it must not be
+        handed classes the document may never have grouped.
+
+        A query parameter and not a body field, on a POST, which is the odd
+        choice here. The body is `{}` and stays that way: this route already
+        carries its subject in the path, and a caller reading the URL sees the
+        whole request -- which matters more than usual for a lever whose two
+        settings answer different questions about the same document.
+
         **`found: null` rather than 404 when the pass declines.** The three
         declines -- an unreadable reply, a document over
         `MAX_DISCOVERY_CHARS`, and a source that is not there -- are told apart
@@ -2975,7 +3020,7 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail=f"no source {source_id!r} in project {project_id}"
             )
-        found = await ontology_discoverers(project_id).discover(source_id)
+        found = await ontology_discoverers(project_id).discover(source_id, strict=strict)
         return {"sourceId": source_id, "found": found}
 
     @app.get("/api/projects/{project_id}/ontology")
@@ -3017,6 +3062,11 @@ def create_app(
                         "end": row.evidence_end,
                     },
                     "rejectedMembers": json.loads(row.rejected_members),
+                    # Travels beside `evidence` rather than being inferred from
+                    # it, because nothing about the offsets says which they are
+                    # -- a member fallback and a located sentence are both a
+                    # pair of integers into the same document.
+                    "evidenceQuoted": row.evidence_quoted,
                     "stale": row.stale,
                     "members": [
                         {"name": member.member_name, "ordinal": member.ordinal}
