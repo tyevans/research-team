@@ -5,7 +5,7 @@ The one property worth testing here is sequencing: Stage 2 must be written
 is prompt text, which no test can adjudicate.
 
 The failure being guarded against is specific and would be invisible: a
-refactor that runs the three turns concurrently, or that builds all three
+refactor that runs the four turns concurrently, or that builds all four
 prompts up front, produces a course with every section present and in the
 right file, written forwards. Nothing raises and the output looks right.
 """
@@ -181,7 +181,7 @@ async def test_stage_three_is_not_given_stage_two_verbatim():
 
 
 @pytest.mark.asyncio
-async def test_all_three_turns_share_one_session():
+async def test_all_four_phases_share_one_session():
     """Stage 2 reads what Stage 1 wrote, and a workspace does not cross sessions."""
     turns = RecordingTurns()
     sessions = FakeSessions(turns.files)
@@ -252,14 +252,23 @@ async def test_a_phase_that_wrote_nothing_fails_the_run():
 @pytest.mark.asyncio
 async def test_the_four_phases_run_in_order():
     """Each phase is asserted checkpoint-valid before the next is dispatched,
-    and each later prompt carries a fragment of what the phase before it wrote
-    -- the same backward-design guarantee the three-turn tests above pin,
-    extended to the fourth phase.
+    and phases 1-3's prompts each carry a fragment of what the phase before
+    them wrote -- the same backward-design guarantee the three-turn tests
+    above pin.
 
     Would pass if the phases ran in the wrong order but each still happened to
     produce checkpoint-valid content in isolation; what it actually catches is
     a later phase's prompt losing the earlier phase's output, which is the
     edit that looks like a harmless prompt-builder refactor.
+
+    Phase 4's assertion is weaker and deliberately so: `assessment_prompt`
+    builds its lesson paths from `lesson_paths(area.slug, lesson_count)` --
+    computed from arguments already in hand, not carried from phase 3's
+    reply -- so this assertion holds even with phase 3 removed entirely.
+    `check_lessons` is what actually connects phase 3's output to phase 4;
+    this test only checks that phase 4 named the right paths, which
+    `assessment_prompt`'s own docstring already says needs nothing from phase
+    3's reply.
     """
     unit_path = f"{AREAS_DIR}/{AREA.slug}/unit.md"
     stage_one = (
@@ -293,7 +302,7 @@ async def test_the_four_phases_run_in_order():
     assert "Enduring Understandings" not in turns.prompts[0]  # nothing to be faithful to yet
     assert "REPLY-1" in turns.prompts[1]  # stage 2 given stage 1's reply
     assert unit_path in turns.prompts[2]  # stage 3 reads stage 2 off the file
-    assert lesson_01 in turns.prompts[3]  # phase 4 named the lessons stage 3 wrote
+    assert lesson_01 in turns.prompts[3]  # phase 4 named the lessons it expects, by path
 
 
 @pytest.mark.asyncio
