@@ -148,14 +148,58 @@ def test_a_file_with_no_frontmatter_parses_as_none_rather_than_raising():
 
 
 def test_unparseable_frontmatter_is_none_rather_than_an_exception():
-    front, _ = parse_frontmatter("---\nartifact_type: [unclosed\n---\nbody\n")
+    front, body = parse_frontmatter("---\nartifact_type: [unclosed\n---\nbody\n")
     assert front is None
+    # The block is still excluded even though it never parsed: a delimited
+    # block is identified structurally (does the text open with `---` and
+    # close it on its own line) before its contents are validated as YAML, so
+    # a caller after the prose does not get the block back just because this
+    # one failed to load.
+    assert body == "body\n"
 
 
 def test_frontmatter_that_is_not_a_mapping_is_none():
     """A YAML list parses fine and is still not frontmatter."""
-    front, _ = parse_frontmatter("---\n- one\n- two\n---\nbody\n")
+    front, body = parse_frontmatter("---\n- one\n- two\n---\nbody\n")
     assert front is None
+    assert body == "body\n"
+
+
+def test_a_value_containing_a_colon_still_gets_its_block_stripped():
+    """`builds_toward` names an assessment and states what it covers, and that
+    is prose a model routinely punctuates with a colon -- the exact case
+    `stage_artifact_instructions` asks for. `yaml.safe_load` reads a second
+    `:` on a line as a second mapping key rather than as punctuation inside a
+    string and raises `mapping values are not allowed here`, so `front` comes
+    back `None` here same as any other malformed block.
+
+    What must not happen is the block landing back in `body`: a course lesson
+    on screen with this exact field content (`agent-interaction-log`,
+    lesson-03 in a real authored course, quoted verbatim as the fixture,
+    per CLAUDE.md's rule against a fixture simpler than what the real producer
+    emits) rendered `---` then `title: ... builds_toward: ...` as a markdown
+    setext `<h2>` above the real `# ` heading, because the strip built for
+    that defect discarded the block only when `parse_frontmatter` returned a
+    mapping -- and a block with a colon in a value never does.
+    """
+    text = (
+        "---\n"
+        "title: No reader, and a switch that does not delete\n"
+        "area: agent-interaction-log\n"
+        "builds_toward: Understanding 3 — a log with no reader: "
+        "pre-consumer collection; Understanding 4 — disabling the switch "
+        "vs. deleting the data\n"
+        "---\n\n"
+        "# No reader, and a switch that does not delete\n\nThe rest of the lesson.\n"
+    )
+    front, body = parse_frontmatter(text)
+    assert front is None
+    expected_body = (
+        "# No reader, and a switch that does not delete\n\nThe rest of the lesson.\n"
+    )
+    assert body == expected_body
+    assert "builds_toward" not in body
+    assert "---" not in body
 
 
 def test_the_instructions_name_every_path_the_stage_is_expected_to_write():

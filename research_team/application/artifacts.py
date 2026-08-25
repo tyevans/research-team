@@ -120,8 +120,27 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any] | None, str]:
     to raise here: a run that produced one malformed artifact should still hand
     back the other twenty.
 
-    The body is returned unchanged in the `None` cases, so a caller that only
-    wanted the prose does not have to know whether the parse succeeded.
+    **The two `None` cases return different bodies, and the difference is the
+    whole point.** No delimited block at all: the body is the text unchanged,
+    because there is nothing to have excluded. A delimited block that failed
+    to parse: the body is still everything *after* the closing fence, not the
+    fence and the block along with it. Structural identification (does the
+    text open with `---` and close it on its own line) is separated from
+    semantic validation (does the block between them parse as a mapping) on
+    purpose, because the first question is answerable even when the second one
+    fails.
+
+    This was `text` in both cases until a real `builds_toward` field broke it:
+    prose that names an assessment and states what it covers routinely
+    contains a colon, which `yaml.safe_load` reads as a second mapping key
+    (`mapping values are not allowed here`) rather than as punctuation in a
+    string. That block is real frontmatter by every structural signal -- it is
+    fenced, it opens the file, a human reading it calls it frontmatter -- and
+    handing its caller "no block, body unchanged" put the whole block back in
+    front of a markdown renderer, which reads `key: value` immediately
+    followed by `---` as a setext heading. A caller that only wanted the prose
+    now gets the prose, whether or not the block parsed; a caller that wants
+    to know whether it parsed still gets `None` for that.
     """
     if not text.startswith(FRONTMATTER_FENCE):
         return None, text
@@ -133,9 +152,9 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any] | None, str]:
     try:
         loaded = yaml.safe_load(block)
     except yaml.YAMLError:
-        return None, text
+        return None, body
     if not isinstance(loaded, dict):
-        return None, text
+        return None, body
     return loaded, body
 
 
