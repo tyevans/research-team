@@ -483,6 +483,29 @@ class _LazyArtStore:
     something to serve `/api/art/{art_id}.svg` from without opening a
     connection before uvicorn's event loop exists -- see `_LazyBlurbCache`'s
     docstring for why that ordering matters.
+
+    **Every public method of `ArtStore` has to be forwarded, and that is not a
+    style rule.** This wrapper mirrors a concrete class rather than standing
+    behind a `Protocol`, so nothing declares what its surface should be: a
+    method added to `ArtStore` and used through this is an `AttributeError` at
+    the call, in a background task, on the one code path that reaches it.
+    `decrement_uses` shipped that way and ran in production. It is only called
+    when a candidate already *has* an assignment to drop -- the sweep's
+    membership-changed arm and every reroll -- so a fresh project sweeps clean
+    and the failure appears the first time somebody redoes art they already
+    have:
+
+        AttributeError: '_LazyArtStore' object has no attribute
+        'decrement_uses'. Did you mean: 'increment_uses'?
+
+    Nothing caught it. There is no Python typechecker in this repository's
+    gates, `ArtSweep.__init__` annotates `art_store: ArtStore` while
+    composition passes this, and every test of the sweep supplies its own fake
+    store rather than the wrapper. The three sibling wrappers were audited at
+    the same time and are complete -- the other two mirror `Protocol`s in
+    `application/course_catalog.py`, which is the difference.
+    `test_composition.py` now pins the surface against `ArtStore`'s own, so the
+    next method lands as a failing test rather than as a broken reroll.
     """
 
     def __init__(self, db_path: str) -> None:
@@ -522,6 +545,10 @@ class _LazyArtStore:
     async def increment_uses(self, art_id: UUID) -> None:
         store = await self._opened()
         await store.increment_uses(art_id)
+
+    async def decrement_uses(self, art_id: UUID) -> None:
+        store = await self._opened()
+        await store.decrement_uses(art_id)
 
     async def close(self) -> None:
         if self._store is not None:
