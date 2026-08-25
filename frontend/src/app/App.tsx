@@ -9,8 +9,9 @@ import { AskView } from '@presentation/ask/AskView.tsx'
 import { DialogueView } from '@presentation/dialogue/DialogueView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { DEFAULT_MATERIAL, ProjectView } from '@presentation/project/ProjectView.tsx'
-import { homeHref, type Route } from '@presentation/routing/routes.ts'
+import { homeHref, interactionsHref, type Route } from '@presentation/routing/routes.ts'
 import { useRoute, useSeekSeconds } from '@presentation/routing/use-route.ts'
+import { InteractionsView } from '@presentation/interactions/InteractionsView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
@@ -57,6 +58,13 @@ export const App = () => (
  * driving the whole console. */
 export const viewNameOf = (route: Route): string => {
   if (route.name === 'session') return 'session'
+  // The explorer records its own use, and that is the honest arrangement
+  // rather than an oversight. Reading the log is an interaction, its dwell
+  // rows are real, and nothing filters them out -- so `interactions` will sit
+  // near the top of any view count, and the correct reading of that is "the
+  // person looking at this was looking at this". Excluding it would mean the
+  // one view whose numbers are known to be wrong is the one nobody can check.
+  if (route.name === 'interactions') return 'interactions'
   if (route.name !== 'project') return 'home'
   return `project/${route.selection?.facet ?? DEFAULT_MATERIAL}`
 }
@@ -116,6 +124,17 @@ const Console = () => {
             <a className="brand" href={homeHref()}>
               <span className="brand-mark" />
               <span className="brand-name">research&#8209;team</span>
+            </a>
+            {/* Beside the brand rather than in `chrome-right`, and out of the
+                breadcrumb's way: the log spans every project and session, so
+                it belongs where the things that are true of the whole console
+                are, not among the badges that describe the current one.
+                Styled as an anchor wearing `.btn` -- the pattern `RunPanel`
+                and `WorkerDrawer` already use for a link into a session --
+                rather than a class of its own, because no new rule is needed
+                for a link that exists everywhere. */}
+            <a className="btn btn-ghost btn-sm" href={interactionsHref()}>
+              log
             </a>
             <Breadcrumbs
               route={route}
@@ -222,6 +241,10 @@ const CurrentView = ({
   if (route.name === 'session') {
     return <SessionView store={store} sessionId={route.id} at={route.at} path={route.path} />
   }
+  // Ahead of the `!== 'project'` fallthrough below, which answers `TreeView`
+  // for every route it does not recognise. A view added after that line is a
+  // view nobody reaches.
+  if (route.name === 'interactions') return <InteractionsView />
   if (route.name !== 'project') return <TreeView />
 
   const { id, selection } = route

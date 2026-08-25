@@ -9,12 +9,16 @@ import { expandReferences } from '../../infrastructure/rendering/references.ts'
 
 import {
   FACETS,
+  INTERACTION_KINDS,
+  interactionsHref,
+  NO_INTERACTION_FILTERS,
   parseRoute,
   parseSeekSeconds,
   projectHref,
   sessionHref,
   sessionSelection,
   type Facet,
+  type InteractionFilters,
   type Route,
   type Selection,
 } from './routes.ts'
@@ -406,5 +410,119 @@ describe('projectHref', () => {
     expect(href).toBe(`#/p/abc/entity/${encodeURIComponent('a/b')}`)
     const route: Route = parseRoute(href)
     expect(route.name === 'project' && route.selection?.id).toBe('a/b')
+  })
+})
+
+describe('the interaction log route', () => {
+  /** Every filter set at once, so a printer that forgets one is visible in the
+   *  round trip rather than only in the test that names that field. */
+  const EVERY: InteractionFilters = {
+    kinds: ['SearchPerformed', 'AskSubmitted'],
+    views: ['home', 'project/catalog'],
+    projectId: 'atlas',
+    installId: 'install-1',
+    browserSessionId: 'bs-1',
+    since: '2026-08-01T00:00:00Z',
+    until: '2026-08-25T12:00:00Z',
+  }
+
+  it('reads a bare `#/i` as the unfiltered log', () => {
+    expect(parseRoute('#/i')).toEqual({
+      name: 'interactions',
+      filters: NO_INTERACTION_FILTERS,
+    })
+  })
+
+  it('is a top-level route, not a facet on a project', () => {
+    // The distinction this asserts: no project id is required to reach it, and
+    // the route carries none. A facet arm would have one.
+    const route = parseRoute('#/i')
+    expect(route.name).toBe('interactions')
+    expect(route).not.toHaveProperty('id')
+  })
+
+  it('round-trips every filter through the href', () => {
+    expect(parseRoute(interactionsHref(EVERY))).toEqual({
+      name: 'interactions',
+      filters: EVERY,
+    })
+  })
+
+  it('prints the unfiltered log without a trailing query', () => {
+    expect(interactionsHref()).toBe('#/i')
+    expect(interactionsHref(NO_INTERACTION_FILTERS)).toBe('#/i')
+  })
+
+  it('repeats the key for a multi-select rather than joining it', () => {
+    const href = interactionsHref({
+      ...NO_INTERACTION_FILTERS,
+      kinds: ['ViewEntered', 'ViewExited'],
+    })
+    expect(href).toBe('#/i?kind=ViewEntered&kind=ViewExited')
+  })
+
+  it('encodes a view name that would otherwise open a segment', () => {
+    const href = interactionsHref({ ...NO_INTERACTION_FILTERS, views: ['project/catalog'] })
+    expect(href).toContain(encodeURIComponent('project/catalog'))
+    expect(parseRoute(href)).toEqual({
+      name: 'interactions',
+      filters: { ...NO_INTERACTION_FILTERS, views: ['project/catalog'] },
+    })
+  })
+
+  it('drops an unrecognised kind and keeps the rest of the filter', () => {
+    // The whole point of the arm: a typo in one of two kinds costs that kind,
+    // not the visit. Falling back to `home` -- which is what an unrecognised
+    // facet does -- would throw away the second kind and the time window too.
+    expect(parseRoute('#/i?kind=Nonsense&kind=ViewExited&view=home')).toEqual({
+      name: 'interactions',
+      filters: { ...NO_INTERACTION_FILTERS, kinds: ['ViewExited'], views: ['home'] },
+    })
+  })
+
+  it('drops a malformed date and keeps the rest of the filter', () => {
+    expect(parseRoute('#/i?since=yesterday&until=2026-08-25T12:00:00Z&project=atlas')).toEqual({
+      name: 'interactions',
+      filters: {
+        ...NO_INTERACTION_FILTERS,
+        projectId: 'atlas',
+        until: '2026-08-25T12:00:00Z',
+      },
+    })
+  })
+
+  it('keeps a date exactly as the URL spelled it', () => {
+    // Stored rather than reformatted: the value goes back out as a query
+    // parameter, and a parse-and-reprint here would be a second date format.
+    const route = parseRoute('#/i?since=2026-08-01')
+    expect(route.name === 'interactions' && route.filters.since).toBe('2026-08-01')
+  })
+
+  it('reads an empty value as absent rather than as an empty filter', () => {
+    expect(parseRoute('#/i?project=&view=&kind=')).toEqual({
+      name: 'interactions',
+      filters: NO_INTERACTION_FILTERS,
+    })
+  })
+
+  it('falls back to home for a path under `#/i`, the way an unknown facet does', () => {
+    expect(parseRoute('#/i/nonsense')).toEqual({ name: 'home' })
+    expect(parseRoute('#/i/nonsense?kind=ViewExited')).toEqual({ name: 'home' })
+  })
+
+  it('drops a repeated value so the printed form is canonical', () => {
+    const href = interactionsHref({
+      ...NO_INTERACTION_FILTERS,
+      kinds: ['ViewExited', 'ViewExited'],
+    })
+    expect(href).toBe('#/i?kind=ViewExited')
+  })
+
+  it.each(INTERACTION_KINDS)('accepts %s, which the log can emit', (kind) => {
+    // Parametrised over the vocabulary rather than over a sample of it: a kind
+    // added to the tuple and misspelled there fails here rather than being
+    // dropped from every URL that names it.
+    const route = parseRoute(`#/i?kind=${kind}`)
+    expect(route.name === 'interactions' && route.filters.kinds).toEqual([kind])
   })
 })
