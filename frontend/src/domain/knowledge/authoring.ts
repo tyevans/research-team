@@ -15,6 +15,19 @@
  * reconstruct the other's from the file list.
  */
 
+/** Model turns per area: `desired_results`, `evidence`, the lesson stage and
+ *  `assessment` -- one per `self._turns.run(...)` call in `author_area`
+ *  (`research_team/application/course_authoring.py`). A path run adds one
+ *  more turn for `author_path`'s own overview file, counted separately by
+ *  its callers rather than folded in here, since it is spent once per path
+ *  and not once per area.
+ *
+ *  Kept as the one place this number lives, after the same arithmetic went
+ *  stale twice at once -- once as a literal in `AuthoringBar.tsx` and once in
+ *  this file's own comment -- when the phase count changed from three to
+ *  four and neither copy was touched. */
+export const TURNS_PER_AREA = 4
+
 export interface AuthoringFailure {
   readonly target: string
   readonly detail: string
@@ -48,9 +61,10 @@ export interface AuthoringRun {
   /** The area being authored right now, or `null` between and after them.
    *
    * The field that makes a long run legible. A run over eight areas is up to
-   * twenty-four model turns and can sit at "running" for a very long time; a
-   * panel that could only say "running" for twenty minutes is indistinguishable
-   * from one that has hung. */
+   * thirty-two model turns (`TURNS_PER_AREA` each) plus the path's own
+   * overview, and can sit at "running" for a very long time; a panel that
+   * could only say "running" for twenty minutes is indistinguishable from one
+   * that has hung. */
   readonly current: string | null
   /** Per-target failures. A run that authored seven of eight areas is `done`
    *  with one failure listed, not `failed` — calling it failed would hide

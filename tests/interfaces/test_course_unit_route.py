@@ -158,6 +158,59 @@ async def test_a_recorded_unit_file_comes_back_as_text_after_a_real_run(app_and_
     assert body["unitPath"] == "/course/areas/roman-law/unit.md"
 
 
+async def test_frontmatter_does_not_reach_the_wire(app_and_client):
+    """Every lesson file this project writes opens with a YAML frontmatter
+    block (`stage_artifact_instructions` puts one there). Markdown reads
+    `key: value` immediately followed by a `---` line as a setext heading, so
+    a reader handed the raw file sees a fabricated `<h2>` -- the frontmatter's
+    own fields, rendered as if they were a title -- sitting above the real
+    `# ` heading the lesson actually opens with.
+
+    Fails against a route that forwards `entry.get("content", "")` unchanged:
+    `body["unit"]` and the lesson's `markdown` would then still start with
+    `---`, and the `builds_toward` field (chosen because it is the field most
+    likely to contain a colon-and-dash shape that a naive strip could get
+    wrong) would still be present verbatim rather than only as prose.
+    """
+    ctx = app_and_client
+    project_id = await _new_project(ctx.client)
+    unit_with_frontmatter = (
+        "---\n"
+        "title: Roman Law\n"
+        "area: roman-law\n"
+        "builds_toward: Understanding 3 -- a law with no court\n"
+        "---\n\n" + UNIT
+    )
+    lesson_with_frontmatter = (
+        "---\n"
+        "title: The Twelve Tables\n"
+        "area: roman-law\n"
+        "builds_toward: Understanding 1 -- a code with no judge\n"
+        "---\n\n" + LESSON
+    )
+    await _authored(
+        ctx.application,
+        ctx.authoring,
+        project_id,
+        {
+            "roman-law": {
+                "/course/areas/roman-law/unit.md": unit_with_frontmatter,
+                "/course/areas/roman-law/lesson-01.md": lesson_with_frontmatter,
+            }
+        },
+    )
+
+    body = (await ctx.client.get(f"/api/projects/{project_id}/catalog/roman-law/unit")).json()
+
+    assert body["unit"] == UNIT
+    assert body["unit"].startswith("# Roman Law")
+    assert "builds_toward" not in body["unit"]
+    lesson_markdown = body["lessons"][0]["markdown"]
+    assert lesson_markdown == LESSON
+    assert lesson_markdown.startswith("# Lesson 1")
+    assert "builds_toward" not in lesson_markdown
+
+
 async def test_a_slug_no_run_ever_wrote_is_unauthored_rather_than_empty(app_and_client):
     """`unauthored` is a state a page can act on; an empty `unit` is not.
 

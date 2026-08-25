@@ -19,6 +19,19 @@ it('renders a reference as a link to the source', () => {
   expect(screen.getByRole('link')).toHaveAttribute('href', expect.stringContaining('t=252'))
 })
 
+/** What a reader actually sees. Asserted through the rendered DOM rather than
+ *  on `expandReferences`' string, because the marker only survives if
+ *  `renderMarkdown`'s allow-list keeps `sup` and `aria-label` -- and a
+ *  stripped tag raises nothing. */
+it('shows a numbered marker, not a fifty-character slug', () => {
+  render(<Markdown source="a claim [[src:keynote@252]]" projectId={PROJECT} />)
+  const link = screen.getByRole('link', { name: 'Source 1: keynote' })
+  expect(link).toHaveTextContent('1')
+  expect(link).toHaveAttribute('title', 'keynote')
+  expect(link.closest('sup')).not.toBeNull()
+  expect(screen.queryByText(/keynote/)).not.toBeInTheDocument()
+})
+
 /** The claim is about what reaches the page, so this asserts on the rendered
  *  DOM rather than on `expandReferences`' output directly -- it would still
  *  pass if someone later moved sanitisation ahead of the reference pre-pass,

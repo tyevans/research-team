@@ -74,8 +74,14 @@ it('turns a model-written source reference into a link', async () => {
 
   await ask('why?')
 
-  const link = await screen.findByRole('link', { name: 's1' })
+  // The accessible name is `Source 1: s1`, not `s1`: the reference renders as
+  // a superscript number and the id lives on the `aria-label` (see
+  // `references.ts`). Matching on the id rather than on the whole name keeps
+  // this test about the thing it exists to catch -- `AskTurn` dropping
+  // `projectId` -- rather than about the marker's wording.
+  const link = await screen.findByRole('link', { name: /s1/ })
   expect(link).toHaveAttribute('href', `#/p/${PROJECT}/doc/s1`)
+  expect(link).toHaveTextContent('1')
 })
 
 it('says the page keeps nothing', () => {

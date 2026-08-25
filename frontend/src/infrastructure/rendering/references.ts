@@ -86,9 +86,9 @@ const TOKEN = new RegExp(
   'g',
 )
 
-/** Escapes the four characters that would otherwise let the anchor's visible
- *  text -- the matched id, interpolated below -- break out of its `<a>...</a>`
- *  text node. `ID_CHARS` already excludes all four, so this currently never
+/** Escapes the four characters that would otherwise let the matched id --
+ *  interpolated below into the anchor's `title` and `aria-label` -- break out
+ *  of its attribute, or out of the element if it were a text node again. `ID_CHARS` already excludes all four, so this currently never
  *  fires; it exists so that stays true if `ID_CHARS` is ever widened without
  *  the widener remembering this coupling. See the charset comment above.
  *
@@ -118,9 +118,29 @@ const escapeText = (text: string): string =>
  * This function does not check that the id names a real source -- see the
  * design's resolution ruling -- so a well-formed reference to an unknown id
  * still links, to the document page's own "not found" state.
+ *
+ * **The anchor's visible text is a superscript number, not the id.** A source
+ * id here is a fifty-character slug, and printing it inline put three of them
+ * in a five-line paragraph, in monospace, wrapping mid-sentence; the slug
+ * carries nothing a reader can act on. The degradation promise above is about
+ * the *invalid* case and is untouched. For the valid case the id is preserved
+ * on the anchor's `title` and `aria-label`, so it is still visible on hover,
+ * still in the DOM, and still greppable in the rendered page -- the reporting
+ * path the promise exists to keep is the same path, one hover longer.
+ *
+ * **Numbering is per call, which is per markdown block, which is per lesson.**
+ * The counter is a local, so a page rendering a unit and three lessons shows
+ * four independent sequences each starting at 1. That is the right unit -- a
+ * lesson is what a reader reads at once -- but it does mean two "1"s on one
+ * page name different sources, which is why the id has to stay reachable on
+ * the element rather than only in a footnote list this function cannot see.
+ * A repeated id reuses its number: the key is the id alone, not the id and
+ * offset, because two moments in one recording are one source.
  */
-export const expandReferences = (source: string, projectId: ProjectId): string =>
-  source.replace(TOKEN, (whole, id: string | undefined, start?: string, _end?: string) => {
+export const expandReferences = (source: string, projectId: ProjectId): string => {
+  const numbers = new Map<string, number>()
+
+  return source.replace(TOKEN, (whole, id: string | undefined, start?: string, _end?: string) => {
     // No `id` capture means this match was a fence or inline-code
     // alternative, not a reference -- hand it back untouched, syntax and all.
     if (id === undefined) return whole
@@ -148,5 +168,26 @@ export const expandReferences = (source: string, projectId: ProjectId): string =
     // range collapses to its start's `?t=`.
     const query = start === undefined ? '' : `?t=${start}`
 
-    return `<a class="font-mono text-sm" href="${href}${query}">${escapeText(id)}</a>`
+    const existing = numbers.get(id)
+    const number = existing ?? numbers.size + 1
+    if (existing === undefined) numbers.set(id, number)
+
+    // `md-ref` is a named class in `markdown.css`, not a Tailwind utility.
+    // The anchor also picks up `md-link`/`md-link-internal` from
+    // `markdown.ts`'s sanitiser hook, and those live in the same unlayered
+    // stylesheet -- a utility would sit in the class attribute and lose the
+    // cascade to them without anything failing. See CLAUDE.md on unlayered
+    // rules beating layered utilities.
+    //
+    // `aria-label` rather than visually-hidden text: the number is the whole
+    // visible content, and a bare numeral read aloud mid-sentence is noise.
+    // Both attributes go through `escapeText` for the same reason the text
+    // node did -- `ID_CHARS` forbids `"` today, and this stays correct if it
+    // stops doing so.
+    const label = escapeText(id)
+    return (
+      `<sup class="md-ref"><a href="${href}${query}"` +
+      ` title="${label}" aria-label="Source ${number}: ${label}">${number}</a></sup>`
+    )
   })
+}

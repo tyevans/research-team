@@ -33,10 +33,16 @@ a judgement nobody can defend and gets a 4 for everything.
    wrong, with evidence from the corpus. "A leak in one does not expose the
    other" fails: it is abstract, and the lesson never shows the leak.
 
-4. **No quote-then-gloss chains.** At most one block quote followed by
-   restatement, in the whole lesson. Claim, quote, "that sentence has two
-   halves", gloss -- repeated in every section -- is the shape that makes a
-   lesson predictable by its third paragraph.
+4. **At most one unpacking, and the format does not matter.** Unpacking is
+   the move where a lesson presents something -- a block quote, an inline
+   quotation, a paraphrase, or its own claim -- and then walks the reader back
+   through its parts: announcing how many parts it has, naming each, restating
+   each in the lesson's own words. Count the move, not the format. The same
+   move on an inline quotation is the same failure as on a block quote, and a
+   lesson holding one block quote can still perform it twice. The tell is a
+   sentence whose only work is to tell the reader that the previous sentence
+   has parts. Twice or more, the reader learns every citation arrives with its
+   own explanation and stops reading the citations.
 
 5. **Second person with a task.** The reader is doing something. "A learner who
    understands them can answer..." fails; "You are about to add an event.

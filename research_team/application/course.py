@@ -257,8 +257,14 @@ def _slot(
     content = entry.get("content", "") or ""
     frontmatter, body = parse_frontmatter(content)
     if frontmatter is None:
-        # Present but unparseable. `body` is the whole file in that case, which
-        # is the honest size to report: there is no block to have excluded.
+        # Present but unparseable. `body` still excludes the fenced block --
+        # `parse_frontmatter` identifies the block structurally before it
+        # tries to parse it, so a malformed block is not counted as prose
+        # either. (It used to be: the block failing to parse meant `body` was
+        # the whole file including the block, overcounting every check that
+        # reads this field as "how much prose is here" by the size of the
+        # block. Changed with the frontmatter-on-the-course-page fix; see
+        # `parse_frontmatter`'s docstring.)
         return replace(base, present=True, body_chars=len(body))
     missing = tuple(name for name in FRONTMATTER_FIELDS if name not in frontmatter)
     return replace(
