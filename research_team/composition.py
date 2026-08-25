@@ -125,6 +125,7 @@ from research_team.infrastructure.agent import (
     build_model,
 )
 from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
+from research_team.infrastructure.agent.authoring_subagents import AUTHORING_SUBAGENTS
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
 from research_team.infrastructure.agent.component_feedback import ComponentFeedback
 from research_team.infrastructure.agent.corpus_tools import (
@@ -1604,6 +1605,44 @@ def _context_parts(
     return FullHistory(), (), ""
 
 
+def _subagents_for(session: Session, default: Sequence[dict]) -> Sequence[dict]:
+    """The roster this turn may dispatch.
+
+    Authoring is the only purpose with its own roster, and the check is on
+    purpose rather than on the presence of a course directory: a session's
+    purpose is fixed when it starts, where a directory appears partway through
+    the first phase, which would give phase 1 a different roster from phase 2.
+
+    **`default` is empty under the configuration this project actually runs.**
+    Only the `delegate` branch of `_context_parts` returns a non-empty tuple,
+    and `.env` sets `AGENT_CONTEXT=elide`, so the mode supplies no baseline
+    roster and this function is the only thing that will ever put a subagent in
+    an authoring turn. A reader who assumes the six are being *added* to
+    something is wrong; on the real configuration they are the whole list.
+    `test_a_chat_session_gets_the_modes_own_roster_and_no_authoring_one` is
+    parametrised over all three modes for that reason -- against `elide` alone
+    its assertion is `() == ()`, which the `delegate` case is there to redeem.
+
+    The seventh subagent is deliberate and could not be removed anyway.
+    deepagents inserts a `general-purpose` spec of its own unless the roster
+    already holds one; the `general_purpose_subagent=...` escape the library's
+    own docstring advertises (`graph.py:404`) is a *harness profile* field
+    derived from the model, and `create_deep_agent` in 0.7.6 takes no such
+    argument -- measured against the installed package on 2026-08-24, not read.
+    So an authoring turn gets seven, and the only way to have six would be to
+    ship a `general-purpose` spec of our own, which is still seven. What it
+    costs: the authoring prompts name six subagents and say when to use each,
+    and a parent that finds a nameless seventh may route work around the roster
+    -- past `prose-critic` and `unit-reviewer`, which exist because the plan is
+    expected to leak. `test_general_purpose_cannot_be_disabled_through_
+    create_deep_agent` fails on a version that adds the argument, which is when
+    to re-take this decision rather than inherit it.
+    """
+    if session.state.purpose is SessionPurpose.COURSE_AUTHORING:
+        return AUTHORING_SUBAGENTS
+    return default
+
+
 def _extraction_model(injected: BaseChatModel | None) -> BaseChatModel:
     """The chat model knowledge extraction runs on, given what the caller passed.
 
@@ -2412,6 +2451,15 @@ def build_application(
             return {}
         return await mounted_sources(corpus_readers(project_id))
 
+    async def turn_subagents(session: Session) -> Sequence[dict]:
+        """This turn's roster -- see `_subagents_for` for the choice it makes.
+
+        A thin `async def` around a pure function, matching how `turn_sources`
+        and `turn_tools` above are wired: the seam is async because the other
+        three providers are, not because anything here awaits.
+        """
+        return _subagents_for(session, subagents)
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
@@ -2421,6 +2469,7 @@ def build_application(
         middleware_provider=turn_middleware,
         tools_provider=turn_tools,
         sources_provider=turn_sources,
+        subagents_provider=turn_subagents,
         gate_reviewer=gate_review,
         # The same registry `turn_tools` (via `granted_tools`) and `start_run`
         # (below) consult -- see `resolved_grants`'s own note for why there
