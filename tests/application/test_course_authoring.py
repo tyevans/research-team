@@ -72,6 +72,16 @@ def member(eid: str, name: str, centrality: float) -> AreaMember:
     return AreaMember(entity_id=eid, name=name, entity_type="concept", centrality=centrality)
 
 
+def prompt_acts(prompt: str) -> str:
+    """The four-acts body, with `COMPONENT_GUIDE` and the roster cut off.
+
+    Both tails carry fixed numerals -- "two fields", "six subagents" -- that
+    have nothing to do with `lesson_count`, and a numeral ban applied to them
+    would fail correct text.
+    """
+    return prompt.split("Lessons may carry interactive components")[0]
+
+
 AREA = LearningArea(
     slug="the-principate",
     members=tuple(member(f"e{i}", f"Entity {i}", float(20 - i)) for i in range(20)),
@@ -269,16 +279,74 @@ def test_the_learning_plan_prompt_fixes_the_shared_decisions_before_fan_out():
         assert shared in prompt
 
 
-def test_the_learning_plan_prompt_says_why_the_plan_comes_first():
+@pytest.mark.parametrize("lesson_count", [2, 5])
+def test_the_learning_plan_prompt_says_why_the_plan_comes_first(lesson_count):
     """An order without a reason gets reordered by a model that knows better.
 
     This is the assertion the ordering test above cannot make. Proved red by
-    deleting the sentence: the ordering test stayed green, because the acts
-    were still in sequence and only the reason for the sequence was gone --
-    which is exactly the edit that would look harmless in review.
+    deleting the reason: the ordering test stayed green, because the acts were
+    still in sequence and only the reason for the sequence was gone -- which is
+    exactly the edit that would look harmless in review.
+
+    Parametrised over two counts, neither of them 3, and that is the whole
+    point of the parametrisation rather than tidiness. This test first asserted
+    the literal `"three ways"`, ran at `lesson_count=3`, and thereby held in
+    place a hardcoded "Three drafters ... three ways" sentence sitting beside
+    interpolated clauses -- correct at exactly the one value the test used, and
+    self-contradicting at every other. That is CLAUDE.md's `SocraticPrompt`
+    shape: the input and the text were chosen by the same person in the same
+    hour, and the input sampled the case the text already handled. Anchoring on
+    the interpolated phrase at two counts is what separates the two candidates.
+    """
+    prompt = learning_plan_prompt(AREA, "STAGE ONE", lesson_count)
+    assert f"reads like {lesson_count} people wrote it" in prompt
+    assert f"because {lesson_count} did" in prompt
+
+
+@pytest.mark.parametrize("lesson_count", [2, 5])
+def test_the_learning_plan_prompt_spells_no_count_it_was_not_given(lesson_count):
+    """No bare numeral in this prompt may disagree with `lesson_count`.
+
+    The general form of the defect above, and the reason it is a separate test:
+    the one above would pass again the moment someone adds a *different*
+    hardcoded number, because it only checks that the interpolated phrases are
+    present. This checks the absence.
+
+    Deliberately narrow, and narrower than the first draft. It bans the
+    spelled-out numerals only where they modify a noun whose count *is*
+    `lesson_count` -- "drafters" and "ways" -- and only in the acts paragraph,
+    not in `COMPONENT_GUIDE` or the roster, where "two fields", "three counts"
+    and "six subagents" are fixed facts about the schema and the roster.
+
+    The first draft also banned "N lessons" and failed on correct text: Act 2's
+    "two lessons opening on the same incident" is a statement about any two
+    lessons, not about how many there are. That failure is the honest limit of
+    this test -- it can only ban numerals beside nouns nobody uses generically,
+    which is a short list, so it catches the defect that occurred rather than
+    the whole class.
+    """
+    spelled = {2: "two", 3: "three", 4: "four", 5: "five"}
+    acts = prompt_acts(learning_plan_prompt(AREA, "STAGE ONE", lesson_count))
+    for count, word in spelled.items():
+        if count == lesson_count:
+            continue
+        assert f"{word} drafters" not in acts
+        assert f"{word} ways" not in acts
+
+
+def test_the_learning_plan_prompt_allows_exactly_one_critique_round():
+    """Act 4's one-round rule, which nothing was asserting.
+
+    `test_the_first_phase_allows_exactly_one_critique_round` covers
+    `desired_results_prompt` and not this one. Without this, someone trimming
+    Act 4's paragraph while leaving the four act names in sequence keeps the
+    ordering test green and ships a critic-to-drafter loop that sands every
+    lesson flat -- the same "reason deleted, sequence left standing" edit the
+    test above exists for, on the other end of the prompt.
     """
     prompt = learning_plan_prompt(AREA, "STAGE ONE", 3)
-    assert "three ways" in prompt
+    assert "Exactly one round" in prompt
+    assert "cleaner and emptier" in prompt
 
 
 def test_the_learning_plan_prompt_permits_an_empty_hunt():

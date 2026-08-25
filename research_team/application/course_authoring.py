@@ -287,8 +287,18 @@ def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) 
     it is confident about and the plan looks like preamble. The reasons are
     therefore in the prompt text rather than in this docstring, which the model
     never sees. `test_the_learning_plan_prompt_says_why_the_plan_comes_first`
-    fails if the reason is trimmed while the sequence is left standing -- which
-    is the edit that looks harmless.
+    fails if a reason is trimmed while the sequence is left standing -- which is
+    the edit that looks harmless -- and it is parametrised over `lesson_count`
+    rather than run at one value.
+
+    That parametrisation is not decoration. Act 1's reason was first written
+    with a summarising sentence -- "Three drafters given an open question answer
+    it three ways" -- beside the interpolated clauses, and the test ran at
+    `lesson_count=3`, the one value at which the mismatch is invisible. At five
+    the paragraph said "you dispatch 5 drafters ... because 5 did. Three
+    drafters ... three ways", and a model that notices the contradiction has
+    grounds to discount the paragraph the whole design depends on. The sentence
+    is gone; every count in this prompt is now interpolated.
 
     What this cannot do: nothing here forces the acts to actually run in order,
     and `authoring_checkpoints` only sees the files at the end. A turn that
@@ -321,9 +331,8 @@ def learning_plan_prompt(area: LearningArea, stage_one: str, lesson_count: int) 
         f"they cannot see each other or this conversation. Every decision this "
         f"plan leaves open gets answered {lesson_count} times, differently, and "
         f"the unit then reads like {lesson_count} people wrote it -- because "
-        f"{lesson_count} did. Three drafters given an open question answer it "
-        f"three ways. The plan is the only place a shared decision can be made "
-        f"once.\n\n"
+        f"{lesson_count} did. The plan is the only place a shared decision can "
+        f"be made once.\n\n"
         f"**Act 2 — dispatch `anecdote-hunter`, then assign what it returns.** "
         f"Give it the enduring understandings and name the corpus. Each find it "
         f"returns goes to **exactly one** slot; two lessons opening on the same "
@@ -385,6 +394,22 @@ def assessment_prompt(area: LearningArea, lesson_count: int) -> str:
     -- deleting another phase's output from a prompt is the reconciliation
     problem this design is arranged to avoid.
 
+    **This prompt carries no roster, and that rests on an assumption about
+    wiring that nothing here enforces.** `AUTHORING_DISPATCH_PROMPT` is
+    appended to phases 1 and 3 and deliberately not to this one: the four
+    phases run as turns in *one session*, so by the time this prompt is read
+    the roster is already in the conversation, and repeating a list headed by
+    `lesson-drafter` inside the one phase that must not dispatch one is an
+    invitation.
+
+    If a later change runs phase 4 as its own session -- which is a reasonable
+    thing to want, since it is the only phase that needs nothing from Stage 1's
+    reply -- the parent arrives with no roster and will most likely write the
+    items itself. What comes out is a plausible unit with no `quiz-writer`
+    involved and nothing raising, because `check_assessment` only asks whether
+    each lesson carries a component and cannot tell who wrote it. Append the
+    roster here if that wiring ever changes.
+
     Lesson paths come from `lesson_paths` rather than a format string built
     here. CLAUDE.md records `AREAS_DIR` reaching three independent copies; a
     fourth resolver for the `lesson-NN.md` pattern is the same failure, and its
@@ -408,16 +433,17 @@ def assessment_prompt(area: LearningArea, lesson_count: int) -> str:
         f"plan asks about a point the draft dropped, which reads to the learner "
         f"as a question about something they were never shown -- and it looks "
         f"correct to everyone except the person taking it.\n\n"
-        f"Then, once every `quiz-writer` has returned, dispatch "
-        f"`unit-reviewer` **once**. Give it `{AREAS_DIR}/{area.slug}` as the "
-        f"unit directory, the lesson paths above, and "
+        f"Then, once every `quiz-writer` has returned and not before, dispatch "
+        f"`unit-reviewer` **once**. Run it while a writer is still appending "
+        f"and it reads a unit that is half one version.\n\n"
+        f"Give it `{AREAS_DIR}/{area.slug}` as the unit directory, the lesson "
+        f"paths above, and "
         f"`{unit_path(area.slug)}` for the Stage 2 tasks. It writes "
         f"`{review_path(area.slug)}` and nothing else.\n\n"
-        f"Last, and not in parallel with the writers: it judges what happens "
-        f"*between* the lessons -- a claim two of them both make as if new, a "
-        f"lesson assuming something no earlier lesson taught, an understanding "
-        f"the tasks assess that no lesson covers. Run it while a `quiz-writer` "
-        f"is still appending and it reads a unit that is half one version.\n\n"
+        f"It judges what happens *between* the lessons: a claim two of them "
+        f"both make as if new, a lesson assuming something no earlier lesson "
+        f"taught, an understanding the tasks assess that no lesson covers, and "
+        f"the reverse.\n\n"
         f"Do not draft or revise lesson prose in this phase, and do not "
         f"dispatch a `lesson-drafter`. The lessons are final; this phase adds "
         f"items to the end of them and writes one file of its own.\n\n"
