@@ -124,7 +124,21 @@ const BUDGET_KB = {
   // around it would buy a fraction of a kilobyte on the default tab in
   // exchange for a suspense boundary and a second network round trip on the
   // tab a reader actually opened.
-  app: 104, // our code: every component, store, mapper and stylesheet rule
+  // 104 -> 112: the course page stopped being a wall. Two changes crossed
+  // the line within 0.4 kB of each other -- the cluster's membership folded
+  // into a grouped, filterable disclosure (**measured at 104.4 kB against
+  // 104**) and the course's widgets started rendering through
+  // `LessonDocument` rather than printing their yaml (**measured at 104.1
+  // kB**). Neither is a number the measurement demanded: the overages are
+  // 0.4 and 0.1 kB, and 112 is 8 kB of headroom taken deliberately, on the
+  // standing position the notes above state, so that the next few components
+  // on this page do not each raise this line by a kilobyte.
+  //
+  // What the 0.5 kB bought: a realized course you can actually take -- 19
+  // interactive widgets on the reference course where there had been 19
+  // blocks of raw yaml, and 66 cluster members that fold away instead of
+  // burying the course under themselves.
+  app: 112, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.
