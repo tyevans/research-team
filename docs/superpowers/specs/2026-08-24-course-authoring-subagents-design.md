@@ -236,14 +236,30 @@ a model given all three UbD stages at once writes the lessons first and
 reverse-engineers understandings to match, fluently and with every section
 present, so the output is indistinguishable from the real thing by inspection.
 
-**2. The subagent specs, compiled for real.** This is the port-with-one-adapter
-shape from CLAUDE.md, with a sharp edge: `_compile_spec` raises `ValueError`
-when a spec lacks `model` or `tools`, and it raises at agent-construction time
-inside a turn -- so a malformed roster entry surfaces as a failed authoring run
-against a live endpoint, minutes in, naming nothing about the roster. A test
-that pushes all six specs through deepagents' own compilation catches it in a
-second. A test that asserts the dicts have the right keys does not, and would
-look identical.
+**2. The subagent specs, built for real.** This is the port-with-one-adapter
+shape from CLAUDE.md. A malformed roster entry surfaces only at
+agent-construction time inside a turn -- so it appears as a failed authoring
+run against a live endpoint, minutes in, naming nothing about the roster. A
+test that pushes the whole roster through `create_deep_agent` with a fake model
+catches it in a second. A test that asserts the dicts have the right keys does
+not, and would look identical.
+
+**The test must go through `create_deep_agent`, not through
+`SubAgentMiddleware` directly**, and the distinction is not pedantic. Read
+against deepagents 0.7.6: `_compile_spec` does raise `ValueError` when a spec
+lacks `model` or `tools`, but `create_deep_agent` fills both before compiling
+(`graph.py` -- `spec.get("tools") if "tools" in spec else tools`, and the
+main agent's model). A test built on the raw middleware would therefore demand
+fields production never requires, and would fail on a roster that works. What
+production actually raises on is a spec missing `name` or `system_prompt`,
+which `graph.py` subscripts directly.
+
+**Note for the roster:** `create_deep_agent` inserts a `general-purpose`
+subagent unless `general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)`
+is passed. The authoring roster will therefore be seven entries, not six,
+unless that is turned off. Today's `delegate` mode already carries the extra
+one, so leaving it is consistent; the plan should decide deliberately rather
+than inherit it by accident.
 
 **3. A live run, which is not a gate.** The acceptance test is reading three
 lessons and seeing whether they catch the reader. It runs against the real
