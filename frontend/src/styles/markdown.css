@@ -160,3 +160,35 @@ pre.code .ln {
   user-select: none;
   font-variant-numeric: tabular-nums;
 }
+
+/* A citation marker: the superscript number `expandReferences` emits in place
+ * of the source id it used to print inline.
+ *
+ * The anchor inside carries no class of its own -- `markdown.ts`'s sanitiser
+ * hook adds `md-link md-link-internal` to every in-app href it keeps, which is
+ * where the accent colour and the hover underline come from. Only the things
+ * a superscript needs are set here.
+ *
+ * `font-size` is set explicitly rather than left to the browser's `sup`
+ * default (`smaller`), because that default compounds: a citation inside a
+ * heading or a `small` shrinks again relative to it. A fixed `0.75em` against
+ * the surrounding text is one step, always.
+ *
+ * A named class rather than Tailwind utilities: this stylesheet is unlayered
+ * and Tailwind's utilities are not, so a utility would lose to `.md-link`'s
+ * own unlayered rules at any specificity. See CLAUDE.md. */
+.md-ref {
+  font-size: 0.75em;
+  /* Keeps a run of citations from touching the word before them without
+   * adding a space the copy-paste would carry. */
+  margin-left: 1px;
+}
+.md-ref a {
+  /* The number is one or two characters; the default hover underline under a
+   * superscript digit is hard to see, so the marker keeps a persistent dotted
+   * one instead -- enough to read as a link at superscript size. */
+  text-decoration: underline dotted;
+}
+.md-ref a:hover {
+  text-decoration: underline solid;
+}

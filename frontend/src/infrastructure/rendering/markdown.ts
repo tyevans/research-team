@@ -108,12 +108,32 @@ const ALLOWED_TAGS = [
   'th',
   'td',
   'a',
+  // Superscript is here for one caller: `expandReferences` wraps every
+  // citation in a `<sup>`. It carries no behaviour -- no href, no script, no
+  // event surface -- so admitting it widens the rendered vocabulary without
+  // widening what a model-authored document can *do*. Drop it and every
+  // citation silently loses its marker while the anchor survives, which is
+  // the failure `references.test.ts` and `markdown.test.ts` both pin.
+  'sup',
   'span',
   'div',
   'input',
 ]
 
-const ALLOWED_ATTR = ['href', 'title', 'class', 'align', 'type', 'checked', 'disabled']
+// `aria-label` is inert in the same sense `title` is: it names an element for
+// assistive technology and can neither navigate nor execute. It is admitted
+// because a citation renders as a bare numeral, which is close to useless read
+// aloud; see `expandReferences`.
+const ALLOWED_ATTR = [
+  'href',
+  'title',
+  'class',
+  'align',
+  'type',
+  'checked',
+  'disabled',
+  'aria-label',
+]
 
 /** Markdown as sanitised HTML, ready for a single `dangerouslySetInnerHTML`.
  *

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ProjectId } from '@domain/shared/identifier.ts'
 
+import { renderMarkdown } from './markdown.ts'
 import { expandReferences } from './references.ts'
 
 const projectId = ProjectId('proj-1')
@@ -11,6 +12,44 @@ describe('expandReferences', () => {
     expect(expandReferences('see [[src:wiki-trajan]] for more', projectId)).toContain(
       'href="#/p/' + projectId + '/doc/wiki-trajan"',
     )
+  })
+
+  it('shows a number, not the id', () => {
+    // The defect this replaced: a fifty-character slug printed inline, in
+    // monospace, mid-sentence. Fails if the anchor's text node is the id.
+    const out = expandReferences('see [[src:wiki-trajan]] for more', projectId)
+    expect(out).toContain('>1</a>')
+    expect(out).not.toContain('>wiki-trajan</a>')
+  })
+
+  it('keeps the id readable without a click, in title and aria-label', () => {
+    // The module's promise is that a reference stays reportable and greppable.
+    // The id leaving the text node would break that for the *valid* case --
+    // the title is what keeps it, and the aria-label is what stops a bare
+    // numeral being read aloud as a stray digit.
+    const out = expandReferences('[[src:wiki-trajan]]', projectId)
+    expect(out).toContain('title="wiki-trajan"')
+    expect(out).toContain('aria-label="Source 1: wiki-trajan"')
+  })
+
+  it('gives a repeated id the same number and a new id the next one', () => {
+    const out = expandReferences('[[src:a]] [[src:b]] [[src:a]]', projectId)
+    expect(out.match(/>(\d+)<\/a>/g)).toEqual(['>1</a>', '>2</a>', '>1</a>'])
+  })
+
+  it('numbers an id by its source, not by its offset', () => {
+    // Two moments in one recording are one source. Fails if the counter is
+    // keyed on the whole match rather than on the id.
+    const out = expandReferences('[[src:keynote@10]] [[src:keynote@99]]', projectId)
+    expect(out.match(/>(\d+)<\/a>/g)).toEqual(['>1</a>', '>1</a>'])
+  })
+
+  it('restarts numbering on each call', () => {
+    // Per call is per markdown block, which is per lesson: a page showing a
+    // unit and three lessons shows four independent sequences. Fails if the
+    // counter is module-level state instead of a local.
+    expect(expandReferences('[[src:b]]', projectId)).toContain('>1</a>')
+    expect(expandReferences('[[src:c]]', projectId)).toContain('>1</a>')
   })
 
   it('carries a point offset as a query parameter on the hash route', () => {
@@ -29,6 +68,7 @@ describe('expandReferences', () => {
     const html = expandReferences('[[src:keynote@252-310]]', projectId)
     expect(html).toContain('?t=252"')
     expect(html).not.toContain(',')
+    expect(html).not.toContain('310')
   })
 
   it.each([
@@ -94,6 +134,20 @@ describe('expandReferences', () => {
     expect(expandReferences(`[[src:${id}]]`, projectId)).toContain(
       'href="#/p/' + projectId + '/doc/' + encodeURIComponent(id) + '"',
     )
+  })
+
+  it('survives the sanitiser that runs over it, tags and attributes both', () => {
+    // The two halves of this pipeline are in different files with different
+    // allow-lists, and `content.tsx` is the only place they meet. Neither
+    // half's own tests can see the join: `expandReferences` emitting a `<sup>`
+    // that `ALLOWED_TAGS` omits, or an `aria-label` that `ALLOWED_ATTR` omits,
+    // would be stripped here with nothing raised and no test red. Fails if
+    // either allow-list is narrowed back.
+    const html = renderMarkdown(expandReferences('a claim [[src:wiki-trajan]]', projectId))
+    expect(html).toContain('<sup')
+    expect(html).toContain('aria-label="Source 1: wiki-trajan"')
+    expect(html).toContain('title="wiki-trajan"')
+    expect(html).toContain('href="#/p/' + projectId + '/doc/wiki-trajan"')
   })
 
   it('never interpolates the id into the href unescaped', () => {
