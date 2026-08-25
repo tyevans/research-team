@@ -322,3 +322,41 @@ async def test_a_realized_course_survives_a_restart(db_path):
         assert row.membership_hash == "hash-1"
     finally:
         await second.close()
+
+
+def test_the_lazy_art_store_forwards_every_method_the_real_one_has():
+    """`_LazyArtStore` mirrors a concrete class, so nothing declares its
+    surface -- and a method it fails to forward is an `AttributeError` in a
+    background task rather than anything a gate can see.
+
+    That shipped: `decrement_uses` was added to `ArtStore` for the art-refresh
+    work and never forwarded, so every reroll of art that already had an
+    assignment failed in production with
+
+        AttributeError: '_LazyArtStore' object has no attribute
+        'decrement_uses'. Did you mean: 'increment_uses'?
+
+    while a fresh project's sweep -- which has no previous assignment to drop --
+    ran clean. There is no Python typechecker in this repository's gates,
+    `ArtSweep.__init__` annotates `art_store: ArtStore` while composition hands
+    it this, and every test of the sweep supplies its own fake store, so the
+    wrapper was the one collaborator nothing exercised.
+
+    Compares names rather than signatures, deliberately: a name is what the
+    failure was, and a signature check would need to strip `self` and reconcile
+    defaults for no additional catch. `open` is excluded as the alternative
+    constructor rather than part of the instance's surface -- this wrapper
+    calls it and does not re-expose it.
+
+    Fails with the `decrement_uses` forwarder removed, which is how it was
+    proved.
+    """
+    from research_team.composition import _LazyArtStore
+    from research_team.infrastructure.persistence.read_models import ArtStore
+
+    def surface(cls: type) -> set[str]:
+        return {name for name in vars(cls) if not name.startswith("_")} - {"open"}
+
+    missing = surface(ArtStore) - surface(_LazyArtStore)
+
+    assert missing == set(), f"_LazyArtStore does not forward: {sorted(missing)}"
