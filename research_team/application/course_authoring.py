@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from research_team.application.authoring_checkpoints import AREAS_DIR
 from research_team.application.components import REGISTRY
 from research_team.application.session_service import SessionService
 from research_team.domain import SessionPurpose
@@ -41,16 +42,17 @@ from research_team.domain.learning_area import LearningArea, LearningPath
 #: the twelve named are the twelve the graph says the area is actually about.
 PROMPT_ANCHORS = 12
 
-#: The directory every generated course lives under.
-#:
-#: Beside `/course`'s stage artifacts rather than inside them. A stage artifact
-#: is named for its position in a preset (`artifacts.artifact_path` builds
-#: `NN-<artifact>.md`), and a course written here has no position in any preset
-#: -- filing it under the same scheme would mean inventing a stage number for
-#: something no stage produced, and `application/course.py` reads that scheme
-#: to say which artifacts a run still owes. A course appearing there as an
-#: unexplained extra would make that view wrong.
-AREAS_DIR = "/course/areas"
+#: `AREAS_DIR` is imported above, not defined here: `authored_files.py` and
+#: anything else already resolving it from this module still can, but the
+#: definition and its docstring now live in `authoring_checkpoints.py`,
+#: because that module's checkpoints need the constant and cannot import it
+#: from here -- a later task makes this module import `authoring_checkpoints`
+#: for those checkpoints, and a mutual import is a circular one. Moving the
+#: constant rather than duplicating it matters because CLAUDE.md already
+#: records `AREAS_DIR` on its third independent copy (`course_authoring.py`,
+#: `export.py`, `frontend/src/presentation/curriculum/course-paths.ts`) -- a
+#: fourth definition here would be exactly that failure again, so this name
+#: is an alias, not a value.
 
 PATHS_DIR = "/course/paths"
 
