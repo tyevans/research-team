@@ -10,6 +10,13 @@ import { CourseCard } from './CourseCard.tsx'
  * every candidate a category ever held may have been promoted to hero or
  * highlights, which is a real state (`Catalog.categories` still carries the
  * label so this page has something to call itself) rather than a missing one.
+ *
+ * **The front page no longer sends anybody here.** Its category filter narrows
+ * in place, which is what a browsing surface should do with a filter -- losing
+ * every other card behind a click was the old page's worst navigation. This
+ * route survives because links to it exist and were correct when written; it is
+ * a deep link, not a step in a flow. If that stops being true, this component
+ * and its route go together.
  */
 export const CategoryPage = ({
   category,
@@ -24,32 +31,29 @@ export const CategoryPage = ({
   onFeature: (candidate: CourseCandidate) => void
   onUnfeature: (slug: string) => void
 }) => (
-  <div className="flex flex-col gap-3 p-3">
+  <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3">
     <div className="flex items-center gap-2">
       <Button small onClick={onBack}>
         Back to catalog
       </Button>
-      <h2 className="font-semibold text-lg text-fg">{category.label}</h2>
+      <h2 className="font-semibold m-0 text-lg text-fg">{category.label}</h2>
+      <span className="font-mono text-xs text-fg-faint">{category.candidates.length}</span>
     </div>
     {category.candidates.length === 0 ? (
-      <p className="text-fg-muted text-sm">
+      <p className="text-sm text-fg-dim">
         Every candidate filed here has been promoted to the front page.
       </p>
     ) : (
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         {category.candidates.map((candidate) => (
-          <div key={candidate.slug} className="flex flex-col items-stretch gap-1">
-            <CourseCard candidate={candidate} size="filed" onOpen={onOpen} />
-            {candidate.featuredRank === null ? (
-              <Button small onClick={() => onFeature(candidate)}>
-                Feature
-              </Button>
-            ) : (
-              <Button small tone="quiet" onClick={() => onUnfeature(candidate.slug)}>
-                Unfeature
-              </Button>
-            )}
-          </div>
+          <CourseCard
+            key={candidate.slug}
+            candidate={candidate}
+            size="filed"
+            onOpen={onOpen}
+            onFeature={onFeature}
+            onUnfeature={onUnfeature}
+          />
         ))}
       </div>
     )}
