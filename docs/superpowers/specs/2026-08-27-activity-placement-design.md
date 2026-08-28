@@ -188,12 +188,24 @@ the dock's dot agree), the stage in words, and the count in flight right-
 aligned. When only a finished run remains, the dot is hollow and the line reads
 `Last extraction · <sourceId>`.
 
-**Stage track**, replacing the wrapped pill list. The pills become one
-connected segmented bar: completed segments filled at `--fg-faint`, the current
-one at `--accent` with a slow shimmer, pending hollow at `--line-soft`. Still a
-list of named stages and still not a percentage -- the existing comment is
-right that a bar over unequal stages would be a made-up number, and this bar
-measures nothing; it is the same list, connected.
+**Stage trail**, replacing the wrapped pill list. The pills become one
+connected run of segments: stages already passed filled at `--fg-faint`, the
+one in flight at `--accent` with a slow shimmer.
+
+**There are no pending segments, and the first draft of this section was wrong
+to promise them.** `Extraction.stages` is the stages *reached so far*, appended
+as frames arrive -- not a declared pipeline. Drawing greyed future segments
+would mean hard-coding an order, and that order is not one thing:
+`ExtractionStage` carries perception's `perceiving`/`perceived` alongside
+extraction's `storing`/`extracting`/`extracted`/`consolidating`/`consolidated`,
+plus `failed`, which can arrive after any of them. A fixed track would draw a
+transcription as an extraction that has skipped four steps.
+
+So the trail grows rather than fills, which is the honest shape and is what the
+existing code already does -- the change is that the segments touch and the
+current one is marked by more than a colour. The existing comment stays true
+for the new drawing: a bar over unequal stages would be a made-up number, and
+this measures nothing.
 
 **Counts** stay exactly as they are, in mono, including
 `confidenceText`'s three-outcome rule.
