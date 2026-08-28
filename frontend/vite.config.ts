@@ -279,6 +279,21 @@ export default defineConfig({
             enabled: true,
             provider: playwright(),
             headless: true,
+            // Vitest's own `page` proxy has no `emulateMedia` -- it forwards only
+            // the commands the framework has chosen to wrap, and this is not one
+            // of them (`a11y.browser.test.tsx` records the same gap: "the sweep's
+            // browser reports no such preference", with no fix beside it). The
+            // real Playwright `Page` does have `emulateMedia`, and the playwright
+            // provider hands it to a custom command's context -- this is the one
+            // channel between a test file and that object, so a `prefers-reduced-
+            // motion` assertion has to go through it rather than through `page`.
+            commands: {
+              async setReducedMotion(context, reduced: boolean) {
+                await context.page.emulateMedia({
+                  reducedMotion: reduced ? 'reduce' : 'no-preference',
+                })
+              },
+            },
             // Stated, because the layout rules this suite exists to check are
             // media queries and a media query reads the *viewport* -- not the
             // width of whatever wrapper a test renders into. The first run of
