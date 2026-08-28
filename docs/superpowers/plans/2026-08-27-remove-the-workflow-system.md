@@ -247,12 +247,26 @@ Historical banner (date + B147), do not delete: `docs/direction.md` §4.
 Leave `docs/research/course-design/synthesis-generic-workflow.md` entirely alone
 -- it is instructional-design research and never claimed to describe the code.
 
-Rewrite: `README.md` (the most visible scar -- it describes a preset picker
-that will not be in the form), `docs/direction.md` §§1/3/7 and its "Packaging
-the workflow engine or the check library" future-work item,
-`docs/features-landing-page.md`, and grep `docs/features-research-view.md`,
-`docs/features-session-view.md`, `docs/design/facets-and-use-cases.md`,
-`docs/design/architecture.md` for `stage`/`artifact`/`finding` rows.
+Rewrite, in descending order of how much is actually wrong. Counts are
+case-insensitive hits for `preset|workflow|stage`, taken 2026-08-27 -- they
+size the work, they do not decide it, and a hit inside a code sample or the
+word "stage" used in its ordinary sense is not a defect:
+
+| File | Hits | Note |
+|---|---|---|
+| `docs/features-landing-page.md` | 44 | The bulk of it. The workflow `<select>` and the workflow/stage columns. |
+| `docs/ui-foundations.md` | 14 | **The cohesion report says leave this alone; check it anyway.** Fourteen is more than "example markup at worst" predicts. |
+| `docs/features-session-view.md` | 10 | Predates the page merge. |
+| `docs/direction.md` | 10 | §§1/3/7 plus the "Packaging the workflow engine or the check library" future-work item, which is a whole proposed direction that is now void. §4 gets the historical banner instead. |
+| `docs/features-research-view.md` | 5 | |
+
+**`README.md` needs no rewrite.** The cohesion report calls it "the most visible
+scar" and predicts it describes a preset picker; grepped, it holds **zero**
+mentions of presets, workflows or stages. `docs/design/architecture.md` and
+`docs/design/facets-and-use-cases.md` are clean too, on the same grep. Read
+them to confirm rather than trusting the count -- a grep cannot see a paragraph
+describing the course view without naming it -- but do not go looking for work
+that is not there.
 
 BACKLOG: close B147. File four new entries, each recording a finding rather than
 proposing symmetry:
