@@ -27,7 +27,19 @@ import { useStream } from '../shell/StreamProvider.tsx'
  * leave this pane stopped on whatever frame arrived last — which on screen is
  * indistinguishable from an extraction that has hung.
  */
-export const ExtractionPane = ({ projectId }: { projectId: ProjectId }) => {
+export const ExtractionPane = ({
+  projectId,
+  onRunning,
+}: {
+  projectId: ProjectId
+  /** Called with whether a run is in flight, so the surface *behind* this
+   *  float can stop calling the graph empty while it is being filled. A
+   *  callback rather than hoisting the store: the store is built per project
+   *  per mount by design, and lifting it would mean either two subscriptions
+   *  or threading a zustand instance through a component whose other props
+   *  are all plain data. */
+  onRunning?: (running: boolean) => void
+}) => {
   const { extractions } = useContainer()
   const stream = useStream()
 
@@ -58,6 +70,13 @@ export const ExtractionPane = ({ projectId }: { projectId: ProjectId }) => {
 
   const { current, last } = store()
 
+  // `setExtracting` (the only caller today) is a stable `useState` setter
+  // identity, so this does not loop -- the effect re-runs only when `current`
+  // itself changes between null and set.
+  useEffect(() => {
+    onRunning?.(current !== null)
+  }, [current, onRunning])
+
   return <ExtractionView current={current} last={last} />
 }
 
@@ -80,18 +99,23 @@ export const ExtractionView = ({
   current: Extraction | null
   /** The most recent finished run, if there has been one. */
   last: Extraction | null
-}) => (
-  <section className="extraction" aria-label="Knowledge extraction">
-    <h3 className="extraction-title">Reading into the graph</h3>
+}) => {
+  // Nothing has ever run, so this draws nothing. The claim it used to make —
+  // "No extraction has run on this project yet." — is the same one the graph
+  // stage's own empty state makes, and this now floats over that stage. Two
+  // elements saying it is one too many; the stage keeps it, because that is
+  // where a reader looking at an empty graph is already looking.
+  if (!current && !last) return null
 
-    {!current && !last ? (
-      <p className="sub extraction-sub">No extraction has run on this project yet.</p>
-    ) : null}
+  return (
+    <section className="extraction" aria-label="Knowledge extraction">
+      <h3 className="extraction-title">Reading into the graph</h3>
 
-    {current ? <Running extraction={current} /> : null}
-    {last ? <Last extraction={last} /> : null}
-  </section>
-)
+      {current ? <Running extraction={current} /> : null}
+      {last ? <Last extraction={last} /> : null}
+    </section>
+  )
+}
 
 /** The stages so far, with the one in flight marked.
  *

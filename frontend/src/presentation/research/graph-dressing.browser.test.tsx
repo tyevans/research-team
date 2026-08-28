@@ -91,6 +91,7 @@ const Mounted = () => (
         <GraphBrowser
           projectId={PROJECT}
           extraction={null}
+          extracting={false}
           view={view}
           results={NODES}
           knownTypes={['Person']}

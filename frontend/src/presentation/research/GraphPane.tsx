@@ -122,6 +122,7 @@ export const GraphPane = ({
   const [term, setTerm] = useState('')
   const [entityType, setEntityType] = useState('')
   const [minDegree, setMinDegree] = useState(DEFAULT_MIN_DEGREE)
+  const [extracting, setExtracting] = useState(false)
 
   const log = useInteractionLog()
   const store = useMemo(
@@ -231,7 +232,8 @@ export const GraphPane = ({
   return (
     <GraphBrowser
       projectId={projectId}
-      extraction={<ExtractionPane projectId={projectId} />}
+      extraction={<ExtractionPane projectId={projectId} onRunning={setExtracting} />}
+      extracting={extracting}
       view={view}
       results={results}
       knownTypes={knownTypes}
@@ -298,6 +300,7 @@ export const GraphPane = ({
 export const GraphBrowser = ({
   projectId,
   extraction,
+  extracting,
   view,
   results,
   knownTypes,
@@ -326,6 +329,10 @@ export const GraphBrowser = ({
    *  taking everything it needs from its caller -- which is what lets the
    *  browser-mode test render it against a partial container. */
   extraction: ReactNode
+  /** A run is in flight. The stage cannot tell "nothing here yet" from "being
+   *  built right now" on its own -- the canvas has no nodes until the first
+   *  `graph` frame lands, which is minutes in. */
+  extracting: boolean
   view: GraphView
   results: readonly GraphNode[]
   knownTypes: readonly string[]
@@ -400,11 +407,19 @@ export const GraphBrowser = ({
           // Unless the ask failed, in which case the error below the canvas
           // is the answer and this must not claim the graph is empty.
           <EmptyState
-            heading={error ? 'The graph could not be read' : 'This graph is empty'}
+            heading={
+              error
+                ? 'The graph could not be read'
+                : extracting
+                  ? 'Extracting into this graph now'
+                  : 'This graph is empty'
+            }
             detail={
               error
                 ? 'The project may still have entities; this page could not fetch them.'
-                : 'Nothing has been extracted into this project yet. Ingest a document to start building it.'
+                : extracting
+                  ? 'The first entities will be drawn as they are found. The panel above follows the run.'
+                  : 'Nothing has been extracted into this project yet. Ingest a document to start building it.'
             }
           />
         ) : (
