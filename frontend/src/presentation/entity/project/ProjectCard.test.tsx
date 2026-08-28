@@ -1,11 +1,12 @@
 import { render, screen } from '@testing-library/react'
-import { expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { expect, it, vi } from 'vitest'
 
 import type { ProjectRollup } from '@domain/project/landing.ts'
 import type { Project } from '@domain/project/project.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
-import { ProjectCard, projectSessionsId } from './ProjectCard.tsx'
+import { ProjectCard } from './ProjectCard.tsx'
 
 /** The `Card` density, and the props-only rule at its hardest case.
  *
@@ -47,7 +48,22 @@ it('names the project through the shared reference', () => {
   expect(screen.getByRole('link', { name: 'apollo' })).toHaveAttribute('href', '/project/1111')
 })
 
-it('says who holds it, by short id, without being told the holder’s name', () => {
+/** **This asserted `held by 7d41e0aa`, and now asserts its absence.**
+ *
+ * Written as the refusal rather than deleted. The card drew `held by 3f2a…`
+ * for a held project and the word `free` for one that was not, and both are
+ * gone: which session holds a project is a fact about where the next write
+ * goes, and a reader of an index neither picks it nor acts on it.
+ *
+ * The holder is still *given* to this component — it is on the rollup's
+ * project, which is why the fixture below still sets it — and it is still read
+ * by `currentSession` to choose the previewed session and by `ProjectList` as
+ * the delete call's `force` flag. This test is about the drawing only, and it
+ * is paired with `TreeView.test.tsx`'s assertion on that `force` argument,
+ * which is the half that would rot silently now that nothing on screen shows
+ * the fact.
+ */
+it('does not name the session holding it', () => {
   render(
     <ProjectCard
       rollup={aRollup({
@@ -58,17 +74,16 @@ it('says who holds it, by short id, without being told the holder’s name', () 
     />,
   )
 
-  // The rule `EntityRef` makes real: name it if you already know the name,
-  // never fetch in order to name it. A session has no name on the wire, so the
-  // honest answer is the short id — and the card cannot go and look one up.
-  expect(screen.getByText('held by')).toBeInTheDocument()
-  expect(screen.getByText('7d41e0aa')).toBeInTheDocument()
+  expect(screen.queryByText('held by')).toBeNull()
+  expect(screen.queryByText('7d41e0aa')).toBeNull()
 })
 
-it('says free when nothing holds it', () => {
+it('does not label an unheld project either', () => {
+  // The word `free` was the other half of the same vocabulary. Its job was to
+  // tell a reader that the row's one button would work, and the row now offers
+  // one verb that works in both states.
   render(<ProjectCard rollup={aRollup()} />)
-  expect(screen.getByText('free')).toBeInTheDocument()
-  expect(screen.queryByText('held by')).toBeNull()
+  expect(screen.queryByText('free')).toBeNull()
 })
 
 it('counts sessions and files, singular and plural', () => {
@@ -119,23 +134,58 @@ it('keeps its disclosure closed until told otherwise, and owned externally', () 
   expect(screen.getByText('the fork forest')).toBeVisible()
 })
 
-it('names the region it hides, so a supplied toggle has something to point at', () => {
-  // `hidden` rather than absent, which is the only reason the toggle's
-  // `aria-controls` says anything: the toggle is a slot, so the view writes
-  // that attribute, and an IDREF resolving to nothing announces exactly as
-  // much as no IDREF at all -- silently, while every other test passes. The
-  // moment a reader needs to hear "this button opens a list of sessions" is
-  // before they have opened it, which is precisely when the region would not
-  // have existed.
-  const { container } = render(
-    <ProjectCard rollup={aRollup()} slots={{ sessions: <p>the fork forest</p> }} />,
+it('points its toggle at the region it hides, while that region is hidden', () => {
+  // The same claim as before, asserted through the attribute rather than
+  // through an exported id helper: `projectSessionsId` was exported because
+  // the *view* wrote `aria-controls` and had to compute the same string the
+  // card computed. The card writes both ends now, so the assertion can be the
+  // one that matters -- the IDREF resolves -- rather than the one that was
+  // available -- two call sites agree on a string.
+  //
+  // `hidden` rather than absent is what makes this possible at all: an IDREF
+  // to an element that does not exist announces exactly as much as no IDREF at
+  // all, silently, at precisely the moment a reader needs to hear what the
+  // button opens -- before they have opened it.
+  //
+  // **Proved red** by rendering the region only while `open`: `getElementById`
+  // is handed a real id and answers null.
+  render(
+    <ProjectCard
+      rollup={aRollup()}
+      slots={{ toggle: 'all 3 sessions', sessions: <p>the fork forest</p> }}
+    />,
   )
 
-  const region = container.querySelector('.ent-project-sessions')!
-  expect(region).toHaveAttribute('id', projectSessionsId(aProject().id))
+  const toggle = screen.getByRole('button', { name: /all 3 sessions/ })
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  const region = document.getElementById(toggle.getAttribute('aria-controls') ?? '')
+  expect(region).not.toBeNull()
   expect(region).not.toBeVisible()
   // Shut, so its contents are not mounted at all. This card is drawn once per
   // row in a virtualized list, and a whole session forest per collapsed
   // project is the cost that made expanding by default untenable.
   expect(region).toBeEmptyDOMElement()
+})
+
+/** The toggle reports through the prop rather than deciding for itself.
+ *
+ *  `open` is owned externally -- a card's session list survives the refetch
+ *  that arrives while it is open -- so the card must ask rather than decide.
+ *  The second assertion is the one that would catch a card growing its own
+ *  `useState`: it stays shut, because the prop did not move. */
+it('asks to be opened rather than opening itself', async () => {
+  const onOpenChange = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <ProjectCard
+      rollup={aRollup()}
+      onOpenChange={onOpenChange}
+      slots={{ toggle: 'all 3 sessions', sessions: <p>the fork forest</p> }}
+    />,
+  )
+
+  await user.click(screen.getByRole('button', { name: /all 3 sessions/ }))
+  expect(onOpenChange).toHaveBeenCalledWith(true)
+  // Still shut: the prop did not change, so neither did the card.
+  expect(screen.queryByText('the fork forest')).toBeNull()
 })

@@ -56,6 +56,20 @@ export const withHeadings = (shown: readonly ProjectRollup[], now: number): read
   return items
 }
 
+/** The same list with no headings at all, for a filtered set.
+ *
+ * A one-line function rather than a flag on `withHeadings`, because the two
+ * answer different questions and the caller should have to say which it means
+ * — the same argument `landing.ts` makes for keeping `summariesAsForest`
+ * separate from `forest`. `ProjectList` states the reasoning: "Today" over a
+ * set of search results labels nothing, and, more importantly, `itemKey`'s
+ * uniqueness rests on each band opening exactly once, which is a property of
+ * the *ranked* order and not of any order a future relevance sort might
+ * produce.
+ */
+export const withoutHeadings = (shown: readonly ProjectRollup[]): readonly Item[] =>
+  shown.map((rollup) => ({ kind: 'project', rollup }))
+
 /** What a closed project row is assumed to be before it has been measured.
  *
  *  Exported so `skeleton-height.browser.test.tsx` can hold it against

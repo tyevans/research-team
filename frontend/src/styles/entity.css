@@ -395,9 +395,59 @@ a.ent-ref:hover .ent-ref-name {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
+  /* The containing block for the stretched link below. Not decoration: without
+     it the name's `::after` resolves against whatever ancestor happens to be
+     positioned, which in the landing list is the virtualizer's absolutely
+     positioned `<li>` -- so the overlay would land on the row rather than on
+     the card and would cover the margin between two rows as well. */
+  position: relative;
   transition:
     border-color 0.12s,
     background 0.12s;
+}
+
+/* --- the card is the link ------------------------------------------------
+   The project's name was an inert `<span>` on the landing page for as long as
+   the page has existed -- `ProjectCard`'s `href` is optional and `ProjectList`
+   never passed one -- so the largest target on every row did nothing and the
+   project page was reached through a small secondary button four controls
+   along. The name is a real `<a>` now, and this stretches it over the whole
+   card so the padding and the stat line lead there too.
+
+   **Everything genuinely interactive has to be raised above it, and that is a
+   stacking fact rather than a visual one**: an element under the overlay is
+   not merely hard to click, it is unclickable and un-hoverable, and it looks
+   completely normal. jsdom cannot see the difference at all -- it applies no
+   stylesheet and returns only inline styles -- so the assertion lives in
+   `ProjectCard.browser.test.tsx`, which reads `elementFromPoint` at each
+   control.
+
+   The accepted cost: text under the overlay cannot be selected by dragging.
+   That is why the overlay is allowed to cover the stat line (counts nobody
+   copies) and why the session preview is raised (its first message is the one
+   string on this card somebody might want).
+
+   **No `z-index` anywhere in this mechanism, and that is not a shortcut.**
+   `scripts/stacking.test.ts` forbids a literal `z-index` outside the roles
+   `tokens.css` declares, on the argument that an ordering encoded as a bare
+   number is how the popover-over-modal inversion arrived one reasonable-looking
+   value at a time. It does not need one: among positioned elements with
+   `z-index: auto`, later in document order paints on top. So the raised
+   controls are `position: relative` and nothing more, and what makes them win
+   is that every one of them comes *after* the name in the DOM — which is why
+   `ProjectCard` moved its disclosure to the end of the head line and says so
+   there. Reorder the head and this stops working silently. */
+.ent-project-name::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+}
+.ent-project-head > *:not(.ent-project-name),
+.ent-project-actions,
+.ent-project-sessions,
+.ent-project-preview {
+  position: relative;
 }
 .ent-project-card:hover {
   background: var(--bg-panel-2);
@@ -430,14 +480,19 @@ a.ent-ref:hover .ent-ref-name {
   letter-spacing: -0.01em;
 }
 
-.ent-project-holder {
-  font-size: var(--t-xs);
-}
+/* `.ent-project-holder` and `.ent-project-free` stood here and are deleted with
+   the `held by 3f2a...` / `free` pair they dressed. Recorded rather than
+   silently dropped, because a rule that matches no element is the failure this
+   stylesheet has already been swept for once: it costs nothing at runtime,
+   fails no gate, and reads to the next person as a live part of the design.
+   Which session holds a project is not something a reader of an index is
+   shown; see `ProjectCard.tsx`. */
 
-.ent-project-free {
-  color: var(--k-file);
-  font-family: var(--mono);
-  font-size: var(--t-xs);
+/* The disclosure's control. It was a `Button` built by the view and is a
+   Radix `Collapsible.Trigger` built by the card, so it carries the `btn`
+   classes rather than being one -- same six declarations, one author. */
+.ent-project-toggle {
+  flex: 0 0 auto;
 }
 
 .ent-project-stats {

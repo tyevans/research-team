@@ -50,11 +50,21 @@ const containerWith = ({
   projects = [] as readonly Project[],
   sessions = [] as readonly SessionSummary[],
   tree,
+  // The two write ports are taken as arguments rather than read back off the
+  // built container. `@typescript-eslint/unbound-method` rejects
+  // `expect(container.projects.join)` -- a method reference plucked off an
+  // object -- and it is right to: the assertion wants the spy, and the spy is
+  // what a caller can hold. Same shape as `use-project.test.tsx`, which holds
+  // its `project` mock in a local const for the same reason.
+  join = vi.fn(),
+  del = vi.fn().mockResolvedValue(undefined),
   ...rest
 }: {
   projects?: readonly Project[]
   sessions?: readonly SessionSummary[]
   tree?: readonly SessionSummary[]
+  join?: ReturnType<typeof vi.fn>
+  del?: ReturnType<typeof vi.fn>
   [key: string]: unknown
 }) =>
   ({
@@ -68,8 +78,8 @@ const containerWith = ({
     projects: {
       list: vi.fn().mockResolvedValue(projects),
       create: vi.fn(),
-      join: vi.fn(),
-      delete: vi.fn().mockResolvedValue(undefined),
+      join,
+      delete: del,
     },
     research: { current: vi.fn().mockResolvedValue(null) },
     // `everywhere` rather than `on`: the row's liveness chip reads the global
@@ -154,36 +164,109 @@ it('leads with projects and puts their sessions inside them', async () => {
   expect(screen.queryByText(/a session of another project/)).not.toBeInTheDocument()
 })
 
-it('reaches all four of a project’s destinations from its row', async () => {
-  const container = containerWith({
-    projects: [project(ATLAS, 'atlas', { activeSessionId: HOLDER })],
-    sessions: [session('a', { projectId: ATLAS })],
-  })
+/** Every destination the row still offers, and the two it no longer does.
+ *
+ * **This asserted four buttons and now asserts one link and one menu.** It
+ * used to click `Resume 3f2a…`, then `Project`, then `Ask`, then `New
+ * session`, which is the measurement this redesign is a response to: the
+ * project page — what the whole console hangs off — was the *third* target on
+ * a row of eight, in the secondary tone, past a flex spacer, while the largest
+ * thing on the row (the name) was an inert `<span>` because `ProjectCard`'s
+ * `href` was optional and `ProjectList` never passed it.
+ *
+ * The name is a real `<a>` now, so this asserts an `href` rather than a click:
+ * ⌘-click, middle-click and copy-link all work, and none of them did.
+ * L-§9.3 named that gap ("Nothing on the page is a link") and it survived the
+ * whole of the last rework of this page.
+ */
+it('reaches the project page from the row’s name, as a link', async () => {
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas', { activeSessionId: HOLDER })],
+      sessions: [session('a', { projectId: ATLAS })],
+    }),
+  )
+
+  expect(await screen.findByRole('link', { name: 'atlas' })).toHaveAttribute('href', `#/p/${ATLAS}`)
+})
+
+it('reaches the ask page, which no tab on the project view can reach', async () => {
+  // `App.tsx` intercepts the `ask` facet above `ProjectView` and renders a
+  // page of its own, so it genuinely cannot be reached by opening the project
+  // and clicking a MATERIAL tab. It is in the menu rather than on the row
+  // because the row is one verb now, and this is not that verb -- but it still
+  // needs a door, which is the one thing kept verbatim from the button it
+  // replaces.
   const user = userEvent.setup()
-  renderPage(<TreeView />, container)
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas')],
+      sessions: [session('a', { projectId: ATLAS })],
+    }),
+  )
 
-  // The holding session.
-  await user.click(await screen.findByRole('button', { name: /Resume/ }))
-  expect(window.location.hash).toBe(`#/s/${HOLDER}`)
-
-  // The project page and the ask page: two buttons for two pages, where
-  // "Course" and "Research" were two buttons for one. There is no course page
-  // and no research page, so the second destination asserted here is the one
-  // route the project view does *not* contain -- `App.tsx` intercepts `ask`
-  // above `ProjectView` and renders a page of its own.
-  await user.click(screen.getByRole('button', { name: 'Project' }))
-  expect(window.location.hash).toBe(`#/p/${ATLAS}`)
-
-  await user.click(screen.getByRole('button', { name: 'Ask' }))
+  await user.click(await screen.findByRole('button', { name: /More actions for atlas/ }))
+  await user.click(screen.getByRole('menuitem', { name: 'Ask' }))
   expect(window.location.hash).toBe(`#/p/${ATLAS}/ask`)
+})
 
-  // A new session *in it*, which ends the holder and so asks first. Scoped to
-  // the row: the action bar's quiet "New session" is the bare-session one, and
-  // the two are deliberately different things.
-  const row = screen.getByText('atlas').closest('.ent-project-card')!
-  await user.click(within(row as HTMLElement).getByRole('button', { name: 'New session' }))
-  const dialog = await screen.findByRole('dialog')
-  expect(within(dialog).getByText(/Its files carry over to the new session/)).toBeInTheDocument()
+/** One verb, and it does not name a session or ask about one.
+ *
+ * **This replaces `Resume 3f2a…` / `New session` / `Open`.** A held project
+ * offered two buttons and a confirmation dialog; a free one offered a third
+ * label for the same intent. All three were the reader resolving a lock before
+ * they had read anything, in a vocabulary — holding, taking over — that is
+ * about where the next write goes.
+ *
+ * `Continue` resolves it instead, from a field the reader never sees: the
+ * holder's transcript when there is one, a fresh session when there is not.
+ * Both arms are asserted here because the branch is invisible from the
+ * outside, which is exactly what makes it worth a test.
+ */
+it('continues a held project into the session already open, without a dialog', async () => {
+  const user = userEvent.setup()
+  const join = vi.fn()
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas', { activeSessionId: HOLDER })],
+      sessions: [session('a', { projectId: ATLAS })],
+      join,
+    }),
+  )
+
+  await user.click(await screen.findByRole('button', { name: 'Continue' }))
+
+  expect(window.location.hash).toBe(`#/s/${HOLDER}`)
+  // No write, and no confirmation. Taking over -- ending somebody's session --
+  // is not something an index offers.
+  expect(join).not.toHaveBeenCalled()
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'New session' })).toBeNull()
+  expect(screen.queryByRole('button', { name: /Resume/ })).toBeNull()
+})
+
+it('continues a free project by starting a session in it', async () => {
+  const user = userEvent.setup()
+  const join = vi.fn().mockResolvedValue({
+    sessionId: SessionId('99999999-9999-9999-9999-999999999999'),
+    warning: null,
+  })
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(SANDBOX, 'sandbox')],
+      sessions: [session('a', { projectId: SANDBOX })],
+      join,
+    }),
+  )
+
+  await user.click(await screen.findByRole('button', { name: 'Continue' }))
+
+  // `false`, always: the take-over flag has no call site on this page any more.
+  expect(join).toHaveBeenCalledWith(SANDBOX, false)
 })
 
 /** Every project has a project page, and this is the assertion that replaced
@@ -199,7 +282,6 @@ it('reaches all four of a project’s destinations from its row', async () => {
  * deleted with the concept in its old name.
  */
 it('offers the project page for every project', async () => {
-  const user = userEvent.setup()
   renderPage(
     <TreeView />,
     containerWith({
@@ -208,11 +290,9 @@ it('offers the project page for every project', async () => {
     }),
   )
 
-  const toProject = await screen.findByRole('button', { name: 'Project' })
+  const toProject = await screen.findByRole('link', { name: 'sandbox' })
   expect(toProject).not.toHaveAttribute('aria-disabled')
-
-  await user.click(toProject)
-  expect(window.location.hash).toBe(`#/p/${SANDBOX}`)
+  expect(toProject).toHaveAttribute('href', `#/p/${SANDBOX}`)
 })
 
 /** The gap that let two buttons point at one page for a whole increment:
@@ -228,6 +308,7 @@ it('offers the project page for every project', async () => {
  * **Not proved red** — see the note above; no test was run locally.
  */
 it('offers a way into both project pages from the picker', async () => {
+  const user = userEvent.setup()
   renderPage(
     <TreeView />,
     containerWith({
@@ -236,8 +317,9 @@ it('offers a way into both project pages from the picker', async () => {
     }),
   )
 
-  expect(await screen.findByRole('button', { name: 'Project' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Ask' })).toBeInTheDocument()
+  expect(await screen.findByRole('link', { name: 'atlas' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /More actions for atlas/ }))
+  expect(screen.getByRole('menuitem', { name: 'Ask' })).toBeInTheDocument()
 
   // The names that used to be here are two addresses of one page. If either
   // comes back, the picker is describing a console that no longer exists.
@@ -321,7 +403,7 @@ it('does not degrade a row when its liveness read fails', async () => {
   )
 
   expect(await screen.findByText('atlas')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Project' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
   expect(screen.queryByText(/not wired up/)).not.toBeInTheDocument()
 })
 
@@ -365,9 +447,14 @@ it('keeps the delete confirmation’s wording, in the console’s own dialog', a
 
   const dialog = await screen.findByRole('dialog', { name: /Delete/ })
   expect(dialog).toHaveAttribute('aria-modal', 'true')
+  // The warning survives; the short id inside it does not. A reader about to
+  // destroy something is entitled to know that a session in progress ends with
+  // it. *Which* session is not a choice they are being offered, and it was the
+  // last place on this page a holder was named.
   expect(
-    within(dialog).getByText(/is still holding it and will be ended first/),
+    within(dialog).getByText(/A session is still holding it, and will be ended first/),
   ).toBeInTheDocument()
+  expect(within(dialog).queryByText(new RegExp(HOLDER.slice(0, 8)))).toBeNull()
   expect(within(dialog).getByText(/cannot rejoin/)).toBeInTheDocument()
   expect(
     within(dialog).getByText(/knowledge graph's contents are left in place/),
@@ -455,4 +542,169 @@ it('offers no fold for a project with a single session', async () => {
   expect(await screen.findByText('the only one')).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /sessions \(/i })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /all .* sessions/i })).not.toBeInTheDocument()
+})
+
+/** **The one place heldness is still load-bearing on this page, pinned.**
+ *
+ * `DELETE /api/projects/{id}` refuses a held project unless
+ * `release_holder=true`, and the client passes `isHeld(project)` for that flag.
+ * Nothing on the page draws the holder any more, so this argument is the shape
+ * that rots silently: a `false` here fails against exactly the projects a
+ * person is most likely to delete — the one they were last working in — and the
+ * only symptom is a request that does not succeed.
+ *
+ * **Nothing checked it while the holder was on screen**, which is the reason it
+ * is written now rather than then. `CLAUDE.md`'s rule about a "background
+ * concern" not becoming "silently absent" is about exactly this: the drawing
+ * can go, the fact cannot, and the assertion is what tells the difference.
+ *
+ * **Proved red** by hard-coding `false` at the call site: `expected [id, true],
+ * received [id, false]`.
+ */
+it('still ends the holding session when a held project is deleted', async () => {
+  const user = userEvent.setup()
+  const del = vi.fn().mockResolvedValue(undefined)
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas', { activeSessionId: HOLDER })],
+      sessions: [session('a', { projectId: ATLAS })],
+      del,
+    }),
+  )
+
+  await user.click(await screen.findByRole('button', { name: /More actions for atlas/ }))
+  await user.click(screen.getByRole('menuitem', { name: 'Delete' }))
+  await user.click(await screen.findByRole('button', { name: 'Delete project' }))
+
+  expect(del).toHaveBeenCalledWith(ATLAS, true)
+})
+
+/** The other half of the pair.
+ *
+ *  A test that only asserted `true` would pass against a call site that had
+ *  stopped reading the project at all and always sent `true` — which would
+ *  silently end sessions through a route whose entire purpose is to refuse to.
+ *  Two arms, because one arm cannot tell a branch from a constant. */
+it('does not force the flag for a project nothing is holding', async () => {
+  const user = userEvent.setup()
+  const del = vi.fn().mockResolvedValue(undefined)
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(SANDBOX, 'sandbox')],
+      sessions: [session('a', { projectId: SANDBOX })],
+      del,
+    }),
+  )
+
+  await user.click(await screen.findByRole('button', { name: /More actions for sandbox/ }))
+  await user.click(screen.getByRole('menuitem', { name: 'Delete' }))
+  await user.click(await screen.findByRole('button', { name: 'Delete project' }))
+
+  expect(del).toHaveBeenCalledWith(SANDBOX, false)
+})
+
+/** The holder is nowhere on the page, in any of its four spellings.
+ *
+ *  It had four: `held by 3f2a…` in the card's head, the word `free` beside it,
+ *  a `held` chip on the previewed session row, and `Resume 3f2a…` as the row's
+ *  primary verb. All four are gone, and this is the single assertion that fails
+ *  if any one of them comes back — worth more than four separate absences,
+ *  because the failure this guards against is a future change re-deriving the
+ *  concept somewhere new rather than reverting a line.
+ *
+ *  What it deliberately does *not* claim: that the holder is unknown. The
+ *  fixture is a held project, `currentSession` still prefers the holder when
+ *  choosing what to preview, and the two tests above pin the `force` flag. */
+it('says nothing about which session is holding a project', async () => {
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas', { activeSessionId: HOLDER })],
+      sessions: [session(HOLDER, { projectId: ATLAS, firstMessage: 'the one still open' })],
+    }),
+  )
+
+  expect(await screen.findByText('the one still open')).toBeInTheDocument()
+  expect(screen.queryByText('held by')).toBeNull()
+  expect(screen.queryByText('free')).toBeNull()
+  expect(screen.queryByText('held')).toBeNull()
+  expect(screen.queryByRole('button', { name: /Resume/ })).toBeNull()
+})
+
+/** Escape gives the page back, which two keystrokes used to.
+ *
+ *  `type="search"` clears on Escape in WebKit and in no other engine, and even
+ *  there it leaves focus in a box the reader has finished with. Changing your
+ *  mind about a filter is the commonest way out of a search and it was the most
+ *  expensive: select-all, delete, then Tab or a click. */
+it('clears the search and gives focus back on Escape', async () => {
+  const user = userEvent.setup()
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas'), project(SANDBOX, 'sandbox')],
+      sessions: [session('a', { projectId: ATLAS }), session('b', { projectId: SANDBOX })],
+    }),
+  )
+
+  await screen.findByText('atlas')
+  const box = screen.getByLabelText(/search projects/i)
+  await user.type(box, 'atlas')
+  expect(screen.queryByText('sandbox')).toBeNull()
+
+  await user.keyboard('{Escape}')
+
+  expect(box).toHaveValue('')
+  expect(box).not.toHaveFocus()
+  expect(screen.getByText('sandbox')).toBeInTheDocument()
+})
+
+/** Recency headings label the list, and label nothing over a set of results.
+ *
+ *  There is a second reason and it is the load-bearing one: `itemKey`'s
+ *  uniqueness rests on each band opening exactly once, which holds only because
+ *  the ranked input is sorted by band. Anything that reorders results — a
+ *  relevance rank, the obvious next thing to want from this search — would emit
+ *  a band twice, and a duplicate key is one measurement cell holding two rows'
+ *  heights. Dropping the headings removes the precondition rather than relying
+ *  on it. */
+it('drops the recency headings while a search is running', async () => {
+  const user = userEvent.setup()
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas'), project(SANDBOX, 'sandbox')],
+      sessions: [session('a', { projectId: ATLAS }), session('b', { projectId: SANDBOX })],
+    }),
+  )
+
+  expect(await screen.findByText('Today')).toBeInTheDocument()
+
+  await user.type(screen.getByLabelText(/search projects/i), 'atlas')
+  expect(screen.queryByText('Today')).toBeNull()
+  expect(screen.getByText('atlas')).toBeInTheDocument()
+})
+
+/** What the top of the page no longer costs.
+ *
+ *  A two-sentence, non-dismissible paragraph explaining what a project is, and
+ *  an `<h2>` reading "Projects" over the only list on the page. Both are read
+ *  once and were rendered on every visit, and together they pushed the first
+ *  row down by about a third of the fold on a laptop. The paragraph is not
+ *  deleted — it is on the first-run page, asserted by the first test in this
+ *  file, which is where somebody is genuinely reading it for the first time. */
+it('does not re-explain itself to a returning reader', async () => {
+  renderPage(
+    <TreeView />,
+    containerWith({
+      projects: [project(ATLAS, 'atlas')],
+      sessions: [session('a', { projectId: ATLAS })],
+    }),
+  )
+
+  expect(await screen.findByText('atlas')).toBeInTheDocument()
+  expect(screen.queryByText(/outlives one conversation/i)).toBeNull()
+  expect(screen.queryByRole('heading', { name: 'Projects' })).toBeNull()
 })
