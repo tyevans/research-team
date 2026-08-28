@@ -5,8 +5,8 @@ import { useContainer } from '@app/container-context.tsx'
 import type { Extraction } from '@domain/knowledge/extraction.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
-import { Disclosure } from '../../common/primitives.tsx'
-import { useStream } from '../../shell/StreamProvider.tsx'
+import { Disclosure } from '../common/primitives.tsx'
+import { useStream } from '../shell/StreamProvider.tsx'
 
 /** `remember`, while it is still happening.
  *

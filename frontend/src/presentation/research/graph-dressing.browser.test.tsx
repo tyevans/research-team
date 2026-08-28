@@ -90,6 +90,7 @@ const Mounted = () => (
       <div style={{ width: '900px', height: '420px', display: 'flex' }}>
         <GraphBrowser
           projectId={PROJECT}
+          extraction={null}
           view={view}
           results={NODES}
           knownTypes={['Person']}
