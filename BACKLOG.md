@@ -3235,6 +3235,42 @@ Found by a general dead-code survey during the workflow removal
 (`docs/reports/dead-code-survey.md`, item 7), and independently confirmed
 before filing. Unrelated to that removal.
 
+### B159. `embeddings_enabled()` is dead because its only call site open-codes it
+
+**Not a deletion — the function is the right shape and the caller is wrong.**
+`infrastructure/config.py:641` reads, whole:
+
+```python
+def embeddings_enabled() -> bool:
+    """Whether anything should embed. A convenience over `vector_store`, not a knob."""
+    return vector_store() != "none"
+```
+
+It has **zero callers** (grepped 2026-08-27). `composition.py:2105` writes
+`build_embedding_provider() if vector_kind != "none" else None` -- which is
+that body, inlined, at the one place the function exists to serve.
+
+The reason this matters more than one duplicated comparison is the invariant it
+is quietly eroding.
+`test_asking_for_a_vector_store_is_what_turns_embeddings_on` states it: *"One
+switch, not two. Two would allow a store with nothing writing to it."*
+`embeddings_enabled` being **derived** from `vector_store()` rather than read
+from an env var of its own is what makes that true by construction. A caller
+that re-derives it by hand is a second copy of the rule, and the next one can
+be written against a different comparison without any test noticing -- which is
+how a store with nothing writing to it gets built, and CLAUDE.md's Events
+section records what that already cost once when `EntitiesEmbedded` never
+reached the log.
+
+**Fix**: call `config.embeddings_enabled()` at `composition.py:2105`. One line.
+
+Do **not** resolve this by deleting the function, which is what a dead-code
+grep recommends and what
+`docs/reports/dead-code-survey.md` item 6 initially proposed. Deleting it
+leaves the inlined comparison as the only statement of the rule and collapses
+the test above into a restatement of the line beneath it. Found and correctly
+argued down during that survey's follow-up rather than acted on.
+
 ## Waiting on redstring
 
 ### B58. `graph = 0.0` across a document boundary is absence of evidence read as disagreement
