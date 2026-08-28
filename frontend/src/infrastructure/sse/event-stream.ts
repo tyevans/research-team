@@ -14,7 +14,6 @@ import {
   frameEnvelopeDto,
   logFrameDto,
   projectChangeFrameDto,
-  projectFrameDto,
   seedingFrameDto,
   topicFrameDto,
 } from '../http/dto.ts'
@@ -185,17 +184,16 @@ export const decodeFrame = (data: string): FeedFrame | null => {
         : null
     }
     case 'Project': {
-      // The graph/corpus shape plus the reviewer's verdict, which only a
-      // stage advance has -- normalised to null here so a consumer tests one
-      // thing rather than distinguishing an old server from a project event
-      // that is not an advance.
-      const frame = projectFrameDto.safeParse(payload)
+      // The same shape as graph and corpus. It carried a sixth key,
+      // `decision`, read off `ProjectStageAdvanced`; that event and the
+      // presenter key both went with the workflow system, so the field could
+      // only ever have arrived null and nothing read it.
+      const frame = projectChangeFrameDto.safeParse(payload)
       return frame.success
         ? {
             kind: 'project',
             projectId: frame.data.project_id,
             change: frame.data.change,
-            decision: frame.data.decision ?? null,
           }
         : null
     }

@@ -3645,15 +3645,15 @@ def create_app(
                 # one file, no lessons. Asked of the workspace rather than
                 # inferred from the slug, for `is_path_file`'s reason.
                 entry = session.state.files.get(path_file(slug)) or {}
-                # `stage_artifact_instructions` puts a YAML frontmatter block on
-                # every course artifact, and markdown reads a `key: value` line
+                # `learning_plan_prompt` asks for a YAML frontmatter block on
+                # every file it writes, and markdown reads a `key: value` line
                 # immediately followed by `---` as a setext heading -- so a
                 # reader handed the raw file sees a fabricated `<h2>` made of
                 # the frontmatter's own fields sitting above the real `# `
                 # heading the file opens with. `parse_frontmatter` already
-                # exists for `application/components.py`'s parser and for the
-                # checks in `application/course.py`; using it here rather than
-                # a second notion of "what frontmatter is" in the console.
+                # exists for `application/components.py`'s parser; using it
+                # here rather than a second notion of "what frontmatter is" in
+                # the console.
                 _, body = parse_frontmatter(entry.get("content", ""))
                 return {
                     "slug": slug,

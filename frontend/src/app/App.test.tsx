@@ -40,9 +40,6 @@ const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
 
 const NOW = Date.parse('2026-08-09T12:00:00Z')
 
-/** Two stages, because a deep link to one is only interesting if the other
- *  stays shut. */
-
 /** The spy the interaction-log assertions read, rebuilt per container so one
  *  test cannot see another's events. Absent entirely until this round: every
  *  test in this file ran the shipped app with `sink === undefined`, and
@@ -81,8 +78,6 @@ const containerWith = (over: Record<string, unknown> = {}) =>
           name: 'atlas',
           activeSessionId: HOLDER,
           tipAtEvent: 0,
-          workflow: null,
-          stage: null,
         },
       ]),
       create: vi.fn(),

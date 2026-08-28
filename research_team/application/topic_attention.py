@@ -68,8 +68,8 @@ DEFAULT_MIN_SOURCES = 2
 """How many live sources a topic wants before its coverage stops being a finding.
 
 Two rather than one because the failure this catches is the single-source
-conclusion. It is a binding parameter, not a law: a preset that wants three says
-so when it binds the trigger.
+conclusion. It is a binding parameter, not a law: a caller that wants three
+says so when it binds the trigger -- see `Trigger.bind`.
 """
 
 DEFAULT_THRASH_LOOKS = 2
@@ -184,7 +184,14 @@ class Trigger:
     params: dict = field(default_factory=dict)
 
     def bind(self, **params) -> "Trigger":
-        """This trigger with different parameters. Used by presets."""
+        """This trigger with different parameters.
+
+        No production caller binds one today -- the shipped registry is the
+        whole of what runs, and this is exercised only by tests. Kept because
+        the parameters it rebinds (`DEFAULT_MIN_SOURCES`, `DEFAULT_THRASH_LOOKS`)
+        are documented as bindable choices rather than laws, and a choice with
+        no way to make it is not a choice.
+        """
         return replace(self, params={**self.params, **params})
 
     def evaluate(self, state: TopicState, corpus: CorpusFacts) -> list[Finding]:

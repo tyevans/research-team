@@ -49,13 +49,13 @@ from typing import Any
 #: resolver, even a re-export, is only safe if there is exactly one
 #: definition behind it.
 #:
-#: Beside `/course`'s stage artifacts rather than inside them. A stage artifact
-#: is named for its position in a preset (`artifacts.artifact_path` builds
-#: `NN-<artifact>.md`), and a course written here has no position in any preset
-#: -- filing it under the same scheme would mean inventing a stage number for
-#: something no stage produced, and `application/course.py` reads that scheme
-#: to say which artifacts a run still owes. A course appearing there as an
-#: unexplained extra would make that view wrong.
+#: A subdirectory of `/course` rather than `/course` itself. It shared that
+#: directory with the workflow's stage artifacts, which were filed as
+#: `NN-<artifact>.md` and enumerated to say what a run still owed; a course has
+#: no stage number, so it sat under `areas/` rather than inventing one. Those
+#: artifacts are gone, and the nesting stays: `authored_files.py` and the
+#: console's course routes both address an area by this prefix, and flattening
+#: it would rewrite every one of those paths to buy one path segment.
 AREAS_DIR = "/course/areas"
 
 #: The minimum an area's Stage 1 must carry, matching what the prompt asks for.

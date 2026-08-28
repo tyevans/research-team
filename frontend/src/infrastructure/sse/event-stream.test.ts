@@ -191,62 +191,50 @@ describe('decodeFrame', () => {
   })
 
   it('reads a project frame as its own kind, not as a session log entry', () => {
-    // The course page's rail redraws off these. Without this case the frame
-    // fell to the log branch, arrived with the project's UUID under
-    // `sessionId`, and -- having no `index` -- was dropped, which is why an
-    // advanced stage only showed up on a reload.
+    // The project page redraws its holder off these. Without this case the
+    // frame fell to the log branch, arrived with the project's UUID under
+    // `sessionId`, and -- having no `index` -- was dropped, which is why a
+    // project change only showed up on a reload.
     expect(
       frame({
         type: 'Project',
         project_id: 'p1',
-        change: 'ProjectStageAdvanced',
-        decision: 'approve_with_edits',
+        change: 'ProjectSessionJoined',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({
-      kind: 'project',
-      projectId: 'p1',
-      change: 'ProjectStageAdvanced',
-      // What the reviewer decided, not only that a boundary was crossed --
-      // the difference between the live update being a notification and
-      // being the information.
-      decision: 'approve_with_edits',
-    })
+    ).toEqual({ kind: 'project', projectId: 'p1', change: 'ProjectSessionJoined' })
   })
 
   it('reads every project event as one kind, told apart by change', () => {
-    // `ProjectWorkflowSelected` is what turns the course page from an error into a
-    // rail, so a decoder that admitted only `ProjectStageAdvanced` would have fixed
-    // the reported symptom and left its sibling invisible.
+    // A decoder that admitted only the event class somebody reported would fix
+    // the reported symptom and leave its siblings invisible. `change` is a
+    // plain string rather than an enum for the same reason: a server that
+    // grows a project event must move the page, not fail validation and leave
+    // it stale.
     expect(
       frame({
         type: 'Project',
         project_id: 'p1',
-        change: 'ProjectWorkflowSelected',
-        decision: null,
+        change: 'ProjectTipAdvanced',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({
-      kind: 'project',
-      projectId: 'p1',
-      change: 'ProjectWorkflowSelected',
-      decision: null,
-    })
+    ).toEqual({ kind: 'project', projectId: 'p1', change: 'ProjectTipAdvanced' })
   })
 
-  it('reads a project frame from a server that has no decision field', () => {
-    // `decision` arrived after the frame did. A server without it must still
-    // move the rail rather than fail validation and leave the page stale --
-    // the reason `change` is a plain string rather than an enum. Normalised to
-    // null so a consumer tests one thing, not two kinds of absence.
+  it('ignores a payload key the frame does not claim', () => {
+    // `decision` was a sixth key here, read off `ProjectStageAdvanced`. Both
+    // are gone with the workflow system. A server still sending one must not
+    // fail validation, and the decoder must not smuggle it onto the frame --
+    // this is red against a decoder that spreads the payload through.
     expect(
       frame({
         type: 'Project',
         project_id: 'p1',
-        change: 'ProjectStageAdvanced',
+        change: 'ProjectDeleted',
+        decision: 'approve_with_edits',
         occurred_at: '2026-01-01T00:00:00Z',
       }),
-    ).toEqual({ kind: 'project', projectId: 'p1', change: 'ProjectStageAdvanced', decision: null })
+    ).toEqual({ kind: 'project', projectId: 'p1', change: 'ProjectDeleted' })
   })
 
   it('drops a log frame with no index rather than guessing a position', () => {

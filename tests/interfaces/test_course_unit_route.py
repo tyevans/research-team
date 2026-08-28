@@ -160,7 +160,7 @@ async def test_a_recorded_unit_file_comes_back_as_text_after_a_real_run(app_and_
 
 async def test_frontmatter_does_not_reach_the_wire(app_and_client):
     """Every lesson file this project writes opens with a YAML frontmatter
-    block (`stage_artifact_instructions` puts one there). Markdown reads
+    block (`learning_plan_prompt` asks for one). Markdown reads
     `key: value` immediately followed by a `---` line as a setext heading, so
     a reader handed the raw file sees a fabricated `<h2>` -- the frontmatter's
     own fields, rendered as if they were a title -- sitting above the real

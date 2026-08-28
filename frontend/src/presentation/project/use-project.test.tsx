@@ -97,7 +97,7 @@ describe('useProject', () => {
     })
 
     act(() => {
-      push({ kind: 'project', projectId: PROJECT, change: 'ProjectSessionJoined', decision: null })
+      push({ kind: 'project', projectId: PROJECT, change: 'ProjectSessionJoined' })
       vi.advanceTimersByTime(FRAME_DEBOUNCE_MS)
     })
 
@@ -123,7 +123,7 @@ describe('useProject', () => {
     })
 
     act(() => {
-      push({ kind: 'project', projectId: OTHER, change: 'ProjectSessionJoined', decision: null })
+      push({ kind: 'project', projectId: OTHER, change: 'ProjectSessionJoined' })
       vi.advanceTimersByTime(FRAME_DEBOUNCE_MS)
     })
 

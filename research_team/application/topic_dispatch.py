@@ -117,8 +117,9 @@ def topic_slug(question: str) -> str:
 def topic_directory(position: int, question: str) -> str:
     """Where everything written about one topic goes.
 
-    `position` is the topic's index in the project's topic list, which is the
-    same thing `stage_number` is to a preset and is used for the same reason.
+    `position` is the topic's index in the project's topic list, and it is in
+    the directory name so that a reader listing `/topics` sees them in the
+    order the project has them rather than alphabetically.
     It is read at dispatch time rather than stored, so a topic that moves in
     the list after its directory was written will next be written to a
     different one. That is a real cost and the alternative is worse: storing
