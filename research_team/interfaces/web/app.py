@@ -1210,12 +1210,16 @@ def create_app(
         # An id nothing was ever written under raises from the repository
         # rather than folding to an empty state, so "no such project" arrives
         # two different ways and both have to become the same 404.
-        try:
-            state = await service.project_state(project_id)
-        except Exception as error:
-            raise HTTPException(status_code=404, detail=f"no project {project_id}") from error
-        if state.status == "new":
-            raise HTTPException(status_code=404, detail=f"no project {project_id}")
+        #
+        # Deleted counts as absent here too, so deleting twice is a 404 rather
+        # than the domain's 409 "project already deleted". The 409 was the more
+        # informative answer and is deliberately given up: a caller who cannot
+        # *see* the project through any other route has no way to act on being
+        # told it is already gone, and one route treating a deleted project as
+        # present -- to refuse it -- is the inconsistency this change exists to
+        # remove.
+        await _require_project(project_id)
+        state = await service.project_state(project_id)
         holder = state.active_session_id
         if holder is not None:
             if not release_holder:
@@ -1246,19 +1250,44 @@ def create_app(
         return {"deleted": True, "project_id": str(project_id)}
 
     async def _require_project(project_id: UUID) -> None:
-        """404 unless `project_id` names a project that exists.
+        """404 unless `project_id` names a project that exists and is not deleted.
 
         Checked before touching the corpus so that "no such project" and "that
         project has no sources" stay different answers. Without it an unknown
         id would list empty and read 404, which reads as a project that exists
         and happens to be bare -- and the caller's next move (store something)
         would be the wrong one.
+
+        **A deleted project is a 404, not a 200 with its name in it**, and this
+        function is the only place that can say so once: it guards
+        seventy-odd project-scoped routes, and until 2026-08-27 it refused
+        only the `new` state, so every one of them answered a deleted
+        project's reads in full. The write half was never affected --
+        `Project.decide` refuses every command against a deleted project
+        ("a deleted project answers nothing but 'deleted'") -- which is
+        exactly what made the read half hard to notice: nothing could be
+        *changed* through those routes, so nothing broke, and a retired
+        project simply kept answering questions about itself.
+
+        The same rule already held one layer down and disagreed with this one.
+        `event_store.list_projects` filters deleted ids out and its docstring
+        says that filter is "what makes deleted mean gone to every caller that
+        lists" -- so a deleted project was absent from `/api/projects` and
+        present at `/api/projects/{id}`, which is the shape of a bug rather
+        than of a convention.
+
+        What it costs: a client holding a URL to a project deleted in another
+        tab now gets 404 rather than a page. That is the point. The
+        alternative considered was 410 Gone, which is more precise and which
+        no client here distinguishes -- `_require_project`'s callers and the
+        console both branch on 404 alone, so 410 would buy accuracy nobody
+        reads at the price of a second not-found code to handle.
         """
         try:
             state = await service.project_state(project_id)
         except Exception as error:
             raise HTTPException(status_code=404, detail=f"no project {project_id}") from error
-        if state.status == "new":
+        if state.status in ("new", "deleted"):
             raise HTTPException(status_code=404, detail=f"no project {project_id}")
 
     @app.get("/api/projects/{project_id}")
@@ -4336,6 +4365,13 @@ def create_app(
         silently because releasing the holder advances the tip, which is a
         write to somebody else's session; a plain join stays a plain join.
         """
+        # Ahead of `take_over`, so that a deleted project is 404 rather than
+        # reaching `release_project` and advancing a retired project's tip on
+        # the way to the domain's refusal. Joining one used to answer the
+        # domain's 409 "project has been deleted", which both refused the join
+        # and confirmed the project existed; 404 is the same refusal without
+        # the confirmation, and matches every other project-scoped route.
+        await _require_project(project_id)
         if body is not None and body.take_over:
             state = await service.project_state(project_id)
             if state.active_session_id is not None:

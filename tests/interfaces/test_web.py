@@ -1525,26 +1525,59 @@ async def test_reading_an_unknown_project_is_a_404(client):
     assert response.status_code == 404
 
 
-async def test_a_deleted_project_still_reads_its_name(client):
-    """Pinned because it surprises, and because it is not this route's decision.
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", ""),
+        ("GET", "/sources"),
+        ("GET", "/topics"),
+        ("DELETE", ""),
+        ("POST", "/join"),
+    ],
+)
+async def test_a_deleted_project_is_absent_from_every_route(client, method, path):
+    """Deleted means gone, and `_require_project` is where that is said once.
 
-    `_require_project` -- which every project-scoped route in this file goes
-    through -- refuses only the `new` state, so a deleted project passes it and
-    answers 200 here exactly as it does on `/sources` and `/topics`. Only
-    `DELETE` and `POST /join` distinguish deletion, and each does so with its
-    own check and a 409.
+    Until 2026-08-27 it refused only the `new` state, so a deleted project
+    answered its reads in full on all seventy-odd project-scoped routes -- its
+    name, its sources, its topics. Nothing could be *written* through them
+    (`Project.decide` refuses every command against a deleted project), which
+    is what kept it quiet: a retired project simply went on answering
+    questions about itself.
 
-    This test would pass with the route reverted to no check at all; what it
-    guards is the *other* direction -- somebody tightening this one route to
-    404 and leaving twenty others answering 200 for the same id.
+    Parametrised over five routes rather than asserting on one, because the
+    defect was never in a route -- it was in the one guard they share, and a
+    single-route test would pass again the moment somebody added a sixth route
+    that forgot to call it. `DELETE` and `/join` are in the list because they
+    used to answer the domain's 409 instead; they now agree with the rest.
+
+    Proved red before it was trusted green: with the `"deleted"` arm removed
+    from `_require_project`, the three GETs return 200 and the other two 409.
     """
     project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
     await client.delete(f"/api/projects/{project_id}")
 
-    response = await client.get(f"/api/projects/{project_id}")
+    response = await client.request(method, f"/api/projects/{project_id}{path}")
 
-    assert response.status_code == 200
-    assert response.json()["name"] == "atlas"
+    assert response.status_code == 404
+    assert str(project_id) in response.json()["detail"]
+
+
+async def test_a_deleted_projects_name_is_free_again(client):
+    """The other half of "deleted means gone", and the reason 404 is safe here.
+
+    `event_store.list_projects` already filtered deleted ids out, and the
+    duplicate-name check reads that listing -- so the name was reusable while
+    the project it belonged to still answered `GET /api/projects/{id}` with
+    it. Those two facts could not both be right. This pins the one that was.
+    """
+    first = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.delete(f"/api/projects/{first}")
+
+    second = await client.post("/api/projects", json={"name": "atlas"})
+
+    assert second.status_code == 200
+    assert second.json()["id"] != first
 
 
 async def test_creating_a_project_with_a_taken_name_does_not_create_a_second(client):
@@ -1745,13 +1778,20 @@ async def test_deleting_a_project_removes_it_from_the_listing(client):
 
 
 async def test_a_deleted_project_cannot_be_joined(client):
+    """404, and deliberately no longer the word "deleted" in the body.
+
+    This asserted 409 with "deleted" in the detail, which refused the join and
+    confirmed the project existed in the same breath. The refusal is what
+    mattered; the confirmation was the half that disagreed with every other
+    project-scoped route.
+    """
     project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
     await client.delete(f"/api/projects/{project_id}")
 
     join = await client.post(f"/api/projects/{project_id}/join")
 
-    assert join.status_code == 409
-    assert "deleted" in join.json()["detail"]
+    assert join.status_code == 404
+    assert str(project_id) in join.json()["detail"]
 
 
 async def test_deleting_a_held_project_needs_the_holder_released_first(client):
@@ -2487,11 +2527,18 @@ async def test_an_unknown_project_is_a_404_on_both_workflow_routes(client):
 
 
 async def test_a_deleted_project_refuses_a_workflow(client):
-    """409 rather than 404: a tombstone is not an absence.
+    """404 now, and this test's own docstring used to argue the opposite.
 
-    The project is still there and still readable -- that is what retiring
-    means here -- so the honest answer is the domain's, which says it was
-    deleted. Joining a deleted project relays the same refusal the same way.
+    It read: "409 rather than 404: a tombstone is not an absence. The project
+    is still there and still readable -- that is what retiring means here."
+    That was the settled reading until 2026-08-27, and it is the one being
+    overturned: a project that answers its name, its sources and its topics
+    after deletion is not retired, it is deleted in the listing only.
+
+    Kept through that reversal rather than deleted with it, even though the
+    route it exercises comes out in the next slice of this same branch, so
+    that the changed assertion is visible in one diff beside the docstring
+    that justified the old one.
     """
     project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
     await client.delete(f"/api/projects/{project_id}")
@@ -2500,8 +2547,10 @@ async def test_a_deleted_project_refuses_a_workflow(client):
         f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"}
     )
 
-    assert response.status_code == 409
-    assert "deleted" in response.json()["detail"]
+    assert response.status_code == 404
+    # Not "deleted" in the body any more: naming the state confirms the project
+    # exists, which is the half of the old 409 this change is removing.
+    assert str(project_id) in response.json()["detail"]
 
 
 # ---------------- the course ----------------
