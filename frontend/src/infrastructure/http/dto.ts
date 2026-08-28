@@ -384,6 +384,19 @@ export const dispatchCatchUpDto = z.object({
   finished: z.array(dispatchFrameDto).default([]),
 })
 
+/** What a bulk fan-out queued, and which ids it could not find.
+ *
+ * `unknown` is not an error branch. The list a browser sends is what it was
+ * showing a moment ago, and a topic deleted in that moment would otherwise
+ * cost the other forty-nine their dispatch -- so the route reports the misses
+ * and enqueues the rest (see `dispatch_topics` in `app.py`). Defaulted to
+ * empty for the ordinary case where every id resolved.
+ */
+export const bulkDispatchDto = z.object({
+  queued: z.array(dispatchFrameDto).default([]),
+  unknown: z.array(z.string()).default([]),
+})
+
 /** A topic's own documents, and the session/scrub pair to read them at.
  *
  * `session_id` and `at` are both nullable and mean different things: no

@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import { useInteractionLog } from '@app/interaction-log-provider.tsx'
 import { useContainer } from '@app/container-context.tsx'
 import { queryKeys } from '@application/queries/keys.ts'
-import { byTopic, type Dispatch } from '@domain/research/dispatch.ts'
+import { byTopic, type Dispatch, type DispatchAction } from '@domain/research/dispatch.ts'
 import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import { useFrameRefresh } from '../../presentation/shell/use-frame-refresh.ts'
@@ -85,10 +85,56 @@ export const useDispatchTopic = (projectId: ProjectId) => {
   const log = useInteractionLog()
 
   return useMutation({
-    mutationFn: ({ topicId, action }: { topicId: TopicId; action: string }) =>
+    mutationFn: ({ topicId, action }: { topicId: TopicId; action: DispatchAction }) =>
       topics.dispatch(projectId, topicId, action),
     onSuccess: (_result, { topicId, action }) => {
       log.record('DispatchRequested', { topic_id: topicId, action })
+      return queryClient.invalidateQueries({ queryKey: queryKeys.dispatch(projectId) })
+    },
+  })
+}
+
+/** The most topics one fan-out may name.
+ *
+ * The server's own cap, in `BulkDispatch`, restated so the browser can say
+ * what is wrong *before* sending rather than rendering a 422. Two spellings of
+ * one number, and the honest note about it: nothing checks the pair. What
+ * makes the duplication safe rather than merely convenient is the direction of
+ * the failure -- a browser cap that drifted low refuses work the server would
+ * take, which is visible on screen as a control that will not press; one that
+ * drifted high sends a request the server refuses, which is the state this
+ * constant exists to avoid and not one it can create.
+ */
+export const BULK_CAP = 50
+
+/** Send one action at every topic in a list.
+ *
+ * Invalidated rather than written through, for `useDispatchTopic`'s reason:
+ * the 202 says "queued" for fifty rows whose positions the very next frame
+ * renumbers.
+ *
+ * The result is *returned*, not swallowed. `unknown` is what lets a caller say
+ * "started 11 of 12" instead of quietly starting fewer topics than the label
+ * on the button promised, which is the whole reason the route reports it.
+ */
+export const useBulkDispatch = (projectId: ProjectId) => {
+  const { topics } = useContainer()
+  const queryClient = useQueryClient()
+  const log = useInteractionLog()
+
+  return useMutation({
+    mutationFn: ({ action, topicIds }: { action: DispatchAction; topicIds: readonly TopicId[] }) =>
+      topics.dispatchBulk(projectId, action, topicIds),
+    onSuccess: (result, { action, topicIds }) => {
+      // Both numbers, because they are the two halves of the safety property:
+      // what was asked for, and what the server found to start. A log holding
+      // only the first cannot tell a fan-out that worked from one that
+      // enqueued nothing.
+      log.record('BulkDispatchRequested', {
+        action,
+        asked: topicIds.length,
+        queued: result.queued.length,
+      })
       return queryClient.invalidateQueries({ queryKey: queryKeys.dispatch(projectId) })
     },
   })

@@ -45,7 +45,7 @@ const renderHeader = (parts: Partial<AppContainer> = {}) => {
       </ContainerProvider>
     </QueryClientProvider>
   )
-  return render(<QueueHeader projectId={PROJECT} />, { wrapper })
+  return render(<QueueHeader projectId={PROJECT} shownTopicIds={[]} />, { wrapper })
 }
 
 /** Both ask routes keep a door, and this file is where that is held.

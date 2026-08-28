@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import { Drawer } from '../../common/Drawer.tsx'
 import { SeedPanel } from '../../research/SeedPanel.tsx'
+import { BulkResearch } from './BulkResearch.tsx'
 
 /** The drawer's name, and the toolbar button's accessible name and tooltip.
  *
@@ -30,18 +31,28 @@ export const TOPICS_HEADING = 'Seed and manage this project’s topics'
  * that reason. What moves in here is everything that configures the queue;
  * what stays out is everything that describes it.
  *
- * **Sections, for one section.** `DrawerSection` exists before there are two
- * of them because the next slice adds "find sources for every topic shown" --
- * a bulk verb over whatever the filter is showing -- and a body that is a bare
- * `<SeedPanel/>` invites appending a second control with no heading between
- * them. The cost is one wrapper that currently earns nothing; what it buys is
- * that the second thing in here has an obvious shape to take.
+ * **Sections, and there are two now.** `DrawerSection` was written for one,
+ * against the slice that adds "find sources for every topic shown" -- and it
+ * paid for itself exactly as its own comment predicted: the bulk verb arrived
+ * with a heading, a sentence and a shape already decided, rather than as a
+ * second control appended under `SeedPanel` with nothing between them.
+ *
+ * **Seeding first, and the order is an argument.** Seeding is what an *empty*
+ * project needs and the fan-out is what a *seeded* one needs, so the two read
+ * top to bottom in the order a project meets them. It is also the order of
+ * cost: seeding opens questions, the fan-out spends a turn on each of them.
  */
 export const TopicsDrawer = ({
   projectId,
+  shownTopicIds,
   onClose,
 }: {
   projectId: ProjectId
+  /** Exactly the topics the queue is showing, in the order it shows them --
+   *  see `TopicList`'s `toolbar` for why this is threaded rather than refetched
+   *  here. A drawer that read the queue again would be the second definition of
+   *  "shown" that the whole fan-out design exists to avoid. */
+  shownTopicIds: readonly TopicId[]
   onClose: () => void
 }) => (
   <Drawer heading={TOPICS_HEADING} label={TOPICS_HEADING} onClose={onClose}>
@@ -51,6 +62,17 @@ export const TopicsDrawer = ({
         detail="Name a subject and the project opens questions about it."
       >
         <SeedPanel projectId={projectId} />
+      </DrawerSection>
+
+      {/* The heading says "shown" and the button says the number, which is the
+          same fact twice on purpose: the scope is the thing a person can get
+          wrong here, and it is the one thing that cannot be recovered by
+          pressing Stop faster than forty turns start. */}
+      <DrawerSection
+        heading="Every topic shown"
+        detail="Acts on the topics the filter above is showing, not on every topic in the project."
+      >
+        <BulkResearch projectId={projectId} topicIds={shownTopicIds} />
       </DrawerSection>
     </div>
   </Drawer>

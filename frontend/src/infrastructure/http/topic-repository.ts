@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { TopicRepository } from '@application/ports/repositories.ts'
+import type { DispatchAction } from '@domain/research/dispatch.ts'
 import type { TopicStatus } from '@domain/research/topic.ts'
 import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
@@ -85,13 +86,33 @@ export class HttpTopicRepository implements TopicRepository {
     }
   }
 
-  async dispatch(projectId: ProjectId, topicId: TopicId, action: string) {
+  async dispatch(projectId: ProjectId, topicId: TopicId, action: DispatchAction) {
     const body = await this.http.post(
       `/api/projects/${seg(projectId)}/topics/${seg(topicId)}/dispatch`,
       { action },
       dto.dispatchFrameDto,
     )
     return toDispatch(body)
+  }
+
+  /** One post, not a loop of the per-topic route.
+   *
+   * The loop is on the server, inside `dispatch_topics`, and that is where it
+   * has to be: fifty presses from the browser would each be scheduled against
+   * the same one-in-flight queue with nothing ordering them, and a tab closed
+   * halfway would start half of what it said. One request either enqueues the
+   * list in the order given or refuses it before any topic is resolved.
+   */
+  async dispatchBulk(projectId: ProjectId, action: DispatchAction, topicIds: readonly TopicId[]) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/dispatch/bulk`,
+      // `topic_ids`, snake, and spread into a plain array because the wire
+      // takes JSON and a `readonly TopicId[]` is a branded type the server has
+      // never heard of.
+      { action, topic_ids: [...topicIds].map(String) },
+      dto.bulkDispatchDto,
+    )
+    return { queued: body.queued.map(toDispatch), unknown: body.unknown }
   }
 
   async dispatchStatus(projectId: ProjectId) {

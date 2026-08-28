@@ -57,6 +57,9 @@ const fakeTopics = (
   dispatch: vi.fn(() => {
     throw new Error('dispatch was not stubbed for this test')
   }),
+  dispatchBulk: vi.fn(() => {
+    throw new Error('dispatchBulk was not stubbed for this test')
+  }),
   cancelDispatch: vi.fn(() => {
     throw new Error('cancelDispatch was not stubbed for this test')
   }),
@@ -687,7 +690,7 @@ it('keeps the toolbar when the topics cannot be read', async () => {
   renderWithContainer(
     <TopicList
       projectId={PROJECT}
-      toolbar={<a href="#/p/x/ask">the way out</a>}
+      toolbar={() => <a href="#/p/x/ask">the way out</a>}
       onOpen={() => {}}
     />,
     { topics: fakeTopics(vi.fn().mockRejectedValue(new Error('no'))) },
@@ -695,4 +698,57 @@ it('keeps the toolbar when the topics cannot be read', async () => {
 
   expect(await screen.findByText(/Could not read/)).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'the way out' })).toBeInTheDocument()
+})
+
+/** The toolbar is handed exactly the rows on screen, filter and all.
+ *
+ * This is the client half of the fan-out's whole safety property: the ids the
+ * drawer sends are the ids the queue is showing, not every topic in the
+ * project, and the server refuses an "all" precisely so that "shown" has one
+ * definition. `BulkResearch.test.tsx` asserts that the label's count and the
+ * ids sent match each other; nothing there can see whether the ids that
+ * arrived were the *filtered* set, because they arrive as a prop.
+ *
+ * So this types into the filter and asserts the toolbar's argument moved with
+ * it. Filtering rather than a bare render is the case that separates the two
+ * candidate implementations -- `shown.map(...)` and `query.data.map(...)`
+ * produce identical arrays on every unfiltered queue, which is every queue
+ * anybody would think to write down, and differ only once a filter is set.
+ * That is CLAUDE.md's `SocraticPrompt.position` shape, met here on purpose.
+ *
+ * **Proved red** by deriving `shownTopicIds` from `query.data` rather than
+ * from `shown` in `use-topic-queue.ts`: two ids arrive instead of one, and
+ * every other assertion in this file stays green.
+ */
+it('hands the toolbar the topics the filter is showing, not every topic', async () => {
+  const seen: (readonly TopicId[])[] = []
+  const topics = fakeTopics(
+    vi.fn<TopicRepository['list']>().mockResolvedValue([
+      topic({ question: 'Who funded the study?' }),
+      topic({
+        topicId: TopicId('33333333-3333-3333-3333-333333333333'),
+        question: 'When did it end?',
+      }),
+    ]),
+  )
+
+  renderWithContainer(
+    <TopicList
+      projectId={PROJECT}
+      toolbar={(shownTopicIds) => {
+        seen.push(shownTopicIds)
+        return <span>toolbar</span>
+      }}
+    />,
+    { topics },
+  )
+
+  await screen.findByText('Who funded the study?')
+  expect(seen.at(-1)).toHaveLength(2)
+
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Filter topics' }), 'funded')
+
+  await waitFor(() => {
+    expect(seen.at(-1)).toStrictEqual([TopicId('22222222-2222-2222-2222-222222222222')])
+  })
 })

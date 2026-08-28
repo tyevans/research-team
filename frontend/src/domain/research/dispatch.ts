@@ -12,6 +12,23 @@
  */
 export type DispatchStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 
+/** What a dispatch can be asked to do.
+ *
+ * The client half of one vocabulary: `DISPATCH_ACTIONS` in
+ * `application/topic_dispatch.py` is the server's, and the route answers 422
+ * naming the set for anything outside it. Two spellings of one vocabulary is
+ * what `docs/design/topic-actions-on-the-row.md` §5 warns about, and the
+ * reason this is a union rather than the bare `string` the wire carries: a
+ * control offering a fourth verb is a type error here rather than a 422 a
+ * person meets by pressing something.
+ *
+ * `Dispatch.action` below stays a `string` deliberately, and the asymmetry is
+ * the point -- what this build may *send* is closed, what it must be able to
+ * *render* is not. A server that grows `lesson` should show it by name on the
+ * row rather than fail validation and blank it.
+ */
+export type DispatchAction = 'understanding' | 'research' | 'refine'
+
 export interface Dispatch {
   readonly dispatchId: string
   readonly topicId: string

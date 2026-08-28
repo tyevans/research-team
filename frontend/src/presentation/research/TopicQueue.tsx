@@ -1,10 +1,11 @@
 import clsx from 'clsx'
 import type { ReactNode } from 'react'
 
-import type { Dispatch } from '@domain/research/dispatch.ts'
+import type { Dispatch, DispatchAction } from '@domain/research/dispatch.ts'
 import type { TopicFocus, TopicView } from '@domain/research/topic.ts'
 import type { TopicId } from '@domain/shared/identifier.ts'
 
+import { Glyph } from '../common/Glyph.tsx'
 import { Button, EmptyState } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { TopicRow } from '../entity/topic/TopicRow.tsx'
@@ -23,12 +24,186 @@ const FOCUSES: readonly (readonly [TopicFocus, string])[] = [
  * The one thing in this feature that disables a control, and it is worth it:
  * synthesising a topic with no sources and no findings produces the model's
  * own prior knowledge presented as project findings, which is confabulation
- * that looks like a deliverable. Research is the action that fixes it, and
- * research is not built yet — so the button says why rather than offering a
- * next step it cannot take.
+ * that looks like a deliverable.
+ *
+ * **What changed when `research` landed, and it is the whole point of this
+ * paragraph.** This comment used to end "Research is the action that fixes it,
+ * and research is not built yet — so the button says why rather than offering
+ * a next step it cannot take." Research is built. So the off state is no
+ * longer a dead end: the sentence names the verb that ends it, and that verb
+ * is the button immediately to its left. The predicate is unchanged; what it
+ * disables is now one of three controls rather than the only one.
+ *
+ * **It gates `understanding` and nothing else, and the asymmetry is
+ * deliberate.** `research` is precisely the action that leaves this state, so
+ * disabling it here would lock the row shut. `refine` is enabled for a
+ * different reason: what makes an ungrounded `understanding` dangerous is that
+ * it records *findings* about the world, and the refine prompt forbids
+ * `record_finding` outright (`docs/design/topic-actions-on-the-row.md` §3.2a).
+ * Its output is a verdict on the wording of a question, which a turn can reach
+ * by reading the question — a topic with nothing gathered is exactly the topic
+ * most likely to have been unanswerable from the start.
  */
 const hasNothingToSynthesise = (topic: TopicView): boolean =>
   topic.sources === 0 && topic.findings === 0
+
+/** The three verbs, as the sentences a screen reader and a tooltip both get.
+ *
+ * Exported because the drawer's fan-out names the same action and the tests
+ * find these controls by name: three literals in three files is how a button
+ * comes to promise something its route does not do. `QueueToolbar` carries
+ * `TOPICS_HEADING` for the same reason.
+ *
+ * **`refine`'s wording is a constraint, not a preference.** §3.2a of the
+ * design: the turn cannot rewrite the question — no tool a dispatch holds can
+ * — so it writes `refinement.md`, a verdict (`fine`/`narrow`/`split`/`wrong`),
+ * a proposed wording and the material behind it, and *a person applies it*.
+ * "Refine this question", which is what the ask and §3.2 both called it, is a
+ * label that lies about who decided: a reader presses it, waits, and finds
+ * their question unchanged and a file they did not expect. "Second opinion"
+ * survives that — it promises an opinion, and an opinion is what arrives.
+ */
+export const ROW_VERBS = {
+  research: 'Find sources for this topic',
+  understanding: 'Write our understanding of this topic',
+  refine: 'Get a second opinion on this question’s wording',
+} as const satisfies Record<DispatchAction, string>
+
+/** The longer sentence, for the tooltip and for the same `aria-describedby`
+ *  the tooltip supplies. Each says what lands on disk, because every one of
+ *  these three verbs produces a file and none of them changes the row. */
+const VERB_DETAIL = {
+  research:
+    'Search for and fetch sources for this topic. One turn — press it again if the first is not enough.',
+  understanding: 'Write down what this project understands about this topic',
+  refine:
+    'Writes refinement.md into this topic’s documents: a verdict on the question, a proposed wording, and the material behind it. You decide whether to apply it.',
+} as const satisfies Record<DispatchAction, string>
+
+/** Why `understanding` is off, in place of what it does.
+ *
+ * The sentence names the next step rather than only the obstacle, which is
+ * what `research` existing makes possible — see `hasNothingToSynthesise`. */
+const NOTHING_GATHERED = 'Nothing gathered for this topic yet — find sources first'
+
+/** The row's verbs, as icons, in the order a topic is worked.
+ *
+ * **Three on the row rather than two, and it is a measurement.** `docs/design/
+ * topic-actions-on-the-row.md` §2 sketches two icons with "write our
+ * understanding" under the `⋯`, and left the split to whoever measured it.
+ * Measured in Chromium at the 340px rail `TopicQueue.browser.test.tsx` renders
+ * — which is the rail this pane actually gets — `.ent-topic-verbs` is
+ * **133px** with all three plus the `⋯`, against **151.16px** for the single
+ * `Write understanding` button plus the `⋯` it replaces. Three icons are
+ * *narrower* than the one worded button was, so the split the sketch proposes
+ * would be buying width the row already has: the facts group ends further
+ * right than it did before this change, not nearer. A fourth icon takes it to
+ * 169px and fails, which is where the sketch becomes right.
+ *
+ * That measurement lives in `TopicQueue.browser.test.tsx` and only jsdom
+ * cannot take it — a verb painted past the clip edge and one sitting inside it
+ * produce identical markup, which is the failure `CHIP` above records twice.
+ *
+ * **`aria-disabled` rather than `disabled`, carried over deliberately.** A
+ * `disabled` element takes neither focus nor pointer events, so the tooltip
+ * saying *why* it is off could never open — the press is guarded in the
+ * handler instead, which is the cost: nothing but that guard stops the click.
+ *
+ * `.btn-ghost.btn-sm` and no stylesheet of its own, matching `QueueToolbar`.
+ * `.topic-dispatch-button` stood here and is gone with no replacement: it
+ * declared nothing in any stylesheet, and a name that hooks nothing cannot be
+ * told from one whose rule was lost.
+ */
+const RowVerbs = ({
+  blocked,
+  empty,
+  onDispatch,
+}: {
+  blocked: boolean
+  empty: boolean
+  onDispatch: (action: DispatchAction) => void
+}) => (
+  <>
+    <RowVerb action="research" off={blocked} onDispatch={onDispatch}>
+      <SearchGlyph />
+    </RowVerb>
+    <RowVerb
+      action="understanding"
+      off={blocked || empty}
+      {...(empty ? { detail: NOTHING_GATHERED } : {})}
+      onDispatch={onDispatch}
+    >
+      <PenGlyph />
+    </RowVerb>
+    <RowVerb action="refine" off={blocked} onDispatch={onDispatch}>
+      <NarrowGlyph />
+    </RowVerb>
+  </>
+)
+
+const RowVerb = ({
+  action,
+  off,
+  detail,
+  onDispatch,
+  children,
+}: {
+  action: DispatchAction
+  off: boolean
+  /** Replaces the verb's own sentence when the verb is off for a reason worth
+   *  saying. Absent means "off because something else is running", which the
+   *  chip beside it is already reporting. */
+  detail?: string
+  onDispatch: (action: DispatchAction) => void
+  children: ReactNode
+}) => (
+  <Tooltip asChild explanation={detail ?? VERB_DETAIL[action]}>
+    <Button
+      tone="ghost"
+      small
+      aria-label={ROW_VERBS[action]}
+      aria-disabled={off}
+      onClick={() => {
+        if (off) return
+        onDispatch(action)
+      }}
+    >
+      {children}
+    </Button>
+  </Tooltip>
+)
+
+/** A magnifier, for the one verb that goes outside the project for material. */
+const SearchGlyph = () => (
+  <Glyph>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="M10.4 10.4 14 14" />
+  </Glyph>
+)
+
+/** A nib over a written line: this verb writes a document about what is
+ *  already here, and the line under it is the material it writes from. */
+const PenGlyph = () => (
+  <Glyph>
+    <path d="M2 14h12" />
+    <path d="M11 1.8 13.6 4.4 6 12H3.4V9.4Z" />
+  </Glyph>
+)
+
+/** Two chevrons closing on a question mark.
+ *
+ * The verdicts are `fine`, `narrow`, `split` and `wrong`, and narrowing is the
+ * one of the four a picture can carry — a question being brought to a point.
+ * A pencil was the obvious alternative and was rejected for the label's own
+ * reason: this verb edits nothing, and a pencil says it does.
+ */
+const NarrowGlyph = () => (
+  <Glyph>
+    <path d="M1.5 3 4 8l-2.5 5M14.5 3 12 8l2.5 5" />
+    <path d="M6.4 5.6a1.7 1.7 0 0 1 3.3.5c0 1.1-1.6 1.2-1.6 2.2" />
+    <circle cx="8.1" cy="10.6" r="0.4" fill="currentColor" stroke="none" />
+  </Glyph>
+)
 
 /** The scroller's inward focus ring, and why `-2px` rather than the global
  *  `+1px`.
@@ -227,7 +402,11 @@ export const TopicQueue = ({
   stopping: boolean
   onFocusChange: (focus: TopicFocus) => void
   onSearchChange: (search: string) => void
-  onDispatch: (topicId: TopicId) => void
+  /** Which verb, as well as which topic. It took a topic alone while
+   *  `understanding` was the only action this build ran; a row offering three
+   *  and a caller that could not tell them apart would have dispatched the
+   *  same one from all three icons, which typechecks and looks right. */
+  onDispatch: (topicId: TopicId, action: DispatchAction) => void
   onManage: (topicId: TopicId) => void
   onStop: () => void
   /** The controls that act on the whole queue, on the search box's line.
@@ -369,54 +548,22 @@ export const TopicQueue = ({
                 // dispatch's sentence came to push both verbs off the row.
                 note: dispatch ? <DispatchChip dispatch={dispatch} /> : null,
                 primary: (
-                  <>
-                    {/* One button rather than the split control the design
-                        sketches: with one action there is nothing to split,
-                        and a menu holding a single item is a click in front of
-                        a button. It becomes a split button when `research` and
-                        `lesson` land. */}
-                    {/* `aria-disabled` rather than `disabled`, and the reason
-                        is the explanation beside it: this button's sentence
-                        exists *because* it is off, and a `disabled` element
-                        takes neither focus nor pointer events, so the tooltip
-                        it hangs on could never open. Keeping it focusable is
-                        what makes "why is this off" answerable at all — the
-                        old `title` was not an answer, it was an answer a mouse
-                        could find. The press is guarded here instead, which is
-                        the cost: nothing but this handler stops the click. */}
-                    <Tooltip
-                      asChild
-                      explanation={
-                        empty
-                          ? 'Nothing gathered for this topic yet'
-                          : 'Write down what this project understands about this topic'
-                      }
-                    >
-                      {/* `.topic-dispatch-button` was here and is gone with no
-                          replacement. It declared nothing, and there was
-                          nothing for it to declare: `Button` already dresses
-                          this, and `shell.css`'s `.btn[aria-disabled='true']`
-                          already draws the off state this button spends most of
-                          its life in. A name that hooks nothing cannot be told
-                          from one whose rule was lost, which is the whole
-                          failure `check-deleted.mjs` exists about. */}
-                      <Button
-                        small
-                        aria-disabled={empty || dispatching || dispatch?.status === 'queued'}
-                        onClick={() => {
-                          if (empty || dispatching || dispatch?.status === 'queued') return
-                          onDispatch(topic.topicId)
-                        }}
-                      >
-                        Write understanding
-                      </Button>
-                    </Tooltip>
-                  </>
+                  <RowVerbs
+                    // One condition for all three, rather than one per verb:
+                    // the row reports on a single dispatch, so a second verb
+                    // pressed while the first is queued would replace the only
+                    // report the first has with no trace that it happened.
+                    blocked={dispatching || dispatch?.status === 'queued'}
+                    empty={empty}
+                    onDispatch={(action) => {
+                      onDispatch(topic.topicId, action)
+                    }}
+                  />
                 ),
                 // Described rather than rendered, so the row can put it behind
-                // a `⋯`. It was a 58px button on a 294px line, and that button
-                // plus its gap is most of the reason the chip above it was
-                // drawn nowhere.
+                // a `⋯`. `Manage` was a 58px button on a 294px line, and that
+                // button plus its gap is most of the reason the chip above it
+                // was drawn nowhere.
                 overflow: [
                   { key: 'manage', label: 'Manage', onSelect: () => onManage(topic.topicId) },
                 ],
