@@ -49,7 +49,7 @@ export const IgnoredList = ({ projectId }: { projectId: ProjectId }) => {
     <div className="flex flex-col gap-3 rounded-md border border-line p-3">
       {hosts.length > 0 ? (
         <section className="flex flex-col gap-1">
-          <h4 className="font-medium text-sm text-fg-dim">Ignored hosts</h4>
+          <h4 className="text-sm font-medium text-fg-dim">Ignored hosts</h4>
           <ul className="flex flex-col gap-1">
             {hosts.map((host) => (
               <li key={host} className="flex items-center justify-between gap-2 text-sm">
@@ -69,7 +69,7 @@ export const IgnoredList = ({ projectId }: { projectId: ProjectId }) => {
 
       {assets.length > 0 ? (
         <section className="flex flex-col gap-1">
-          <h4 className="font-medium text-sm text-fg-dim">Ignored assets</h4>
+          <h4 className="text-sm font-medium text-fg-dim">Ignored assets</h4>
           <ul className="flex flex-col gap-1">
             {assets.map((asset) => (
               <li key={asset} className="flex items-center justify-between gap-2 text-sm">

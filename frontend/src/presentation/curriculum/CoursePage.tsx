@@ -145,7 +145,7 @@ export const CoursePage = ({
               </p>
             )}
         </div>
-        <h2 className="crs-course-title font-semibold text-2xl text-fg">
+        <h2 className="crs-course-title text-2xl font-semibold text-fg">
           {titleCase(candidate.title)}
         </h2>
         {candidate.blurb !== null && (

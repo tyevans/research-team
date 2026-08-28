@@ -64,7 +64,7 @@ const AreaCard = ({
     ].join(' ')}
   >
     <div className="flex items-baseline justify-between gap-2">
-      <span className="font-medium truncate">{area.title}</span>
+      <span className="truncate font-medium">{area.title}</span>
       <span className="shrink-0 text-xs text-fg-dim">{area.size}</span>
     </div>
     {area.summary !== null && <p className="mt-1 mb-0 text-xs text-fg-dim">{area.summary}</p>}
@@ -122,7 +122,7 @@ export const DerivedFromLine = ({ curriculum }: { curriculum: Curriculum }) => {
 
 const EmptyMap = ({ derivedFrom }: { derivedFrom: Curriculum['derivedFrom'] }) => (
   <div className="p-4 text-sm text-fg-dim">
-    <p className="font-medium m-0 text-fg">No learning areas yet.</p>
+    <p className="m-0 font-medium text-fg">No learning areas yet.</p>
     {/* Two different empty states, and they want different next actions, so
         they get different sentences. A project with no entities needs
         extraction; one with entities but no areas has a graph too sparse to

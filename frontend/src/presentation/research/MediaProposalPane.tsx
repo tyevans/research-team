@@ -120,7 +120,7 @@ export const MediaProposalPane = ({ projectId }: { projectId: ProjectId }) => {
             {/* The need's own sentence from stage 1, not the id -- the id is
                 an opaque key the projection uses to join rows, and nobody
                 approving media should have to read one. */}
-            <h3 className="font-medium text-sm text-fg-dim">
+            <h3 className="text-sm font-medium text-fg-dim">
               {group.needDescription || group.needId}
             </h3>
             <div className="flex flex-col gap-2">

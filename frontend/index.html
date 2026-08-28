@@ -1,10 +1,36 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="system">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>research-team</title>
     <link rel="icon" href="data:," />
+    <!--
+      The stored theme, applied before the first paint.
+
+      `data-theme="system"` is on the element above rather than absent, so the
+      document has a defined scheme from the first byte; this script narrows it
+      to an explicit choice if there is one. Blocking and inline on purpose: a
+      module script runs after the stylesheet has painted, which is a white
+      flash on a dark console -- the one thing a theme feature is judged on and
+      the one thing no test in this repository can see.
+
+      Duplicated from `theme-choice.ts` rather than imported, because an import
+      is a network round trip and the whole value of this script is that it runs
+      before one. The duplication is three strings; `theme-choice.test.ts` pins
+      the storage key and the state names so a rename cannot break this quietly.
+    -->
+    <script>
+      try {
+        var choice = localStorage.getItem('rt.theme')
+        if (choice === 'light' || choice === 'dark') {
+          document.documentElement.setAttribute('data-theme', choice)
+        }
+      } catch (error) {
+        // Site data disabled. The document keeps `system`, which is the right
+        // answer for a reader whose preferences cannot be stored.
+      }
+    </script>
   </head>
   <body>
     <div id="root">

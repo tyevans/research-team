@@ -147,7 +147,7 @@ const ClassCard = ({
   return (
     <li className={CARD}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-semibold m-0 text-sm text-fg">{klass.name}</h3>
+        <h3 className="m-0 text-sm font-semibold text-fg">{klass.name}</h3>
         <div className="flex items-baseline gap-3">
           <Checksum klass={klass} />
           <a className="text-xs text-fg-dim underline" href={sourceHref(klass.evidence)}>

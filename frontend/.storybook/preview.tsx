@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { Preview } from '@storybook/react-vite'
 
 import { BREAKPOINTS } from '../src/presentation/layout/layout-tokens.ts'
@@ -9,6 +10,22 @@ import { OverlayHost } from '../src/presentation/layout/OverlayHost.tsx'
 // last of all to correct the files above it, so anything less than the real
 // import chain renders components that look right nowhere else.
 import '../src/styles/index.css'
+
+/** Applies the toolbar's theme to the preview document.
+ *
+ *  A decorator rather than a `preview-head.html` snippet because the value has
+ *  to change without a reload, and an effect rather than a render-time write
+ *  because writing to `documentElement` during render is a side effect React is
+ *  allowed to run twice. */
+const ThemedDocument = (
+  Story: React.ComponentType,
+  { globals }: { globals: { theme?: string } },
+) => {
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', globals.theme ?? 'dark')
+  }, [globals.theme])
+  return <Story />
+}
 
 const preview: Preview = {
   /** An `OverlayHost` around every story, and the reason it is here rather
@@ -46,6 +63,7 @@ const preview: Preview = {
         <Story />
       </OverlayHost>
     ),
+    ThemedDocument,
   ],
 
   parameters: {
@@ -85,7 +103,40 @@ const preview: Preview = {
       },
     },
   },
-  initialGlobals: { backgrounds: { value: 'console' } },
+  /** The theme, switchable from the toolbar.
+   *
+   * Storybook is where this console's appearance is actually reviewed, and
+   * light mode arrived as ~40 tokens with a second column each. A workbench
+   * that can only show one of the two is a workbench in which half of that
+   * change cannot be looked at -- and `a11y.browser.test.tsx` proves the
+   * arithmetic, not that anything looks right. The one thing a person has to
+   * do here is see both.
+   *
+   * Dark is the initial value because it is what this console has always been
+   * and what every existing story was composed against; the switch is opt-in
+   * rather than the default being taken away.
+   *
+   * Written on `document.documentElement` rather than on a wrapper `<div>`,
+   * and that is the load-bearing detail: `color-scheme` and `light-dark()`
+   * resolve against the element that declares them, `tokens.css` declares them
+   * on `:root`, and a decorator that set `data-theme` on a wrapper would change
+   * nothing at all while looking exactly like it worked. */
+  globalTypes: {
+    theme: {
+      description: 'Colour theme',
+      toolbar: {
+        title: 'Theme',
+        icon: 'contrast',
+        items: [
+          { value: 'dark', title: 'Dark' },
+          { value: 'light', title: 'Light' },
+          { value: 'system', title: 'System' },
+        ],
+        dynamicTitle: true,
+      },
+    },
+  },
+  initialGlobals: { backgrounds: { value: 'console' }, theme: 'dark' },
 }
 
 export default preview

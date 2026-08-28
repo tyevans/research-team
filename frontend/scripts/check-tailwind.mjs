@@ -45,16 +45,31 @@
  * being committed and produced no false positive, which is the bar: a family
  * goes on this list once somebody has watched it stay quiet on correct code.
  *
- * Not checked, and each for a stated reason rather than an oversight:
+ * **`font-*` was the reason this list had a "not checked" section, and it is
+ * now checked.** The paragraph that used to sit here recorded the defect and
+ * declined to fix it: `font-medium`, `font-semibold` and `font-normal`
+ * generated nothing across **29 sites** (16, 12 and 1), because font weights
+ * live in Tailwind's default theme and `theme.css` omits it -- so the console
+ * had no bold text anywhere it thought it had some. It declined because the
+ * only fix was to declare `--font-weight-*`, and declaring a token to make an
+ * existing class valid is growing the palette to bless a typo, which is the
+ * move `theme.css` exists to refuse.
  *
- * - **`font-*`.** It would fire, and correctly -- `font-medium`, `font-semibold`
- *   and `font-normal` generate nothing across 29 sites, because font weights
- *   live in Tailwind's default theme and `theme.css` omits it. They are left
- *   out because there is no fix available inside this check's remit: the
- *   nearest declared token does not exist, and declaring `--font-weight-*`
- *   would grow the palette to make a class valid, which is the move
- *   `theme.css` exists to refuse. Turning this family on is a decision about
- *   the type scale, and belongs in the commit that makes it. See BACKLOG.
+ * That reasoning was right and its conclusion had an expiry date, which is the
+ * commit that decides the type scale on purpose. `theme.css` now declares three
+ * weights -- normal, medium, semibold, and no more -- with the argument for
+ * each, so the 29 sites resolve and `font-bold` is still a name that generates
+ * nothing. Turning the family on here is what stops that being reversible by
+ * accident: a fourth weight now has to be declared deliberately or the class
+ * that reaches for it fails the build.
+ *
+ * Watched on correct code before being committed, which is this list's bar: it
+ * reports nothing across `src/`. `font-mono` and `font-sans` pass because
+ * `--font-mono` and `--font-sans` are declared; that is the family's static
+ * half and it was already emitting.
+ *
+ * Still not checked, and each for a stated reason rather than an oversight:
+ *
  * - **Gradient stops (`from-*`, `via-*`, `to-*`).** `to-` in particular is a
  *   common prefix in ordinary strings, this console draws no gradients, and a
  *   family with nothing to catch is only a false-positive surface.
@@ -100,6 +115,7 @@ const FAMILIES = `
   text bg border border-t border-r border-b border-l border-x border-y
   ring ring-offset outline divide decoration accent caret
   fill stroke shadow inset-shadow drop-shadow text-shadow
+  font
 `
   .trim()
   .split(/\s+/)

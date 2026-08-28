@@ -93,6 +93,14 @@ const AXE_OPTIONS: axe.RunOptions = {
  * colour rather than the declared one is the single most useful thing it does
  * here, and it is a number no stylesheet grep could have produced.
  *
+ * **The sweep runs twice since light mode landed, once per theme**, and the
+ * inventory is keyed by theme. That is not a formality: a palette can clear AA
+ * in one scheme and fail in the other, and a single-scheme sweep would report
+ * the console clean while half of it was unreadable. The light column was
+ * designed against this test rather than checked by it afterwards -- every ink
+ * clears 4.5:1 against every surface arithmetically, and axe is what confirms
+ * the *composited* result, which is the number no stylesheet grep can produce.
+ *
  * **All twelve are now paid, and the list is empty rather than deleted.** The
  * two paragraphs above are kept because they are the record of what the sweep
  * found on the day it was first run, and an empty array with no history reads
@@ -134,15 +142,45 @@ const AXE_OPTIONS: axe.RunOptions = {
  * are not WCAG's "inactive user interface component" exception, and this list
  * is exact in both directions -- fixing them without deleting this entry fails
  * the same assertion. */
-const KNOWN_CONTRAST_DEBT: readonly string[] = [
-  '#274d39 on #0b0d10',
-  '#2a3d46 on #0b0d10',
-  '#323941 on #0b0d10',
-  '#403860 on #0b0d10',
-  '#40454b on #0b0d10',
-  '#505459 on #0b0d10',
-  '#5a302f on #0b0d10',
-]
+const KNOWN_CONTRAST_DEBT: Readonly<Record<'light' | 'dark', readonly string[]>> = {
+  dark: [
+    '#274d39 on #0b0d10',
+    '#2a3d46 on #0b0d10',
+    '#323941 on #0b0d10',
+    '#403860 on #0b0d10',
+    '#40454b on #0b0d10',
+    '#505459 on #0b0d10',
+    '#5a302f on #0b0d10',
+  ],
+  /* The same rule, the same rows, measured again under the light palette --
+   * and it is **eight** pairs rather than seven. `.ev.future` dims each event
+   * kind to its own value and the row has three text elements, so the count is
+   * a property of how many distinct composites land above the threshold in
+   * each scheme rather than of how many rows there are. The eighth is on
+   * `--bg-raise` (#ffffff) rather than on the page, which is a surface the
+   * dark scheme's arithmetic happened to keep on the passing side.
+   *
+   * Listed rather than folded in with the dark set, for the reason the
+   * inventory is exact in both directions: a fix that lands in one scheme and
+   * not the other is a real state, and one combined list would hide it.
+   *
+   * These are the *only* pairs light mode inherits. Five others were reported
+   * on the first light sweep and were not debt -- they were hard-coded dark
+   * surfaces in `conversation.css` and `states.css` that no token had ever
+   * reached, invisible for as long as the console was dark-only, and they are
+   * fixed in this commit rather than recorded here. That is what the light
+   * sweep bought beyond light mode itself. */
+  light: [
+    '#aac9b8 on #f7f6f3',
+    '#acadad on #f7f6f3',
+    '#b3c7cd on #f7f6f3',
+    '#bdbfc0 on #f7f6f3',
+    '#c1c4c6 on #f7f6f3',
+    '#c8bce7 on #f7f6f3',
+    '#e4b5b0 on #f7f6f3',
+    '#f6b4af on #ffffff',
+  ],
+}
 
 /** What the sweep saw, so a claim can be made about whether it saw anything.
  *
@@ -198,7 +236,8 @@ const STILL = `*, *::before, *::after {
   transition-delay: 0s !important;
 }`
 
-const sweep = async (): Promise<Sweep> => {
+const sweep = async (theme: 'light' | 'dark'): Promise<Sweep> => {
+  document.documentElement.setAttribute('data-theme', theme)
   const still = document.createElement('style')
   still.textContent = STILL
   document.head.append(still)
@@ -228,6 +267,16 @@ const sweep = async (): Promise<Sweep> => {
         // virtual list measures before it fills. Measured rather than reasoned:
         // at 0ms the `TopicQueue` stories report no rows at all.
         await new Promise((resolve) => setTimeout(resolve, 60))
+
+        // **After the render and the settle, not before.** `.storybook/
+        // preview.tsx` carries a decorator that writes the toolbar's theme onto
+        // `document.documentElement` in an effect, and `composeStories` applies
+        // preview decorators -- so a theme set before mounting is overwritten by
+        // every story, and the light pass silently swept the dark palette while
+        // reporting itself as the light one. Caught because the light run
+        // returned the dark inventory verbatim, which is a coincidence too
+        // exact to be anything else.
+        document.documentElement.setAttribute('data-theme', theme)
 
         const results = await axe.run(host, AXE_OPTIONS)
 
@@ -269,38 +318,42 @@ const sweep = async (): Promise<Sweep> => {
  *  the pair being named in it. Measured at ~12s of the browser suite's runtime,
  *  which roughly triples it; that is affordable precisely because this suite is
  *  not in CI. */
-it('sweeps every story for WCAG A/AA violations', { timeout: 300_000 }, async () => {
-  const result = await sweep()
+it.each(['dark', 'light'] as const)(
+  'sweeps every story for WCAG A/AA violations under the %s theme',
+  { timeout: 300_000 },
+  async (theme) => {
+    const result = await sweep(theme)
 
-  // Floors rather than equalities: a story added tomorrow should not fail this.
-  // The numbers are what was measured today (21 modules, 91 stories) less a
-  // little slack, and they exist to catch the sweep collapsing -- a glob that
-  // stops matching, a `composeStories` that returns nothing.
-  expect(Object.keys(STORY_MODULES).length).toBeGreaterThanOrEqual(21)
-  expect(result.stories).toBeGreaterThanOrEqual(85)
+    // Floors rather than equalities: a story added tomorrow should not fail this.
+    // The numbers are what was measured today (21 modules, 91 stories) less a
+    // little slack, and they exist to catch the sweep collapsing -- a glob that
+    // stops matching, a `composeStories` that returns nothing.
+    expect(Object.keys(STORY_MODULES).length).toBeGreaterThanOrEqual(21)
+    expect(result.stories).toBeGreaterThanOrEqual(85)
 
-  // The anti-rubber-stamp assertion, and the one worth understanding. axe
-  // reports `color-contrast` as *incomplete* -- neither pass nor violation --
-  // when it cannot resolve a background, which is what happens for every node
-  // on an unstyled page. So a run with no stylesheet produces zero violations
-  // and zero passes, and only this line can tell it from a clean console.
-  // Measured at 812 passing nodes today; commenting out `index.css` in
-  // `vitest.setup.browser.ts` and `.storybook/preview.tsx` together is what
-  // fails it.
-  expect(result.contrastNodesPassed).toBeGreaterThan(600)
+    // The anti-rubber-stamp assertion, and the one worth understanding. axe
+    // reports `color-contrast` as *incomplete* -- neither pass nor violation --
+    // when it cannot resolve a background, which is what happens for every node
+    // on an unstyled page. So a run with no stylesheet produces zero violations
+    // and zero passes, and only this line can tell it from a clean console.
+    // Measured at 812 passing nodes today; commenting out `index.css` in
+    // `vitest.setup.browser.ts` and `.storybook/preview.tsx` together is what
+    // fails it.
+    expect(result.contrastNodesPassed).toBeGreaterThan(600)
 
-  // Every WCAG A/AA rule other than contrast passes across all 91 stories, and
-  // that is a real result rather than an empty one: axe's default rule set is
-  // strongest at exactly the things this console has a lot of -- ARIA
-  // attributes on Radix primitives, `aria-labelledby` targets that must exist,
-  // button and link names, roles that must contain particular children.
-  expect(result.otherViolations).toEqual([])
+    // Every WCAG A/AA rule other than contrast passes across all 91 stories, and
+    // that is a real result rather than an empty one: axe's default rule set is
+    // strongest at exactly the things this console has a lot of -- ARIA
+    // attributes on Radix primitives, `aria-labelledby` targets that must exist,
+    // button and link names, roles that must contain particular children.
+    expect(result.otherViolations).toEqual([])
 
-  // Exact, in both directions. A new failing pair fails here; so does *fixing*
-  // one without deleting its entry, which is how the inventory stays a record
-  // of what is true rather than a list of what was once true.
-  expect([...result.contrastPairs].sort()).toEqual([...KNOWN_CONTRAST_DEBT].sort())
-})
+    // Exact, in both directions. A new failing pair fails here; so does *fixing*
+    // one without deleting its entry, which is how the inventory stays a record
+    // of what is true rather than a list of what was once true.
+    expect([...result.contrastPairs].sort()).toEqual([...KNOWN_CONTRAST_DEBT[theme]].sort())
+  },
+)
 
 /** The premise of the one disabled rule, asserted rather than trusted.
  *

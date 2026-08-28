@@ -163,7 +163,7 @@ export const Drawer = ({
           the direction the rule already stated. */}
       <aside className="drawer fixed inset-y-0 right-0 left-auto flex w-[42vw] max-w-[640px] min-w-[360px] flex-col overflow-hidden border-l border-line bg-bg-panel">
         <header className="flex flex-none items-center gap-[8px] border-b border-line px-[12px] py-3">
-          <h3 className="font-semibold m-0 text-sm">{heading}</h3>
+          <h3 className="m-0 text-sm font-semibold">{heading}</h3>
           <span className="flex-auto" />
           {actions}
           <button type="button" className="btn btn-sm" ref={closeButtonRef} onClick={onClose}>

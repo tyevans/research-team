@@ -139,7 +139,7 @@ export const CourseCard = ({
           {featured && (
             // Text, not colour alone -- a border tint says nothing to a screen
             // reader, and `featuredRank` is the fact this line reports.
-            <span className="crs-card-featured font-semibold tracking-wide rounded-[3px] bg-accent px-2 py-px text-xs text-accent-fg uppercase">
+            <span className="crs-card-featured tracking-wide rounded-[3px] bg-accent px-2 py-px text-xs font-semibold text-accent-fg uppercase">
               Featured
             </span>
           )}

@@ -75,7 +75,7 @@ export const CatalogSpotlight = ({
 
       <div className="relative flex min-w-0 flex-col gap-2 p-5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold tracking-wide text-xs text-accent uppercase">
+          <span className="tracking-wide text-xs font-semibold text-accent uppercase">
             {candidate.featuredRank !== null ? 'Featured' : 'Most prominent'}
           </span>
           {stale && <span className="text-xs text-fg-dim">copy is out of date</span>}

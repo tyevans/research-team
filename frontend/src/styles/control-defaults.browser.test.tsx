@@ -68,8 +68,8 @@ it('lets a colour utility beat the bare-control default', () => {
   expect(accent).not.toBe(fg)
 
   const drawn = computed(getByTestId('control')).color
-  expect(drawn).not.toBe(hexToRgb(fg))
-  expect(drawn).toBe(hexToRgb(accent))
+  expect(drawn).not.toBe(fg)
+  expect(drawn).toBe(accent)
 })
 
 it('lets a size utility beat `font: inherit`, which is a shorthand', () => {
@@ -104,22 +104,23 @@ it('still dresses a control that says nothing', () => {
   )
 
   const bg = computed(document.documentElement).getPropertyValue('--bg').trim()
-  expect(computed(getByTestId('plain')).backgroundColor).toBe(hexToRgb(bg))
+  expect(computed(getByTestId('plain')).backgroundColor).toBe(bg)
 })
 
-/** `getPropertyValue` hands back the token as authored (`#0b0d10`);
- *  `getComputedStyle().color` reports `rgb(...)`. One of the two has to be
- *  converted, and converting the token keeps the assertion reading in the
- *  units the browser actually reports. */
-const hexToRgb = (hex: string): string => {
-  const value = hex.replace('#', '')
-  const full =
-    value.length === 3
-      ? value
-          .split('')
-          .map((c) => c + c)
-          .join('')
-      : value
-  const n = parseInt(full, 16)
-  return `rgb(${String((n >> 16) & 255)}, ${String((n >> 8) & 255)}, ${String(n & 255)})`
-}
+/** **`hexToRgb` used to live here and is deleted, which is a fact about the
+ *  palette rather than about this test.**
+ *
+ * It converted `#e2a457` to `rgb(226, 164, 87)`, because `getPropertyValue`
+ * handed back the token exactly as authored while `getComputedStyle().color`
+ * reports `rgb(...)`. That is true of an *unregistered* custom property and is
+ * no longer true of these: the light-mode commit declares every colour alias
+ * with `@property { syntax: "<color>" }`, and a registered property computes to
+ * a resolved colour -- so `getPropertyValue('--accent')` now returns
+ * `rgb(226, 164, 87)` itself and the helper was converting a string that was
+ * already converted, to `rgb(0, 0, 0)`.
+ *
+ * Left as a comment rather than deleted silently, because "the token reads back
+ * as a colour" is the property three canvases depend on (`tokens.css` argues
+ * it) and this is the second place it is observable. If a future change
+ * un-registers the palette, these two assertions go red here first.
+ */

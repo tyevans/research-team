@@ -59,7 +59,7 @@ export const Keyboard: Story = {
             and `.prov-src` were what stood here, and both stopped resolving
             when those rules left `course.css`. */}
         <Tooltip explanation="Some of this was reasoned rather than drawn from a source, and says so.">
-          <Chip dress="text-k-message border-[#24365a] bg-[#111a2a]">inferred</Chip>
+          <Chip dress="text-k-message border-tint-msg-line bg-tint-msg">inferred</Chip>
         </Tooltip>
         <Tooltip asChild explanation="Open this source at the offsets this artifact cites">
           <a className="font-mono text-xs text-k-message" href="#nowhere">

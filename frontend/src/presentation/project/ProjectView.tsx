@@ -870,7 +870,7 @@ export const ProjectView = ({
  */
 const SectionHead = ({ label, meta }: { label: string; meta: string | undefined }) => (
   <div className="flex shrink-0 items-baseline gap-2 px-3 py-1 text-xs text-fg-dim">
-    <h3 className="font-medium tracking-wide m-0 text-xs uppercase">{label}</h3>
+    <h3 className="tracking-wide m-0 text-xs font-medium uppercase">{label}</h3>
     {meta === undefined ? null : <span className="text-fg-faint">{meta}</span>}
   </div>
 )

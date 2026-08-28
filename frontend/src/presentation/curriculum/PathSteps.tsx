@@ -37,7 +37,7 @@ export const PathSteps = ({
     <div className="flex flex-col gap-3">
       {contested.length > 0 && (
         <div className="rounded-md border border-line bg-bg-panel p-3">
-          <p className="font-medium m-0 text-sm">
+          <p className="m-0 text-sm font-medium">
             {contested.length === 1
               ? 'One pair of areas depends on itself.'
               : `${contested.length} pairs of areas depend on each other.`}
@@ -75,7 +75,7 @@ export const PathSteps = ({
                 {step.position}
               </span>
               <span className="min-w-0">
-                <span className="font-medium block truncate">{step.area.title}</span>
+                <span className="block truncate font-medium">{step.area.title}</span>
                 <span className="block text-xs text-fg-dim">
                   {step.area.size} entities
                   {/* The reason, verbatim from the server. Prose rather than a

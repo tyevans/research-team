@@ -96,7 +96,7 @@ export const DrawerSection = ({
   children: ReactNode
 }) => (
   <section className="flex flex-col gap-[8px]">
-    <h3 className="font-semibold m-0 text-sm">{heading}</h3>
+    <h3 className="m-0 text-sm font-semibold">{heading}</h3>
     {detail === undefined ? null : <p className="m-0 text-xs text-fg-dim">{detail}</p>}
     {children}
   </section>
