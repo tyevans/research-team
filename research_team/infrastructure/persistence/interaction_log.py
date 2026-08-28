@@ -84,8 +84,9 @@ class InteractionEventRow(ReadModel):
     """One interaction, as stored.
 
     `id` is derived rather than random -- see `row_id`. No column is named
-    after a SQLite keyword: the generated DDL does not quote identifiers, and
-    `check_telemetry.py` records what that costs when you forget.
+    after a SQLite keyword: the generated DDL does not quote identifiers, so a
+    column named for one gives a syntax error at table creation rather than at
+    the query that would have used it.
     """
 
     __table_name__ = "interaction_events"
@@ -911,10 +912,10 @@ class InteractionLogStore:
                     Filter(
                         field="browser_session_id",
                         operator="eq",
-                        # The real UUID, not `str(...)` -- `check_telemetry.py`
-                        # records a stringified filter matching nothing in the
-                        # in-memory repository, which compares the field's real
-                        # value.
+                        # The real UUID, not `str(...)`: the in-memory
+                        # repository compares the field's own value, so a
+                        # stringified filter matches nothing there while the
+                        # SQLite one still works.
                         value=browser_session_id,
                     )
                 ]

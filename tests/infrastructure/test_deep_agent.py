@@ -1,10 +1,9 @@
 """Middleware on the executor: what it may change, and what it must not.
 
-`StageMiddleware` is tested in isolation next door. What these tests are about
-is the seam it arrives through -- the executor rebuilds its agent on every turn,
-so middleware has to be resolved on every turn too, and two things that already
-work must survive being wrapped: the prose stream a person is watching, and the
-approval interrupt a person is answering.
+These tests are about the seam middleware arrives through -- the executor
+rebuilds its agent on every turn, so middleware has to be resolved on every turn
+too, and two things that already work must survive being wrapped: the prose
+stream a person is watching, and the approval interrupt a person is answering.
 
 Nothing here reaches a network. The search tool exists only so there is a
 *gated* tool to argue about; its transport is a mock.
@@ -24,50 +23,9 @@ from research_team.application.ports import ActivityDelta, GateReview
 from research_team.domain import Session, SessionPurpose, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
-from research_team.infrastructure.agent.stage_middleware import StageMiddleware
 from tests.conftest import ToolAwareFakeChatModel
 
 PAYLOAD = {"results": [{"title": "Hit", "url": "https://a.example", "content": "A snippet."}]}
-
-
-@dataclass(frozen=True)
-class FakeStage:
-    """The three fields `StageLike` asks for, and nothing else."""
-
-    id: str
-    name: str
-    tools: tuple[str, ...]
-
-
-class ToolRecordingChatModel(ToolAwareFakeChatModel):
-    """Remembers what it was bound, which is the only way to see the filter work.
-
-    The tools reaching `bind_tools` are the tools the model can call; asserting
-    on the executor's registered set instead would pass no matter what the
-    middleware did.
-    """
-
-    seen: list[list[str]] = []
-
-    def bind_tools(self, tools: Any, **kwargs: Any) -> "ToolRecordingChatModel":
-        self.seen.append([getattr(tool, "name", str(tool)) for tool in tools])
-        return self
-
-    @property
-    def last_bound(self) -> list[str]:
-        return self.seen[-1] if self.seen else []
-
-
-class PromptRecordingChatModel(ToolAwareFakeChatModel):
-    """Remembers what it was sent, so the appended stage block is observable."""
-
-    prompts: list[str] = []
-
-    def _generate(
-        self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any
-    ):
-        self.prompts.append("\n".join(str(message.content) for message in messages))
-        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
 
 class Recording(AgentMiddleware):
@@ -191,32 +149,6 @@ async def test_provided_middleware_wraps_the_model_call():
     assert Recording.calls == 1
 
 
-async def test_a_stage_hides_a_registered_tool_from_the_model():
-    """The whole point: registered is not the same as callable."""
-    model = ToolRecordingChatModel(responses=[AIMessage(content="done", id="a1")])
-    stage = FakeStage(id="s.read", name="Read", tools=("list_sources",))
-    executor = DeepAgentTurnExecutor(
-        model,
-        tools=(_search_tool(),),
-        middleware=(StageMiddleware(stage, managed_tools=("web_search", "list_sources")),),
-    )
-    await _run(executor, _session())
-    assert "web_search" not in model.last_bound
-
-
-async def test_a_tool_no_stage_claims_survives_the_filter():
-    """A gate that hid tools nobody had an opinion about would be overreaching."""
-    model = ToolRecordingChatModel(responses=[AIMessage(content="done", id="a1")])
-    stage = FakeStage(id="s.read", name="Read", tools=())
-    executor = DeepAgentTurnExecutor(
-        model,
-        tools=(_search_tool(),),
-        middleware=(StageMiddleware(stage, managed_tools=("list_sources",)),),
-    )
-    await _run(executor, _session())
-    assert "web_search" in model.last_bound
-
-
 async def test_a_per_turn_tool_shadows_a_registered_tool_of_the_same_name():
     """The per-turn tool must replace the registered one, not sit beside it.
 
@@ -254,35 +186,6 @@ async def test_a_per_turn_tool_shadows_a_registered_tool_of_the_same_name():
     assert registered_calls == []
 
 
-async def test_the_builtin_filesystem_tools_survive_a_stage():
-    model = ToolRecordingChatModel(responses=[AIMessage(content="done", id="a1")])
-    stage = FakeStage(id="s.read", name="Read", tools=())
-    executor = DeepAgentTurnExecutor(
-        model,
-        middleware=(StageMiddleware(stage, managed_tools=("write_file", "ls")),),
-    )
-    await _run(executor, _session())
-    assert {"write_file", "ls"} <= set(model.last_bound)
-
-
-async def test_the_stage_block_is_appended_to_the_system_prompt():
-    """Appended, not substituted -- the turn's own prompt has to survive."""
-    model = PromptRecordingChatModel(responses=[AIMessage(content="done", id="a1")])
-    stage = FakeStage(id="s.read", name="Read the corpus", tools=())
-    executor = DeepAgentTurnExecutor(
-        model, middleware=(StageMiddleware(stage, managed_tools=()),)
-    )
-    await executor.execute(
-        _session(),
-        messages=[executor.encode_user_message("hi")],
-        system_prompt="be brief",
-    )
-    [sent] = model.prompts
-    assert "be brief" in sent
-    assert "Read the corpus" in sent
-    assert "s.read" in sent
-
-
 async def test_prose_still_streams_with_middleware_installed():
     """Middleware nodes are named `<name>.before_model`, never `model`.
 
@@ -290,10 +193,9 @@ async def test_prose_still_streams_with_middleware_installed():
     node happened to be called `model` would silently double the reply in the
     browser. Pinned rather than assumed.
     """
-    stage = FakeStage(id="s.read", name="Read", tools=())
     executor = DeepAgentTurnExecutor(
         ToolAwareFakeChatModel(responses=[AIMessage(content="the streamed reply", id="a1")]),
-        middleware=(StageMiddleware(stage, managed_tools=("web_search",)),),
+        middleware=(Recording(),),
     )
     seen: list[Any] = []
     await executor.execute(
@@ -307,10 +209,15 @@ async def test_prose_still_streams_with_middleware_installed():
     assert "".join(delta.text for delta in deltas) == "the streamed reply"
 
 
-async def test_a_gated_tool_the_stage_allows_still_interrupts():
-    """Stage filtering runs first; HITL gates whatever survives it."""
+async def test_a_gated_tool_still_interrupts_with_middleware_installed():
+    """Wrapping the model call must not swallow the HITL interrupt.
+
+    The interrupt is raised from inside the tool node, below whatever
+    `awrap_model_call` wraps; a middleware that resolved the graph differently
+    would let the call through unasked, and the only visible symptom would be a
+    tool running that a person was supposed to approve.
+    """
     approvals = ScriptedApprovals(ApprovalDecision("approve"))
-    stage = FakeStage(id="s.search", name="Search", tools=("web_search",))
     policy = AutonomyPolicy()
     policy.set("web_search", "ask")
     executor = DeepAgentTurnExecutor(
@@ -318,29 +225,10 @@ async def test_a_gated_tool_the_stage_allows_still_interrupts():
         tools=(_search_tool(),),
         policy=policy,
         approvals=approvals,
-        middleware=(StageMiddleware(stage, managed_tools=("web_search",)),),
+        middleware=(Recording(),),
     )
     await _run(executor, _session())
     assert [request.tool_name for request in approvals.seen] == ["web_search"]
-
-
-async def test_a_gated_tool_the_stage_hides_is_never_bound():
-    """Hidden means the model cannot ask, so the approval is never posed."""
-    approvals = ScriptedApprovals(ApprovalDecision("approve"))
-    model = ToolRecordingChatModel(responses=[AIMessage(content="done", id="a1")])
-    stage = FakeStage(id="s.read", name="Read", tools=())
-    policy = AutonomyPolicy()
-    policy.set("web_search", "ask")
-    executor = DeepAgentTurnExecutor(
-        model,
-        tools=(_search_tool(),),
-        policy=policy,
-        approvals=approvals,
-        middleware=(StageMiddleware(stage, managed_tools=("web_search",)),),
-    )
-    await _run(executor, _session())
-    assert "web_search" not in model.last_bound
-    assert approvals.seen == []
 
 
 # --- the gate reviewer -------------------------------------------------------
@@ -360,11 +248,11 @@ def _gated_executor(approvals: Any, reviewer: Any) -> DeepAgentTurnExecutor:
 
 async def test_the_reviewers_context_reaches_the_approval():
     async def reviewer(session: Session, name: str, args: dict) -> GateReview:
-        return GateReview(context={"stage": "s.one", "findings": []})
+        return GateReview(context={"reviewer": "r.one", "findings": []})
 
     approvals = ScriptedApprovals(ApprovalDecision("approve"))
     await _run(_gated_executor(approvals, reviewer), _session())
-    assert approvals.seen[0].context == {"stage": "s.one", "findings": []}
+    assert approvals.seen[0].context == {"reviewer": "r.one", "findings": []}
 
 
 async def test_a_refusal_settles_the_call_without_asking_anybody():
