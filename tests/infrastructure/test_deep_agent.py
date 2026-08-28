@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from research_team.application import ApprovalDecision, ApprovalRefused, AutonomyPolicy
-from research_team.application.ports import ActivityDelta, GateReview
+from research_team.application.ports import ActivityDelta
 from research_team.domain import Session, SessionPurpose, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
@@ -231,10 +231,8 @@ async def test_a_gated_tool_still_interrupts_with_middleware_installed():
     assert [request.tool_name for request in approvals.seen] == ["web_search"]
 
 
-# --- the gate reviewer -------------------------------------------------------
-
-
-def _gated_executor(approvals: Any, reviewer: Any) -> DeepAgentTurnExecutor:
+def _gated_executor(approvals: Any) -> DeepAgentTurnExecutor:
+    """An executor whose one gated tool is `web_search`, floored at `ask`."""
     policy = AutonomyPolicy()
     policy.set("web_search", "ask")
     return DeepAgentTurnExecutor(
@@ -242,65 +240,7 @@ def _gated_executor(approvals: Any, reviewer: Any) -> DeepAgentTurnExecutor:
         tools=(_search_tool(),),
         policy=policy,
         approvals=approvals,
-        gate_reviewer=reviewer,
     )
-
-
-async def test_the_reviewers_context_reaches_the_approval():
-    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
-        return GateReview(context={"reviewer": "r.one", "findings": []})
-
-    approvals = ScriptedApprovals(ApprovalDecision("approve"))
-    await _run(_gated_executor(approvals, reviewer), _session())
-    assert approvals.seen[0].context == {"reviewer": "r.one", "findings": []}
-
-
-async def test_a_refusal_settles_the_call_without_asking_anybody():
-    """An invariant failure is not a judgement, so there is nobody to put it to."""
-
-    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
-        return GateReview(context={}, refusal="a harness invariant failed")
-
-    approvals = ScriptedApprovals(ApprovalDecision("approve"))
-    await _run(_gated_executor(approvals, reviewer), _session())
-    assert approvals.seen == []
-
-
-async def test_a_refusal_is_recorded_as_the_harness_deciding():
-    """Not `policy`, which permitted the call, and not `human`, who never saw it."""
-
-    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
-        return GateReview(context={}, refusal="a harness invariant failed")
-
-    session = _session()
-    await _run(_gated_executor(ScriptedApprovals(), reviewer), session)
-    [decided] = [
-        event
-        for event in session.uncommitted_events
-        if type(event).__name__ == "ToolCallDecided"
-    ]
-    assert (decided.decision, decided.decided_by) == ("reject", "harness")
-
-
-async def test_a_reviewer_that_raises_still_lets_the_approval_be_posed():
-    """A bug in the advice must not cost a call the model already earned."""
-
-    async def reviewer(session: Session, name: str, args: dict) -> GateReview:
-        raise RuntimeError("the reviewer is broken")
-
-    approvals = ScriptedApprovals(ApprovalDecision("approve"))
-    await _run(_gated_executor(approvals, reviewer), _session())
-    assert [request.tool_name for request in approvals.seen] == ["web_search"]
-    assert approvals.seen[0].context is None
-
-
-async def test_no_reviewer_means_no_context_and_no_change():
-    approvals = ScriptedApprovals(ApprovalDecision("approve"))
-    await _run(_gated_executor(approvals, None), _session())
-    assert approvals.seen[0].context is None
-
-
-# --- a port that refuses instead of deciding ---------------------------------
 
 
 class RefusingApprovals:
@@ -334,7 +274,7 @@ async def test_a_ports_refusal_is_recorded_as_policy_deciding_not_a_human():
     approvals = RefusingApprovals()
     session = _session()
 
-    await _run(_gated_executor(approvals, None), session)
+    await _run(_gated_executor(approvals), session)
 
     [decided] = [
         event
@@ -352,6 +292,6 @@ async def test_a_ports_refusal_still_lets_the_turn_finish():
     harness-refusal arm already meet."""
     approvals = RefusingApprovals("timed out waiting for a person")
 
-    result = await _run(_gated_executor(approvals, None), _session())
+    result = await _run(_gated_executor(approvals), _session())
 
     assert "done" in result.reply_text

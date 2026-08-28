@@ -3,7 +3,6 @@
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
-from uuid import UUID
 
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -31,8 +30,6 @@ from research_team.application.knowledge_attachment import _compose
 from research_team.application.ports import (
     ActivityDelta,
     ActivityMessage,
-    GateReview,
-    GateReviewer,
 )
 from research_team.domain import RecordToolDecision, Session
 from research_team.infrastructure import config
@@ -65,9 +62,10 @@ MiddlewareProvider = Callable[[Session], Awaitable[Sequence[AgentMiddleware]]]
 #: writes an event and returns, and a tool registered only at attach time would
 #: be missing for the entire session that chose it.
 #:
-#: `StageMiddleware` can only filter down, so anything a stage might permit has
-#: to be registered here at creation. A tool resolved per turn and a middleware
-#: resolved per turn from the same fold is what keeps those two consistent.
+#: Middleware can only filter the registered set down, never add to it, so any
+#: tool a turn might be allowed has to be registered here at creation. Resolving
+#: the tools and the middleware per turn from the same facts is what keeps the
+#: two consistent.
 ToolProvider = Callable[[Session], Awaitable[Sequence[BaseTool]]]
 
 #: This turn's corpus mount: `/sources/<source_id>` -> file data.
@@ -290,7 +288,6 @@ class DeepAgentTurnExecutor:
         tools_provider: ToolProvider | None = None,
         sources_provider: SourcesProvider | None = None,
         subagents_provider: SubagentProvider | None = None,
-        gate_reviewer: GateReviewer | None = None,
         grants: GrantRegistry | None = None,
     ) -> None:
         self._model = model
@@ -299,10 +296,9 @@ class DeepAgentTurnExecutor:
         # Two ways in, because middleware divides cleanly into two kinds.
         # `middleware` is for anything true of this executor for its whole
         # life; `middleware_provider` is for anything true only of the turn
-        # about to run -- which is what stage enforcement is, since the stage
-        # is folded from the event log and moves while the executor does not.
-        # Both default to nothing, so an executor wired without a workflow
-        # builds precisely the agent it built before any of this existed.
+        # about to run, since the executor outlives any one turn's answer.
+        # Both default to nothing, so an executor wired without either builds
+        # precisely the agent it built before any of this existed.
         self._middleware = list(middleware)
         self._middleware_provider = middleware_provider
         self._tools_provider = tools_provider
@@ -315,11 +311,6 @@ class DeepAgentTurnExecutor:
         # composition site and no test that constructs it bare.
         self._sources_provider = sources_provider
         self._subagents_provider = subagents_provider
-        # Consulted per gated call, before the human is. Optional for the same
-        # reason the two providers above are: an executor wired without a
-        # workflow has nothing to review and poses exactly the approvals it
-        # posed before this existed.
-        self._gate_reviewer = gate_reviewer
         # An all-`auto` policy is the default so that wiring a supervisor is
         # opt-in: without one, nothing is gated and the executor behaves
         # exactly as it did before interrupts existed.
@@ -499,14 +490,14 @@ class DeepAgentTurnExecutor:
         Kept separate from `set_tools` because the two answer different
         questions. `set_tools` is what a project attachment swaps in, and it
         persists until something swaps it back; this is what the *state of the
-        run* implies right now, and there is no event to hang it off -- a
-        workflow is chosen by an HTTP call that appends to the log and returns,
-        with nothing to notify an executor holding a stale list.
+        run* implies right now, and there is no event to hang it off -- what
+        a session may reach is changed by HTTP calls that append to the log and
+        return, with nothing to notify an executor holding a stale list.
 
         Resolved on every pass for the same reason the middleware is, and
-        deliberately from the same fold: `StageMiddleware` filters down over
-        what was registered at agent creation, so a tool that a stage might
-        permit and this did not supply is a tool no stage can ever expose.
+        deliberately from the same facts: middleware filters down over what was
+        registered at agent creation, so a tool this provider does not supply
+        is a tool no middleware can ever expose.
         """
         if self._tools_provider is None:
             return ()
@@ -566,27 +557,6 @@ class DeepAgentTurnExecutor:
                 "type": "reject",
                 "message": f"The {name} tool is not permitted in this session.",
             }
-        gate = await self._review_gate(session, name, args)
-        # Every decision from here down answers a review, when there was one.
-        # The two above are recorded before `_review_gate` runs and get no
-        # `review_id` on purpose: no review ran, so there is nothing to name.
-        review_id = gate.review_id if gate is not None else None
-        if gate is not None and gate.refusal is not None:
-            # Refused without the human seeing it, which is the same shape as
-            # the `deny` arm above and for a related reason: there is no
-            # judgement here to put to anybody. `decided_by` is the harness
-            # rather than policy, because policy said this tool was askable and
-            # it was the check library that objected.
-            session.execute(
-                RecordToolDecision(
-                    tool_name=name,
-                    args=args,
-                    decision="reject",
-                    decided_by="harness",
-                    review_id=review_id,
-                )
-            )
-            return {"type": "reject", "message": gate.refusal}
         try:
             decision = await self._approvals.decide(
                 ApprovalRequest(
@@ -595,7 +565,6 @@ class DeepAgentTurnExecutor:
                     args=args,
                     description=str(request.get("description") or ""),
                     allowed_decisions=tuple(review.get("allowed_decisions") or ()),
-                    context=gate.context if gate is not None else None,
                 )
             )
         except ApprovalRefused as refused:
@@ -610,29 +579,10 @@ class DeepAgentTurnExecutor:
                     args=args,
                     decision="reject",
                     decided_by="policy",
-                    review_id=review_id,
                 )
             )
             return {"type": "reject", "message": str(refused)}
-        return self._apply(session, name, args, decision, review_id)
-
-    async def _review_gate(self, session: Session, name: str, args: dict) -> GateReview | None:
-        """What the harness has to say about this call, or nothing.
-
-        Never lets the reviewer's failure become the turn's, exactly as
-        `_report` refuses to let a browser feed cost a minute of model work.
-        The asymmetry with the refusal path above is deliberate: an invariant
-        that *failed* is a refusal, and an invariant that *crashed* is our bug,
-        and charging the run for our bug is how a gate earns a reputation for
-        being in the way.
-        """
-        if self._gate_reviewer is None:
-            return None
-        try:
-            return await self._gate_reviewer(session, name, args)
-        except Exception:
-            logger.exception("gate reviewer raised; posing the approval unreviewed")
-            return None
+        return self._apply(session, name, args, decision)
 
     def _apply(
         self,
@@ -640,15 +590,8 @@ class DeepAgentTurnExecutor:
         name: str,
         args: dict,
         decision: ApprovalDecision,
-        review_id: UUID | None = None,
     ) -> dict:
-        """Record a human's decision and translate it into langchain's shape.
-
-        `review_id` is passed in rather than obtained by re-running the
-        reviewer: `_review_gate` emits the review event, so a second call would
-        record a second review that nobody was asked about and halve every fire
-        rate.
-        """
+        """Record a human's decision and translate it into langchain's shape."""
         if decision.type == "edit":
             edited = dict(decision.edited_args or args)
             session.execute(
@@ -658,7 +601,6 @@ class DeepAgentTurnExecutor:
                     decision="edit",
                     decided_by="human",
                     edited_args=edited,
-                    review_id=review_id,
                 )
             )
             return {"type": "edit", "edited_action": {"name": name, "args": edited}}
@@ -668,7 +610,6 @@ class DeepAgentTurnExecutor:
                 args=args,
                 decision=decision.type,
                 decided_by="human",
-                review_id=review_id,
             )
         )
         if decision.type == "approve":

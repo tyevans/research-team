@@ -4288,10 +4288,10 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         try:
-            # RESEARCH_ROUND, and this is the line that detaches the workflow:
-            # `running_workflow` returns None for it, so the rounds get neither
-            # `advance_stage` nor the stage prompt nor the stage tool denylist.
-            # See docs/design/turn-purpose-and-workflow-attachment.md.
+            # RESEARCH_ROUND rather than CHAT: the purpose is what a later
+            # reader of the log uses to tell an autonomous round's turns from a
+            # person's own, and it is the only thing that records the
+            # difference.
             session_id = await service.start_in_project(
                 project_id, SessionPurpose.RESEARCH_ROUND
             )

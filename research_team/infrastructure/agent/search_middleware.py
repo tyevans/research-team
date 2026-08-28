@@ -5,9 +5,9 @@ reference -- nothing about the counter itself knows when a turn ends. Without
 this, a `DeepAgentTurnExecutor` that reused one `SearchAttempts` across turns
 (the natural thing to do, since it also reuses the tool instance) would let a
 run of empty searches near the end of one turn carry into the next and bound
-a turn that has not actually tried anything yet. `StageMiddleware` resets per
-turn by being rebuilt per turn; the `SearchAttempts` instance is not, so the
-turn's counter has to be installed explicitly -- and installing it here is also
+a turn that has not actually tried anything yet. A middleware built per turn
+resets by construction; the `SearchAttempts` instance is not, so the turn's
+counter has to be installed explicitly -- and installing it here is also
 what scopes it to the turn at all, since `SearchAttempts` keeps the count in a
 context variable this hook is the only writer of.
 """
@@ -28,15 +28,14 @@ class SearchAttemptsMiddleware(AgentMiddleware):
 
     @property
     def name(self) -> str:
-        """Explicit for the same reason `StageMiddleware.name` is: `factory.py`
-        raises when two middleware share a name, and the default is the class
-        name."""
+        """Explicit rather than defaulted: `factory.py` raises when two
+        middleware share a name, and the default is the class name."""
         return "search_attempts"
 
     def before_agent(self, state: Any) -> None:
-        """Sync, unlike `StageMiddleware.awrap_model_call` -- this hook only
-        installs a counter before the model is ever called, so there is no
-        streamed response to be sync-only-implemented ahead of.
+        """Sync, unlike the `awrap_*` hooks -- this one only installs a
+        counter before the model is ever called, so there is no streamed
+        response to be sync-only-implemented ahead of.
 
         `begin_turn` rather than `reset`: reset clears the counter this context
         can already see, which under concurrency is another live turn's. This
