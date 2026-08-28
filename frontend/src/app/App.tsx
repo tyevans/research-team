@@ -13,6 +13,7 @@ import { useRoute, useSeekSeconds } from '@presentation/routing/use-route.ts'
 import { InteractionsView } from '@presentation/interactions/InteractionsView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
+import { AutonomyLock } from '@presentation/shell/AutonomyLock.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
 import { DecisionBar } from '@presentation/shell/DecisionBar.tsx'
 import { AgentWidget } from '@presentation/agents/AgentWidget.tsx'
@@ -155,6 +156,13 @@ const Console = () => {
                   when the work stops making sense -- so it stays at the edge where
                   it has always been rather than being pushed along. */}
               <AgentWidget />
+              {/* Left of the connection badges, which is where the sentence
+                  above puts it: those two describe the stream, this is a
+                  setting the stream has nothing to do with. Beside them rather
+                  than beside the brand because it is a control a person
+                  operates, and the left of this bar is for what the console is
+                  rather than for what you can do to it. */}
+              <AutonomyLock route={route} />
               <DriftBadge />
               <ConnectionBadge state={stream.connection} />
             </div>

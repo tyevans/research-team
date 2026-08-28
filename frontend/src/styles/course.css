@@ -1,5 +1,5 @@
-/* What the course view left behind: the worker roster, the extraction pane and
-   the autonomy panel — all three of them in the project page's queue header.
+/* What the course view left behind: the extraction pane, in the project page's
+   queue header.
 
    **There is no course view any more, and this file did not die with it.**
    That is a departure from the policy — stylesheets die with the screen they
@@ -9,28 +9,22 @@
    combinators, `.course-findings`, and their four counterparts in
    `responsive.css`. A later slice rewrote the artifacts and findings shelves
    in utilities, and the workflow system's removal deleted those components and
-   the whole stage rail; the note below says what went. What is left dresses
-   three families:
+   the whole stage rail; the note below says what went.
 
-     - `AutonomyPanel`   (15 rules), and the policy is instance-wide
-     - `ExtractionPane`  (12)
+   **One family is left**, and it is down from three: `ExtractionPane` (12
+   rules). The roster went with the per-project poll the agent dock already
+   answers, and the autonomy panel moved into the chrome and took its dressing
+   with it — see the block further down for why that move made porting the
+   rules mandatory rather than forbidden.
 
-   The plan for the route merge expected this file to die in the QUEUE slice
-   and named two passengers to rescue first. There were six. All three families
-   above are written from template literals and so are invisible to a grep for a
-   class name, and deleting the file today would silently strip the autonomy
-   panel, the extraction pane and the roster — the `AutonomyAllowAll` trap at
-   three times the size. So the file stays until the components do. The
-   components moved directories in the same commit that took the rail
+   Its rules are written from template literals and so are invisible to a grep
+   for a class name, which is the reason this file outlived the plan that
+   expected it to die in the QUEUE slice: deleting it today would silently
+   strip the extraction pane. So the file stays until that component does. The
+   component moved directories in the same commit that took the rail
    (`presentation/course/` → `presentation/project/queue/`) and the file's name
    is now the last thing in the tree calling any of this "course"; renaming it
-   is a separate diff.
-
-   One correction to the note further down, since a stale comment about a
-   deletion trap is itself a trap: `.autonomy-warn` and `.autonomy-error` are
-   described there as shared by the panel and by `AutonomyAllowAll`. They are
-   not, any more — `AutonomyAllowAll` is utilities throughout, and these two are
-   `AutonomyPanel`'s alone. */
+   is a separate diff. */
 
 /* **The stage rail was here, and is gone with the workflow system.**
    Twenty-six class names: `.rail`, `.rail-item/row/dot/index/name/count`,
@@ -247,181 +241,17 @@
 
 /* -------------------------------------------------------------- autonomy
  *
- * Two surfaces over one instance-wide policy: the full per-tool panel, now a
- * band of the project page's QUEUE header, and the allow-all control in the
- * shell's decision bar — which is no longer dressed from here at all. Its
- * rules were utilities-ised onto `AutonomyAllowAll.tsx` once it moved out of
- * the worker drawer, because a screen stylesheet dressing a control that
- * outlives the screen is a deletion trap rather than a filing preference. See
- * the block further down where they used to be.
+ * Gone, and the reason is the one this file records twice already.
+ * `AutonomyPanel` left the project page's queue header for a dialog behind the
+ * lock in the chrome (`AutonomyLock`), which is reached on every route -- so a
+ * stylesheet on the die-with-its-screen list was dressing a surface that
+ * outlives it, exactly as it was for `AutonomyAllowAll` one block down. The
+ * fifteen `.autonomy-*` rules are utilities on `AutonomyPanel.tsx` now, and
+ * `check-deleted.mjs` forbids the names coming back under `src/styles/`.
  *
- * `.autonomy-panel` itself is gone, along with `.worker-panel` here and
- * `.run-panel` in `components.css`. The three were one card written out three
- * times — the duplication this comment used to describe as deliberate — and
- * `QueueHeader` now spells that card once, in utilities, around all four
- * panels. Nothing writes any of the three class names.
- *
- * `.autonomy-warn` and `.autonomy-error` are **not** shared with the allow-all
- * control, which an earlier version of this note said they were.
- * `AutonomyAllowAll` is utilities throughout; these two are this panel's alone,
- * and they die with it.
- *
- * `.autonomy-warn` carries the scope warning and is the one thing here that
- * must not be quiet: it uses the accent border rather than `--line`, because a
- * reader skimming past it and flipping a switch is the specific failure this
- * whole panel is shaped to prevent.
- */
-.autonomy-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  cursor: pointer;
-  /* The marker is drawn below, so the default triangle would be a second one
-     pointing the other way in some engines. */
-  list-style: none;
-}
-
-.autonomy-head::-webkit-details-marker {
-  display: none;
-}
-
-/* A caret that turns, in the same character set the rest of this console
-   draws its arrows from. Before the title rather than after it, so the whole
-   row reads as one control from its left edge. */
-.autonomy-head::before {
-  content: '\25B8';
-  color: var(--fg-dim);
-  transition: transform 120ms ease;
-}
-
-.autonomy-disclosure[open] > .autonomy-head::before {
-  transform: rotate(90deg);
-}
-
-.autonomy-head:hover::before {
-  color: var(--accent);
-}
-
-.autonomy-tally {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-/* Only once open: collapsed, the summary is the whole panel and a gap under
-   it would read as an empty box. */
-.autonomy-disclosure[open] > .autonomy-head {
-  margin-bottom: 10px;
-}
-.autonomy-title {
-  margin: 0;
-  font-size: var(--t-sm);
-  font-weight: 600;
-}
-
-.autonomy-sub {
-  margin: 0;
-}
-
-/* **Read this before deleting `course.css`.** These two rules are used by two
- * surfaces on two different schedules: `AutonomyPanel`, which is a course-page
- * component and dies with this file, and `AutonomyAllowAll`, which lives in the
- * shell's decision bar and does not. The allow-all's *layout* rules were moved
- * onto that component for exactly this reason; these two were left because
- * moving them would mean porting rules a course-page surface still needs,
- * which the standing policy rules out.
- *
- * So deleting this file unstyles the scope warning and the write error in the
- * decision bar, silently -- nothing renders a class it cannot find, and no
- * test in either suite asserts a computed style here. Whoever deletes it owes
- * `AutonomyAllowAll` the two utilities equivalent to these declarations, in
- * the same commit. The trade is 2px of accent border against a whole
- * stylesheet's worth of pre-paid migration; it is small on purpose. */
-.autonomy-warn {
-  margin: 0;
-  padding: 6px 8px;
-  border-left: 2px solid var(--accent);
-  background: var(--bg-panel-2);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  color: var(--fg);
-}
-
-.autonomy-error {
-  margin: 0;
-  padding: 6px 8px;
-  border-left: 2px solid var(--k-failure);
-  background: var(--del-bg);
-  color: var(--del-fg);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-}
-
-.autonomy-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.autonomy-row {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 4px 0;
-  border-top: 1px solid var(--line-soft);
-}
-/* A fieldset for the arrow-key grouping and the announced legend; the browser
- * chrome that comes with it is removed, since the row itself is the frame. */
-.autonomy-field {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.autonomy-tool {
-  padding: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.autonomy-tool-name {
-  font-family: var(--mono);
-  font-size: var(--t-sm);
-}
-
-.autonomy-levels {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.autonomy-level {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--t-xs);
-  color: var(--fg-dim);
-  cursor: pointer;
-}
-.autonomy-field:disabled .autonomy-level {
-  cursor: default;
-  color: var(--fg-faint);
-}
-
-.autonomy-meaning {
-  margin: 0;
-  flex: 1 1 12ch;
-}
+ * Not a port. The policy is that these stylesheets are deleted, never ported;
+ * what makes a move mandatory rather than forbidden is the component
+ * outliving the screen, which is what changed here. */
 
 /* --- the decision bar's allow-all ------------------------------------- *
  *
