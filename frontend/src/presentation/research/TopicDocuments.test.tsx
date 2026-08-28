@@ -25,7 +25,6 @@ const PATH = '/topics/00-how-does-spacing-work/understanding.md'
 const board = (over: Partial<Documents> = {}): Documents => ({
   directory: '/topics/00-how-does-spacing-work',
   sessionId: WRITER,
-  at: ScrubPoint.head(),
   documents: [{ path: FilePath.of(PATH), name: 'understanding.md' }],
   ...over,
 })
@@ -122,23 +121,29 @@ it('renders a document read from the session the listing named', async () => {
   expect(workspace.readFile).toHaveBeenCalledWith(WRITER, expect.anything(), ScrubPoint.head())
 })
 
-it('reads a released project’s files at the tip, not at the session’s HEAD', async () => {
-  // A project nobody holds has its files at the *tip*, a position in a session
-  // that may have run on past it. Reading that session at HEAD would show
-  // files the project does not have. Would pass with `at` ignored if every
-  // fixture used HEAD, which is why this one does not.
-  const container = parts(board({ at: ScrubPoint.fromNullable(12) }))
+it('reads a project’s documents at HEAD, on the session the server named', async () => {
+  // **This test used to assert the opposite and was reversed by measurement.**
+  // It read "a project nobody holds has its files at the *tip*, a position in
+  // a session that may have run on past it", and fed a fixture with `at: 12`
+  // to prove the offset was honoured. Measured 2026-08-27: the response's own
+  // `documents` list is folded to HEAD, so it listed a file written after a
+  // release and then handed this reader a scrub point at which that file does
+  // not exist -- one response, two resolutions. The offset is gone from the
+  // wire and from the domain type; HEAD is what the documents were folded at,
+  // so HEAD is what they are read at.
+  //
+  // It would pass with the scrub argument dropped entirely, which is the
+  // limit of what a jsdom test can say here -- what it pins is the *pair*:
+  // the session the server resolved, at the point that session's files were
+  // folded.
+  const container = parts(board())
   renderPane(<TopicDocuments projectId={PROJECT} topicId={TOPIC} />, container)
 
   await userEvent.click(await screen.findByRole('button', { name: 'understanding.md' }))
 
   const workspace = container.workspace as unknown as { readFile: ReturnType<typeof vi.fn> }
   await waitFor(() =>
-    expect(workspace.readFile).toHaveBeenCalledWith(
-      WRITER,
-      expect.anything(),
-      ScrubPoint.fromNullable(12),
-    ),
+    expect(workspace.readFile).toHaveBeenCalledWith(WRITER, expect.anything(), ScrubPoint.head()),
   )
 })
 

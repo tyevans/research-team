@@ -6,8 +6,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createSessionStore } from '@application/session/session-store.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { Container } from '@app/container.ts'
+import { FilePath } from '@domain/shared/file-path.ts'
 import { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
-import { sessionSelection } from '@presentation/routing/routes.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
@@ -64,6 +64,25 @@ const TOPICS = Array.from({ length: 12 }, (_, index) => ({
   isBlocked: false,
 }))
 
+/** A workspace with enough files to give MATERIAL a height of its own.
+ *
+ * The same fixture hazard `TOPICS` above records, one region over. MATERIAL's
+ * height used to come from the holding session's transcript, event log and
+ * composer -- a whole session view standing in a tab. That panel is gone, and
+ * with an empty workspace the claims below went red at 856/856 with nothing
+ * about the layout changed: the surface had nothing to overflow with.
+ *
+ * The Workspace is the honest replacement rather than a convenient one. It is
+ * MATERIAL's first tab now, it is the only tab drawing the project's own
+ * files, and its height is the project's data rather than this file's
+ * scaffolding -- which is exactly what `TOPICS` is for on the other side.
+ */
+const WORKSPACE_FILES = Array.from({ length: 24 }, (_, index) => ({
+  path: FilePath.of(`/topics/00-replication/notes-${String(index).padStart(2, '0')}.md`),
+  size: 1200 + index,
+  revisions: 1,
+}))
+
 const container = () =>
   ({
     preferences: new InMemoryPreferenceStore(),
@@ -78,6 +97,10 @@ const container = () =>
         id: ATLAS,
         name: 'atlas',
         activeSessionId: HOLDER,
+        // The Workspace tab is gated on the reading head rather than on the
+        // holder now. Equal to the holder here, which is what a held project
+        // reports -- the two only differ once nobody is holding it.
+        readingHeadSessionId: HOLDER,
         tipAtEvent: 0,
       }),
     },
@@ -88,7 +111,7 @@ const container = () =>
         startedAt: '2026-08-10T00:00:00Z',
         forkedFrom: null,
         forkedAt: null,
-        files: [],
+        files: WORKSPACE_FILES,
         messages: [],
         compactedThrough: null,
       }),
@@ -129,24 +152,29 @@ const show = async () => {
               an 856px shell that had not moved. */}
           <div style={{ height: '100vh' }}>
             <Shell chrome={<span>chrome</span>}>
-              <ProjectView projectId={ATLAS} selection={sessionSelection(HOLDER)} store={store} />
+              <ProjectView
+                projectId={ATLAS}
+                // The Workspace tab, named rather than defaulted. The default
+                // is the catalog, which this fixture answers empty, and a
+                // region with nothing in it has no height for the claims below
+                // to be about -- see `WORKSPACE_FILES`.
+                selection={{ facet: 'file', id: null }}
+                store={store}
+              />
             </Shell>
           </div>
         </StreamProvider>
       </QueryClientProvider>
     </ContainerProvider>,
   )
-  // `Event log` is a `<section aria-label>` rather than a `Pane`, and it is the
-  // same role and the same name -- which is the point of labelling them by
-  // hand. It is only drawn when the Holding session tab is the open one, which
-  // is why the render above names a `session` selection rather than passing
-  // `null`. It passed `null` and arrived on this tab for free until #286 moved
-  // `DEFAULT_MATERIAL` to `catalog` without running this suite -- which is
-  // outside CI, so nothing said so, and every claim in this file has been
-  // failing since 2026-08-24. Naming the selection is also the honest fixture:
-  // this file measures how height travels through the transcript's own boxes,
-  // so the transcript has to be what is open.
-  await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
+  // The history is worth keeping. This passed `null` and arrived on the
+  // holding session for free until #286 moved `DEFAULT_MATERIAL` to `catalog`
+  // without running this suite -- which is outside CI, so nothing said so, and
+  // every claim in this file failed silently from 2026-08-24. It was then
+  // pinned to a `session` selection so the transcript's own boxes were what
+  // the file measured. The transcript is not a tab on this page any more, so
+  // the selection names the Workspace and the wait is on its file list.
+  await expect.element(page.getByRole('listbox', { name: 'files' })).toBeVisible()
   return { preferences: deps.preferences as InMemoryPreferenceStore }
 }
 
@@ -239,11 +267,20 @@ it('lets the surface scroll below 821 rather than squeezing every pane', async (
   // claim 3) rather than at a share of 856. The numbers are floors well under
   // what was measured, because the heights themselves are the fixture's.
   //
-  // MATERIAL is the one that carries the transcript now, so the height that
-  // used to be HOLDER's is asserted on it. QUEUE is the other half of the pair
-  // and was implied by the two regions above it before.
+  // MATERIAL's height is the Workspace's file list now rather than the
+  // transcript's, and the floor moved with it: **measured 309.5 at 700x900 on
+  // 2026-08-28**, against 380 when a transcript, an event log and a composer
+  // filled the tab. The number is the fixture's, not the layout's -- the file
+  // list is capped at 34% of the panel (`workspace.css`) and the viewer below
+  // it is empty with no file open -- so the floor is set under what was
+  // measured rather than at it, exactly as the old pair were.
+  //
+  // What the pair is still for: together they exceed the 856 viewport, which
+  // is the claim. Neither on its own says a pane escaped a share of the
+  // screen; the surface assertion above is what does, and these say which
+  // panes are the reason.
   expect(box('queue').height).toBeGreaterThan(140)
-  expect(box('material').height).toBeGreaterThan(380)
+  expect(box('material').height).toBeGreaterThan(280)
 })
 
 /** Claim 3. **The unqualified 60vh cap does not clip the two `regions` panes,
@@ -325,42 +362,24 @@ it('caps the scrolling body at 60vh and leaves what it hides reachable', async (
   expect(getComputedStyle(body('queue')).overflowY).toBe('auto')
 })
 
-/** Claim 4. The `regions` panes distribute the cap rather than clipping under
- *  it — the other half of claim 3, asserted on the pane the objection is about.
+/** Claim 4 stood here and is deleted with the boxes it measured.
  *
- * Separate from claim 3 because it goes red for a different reason: claim 3
- * fails if the cap changes, this one fails if a region inside HOLDER loses its
- * `min-height: 0` or its scroller — an edit in `ProjectView.tsx` rather than in
- * a stylesheet, which nothing else would catch.
+ * It asserted that MATERIAL's regions distributed the 60vh cap by scrolling
+ * rather than clipping under it, and it read `[data-holder-scroll="log"]` and
+ * `.conv-scroll` to prove it -- the event log's scroller and the transcript's.
+ * Both belonged to the holding-session panel, which is gone: a person does not
+ * pick which session to read a project through, and the transcript lives at
+ * the session route.
  *
- * **This passes against unfixed code**: it pins the refutation so the next
- * reader does not re-derive it, and guards no fix. */
-it('gives the transcript’s regions their own scrollers under the cap', async () => {
-  await show()
-  await resizeViewport(700)
-
-  // The sidebar folded away, so MATERIAL has the screen. This used to fold
-  // MATERIAL and measure HOLDER; the two regions swapped places when the
-  // holding session became MATERIAL's default tab, and QUEUE is now the only
-  // pane with a fold at all.
-  await page.getByRole('button', { name: 'Collapse Queue' }).click()
-  await expect.poll(() => box('queue').height).toBeLessThan(60)
-
-  const materialBody = body('material')
-  expect(getComputedStyle(materialBody).overflowY).toBe('hidden')
-  expect(materialBody.clientHeight).toBeLessThanOrEqual(540)
-
-  // Nothing clipped: the body shows all of itself, because its regions took the
-  // shortfall.
-  expect(materialBody.scrollHeight).toBeLessThanOrEqual(materialBody.clientHeight)
-
-  // And they took it by scrolling rather than by vanishing.
-  for (const sel of ['[data-holder-scroll="log"]', '.conv-scroll']) {
-    const el = document.querySelector<HTMLElement>(sel)!
-    expect(getComputedStyle(el).overflowY).toBe('auto')
-    expect(el.clientHeight).toBeGreaterThan(0)
-  }
-})
+ * The refutation it pinned is not lost, only unasserted: the objection was
+ * that a `max-height` on a `scroll="regions"` body clips content with no way
+ * to reach it, and the answer was that each region inside takes the shortfall
+ * and scrolls. MATERIAL's remaining tabs are single panes rather than a
+ * stacked pair, so there is no longer a case in this file where two regions
+ * share the cap. A rewritten version over one tab would assert something
+ * weaker while looking like the same test.
+ *
+ */
 
 /** Claim 5. A pane folded below 821 becomes a strip: a row of natural height
  *  with a level title, its meta kept and its body gone.

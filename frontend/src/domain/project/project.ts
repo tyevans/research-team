@@ -8,22 +8,38 @@ import type { ProjectId, SessionId } from '../shared/identifier.ts'
  * that could not see the holder would show a single "join" button and no way to
  * know that pressing it will fail.
  */
-export interface ProjectDetail {
+export interface Project {
   readonly id: ProjectId
   readonly name: string
   readonly activeSessionId: SessionId | null
   readonly tipAtEvent: number
 }
 
-/** A listing row, which is now the same shape as the detail.
+/** One project's page, which needs one thing a row does not: somewhere to read
+ *  its files from.
  *
- * The two came apart because the listing carried a project's workflow and its
- * stage and the detail did not. Both columns are gone with the workflow system,
- * so this is an alias rather than an extension -- kept as a name because `list()`
- * and `project()` answer different questions and a reader tracing either wants
- * the question named at the port. It goes back to being an `interface` the day
- * the listing carries a column the detail does not.
+ * **`readingHeadSessionId` is not the holder, and that is the point.** Every
+ * file reader in this console is keyed by `(sessionId, path)`, and a project's
+ * files live on whichever session last wrote them — the holder while somebody
+ * holds it, the tip session between sessions. The server resolves that once
+ * (`presenters.reading_head`) so the console reuses the session-keyed routes
+ * unchanged instead of growing a project-scoped copy of each.
+ *
+ * It is a session and no scrub point. The pair used to travel together and the
+ * offset half was measured wrong on 2026-08-27: it named a point at which a
+ * file the same response listed did not exist. HEAD is the answer in every
+ * branch, so callers write `ScrubPoint.head()` rather than reading one back.
+ *
+ * `null` for a project that has never been joined — which is exactly the
+ * project with no files either.
+ *
+ * **Not on the listing**, deliberately. `GET /api/projects` folds one aggregate
+ * per row, `landing.ts` already defers a feature on that cost, and no listing
+ * surface reads a file. This is why `Project` is an interface again rather than
+ * the alias of this type it was for two slices.
  */
-export type Project = ProjectDetail
+export interface ProjectDetail extends Project {
+  readonly readingHeadSessionId: SessionId | null
+}
 
 export const isHeld = (project: Project): boolean => project.activeSessionId !== null

@@ -307,47 +307,124 @@ def tree_view(nodes: list[ForkNode]) -> list[dict[str, Any]]:
     ]
 
 
+def reading_head(state: ProjectState) -> UUID | None:
+    """Which session to read this project's files through, right now.
+
+    **This is not the holder, and the difference is the whole point.**
+    *Holding* is about where the next write goes; *reading the head state* has
+    an answer whether or not anybody is holding, and the console spent a long
+    time conflating the two -- a project between sessions showed no files, no
+    workspace and no documents, because the only session id on the wire was
+    `active_session_id` and it was `null`.
+
+    A holder is asked first because it has work the tip does not yet know
+    about: the tip only advances on release. With nobody holding it, the tip
+    *session* is the truth -- the same two cases `SessionService.project_files`
+    resolves, reported rather than applied, so a client folds files out of the
+    same stream the server folded them from.
+
+    **The point to read at is HEAD, always, and it is deliberately not
+    returned.** This resolution used to hand back a pair, `(session_id, at)`,
+    with `at = state.tip_at_event` whenever nobody held the project. Measured
+    2026-08-27 (see `topic_documents_view`, which carries the reproduction):
+    that offset made one response contradict itself, listing a file written
+    after a release and then 404ing it through the very reader route the
+    offset was sent to feed. The tip offset is never a statement about what a
+    project *has* -- it is a fork point (`ProjectSessionJoined.inherited_at`),
+    which is a different question, and `_catch_up_tip` exists to drag it
+    forward precisely because work past it is a bug rather than a boundary.
+    So this returns a session and nothing else, and a caller that wants a
+    scrub point uses HEAD.
+
+    `None` for a project that has never been joined. That is a real state, not
+    an error: it reads as "nothing has been written here yet", which is also
+    the state in which there are no files to ask about.
+
+    **`tip_at_event` is deliberately not read here.** It is stale between a
+    release and the next join -- `_catch_up_tip` only runs on join -- and any
+    reader of it inherits that. This is the resolution every surface shares,
+    so it is the one place that must not become that reader.
+    """
+    if state.active_session_id is not None:
+        return state.active_session_id
+    if state.tip_session_id is not None and state.tip_at_event >= 1:
+        return state.tip_session_id
+    return None
+
+
 def project_detail_view(
     project_id: UUID,
     name: str,
     *,
     active_session_id: UUID | None = None,
     tip_at_event: int = 0,
+    reading_head_session_id: UUID | None = None,
 ) -> dict[str, Any]:
     """One project, as `GET /api/projects/{id}` answers it.
 
-    Identity and holder, and nothing else. It exists because the only
+    Identity, holder, and the reading head. It exists because the only
     single-project read this API had was `/course` -- so four surfaces that
     wanted a project's name were reading a workflow run's progress to get one.
     That route is gone now; this is what they read instead.
 
-    `GET /api/projects` answers the same shape. They were two functions while
-    the listing carried a workflow chip the detail did not; with those columns
-    gone the two questions have one answer, so `project_view` is an alias
-    rather than a copy. Kept apart as two *names* rather than collapsed to
-    one, because the day a listing earns a column a detail does not is the day
-    this becomes a function again, and every call site is already labelled
-    with which question it is asking.
+    **`reading_head_session_id` is the column the detail has and the listing
+    does not**, and it is why `project_view` below is a function again rather
+    than the alias it was for two slices. The alias's own docstring named this
+    day: "the day a listing earns a column a detail does not is the day this
+    becomes a function again". It happened in the other direction, which
+    changes nothing about the shape.
+
+    The listing does not carry it because `GET /api/projects` folds one
+    aggregate per row already, and `domain/project/landing.ts` defers a
+    feature on exactly that cost. The reading head is what a project *page*
+    needs -- a session to read files, documents and a workspace through -- and
+    a page is reached one at a time.
+
+    It is a session id and no offset: see `reading_head`, which carries the
+    measurement that settled the offset to HEAD in every branch.
     """
     return {
         "id": str(project_id),
         "name": name,
         "active_session_id": str(active_session_id) if active_session_id else None,
         "tip_at_event": tip_at_event,
+        "reading_head_session_id": (
+            str(reading_head_session_id) if reading_head_session_id else None
+        ),
     }
 
 
-project_view = project_detail_view
-"""One row of `/api/projects`: enough to list, join, and see who holds it.
+def project_view(
+    project_id: UUID,
+    name: str,
+    *,
+    active_session_id: UUID | None = None,
+    tip_at_event: int = 0,
+) -> dict[str, Any]:
+    """One row of `/api/projects`: enough to list, join, and see who holds it.
 
-The holder is part of the row because it decides what the row can offer. A
-list that cannot see it has only one button to show -- join -- and no way to
-know that pressing it will fail, or that ending the holding session is what
-the user actually wants.
+    The holder is part of the row because it decides what the row can offer. A
+    list that cannot see it has only one button to show -- join -- and no way
+    to know that pressing it will fail, or that ending the holding session is
+    what the user actually wants.
 
-Kept as a name because `list_projects` and `read_project` answer different
-questions and a call site reading `project_view` says which one it is asking.
-"""
+    **A function again, not the alias it was.** The two answers came apart the
+    moment the detail grew a reading head, and the cost of keeping them one
+    was the wrong one to pay: it is a field a listing has no reader for, on
+    the one route that folds an aggregate per row.
+
+    Delegates rather than repeating the dict, so a field added for both still
+    cannot reach one route and miss the other -- the property the alias was
+    protecting, kept without the column it forced.
+    """
+    row = project_detail_view(
+        project_id,
+        name,
+        active_session_id=active_session_id,
+        tip_at_event=tip_at_event,
+    )
+    del row["reading_head_session_id"]
+    return row
 
 
 def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[str, Any]:
@@ -947,11 +1024,19 @@ def topic_documents_view(
     resolves it once, so a viewer reuses those three routes unchanged instead
     of a fourth project-scoped copy of each growing beside them.
 
-    **`at` is always `None`, which is HEAD, and that is not an oversight.**
-    It used to be `state.tip_at_event` whenever nobody held the project, on
-    the argument that a released session may have run on past the tip and
-    reading it at HEAD "would show files the project does not have". That
-    argument is wrong, and it made this one response contradict itself: the
+    **The resolution itself is `reading_head`, not written here.** It was
+    written here first, and this was the only surface that needed it; the
+    project detail needs the same answer now, and two surfaces computing it
+    separately is two answers that will eventually disagree about which
+    session was newer -- which is the argument `project_files` already makes
+    one layer down.
+
+    **There is no `at` on this response, and its absence is not an
+    oversight.** It used to be `state.tip_at_event` whenever nobody held the
+    project, on the argument that a released session may have run on past the
+    tip and reading it at HEAD "would show files the project does not have".
+    That argument is wrong, and it made this one response contradict itself:
+    the
     `documents` list is built from `project_files`, which folds the tip
     session to HEAD deliberately (see its docstring, and
     `test_the_project_shows_files_written_after_its_release`), so a file
@@ -980,9 +1065,11 @@ def topic_documents_view(
     job is as a *fork point* (`ProjectSessionJoined.inherited_at`,
     `_fork_files_from`), which is a different question.
 
-    The key is kept rather than dropped because the client's DTO already
-    accepts `null` and maps it to HEAD; removing it is a frontend change and
-    buys nothing.
+    The key was kept for one slice, `null` in every branch, because the
+    client's DTO already accepted `null` and mapped it to HEAD. It is gone
+    now, on both sides: a field that carries no information is a field the
+    next reader has to work out is constant, and `ScrubPoint.head()` says the
+    same thing at the point of use without a round trip to say it.
 
     Filtered on `directory + "/"` rather than `directory`: without the
     separator `/topics/0` would match `/topics/01-...` as well as
@@ -995,22 +1082,10 @@ def topic_documents_view(
         for path in sorted(files)
         if path.startswith(prefix)
     ]
-    if state.active_session_id is not None:
-        session_id = state.active_session_id
-    elif state.tip_session_id is not None and state.tip_at_event >= 1:
-        session_id = state.tip_session_id
-    else:
-        # A project that has never been joined has no stream to read from.
-        # Reported as no session rather than an error: it is the same state as
-        # "nothing has been dispatched here yet", which is the ordinary case.
-        session_id = None
-    # HEAD in every branch, matching the fold `project_files` did to build
-    # `documents`. See the docstring for the measurement that settled it.
-    at = None
+    session_id = reading_head(state)
     return {
         "directory": directory,
         "session_id": str(session_id) if session_id else None,
-        "at": at,
         "documents": documents,
     }
 

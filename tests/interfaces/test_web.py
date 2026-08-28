@@ -1474,19 +1474,19 @@ async def test_list_projects_starts_empty_then_shows_a_created_one(client):
     ]
 
 
-async def test_reading_one_project_answers_its_identity_and_its_holder(client):
+async def test_reading_one_project_answers_its_identity_holder_and_reading_head(client):
     """`GET /api/projects/{id}`, the console's only single-project read.
 
     Asserted against the whole body rather than field by field, so a key
     added here has to be added to this test's set as well -- which is what
-    `set(body)` is for. The listing answers the same four fields now, and
-    `test_list_projects_starts_empty_then_shows_a_created_one` asserts the
-    listing row as a whole dict for the same reason, and the two now describe
-    one shape: `project_view` is an alias of `project_detail_view`.
+    `set(body)` is for.
 
-    The holder is what earns the route. A project page resolves its transcript,
-    its composer and its Workspace tab off `active_session_id`, and joining is
-    what sets it -- so the read has to reflect a join rather than a creation.
+    The holder is what earned the route. A project page resolves its
+    transcript, its composer and (until this slice) its Workspace tab off
+    `active_session_id`, and joining is what sets it -- so the read has to
+    reflect a join rather than a creation. While somebody holds the project
+    the reading head is that same session; the test below is the one that can
+    tell the two apart.
     """
     project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
     session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
@@ -1498,7 +1498,55 @@ async def test_reading_one_project_answers_its_identity_and_its_holder(client):
     assert body["id"] == project_id
     assert body["name"] == "atlas"
     assert body["active_session_id"] == session_id
-    assert set(body) == {"id", "name", "active_session_id", "tip_at_event"}
+    assert body["reading_head_session_id"] == session_id
+    assert set(body) == {
+        "id",
+        "name",
+        "active_session_id",
+        "tip_at_event",
+        "reading_head_session_id",
+    }
+
+
+async def test_a_released_project_still_names_a_session_to_read_it_through(client):
+    """The state the whole reading head exists for, and the one a test over a
+    held project cannot reach.
+
+    A project between sessions has files and no holder. Until this slice the
+    only session id on the wire was `active_session_id`, so the console's
+    workspace, its documents and its file routes all went dark the moment
+    somebody ended a session -- the tab was gated on exactly this and the gate
+    was right, because there was nothing behind it.
+
+    The test that distinguishes the candidate resolutions is this one, not the
+    held case: `reading_head` returning `state.active_session_id` unchanged
+    passes every assertion in the test above and fails here on `None`.
+    """
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+    await client.post(f"/api/sessions/{session_id}/message", json={"text": "hello"})
+    await client.post(f"/api/sessions/{session_id}/release")
+
+    body = (await client.get(f"/api/projects/{project_id}")).json()
+
+    assert body["active_session_id"] is None
+    assert body["reading_head_session_id"] == session_id
+
+
+async def test_the_listing_does_not_carry_a_reading_head(client):
+    """One aggregate fold per row is what this route costs already.
+
+    `landing.ts` defers a feature on exactly that cost, and a reading head is
+    a page's question rather than a row's: no listing surface reads a session
+    to fold files through. Pinned rather than left implicit because the two
+    presenters were one function until this slice and the cheap way to add
+    the field would have put it on both.
+    """
+    await client.post("/api/projects", json={"name": "atlas"})
+
+    (row,) = (await client.get("/api/projects")).json()
+
+    assert "reading_head_session_id" not in row
 
 
 async def test_reading_an_unknown_project_is_a_404(client):
@@ -4373,9 +4421,13 @@ async def test_the_listing_says_which_session_to_read_the_file_from(
     body = (await http.get(f"/api/projects/{project_id}/topics/{topic_id}/documents")).json()
 
     assert body["session_id"] is not None
+    # No `at` parameter, because the response no longer carries one: the
+    # documents are folded at HEAD, so HEAD is where they are read. Sending the
+    # tip offset here is what this route did until 2026-08-27, and it is what
+    # made the pair unusable -- a file this same body listed answering
+    # `404 ... not found as of event 7`.
     readable = await http.get(
-        f"/api/sessions/{body['session_id']}/files",
-        params={"path": path, **({"at": body["at"]} if body["at"] is not None else {})},
+        f"/api/sessions/{body['session_id']}/files", params={"path": path}
     )
     assert readable.status_code == 200
     assert readable.json()["content"] == "hi"

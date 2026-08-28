@@ -217,6 +217,7 @@ from research_team.interfaces.web.presenters import (
     project_change,
     project_detail_view,
     project_view,
+    reading_head,
     roster_view,
     seeding_view,
     session_view,
@@ -1204,6 +1205,10 @@ def create_app(
             state.name,
             active_session_id=state.active_session_id,
             tip_at_event=state.tip_at_event,
+            # The one field the listing beside this does not carry. See
+            # `project_detail_view`: a page is reached one at a time, and the
+            # listing folds an aggregate per row already.
+            reading_head_session_id=reading_head(state),
         )
 
     def _reader(project_id: UUID) -> ProjectCorpusReader:
