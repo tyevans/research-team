@@ -174,7 +174,7 @@ const RowVerb = ({
 )
 
 /** A magnifier, for the one verb that goes outside the project for material. */
-const SearchGlyph = () => (
+export const SearchGlyph = () => (
   <Glyph>
     <circle cx="7" cy="7" r="4.5" />
     <path d="M10.4 10.4 14 14" />
@@ -183,7 +183,7 @@ const SearchGlyph = () => (
 
 /** A nib over a written line: this verb writes a document about what is
  *  already here, and the line under it is the material it writes from. */
-const PenGlyph = () => (
+export const PenGlyph = () => (
   <Glyph>
     <path d="M2 14h12" />
     <path d="M11 1.8 13.6 4.4 6 12H3.4V9.4Z" />
@@ -197,7 +197,7 @@ const PenGlyph = () => (
  * A pencil was the obvious alternative and was rejected for the label's own
  * reason: this verb edits nothing, and a pencil says it does.
  */
-const NarrowGlyph = () => (
+export const NarrowGlyph = () => (
   <Glyph>
     <path d="M1.5 3 4 8l-2.5 5M14.5 3 12 8l2.5 5" />
     <path d="M6.4 5.6a1.7 1.7 0 0 1 3.3.5c0 1.1-1.6 1.2-1.6 2.2" />

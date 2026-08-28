@@ -133,7 +133,7 @@ export const QueueToolbar = ({
  * holds what *configures* the queue, which two adjustable rows say better than
  * a cog does.
  */
-const SlidersGlyph = () => (
+export const SlidersGlyph = () => (
   <Glyph>
     <path d="M2 5h9M2 11h9" />
     <circle cx="5" cy="5" r="1.6" />
@@ -154,7 +154,7 @@ const SlidersGlyph = () => (
  * as an `aria-label` and as a tooltip, so a reader who takes the tail to mean
  * the opposite of what it means loses nothing.
  */
-const AskGlyph = ({ incoming = false }: { incoming?: boolean }) => (
+export const AskGlyph = ({ incoming = false }: { incoming?: boolean }) => (
   <Glyph>
     <g transform={incoming ? 'translate(16 0) scale(-1 1)' : undefined}>
       <rect x="1.5" y="2" width="13" height="8.5" rx="2" />
