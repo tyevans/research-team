@@ -684,21 +684,20 @@ class EventStoreSessionRepository:
         streams -- so a pane fed by graph frames would silently drop exactly
         the sources whose failure a reader needs to see listed.
 
-        **`Project` is read for the course page, which had no live path at
-        all.** `ProjectStageAdvanced` and `ProjectWorkflowSelected` are appended here and the
-        rail is what they moved, so a stage that advanced while a tab was open
-        reached the browser through nothing and the page only moved on a
-        reload. It is the same shape as `Topic`, the graph and `Corpus` before
-        it -- the fourth time -- which is why `FEED_AGGREGATE_TYPES` and
-        `UNROUTED_AGGREGATE_TYPES` now exist instead of a literal here.
+        **`Project` is read for the project page, which had no live path at
+        all.** Its events are appended here and the page is what they moved, so
+        a change made while a tab was open reached the browser through nothing
+        and the page only moved on a reload. It is the same shape as `Topic`,
+        the graph and `Corpus` before it -- the fourth time -- which is why
+        `FEED_AGGREGATE_TYPES` and `UNROUTED_AGGREGATE_TYPES` now exist instead
+        of a literal here.
 
-        One admission covers the whole aggregate rather than `ProjectStageAdvanced`
-        alone, and that is deliberate: `ProjectWorkflowSelected` is what turns the
-        course page from a 409 into a rail, and the lifecycle events
-        (`ProjectSessionJoined`, `ProjectTipAdvanced`, `ProjectDeleted`) move
-        the holding-session link and the project list. Filtering to one event
-        class would have fixed the reported symptom and left its siblings
-        invisible until the next report.
+        One admission covers the whole aggregate rather than one event class,
+        and that is deliberate: the lifecycle events (`ProjectSessionJoined`,
+        `ProjectTipAdvanced`, `ProjectDeleted`) move the holding-session link
+        and the project list. Filtering to whichever event was reported would
+        have fixed that symptom and left its siblings invisible until the next
+        report.
 
         The redstring category names come from redstring rather than being
         spelled out

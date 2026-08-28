@@ -814,8 +814,16 @@ def _pending(request: ApprovalRequest) -> dict:
     return PendingApproval(id="p1", request=request, future=None).view()
 
 
-def test_an_ordinary_approval_frame_is_unchanged_by_gate_context_existing():
-    """Every client already parsing these must see exactly what it saw before."""
+def test_an_approval_frame_carries_exactly_the_call_and_nothing_else():
+    """The frame's whole surface, pinned as a set rather than key by key.
+
+    It used to have a sixth, optional key: `context`, which a stage gate filled
+    with its findings and every other gate left `None`. The workflow removal
+    deleted the only producer, so the key could only ever have been absent --
+    and the case asserting a stage gate populated it went with it. Asserting
+    the set is what makes a seventh key someone adds without a producer fail
+    here rather than reach a browser as a field nothing fills.
+    """
     view = _pending(
         ApprovalRequest(
             session_id=uuid4(),
@@ -833,17 +841,3 @@ def test_an_ordinary_approval_frame_is_unchanged_by_gate_context_existing():
         "description",
         "allowed_decisions",
     }
-
-
-def test_a_reviewed_gate_puts_its_findings_on_the_frame():
-    view = _pending(
-        ApprovalRequest(
-            session_id=uuid4(),
-            tool_name="advance_stage",
-            args={"rationale": "done"},
-            description="",
-            allowed_decisions=("approve", "reject"),
-            context={"stage": "s.one", "findings": []},
-        )
-    )
-    assert view["context"] == {"stage": "s.one", "findings": []}

@@ -323,20 +323,6 @@ class ApprovalRequest:
     args: dict
     description: str
     allowed_decisions: tuple[str, ...]
-    context: dict | None = None
-    """Whatever the harness found out about this call before posing it.
-
-    Optional, and `None` for every ordinary tool gate -- `web_search` has
-    nothing to say for itself beyond its arguments, and inventing a shape for
-    it would make the common case pay for the rare one. A stage advance does:
-    it carries the findings from the stage's own checks and the path of the
-    artifact they were written to, so the reviewer decides having seen what the
-    machine found rather than discovering it a stage later.
-
-    Deliberately an untyped mapping. This crosses to a browser as JSON, and the
-    field list a gate wants to present is a guess until somebody has reviewed
-    with it; a typed model here would freeze that guess into the port.
-    """
 
 
 @dataclass(frozen=True)

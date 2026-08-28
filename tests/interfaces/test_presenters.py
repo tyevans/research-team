@@ -16,8 +16,6 @@ from research_team.domain import (
     FileEdited,
     FileWritten,
     MediaRecord,
-    ProjectStageAdvanced,
-    ProjectWorkflowSelected,
     SessionForkedFrom,
     SessionPurpose,
     SessionStarted,
@@ -387,33 +385,12 @@ def test_a_feed_event_always_has_a_summary_string():
 # ---------------- project events ----------------
 
 
-def test_a_selected_workflow_is_summarised_by_the_preset_it_chose():
-    """The fallback returns "" for these, which loses the entire content.
-
-    `ProjectWorkflowSelected` carries no `turn_index` and no `message`, so before
-    this branch a timeline row said `ProjectWorkflowSelected` and nothing else --
-    the one fact worth recording, which preset the run is now bound to, was
-    the fact that went missing.
-    """
-    event = make(ProjectWorkflowSelected, preset_id="hybrid.default", preset_version="1")
-    summary = event_summary(event)
-    assert "hybrid.default" in summary
-    assert "1" in summary
-
-
-def test_an_advanced_stage_is_summarised_by_both_ends_of_the_move():
-    """From *and* to: a stage list is long and "now at X" does not say what moved."""
-    event = make(
-        ProjectStageAdvanced,
-        from_stage="tyler.step0.intake",
-        to_stage="hybrid.step1.framing",
-        decided_by="agent",
-        gate_decision="the intake is cited",
-    )
-    summary = event_summary(event)
-    assert "tyler.step0.intake" in summary
-    assert "hybrid.step1.framing" in summary
-    assert "the intake is cited" in summary
+# Two cases stood here: `ProjectWorkflowSelected` summarised by its preset, and
+# `ProjectStageAdvanced` summarised by both ends of the move. Both events are
+# gone with the workflow system, and so are their branches in `event_summary`.
+# No surviving project event carries a summary of its own -- they fall through
+# to the "" fallback, which is correct for a fact whose whole content is its
+# name.
 
 
 def test_a_changed_autonomy_is_summarised_by_the_tool_and_its_new_level():

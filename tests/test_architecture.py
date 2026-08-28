@@ -16,20 +16,14 @@ PACKAGE = Path(__file__).resolve().parent.parent / "research_team"
 # Innermost first. A layer may import from itself and anything before it.
 LAYERS = ("domain", "application", "infrastructure", "interfaces")
 
-CONTENT = frozenset({"workflows"})
-"""Packages that are data rather than a layer, importable from anywhere.
-
-`research_team/workflows/` holds the shipped presets. They define no
-behaviour, import nothing but `domain.workflow`, and are validated at import
-time -- so depending on one is depending on the domain vocabulary with some
-constants filled in, not on an outer layer. They live outside `domain/`
-because they are content that will be edited by people who are not changing
-the engine, and that editorial split should not cost the layer rule.
-
-`test_content_packages_depend_only_on_the_domain` is what keeps this from
-becoming a hole: the moment a preset module reaches for anything but the
-domain, it stops being data and this exemption stops applying.
-"""
+# There is no content-package exemption any more. `CONTENT` named
+# `research_team/workflows/` -- the shipped presets, data rather than a layer
+# -- and the workflow removal deleted that package. Removed rather than
+# emptied to `frozenset()`: its guard,
+# `test_content_packages_depend_only_on_the_domain`, was parametrised over the
+# package's modules, so an empty set would leave a test that collects nothing
+# and reads as passing. The exemption is cheap to reinstate if a data package
+# ever returns; a test that silently checks nothing is not.
 
 FRAMEWORKS = (
     "langchain",
@@ -107,26 +101,9 @@ ALL_MODULES = [(layer, module) for layer in LAYERS for module in _modules(layer)
     ids=[f"{layer}/{module.name}" for layer, module in ALL_MODULES],
 )
 def test_imports_point_inward(layer: str, module: Path) -> None:
-    permitted = set(LAYERS[: LAYERS.index(layer) + 1]) | CONTENT
+    permitted = set(LAYERS[: LAYERS.index(layer) + 1])
     offenders = _imported_layers(module) - permitted
     assert not offenders, f"{module.relative_to(PACKAGE)} imports outward: {offenders}"
-
-
-@pytest.mark.parametrize(
-    "module",
-    [module for name in sorted(CONTENT) for module in sorted((PACKAGE / name).rglob("*.py"))],
-    ids=lambda module: module.name,
-)
-def test_content_packages_depend_only_on_the_domain(module: Path) -> None:
-    """What makes the `CONTENT` exemption safe rather than a hole in the rule.
-
-    A preset is data. The moment one of these modules imports from
-    `application`, `infrastructure` or `interfaces` it has behaviour and a
-    direction, and anything importing it inherits that -- which is exactly the
-    outward dependency the exemption assumes cannot happen here.
-    """
-    reached = _imported_layers(module) - CONTENT
-    assert reached <= {"domain"}, f"{module.relative_to(PACKAGE)} reaches beyond the domain"
 
 
 @pytest.mark.parametrize(

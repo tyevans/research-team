@@ -699,10 +699,9 @@ class SessionService:
         whenever the next turn happens to commit.
 
         Deliberately narrow. This is not a general filesystem API for the
-        application layer -- a caller writing a *stage's artifact* this way
-        would be producing course content with no model, no stage prompt and no
-        record of a turn behind it, which is the provenance failure the whole
-        workflow engine exists to prevent.
+        application layer -- a caller writing course content this way would be
+        producing it with no model, no prompt and no record of a turn behind
+        it, and a file whose provenance is nothing is worse than no file.
         """
         aggregate = await self._repository.load(session_id)
         aggregate.execute(WriteFile(path=path, file_data={"content": content}))
@@ -715,23 +714,17 @@ class SessionService:
         args: dict[str, Any],
         decision: str,
         decided_by: str,
-        review_id: UUID | None = None,
     ) -> None:
         """Note in the log that a gated call was allowed, refused, or amended.
 
         The turn executor records this on the aggregate it is already holding,
-        mid-turn, and needs no use case for it. A caller deciding
-        something *between* turns holds no aggregate, and this is the seam for
-        it -- a stage runner posing an advance through `ApprovalPort` is the
-        only one today.
+        mid-turn, and needs no use case for it. A caller deciding something
+        *between* turns holds no aggregate, and this is the seam for it.
 
         Appends immediately rather than deferring to a turn, because there is
         no turn to defer to: the decision is made and acted on before the next
         one starts, and a decision that reached the store only if some later
         turn succeeded would be missing from exactly the runs that went wrong.
-
-        `review_id` names the stage review this decision answered, when it
-        answered one. None for every gated call that is not an advance.
         """
         aggregate = await self._repository.load(session_id)
         aggregate.execute(
@@ -740,7 +733,6 @@ class SessionService:
                 args=args,
                 decision=decision,
                 decided_by=decided_by,
-                review_id=review_id,
             )
         )
         await self._repository.save(aggregate)

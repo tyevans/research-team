@@ -43,9 +43,7 @@ from research_team.domain import (
     FileDeleted,
     FileEdited,
     FileWritten,
-    ProjectStageAdvanced,
     ProjectState,
-    ProjectWorkflowSelected,
     Session,
     SessionForkedFrom,
     SessionStarted,
@@ -88,14 +86,6 @@ def event_summary(event: DomainEvent) -> str:
             f"first {event.through_index} messages now behind a summary "
             f"({event.strategy}{saved})"
         )
-    if isinstance(event, ProjectWorkflowSelected):
-        return f"{event.preset_id} v{event.preset_version}"
-    if isinstance(event, ProjectStageAdvanced):
-        # Both ends of the move, and the reason. A preset has up to fifteen
-        # stages, so "now at X" does not say what was left; and the rationale
-        # is what a reviewer scrolling the log is actually looking for, since
-        # it is the only record of why the gate was crossed.
-        return f"{event.from_stage} → {event.to_stage}: {event.gate_decision}"
     if isinstance(event, AutonomyChanged):
         # The level alone doesn't say what changed, and the tool alone
         # doesn't say what changed to; a reviewer needs both to know what
@@ -523,39 +513,28 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     lean on.
 
     One frame type for the whole aggregate, and `change` is what tells its
-    events apart. `ProjectStageAdvanced` is what was reported, but `ProjectWorkflowSelected`
-    turns the course page from a 409 into a rail and the lifecycle events move
-    the holding-session link, so a frame per event class would be five frame
-    types where the client wants one invalidation.
+    events apart. The lifecycle events (`ProjectSessionJoined`,
+    `ProjectTipAdvanced`, `ProjectDeleted`) move the holding-session link and
+    the project list, so a frame per event class would be several frame types
+    where the client wants one invalidation.
 
-    Carries no stage. It would be `to_stage` off `ProjectStageAdvanced` and nothing at
-    all off the other four, so a client would need the read anyway and would
-    have two descriptions of the current stage that can disagree -- the same
+    Carries no state beyond the change's name. Anything more would be a second
+    description of the project that can disagree with the read -- the same
     argument `corpus_change` makes about a document. The frame is a nudge;
-    `/api/projects/{id}/course` stays the single answer to where the run is.
+    `GET /api/projects/{id}` stays the single answer to where the project
+    stands.
 
-    **`decision` is the exception, and the distinction is worth being precise
-    about.** It is not a description of current state, so it cannot disagree
-    with the course read the way a stage name could -- it is a fact about the
-    transition that just happened, and the course read does not report it at
-    all. A tab told only that a stage advanced has to ask what happened; one
-    told the reviewer chose `approve_with_edits` has been informed. That is the
-    whole point of the field (#80), which added it because an audit of a driven
-    run could otherwise say fifteen boundaries were crossed and nothing about
-    how.
-
-    Read through `getattr` with a `None` default rather than off the class,
-    because this frame serves all six project events and only `ProjectStageAdvanced`
-    has one. A client reads a null `decision` as "not that kind of change"
-    rather than as a missing verdict. Nothing on the page renders it yet; it is
-    on the frame so the live path does not have to be widened again the first
-    time something wants it.
+    It used to carry `decision`, read off `ProjectStageAdvanced` through
+    `getattr`. That event is gone with the workflow system and no surviving
+    project event has a verdict, so the key could only ever have been null --
+    which is a silent default rather than a field. Removed rather than left to
+    answer null forever; the console's decoder already treats its absence as
+    valid.
     """
     return {
         "type": "Project",
         "project_id": str(project_id),
         "change": type(event).__name__,
-        "decision": getattr(event, "decision", None),
         "occurred_at": event.occurred_at.isoformat(),
     }
 
@@ -1083,11 +1062,11 @@ def autonomy_view(policy: AutonomyPolicy) -> dict[str, Any]:
     `gated` says so explicitly.
 
     `stage_gates` was a third key marking the subset "allow all" left alone.
-    It named exactly one tool, `advance_stage`, which the workflow removal is
-    deleting -- so the key is about to have nothing to name, and the console
-    stopped reading it a slice before this. Removed here rather than left to
-    answer an empty list, which would read as a subset that happens to be
-    empty rather than one that no longer exists.
+    It named exactly one tool, `advance_stage`, which the workflow removal
+    deleted -- so the key had nothing left to name, and the console had
+    stopped reading it. Removed rather than left to answer an empty list,
+    which would read as a subset that happens to be empty rather than one that
+    no longer exists.
     """
     return {
         "levels": policy.levels(),

@@ -28,13 +28,11 @@ from research_team.domain import (
     FileEdited,
     RecordAssistantMessage,
     RecordForkSource,
-    RecordStageReview,
     RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
     SessionPurpose,
     SessionStarted,
-    StageChecksEvaluated,
     StartSession,
     ToolCallDecided,
     ToolResultRecorded,
@@ -489,74 +487,17 @@ def test_supervision_events_leave_the_state_alone():
     assert after == state
 
 
-def test_a_stage_review_is_recorded_as_an_audit_event():
-    """`RecordStageReview` produces one event and touches no state.
+def test_a_tool_decision_records_the_call_and_who_decided_it():
+    """The audit half of `RecordToolDecision`, with nothing folded into state.
 
-    Fails if the command is unhandled, and fails differently if someone makes
-    `evolve` fold it: `SessionState` tracks what the session *is*, and what a
-    check found at a gate is not that.
+    Two cases stood here before the workflow removal -- one asserting a
+    `review_id` rode through onto the event, one asserting it defaulted to
+    `None`. The field named the stage review a decision answered, nothing poses
+    one now, and the field is gone; both cases went with it rather than being
+    weakened into an assertion about a field that does not exist.
     """
     state = started()
-    review_id = uuid4()
-    project_id = uuid4()
 
-    (event,) = decide(
-        RecordStageReview(
-            review_id=review_id,
-            project_id=project_id,
-            stage="analysis",
-            preset="hybrid.default",
-            preset_version="1",
-            evaluated=[{"check": "shared.coverage", "severity": "blocking", "findings": 2}],
-            unimplemented=[{"check": "ubd.uncoverage", "severity": "blocking"}],
-            posed_by="runner",
-        ),
-        state,
-    )
-
-    assert isinstance(event, StageChecksEvaluated)
-    assert event.aggregate_id == state.session_id
-    assert event.review_id == review_id
-    assert event.project_id == project_id
-    assert (event.stage, event.preset, event.preset_version) == (
-        "analysis",
-        "hybrid.default",
-        "1",
-    )
-    assert event.posed_by == "runner"
-    assert event.evaluated == [
-        {"check": "shared.coverage", "severity": "blocking", "findings": 2}
-    ]
-    assert event.unimplemented == [{"check": "ubd.uncoverage", "severity": "blocking"}]
-    # The audit half: nothing about the session changed.
-    assert evolve(state, event) == state
-
-
-def test_a_tool_decision_can_name_the_review_it_answers():
-    """`review_id` rides through `RecordToolDecision` onto the event.
-
-    This is the only join between a finding and the decision that followed it;
-    `ToolCallDecided` names no stage, and `ProjectStageAdvanced` -- which does -- is on
-    the `Project` stream and is not written at all when a gate is rejected.
-    """
-    review_id = uuid4()
-
-    (event,) = decide(
-        RecordToolDecision(
-            tool_name="advance_stage",
-            args={"rationale": "3 findings"},
-            decision="approve",
-            decided_by="human",
-            review_id=review_id,
-        ),
-        started(),
-    )
-
-    assert event.review_id == review_id
-
-
-def test_a_tool_decision_that_answers_no_review_says_so():
-    """The default is None, which is what every non-gate tool call means."""
     (event,) = decide(
         RecordToolDecision(
             tool_name="web_search",
@@ -564,7 +505,13 @@ def test_a_tool_decision_that_answers_no_review_says_so():
             decision="approve",
             decided_by="human",
         ),
-        started(),
+        state,
     )
 
-    assert event.review_id is None
+    assert isinstance(event, ToolCallDecided)
+    assert (event.tool_name, event.decision, event.decided_by) == (
+        "web_search",
+        "approve",
+        "human",
+    )
+    assert evolve(state, event) == state

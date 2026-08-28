@@ -689,12 +689,11 @@ async def test_sse_frames_a_media_proposal_change_as_a_media_frame(repository):
     assert "session_id" not in payload
 
 
-async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
-    """An advanced stage reaches the live feed addressed to its project.
+async def test_sse_frames_a_project_change_as_a_project_frame(repository):
+    """A change to a project reaches the live feed addressed to that project.
 
-    The reported bug, at the layer where it is visible: `advance_stage`
-    appended `ProjectStageAdvanced` and the course page's rail moved only on a
-    reload, because the feed read `Session`, `Topic`, `Corpus` and
+    The reported bug, at the layer where it is visible: a project's page moved
+    only on a reload, because the feed read `Session`, `Topic`, `Corpus` and
     redstring's categories and nothing else.
 
     A `Project` frame rather than a log frame, for the reason `Topic` and
@@ -705,34 +704,27 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     appended to the log, so a reconnect replays it from `Last-Event-ID`
     rather than needing a catch-up route.
 
-    `change` rather than a stage name, so the frame stays independent of
-    `ProjectStageAdvanced`'s payload -- which is being extended under separate work.
+    `change` and nothing else off the payload, so the frame stays independent
+    of any one event's shape. It was written against `ProjectStageAdvanced`,
+    which the workflow removal deleted along with the `decision` key this used
+    to assert; a join makes the identical point about the admission, which is
+    per aggregate rather than per event class.
     """
     from research_team.application import LiveFeed
-    from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
+    from research_team.domain.project import CreateProject, JoinProject
     from research_team.interfaces.web.app import _sse
-    from research_team.workflows import hybrid_default
 
     feed = LiveFeed(repository, poll_interval=0.01)
     project_id = uuid4()
     project = repository.projects.create_new(project_id)
     project.execute(CreateProject(project_id=project_id, name="Spacing"))
-    project.execute(SelectWorkflow(preset=hybrid_default))
     await repository.projects.save(project)
 
     frames: list[str] = []
     generator = _sse(StubRequest(), feed)
     await _subscribed(generator)
     task = asyncio.create_task(_drain(generator, frames, wanted=1))
-    project.execute(
-        AdvanceStage(
-            preset=hybrid_default,
-            to_stage="hybrid.step1.framing",
-            decided_by="human",
-            gate_decision="4 of 4 declared artifacts present",
-            decision="approve_with_edits",
-        )
-    )
+    project.execute(JoinProject(session_id=uuid4()))
     await repository.projects.save(project)
     await asyncio.wait_for(task, timeout=5)
 
@@ -740,12 +732,7 @@ async def test_sse_frames_a_stage_advance_as_a_project_frame(repository):
     payload = json.loads(frames[0].split("data: ", 1)[1])
     assert payload["type"] == "Project"
     assert payload["project_id"] == str(project_id)
-    assert payload["change"] == "ProjectStageAdvanced"
-    # The verdict, not only that a boundary was crossed (#80). The one payload
-    # field this frame carries, because unlike a stage name it describes the
-    # transition rather than the current state and so cannot disagree with the
-    # course read.
-    assert payload["decision"] == "approve_with_edits"
+    assert payload["change"] == "ProjectSessionJoined"
     assert "session_id" not in payload
 
 

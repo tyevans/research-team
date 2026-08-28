@@ -23,15 +23,12 @@ MAX_ERROR_MESSAGE = 500
 class SessionPurpose(StrEnum):
     """What kind of work a session exists to do.
 
-    The one thing that decides whether a workflow attaches to its turns. A
-    `StrEnum` rather than a `Literal` because it is named at six production
-    call sites and read in `composition.py`; a bare string would let a typo
-    reach the fold and read as an unknown purpose, which -- see
-    `WORKFLOW_DRIVEN` in `composition.py` -- fails safe into "no workflow" and
-    would therefore be silent.
+    A `StrEnum` rather than a `Literal` because it is named at several
+    production call sites; a bare string would let a typo reach the fold and
+    read as an unknown purpose, which nothing would report.
 
     Deliberately not a boolean. `drives_workflow: bool` was the cheaper shape
-    and was rejected: three of these five are unattended in different ways
+    and was rejected: three of these four are unattended in different ways
     (a round works a topic queue, a seeding turn opens topics, a dispatch turn
     writes one topic up), and collapsing them loses the ability to answer
     "which sessions were research rounds" -- the first question anyone
@@ -52,9 +49,6 @@ class SessionPurpose(StrEnum):
     CHAT = "chat"
     """A person, at a keyboard, in the web console or the REPL."""
 
-    WORKFLOW_STAGE = "workflow_stage"
-    """`StageRunner`, driving one stage of the selected preset."""
-
     RESEARCH_ROUND = "research_round"
     """One round of `ResearchRunDriver`, working the topic queue."""
 
@@ -67,12 +61,11 @@ class SessionPurpose(StrEnum):
     COURSE_AUTHORING = "course_authoring"
     """`CourseAuthor`, writing one learning area's unit and lessons.
 
-    A purpose of its own rather than `WORKFLOW_STAGE`, which it superficially
-    resembles: a stage run is driven by the selected preset and its position
-    in it decides what it writes, whereas this is driven by a projection over
-    the graph and writes to a path derived from an area slug. Folding them
-    together would make "which sessions were workflow stages" -- the question
-    the docstring above says is the first one anyone asks -- unanswerable.
+    A purpose of its own rather than one of the topic purposes it superficially
+    resembles: those work a topic queue, whereas this is driven by a projection
+    over the graph and writes to a path derived from an area slug. Folding them
+    together would make "which sessions authored a course" -- the question the
+    docstring above says is the first one anyone asks -- unanswerable.
     """
 
 
@@ -105,9 +98,10 @@ class StartSession(Command):
     #: same reason `project_id` above is: a session whose purpose nobody stated
     #: cannot be expressed as a request in the first place, so `decide` never
     #: has to reject one and no caller can forget. Defaulting it to `CHAT` was
-    #: considered and rejected -- it makes the safe value the silent one, so a
-    #: caller who forgot would attach a workflow to an unattended run, which is
-    #: precisely the defect this field exists to remove.
+    #: considered and rejected -- it makes the wrong value the silent one, so
+    #: every unattended run a caller forgot to mark would be counted as a
+    #: person at a keyboard, which is precisely the confusion this field exists
+    #: to remove.
 
 
 class SendUserMessage(Command):
@@ -195,21 +189,6 @@ class RecordToolDecision(Command):
     decision: str
     decided_by: str
     edited_args: dict[str, Any] | None = None
-    review_id: UUID | None = None
-    """The stage review this decision answered. None when it answered none."""
-
-
-class RecordStageReview(Command):
-    """The check library ran at a gate; here is what it was asked and found."""
-
-    review_id: UUID
-    project_id: UUID
-    stage: str
-    preset: str
-    preset_version: str
-    evaluated: list[dict[str, Any]]
-    unimplemented: list[dict[str, Any]]
-    posed_by: str
 
 
 class ChangeAutonomy(Command):
@@ -232,7 +211,6 @@ SessionCommand = (
     | EditFile
     | DeleteFile
     | RecordToolDecision
-    | RecordStageReview
     | ChangeAutonomy
 )
 """Every request a session accepts.
