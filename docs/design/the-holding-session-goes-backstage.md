@@ -47,7 +47,9 @@ not anybody is holding, and the console has been conflating the two.
 
 ## 2. The head state has an answer already, and it is not new machinery
 
-`topic_documents_view` resolves it, server-side, today:
+`topic_documents_view` resolves it, server-side. This is the shape it had
+when this document was written; §2.1 records what the measurement then did to
+the `at` half of it, and the surviving version is simpler:
 
 ```python
 if state.active_session_id is not None:
@@ -80,7 +82,46 @@ the file, parse or history routes. `regionOf`'s `file` case has already made
 this argument from the routing side — "the routing already treats a file as
 project-shaped; only the data source is still session-shaped" (map, trap i).
 
-### 2.1 An open conflict this design must resolve rather than inherit
+### 2.1 SETTLED, 2026-08-27, and by something better than a tiebreak
+
+**The conflict below was real, was measured, and the measurement found a third
+thing: the response contradicted itself.** `topic_documents_view` built its
+`documents` array from `project_files` — HEAD — while reporting `at` as
+`tip_at_event`. So a file written after release was *listed*, and
+`GET /api/sessions/{id}/files?path=…&at=<that offset>` — the exact route the
+`at` exists to feed — answered `404 … not found as of event 7`. One response,
+two resolutions, and the pair was unusable.
+
+HEAD survived, on the domain's own criterion rather than the presenter's:
+`_catch_up_tip` exists to drag a stale tip up to `len(history)`, and its
+docstring calls work stranded past a release "unreachable from the project the
+moment they were written" — a bug, already settled by a test. **An offset below
+HEAD is never a statement about what a project *has*; it is a pointer the next
+join will move.** Its real job is as a fork point (`inherited_at`,
+`_fork_files_from`), which is a different question.
+
+Notable for anyone re-checking this: the real database *cannot* separate the
+two resolutions, because `_catch_up_tip` runs on every join and every live
+project's `tip_at_event` equals its tip session's stream length exactly. The
+one project whose tip ran on after release did so by a single `TurnFailed`,
+which touches no file. The divergence had to be reproduced synthetically, and
+the report says so rather than implying the case is common.
+
+`topic_documents_view`'s offset is deleted and `at` is now `None` in every
+branch. Two consequences this document inherits:
+
+- **`at` now carries no information** and should be dropped from the frontend
+  DTO, `toTopicDocuments`, and the `TopicDocuments` domain type. That is
+  frontend work and belongs in step 2 of §7.
+- **`_catch_up_tip` still only runs on join**, so `tip_at_event` remains stale
+  between a release and the next join. That is now unobservable through this
+  route, but any *future* reader of `tip_at_event` inherits the same trap and
+  nothing forbids one. The reading head in §2 must not become that reader.
+
+What follows is the original statement of the conflict, kept because the
+reasoning on both sides is what made it worth measuring rather than arguing.
+
+### 2.1a The conflict as it stood
 
 There are **two different answers to "what are this project's files" live in
 one process**, and only one of them has its reasoning written down:
@@ -96,15 +137,9 @@ Both arguments are coherent and they contradict each other. This design cannot
 pick one by reasoning, because both were arrived at by reasoning and one of
 them is wrong.
 
-**Resolve it by measurement, against a copy of the real database, before
-building anything on top.** `research_team.infrastructure.persistence.local_copy`
-makes the copy safely (`CLAUDE.md`, Read models). The question to answer: for a
-project whose tip session ran on after release, do the two resolutions return
-different file lists, and which one matches what the project actually has? Then
-delete the loser and record the measurement where the surviving one lives.
-
-Building the reading head on top of an unresolved contradiction would put a
-third answer in the process.
+This was resolved by measurement rather than by argument — §2.1 has the answer.
+Building the reading head on top of an unresolved contradiction would have put
+a third answer in the process.
 
 ## 3. What leaves the interface
 
@@ -214,8 +249,9 @@ From the map, the ones that constrain this work rather than merely inform it:
 
 ## 7. Sequencing
 
-1. Settle §2.1 by measurement. Nothing else starts until there is one answer to
-   "what are this project's files".
+1. ~~Settle §2.1 by measurement.~~ **Done, 2026-08-27** — HEAD survived, and
+   the measurement found a self-contradicting response rather than a tiebreak.
+   The frontend half (dropping the now-constant `at`) falls into step 2.
 2. Reading head on the project detail view, server-side, with the resolution
    lifted out of `topic_documents_view` so there is one copy.
 3. Workspace as a project tab over the reading head; the gate's condition
