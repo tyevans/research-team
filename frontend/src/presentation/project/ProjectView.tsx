@@ -491,13 +491,17 @@ export const ProjectView = ({
         ? 'area'
         : openFacet
 
-  /** Replaced rather than pushed by default, which is the rule the graph's
-   *  entity selection already follows:
-   *  a selection here is a glance, and forty glances in the back stack make the
-   *  back button useless. The caller says otherwise for the one selection that
-   *  is a destination — watching a worker. */
-  const select = (next: Selection | null, replace = true) => {
-    navigate(projectHref(projectId, next), { replace })
+  /** Replaced, never pushed: a selection on this page is a glance, and forty
+   *  glances in the back stack make the back button useless.
+   *
+   *  This took a `replace` flag until the roster left the page. Its one caller
+   *  passing `false` was the worker row — opening a worker's transcript was a
+   *  destination rather than a glance, and worth a back-button entry. The dock
+   *  opens a worker in a drawer and writes no URL, so there is no longer a
+   *  selection on this page that is a destination, and a flag with one legal
+   *  value is a decision nobody is making. */
+  const select = (next: Selection | null) => {
+    navigate(projectHref(projectId, next), { replace: true })
   }
 
   return (
@@ -517,14 +521,7 @@ export const ProjectView = ({
         {/* The four panels slice 0 parked loose here, now one band of chrome.
             That slice's comment named this as the change that would make it
             true, and `QueueHeader` carries the argument. */}
-        <QueueHeader
-          projectId={projectId}
-          watching={watching}
-          // Pushed rather than replaced: opening a worker's transcript is a
-          // destination, and the back button should come back out of it.
-          onWatch={(sessionId) => select(sessionSelection(sessionId), false)}
-          holdingSessionId={holdingSessionId}
-        />
+        <QueueHeader projectId={projectId} holdingSessionId={holdingSessionId} />
 
         {/* Replaced rather than pushed, like every MATERIAL selection below: a topic is a **glance**, not a
             destination. The queue is a list a reader scans — open a question,

@@ -32,13 +32,33 @@ export interface RunningAgent {
  * `WorkerRoster.everywhere`, which folds nothing when nothing is running. A
  * widget on every page cannot cost more than that.
  *
- * **Refreshed off the log frames the console is already receiving, never off a
- * timer.** The landing-page design doc records this decision and its reasoning
- * for its own per-row markers: a run's rounds *are* turns on a session, so the
- * frames that move a count are the frames that move the roster. A poll would
- * be a request per interval on every page, forever, mostly to be told that
- * nothing has changed.
+ * **Refreshed off the log frames the console is already receiving, plus a poll
+ * while the dock is open.** The landing-page design doc records the frame
+ * reasoning for its own per-row markers: a run's rounds *are* turns on a
+ * session, so the frames that move a count are the frames that move the
+ * roster -- for a run or a dispatch. A turn is the exception: see
+ * `ROSTER_POLL_MS`.
  */
+/** How often the open dock re-asks who is running.
+ *
+ * Two seconds, inherited from the project-page roster this replaced rather than
+ * chosen fresh. The interval is not tuning: it is the latency of "a new worker
+ * appeared" for the one worker kind whose appearance produces no frame. A
+ * turn's events append atomically when the turn commits
+ * (`session_service.run_turn`), so a turn is in the roster for exactly the
+ * interval in which the feed is silent about it -- measured by
+ * `tests/integration/test_turn_visibility.py::test_a_turns_events_all_become_visible_at_once`,
+ * run rather than reasoned from.
+ *
+ * Gated on the panel being open, which is the whole difference from what this
+ * replaced. The collapsed dock draws a count and keeps its frame-only refresh:
+ * a run or a dispatch appearing does produce a frame, and only a turn does not.
+ * What this costs is one request every two seconds while somebody is looking;
+ * what it replaced cost that on every open project page whether anyone was
+ * looking or not.
+ */
+export const ROSTER_POLL_MS = 2_000
+
 export const useRunningAgents = (
   /** Whether the widget is open. Almost everything here is gated on it -- see
    *  the two comments below, which are the reason this parameter exists rather
@@ -59,6 +79,10 @@ export const useRunningAgents = (
     queryKey: queryKeys.runningAgents(),
     queryFn: () => workers.everywhere(),
     retry: false,
+    // Per observer, not per key: `ProjectActivity` reads the same cache entry
+    // under `queryKeys.runningAgents()` and sets no interval, so the landing
+    // page keeps costing nothing.
+    refetchInterval: expanded ? ROSTER_POLL_MS : false,
   })
 
   useFrameRefresh(

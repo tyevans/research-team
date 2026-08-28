@@ -66,7 +66,6 @@ export const queryKeys = {
   project: (project: ProjectId) => ['project', project] as const,
 
   run: (project: ProjectId) => ['run', project] as const,
-  workers: (project: ProjectId) => ['workers', project] as const,
   /** Every project's run and worker state at once.
    *
    * The landing page draws one live marker per project row and has no list of

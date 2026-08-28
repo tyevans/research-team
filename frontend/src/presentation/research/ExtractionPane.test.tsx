@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
@@ -8,10 +8,25 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { ExtractionRepository } from '@application/ports/repositories.ts'
+import {
+  emptyExtraction,
+  type Extraction,
+  type ExtractionStage,
+} from '@domain/knowledge/extraction.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
-import { StreamProvider } from '../../shell/StreamProvider.tsx'
-import { ExtractionPane } from './ExtractionPane.tsx'
+import { StreamProvider } from '../shell/StreamProvider.tsx'
+import { ExtractionPane, ExtractionView } from './ExtractionPane.tsx'
+
+/** An `Extraction` with the stages *reached* set directly, for the two tests
+ *  below that assert on markup rather than on the store's fold -- built over
+ *  `emptyExtraction` so a field this file does not care about keeps its
+ *  default rather than being hand-repeated. */
+const running = (stages: readonly ExtractionStage[], now: ExtractionStage): Extraction => ({
+  ...emptyExtraction('notes'),
+  stage: now,
+  stages: stages.map((stage) => ({ stage, detail: '' })),
+})
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
@@ -56,8 +71,14 @@ const fakeStream = () => {
   }
 }
 
-/** Mirrors `Workers.test.tsx`'s harness, plus the `StreamProvider` this pane
- *  reads its frames from. */
+/** The pane, driven through the provider's fan-out rather than around it: a
+ *  `QueryClientProvider` with retries off, a partial container, and a fake
+ *  `EventStream` whose listener the test keeps so frames arrive the way the
+ *  real socket delivers them.
+ *
+ *  This used to say it mirrored `Workers.test.tsx`, which no longer exists --
+ *  the roster left the project page. Described rather than cross-referenced
+ *  this time, so the next deletion does not strand it again. */
 const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {
   const container = parts as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -75,13 +96,22 @@ const emptyRepo = () => ({
   on: vi.fn<ExtractionRepository['on']>().mockResolvedValue({ current: [], last: [] }),
 })
 
-it('says nothing has run rather than showing an empty box', async () => {
+it('renders nothing rather than an empty box when nothing has run', async () => {
+  // Used to render a heading and "No extraction has run on this project
+  // yet." -- the same claim the graph stage's own empty state makes, two
+  // elements away on the page this float now sits on. An always-present card
+  // whose only content is a negative sentence is most of what made this
+  // widget read as dead.
   const extractions = emptyRepo()
   const { stream } = fakeStream()
 
-  renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
+  const { container } = renderWithContainer(<ExtractionPane projectId={PROJECT} />, {
+    extractions,
+    stream,
+  })
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
-  expect(await screen.findByText(/No extraction has run on this project yet\./)).toBeInTheDocument()
+  expect(container).toBeEmptyDOMElement()
 })
 
 it('shows the stages, the model calls and the counts as they arrive', async () => {
@@ -89,7 +119,7 @@ it('shows the stages, the model calls and the counts as they arrive', async () =
   const { stream, push } = fakeStream()
 
   renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   push(frame({ stage: 'storing' }))
   push(frame({ stage: 'extracting', model_calls: 4 }))
@@ -111,7 +141,7 @@ it('renders a zero confidence as a fallback warning, not as a score', async () =
   const { stream, push } = fakeStream()
 
   renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   push(frame({ stage: 'extracted', domain: 'general', domain_confidence: 0 }))
 
@@ -125,7 +155,7 @@ it('says nothing about confidence when no classifier ran', async () => {
   const { stream, push } = fakeStream()
 
   renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   push(frame({ stage: 'extracted', domain: 'ecology', domain_confidence: null }))
 
@@ -139,12 +169,16 @@ it('lists the consolidation pass under its position', async () => {
   const { stream, push } = fakeStream()
 
   renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   push(frame({ stage: 'consolidating', detail: 'otter — merged into Lutra', index: 1, total: 9 }))
   push(frame({ stage: 'consolidating', detail: 'kelp — kept, no match', index: 2, total: 9 }))
 
-  expect(screen.getByText(/2\/9/)).toBeInTheDocument()
+  // The count now shows twice — once on the status line's own count, once on
+  // the consolidating line that names which pass it belongs to (see the
+  // comment beside that line in `ExtractionPane.tsx`) — so this asserts both
+  // are present rather than picking one with a query that would throw on two.
+  expect(screen.getAllByText(/2\/9/)).toHaveLength(2)
   expect(screen.getByText('otter — merged into Lutra')).toBeInTheDocument()
   expect(screen.getByText('kelp — kept, no match')).toBeInTheDocument()
 })
@@ -164,7 +198,7 @@ it('still has the merge verdicts after the extraction finishes', async () => {
   const { stream, push } = fakeStream()
 
   renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   push(frame({ stage: 'consolidating', detail: 'otter — merged into Lutra', index: 1, total: 2 }))
   push(frame({ stage: 'consolidating', detail: 'kelp — kept, no match', index: 2, total: 2 }))
@@ -184,7 +218,7 @@ it('keeps a failed extraction on screen with a failed tone', async () => {
   const { stream, push } = fakeStream()
 
   renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   push(frame({ stage: 'failed', detail: 'the model refused' }))
 
@@ -209,12 +243,17 @@ it('ignores another project’s frames', async () => {
   const extractions = emptyRepo()
   const { stream, push } = fakeStream()
 
-  renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  const { container } = renderWithContainer(<ExtractionPane projectId={PROJECT} />, {
+    extractions,
+    stream,
+  })
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   push(frame({ project_id: '99999999-9999-9999-9999-999999999999', stage: 'extracting' }))
 
-  expect(screen.getByText(/No extraction has run/)).toBeInTheDocument()
+  // Nothing for this project has run, so this stays exactly what `ExtractionView`
+  // renders for that state now: nothing.
+  expect(container).toBeEmptyDOMElement()
 })
 
 it('refetches on reconnect, because a dropped frame cannot be replayed', async () => {
@@ -222,11 +261,44 @@ it('refetches on reconnect, because a dropped frame cannot be replayed', async (
   const { stream, reconnect } = fakeStream()
 
   renderWithContainer(<ExtractionPane projectId={PROJECT} />, { extractions, stream })
-  await screen.findByText(/No extraction has run/)
+  await waitFor(() => expect(extractions.on).toHaveBeenCalled())
 
   expect(extractions.on).toHaveBeenCalledTimes(1)
 
   reconnect()
 
   expect(extractions.on).toHaveBeenCalledTimes(2)
+})
+
+/** The stage in flight is marked by something other than a colour.
+ *
+ * jsdom cannot judge the colour — it applies no stylesheet — so this asserts
+ * the hook a browser test measures against, and the browser suite asserts the
+ * computed value. Both are needed: this one fails fast in CI if the attribute
+ * is dropped, and that one fails if the attribute is present and inert.
+ *
+ * Proved red by rendering every segment with the same class. */
+it('marks the stage in flight, and only that one', () => {
+  render(<ExtractionView current={running(['storing', 'extracting'], 'extracting')} last={null} />)
+
+  const marked = screen
+    .getAllByRole('listitem')
+    .filter((li) => li.getAttribute('aria-current') === 'step')
+  expect(marked).toHaveLength(1)
+  expect(marked[0]).toHaveTextContent('extracting')
+})
+
+/** The status line says the stage, once, without a heading over it.
+ *
+ * The heading was "Reading into the graph" over a pane that is now a float on
+ * the graph itself, where it restated its own container. Proved red by keeping
+ * the `<h3>`. */
+it('names the stage on one status line and renders no heading', () => {
+  // A single stage means the trail also reads "extracting", so the name is
+  // asserted on the status line specifically rather than with a bare
+  // `getByText` that would find both.
+  render(<ExtractionView current={running(['extracting'], 'extracting')} last={null} />)
+
+  expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+  expect(document.querySelector('.extraction-status')).toHaveTextContent('extracting')
 })

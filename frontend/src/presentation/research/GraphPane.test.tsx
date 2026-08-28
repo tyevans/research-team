@@ -10,13 +10,18 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import { ApiError } from '@application/ports/errors.ts'
 import type { GraphRepository, UsagesRepository } from '@application/ports/repositories.ts'
-import type { GraphNode, GraphView, Neighborhood } from '@domain/knowledge/graph.ts'
+import {
+  emptyGraph,
+  type GraphNode,
+  type GraphView,
+  type Neighborhood,
+} from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
-import { GraphPane } from './GraphPane.tsx'
+import { GraphBrowser, GraphPane } from './GraphPane.tsx'
 
 // Asserting on canvas pixels would test the library, not this pane -- the
 // canvas is mocked to a stub that exposes what the pane hands it, so these
@@ -166,6 +171,44 @@ const renderWithContainer = (
   )
   return render(ui, { wrapper })
 }
+
+const emptyView: GraphView = emptyGraph
+
+/** `GraphBrowser` alone, with every prop the empty-canvas branches read given
+ *  a value and everything else a no-op -- the states this component is
+ *  responsible for (empty, extracting, errored, capped) do not need a live
+ *  store or a fake extraction repository to reach, which is the reason
+ *  `GraphBrowser` takes its data as props rather than as a `projectId`. */
+const renderBrowser = (over: Partial<Parameters<typeof GraphBrowser>[0]> = {}) =>
+  render(
+    <GraphBrowser
+      projectId={PROJECT}
+      extraction={null}
+      extracting={false}
+      view={emptyView}
+      results={[]}
+      knownTypes={[]}
+      truncated={false}
+      searching={false}
+      error={null}
+      partial={false}
+      edgesPartial={false}
+      loading={false}
+      entity={null}
+      term=""
+      entityType=""
+      minDegree={1}
+      onTerm={() => {}}
+      onEntityType={() => {}}
+      onMinDegree={() => {}}
+      onEntity={() => {}}
+      onPick={() => {}}
+      onReset={() => {}}
+      onRemove={() => {}}
+      graphUrl={() => '/api/projects/p/export/graph'}
+      {...over}
+    />,
+  )
 
 it('populates results from a search', async () => {
   const ada = node()
@@ -755,4 +798,20 @@ it('blames the threshold rather than the project when it hides everything', asyn
   // to ingest documents they already have.
   expect(await screen.findByText(/nothing is connected enough to draw/i)).toBeInTheDocument()
   expect(screen.queryByText(/this graph is empty/i)).not.toBeInTheDocument()
+})
+
+it('does not call the graph empty while an extraction is running', () => {
+  // The stage's canvas has no nodes until the first `graph` frame lands,
+  // minutes into an ingest -- so through the whole of a project's first
+  // extraction it told a reader watching that extraction "Nothing has been
+  // extracted into this project yet." A pre-existing defect, invisible until
+  // the float was moved next to it and the two contradicted each other on
+  // one screen.
+  //
+  // Proved red on 2026-08-27 by rendering with `extracting` ignored: the
+  // heading came back as "This graph is empty".
+  renderBrowser({ view: emptyView, extracting: true })
+
+  expect(screen.queryByText('This graph is empty')).not.toBeInTheDocument()
+  expect(screen.getByText(/extracting/i)).toBeInTheDocument()
 })

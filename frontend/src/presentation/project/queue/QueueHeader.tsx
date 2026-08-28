@@ -2,9 +2,7 @@ import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import { projectHref } from '../../routing/routes.ts'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
-import { ExtractionPane } from './ExtractionPane.tsx'
 import { RunPanel } from './RunPanel.tsx'
-import { Workers } from './Workers.tsx'
 import { SeedPanel } from '../../research/SeedPanel.tsx'
 
 /** The controls that act on the queue, above the queue.
@@ -54,20 +52,20 @@ import { SeedPanel } from '../../research/SeedPanel.tsx'
  * scroller. A focus ring inside it is therefore not at risk of the clipping
  * §5.2 of the plan describes; the rows in the list below are, and they are
  * unchanged from where they already lived.
+ *
+ * **The roster is not here, and the card it shared with the extraction pane is
+ * gone.** `Shell.tsx` gives chrome the test -- "what is running is not a
+ * property of the page you happen to be on" -- and a per-project roster polled
+ * every two seconds was this page answering a question the dock already
+ * answers for free. What is left in this header is only what a reader *acts*
+ * on: ask, be asked, run, seed, autonomy. That is the region's stated job and
+ * this is the first time the header has held only that.
  */
 export const QueueHeader = ({
   projectId,
-  watching,
-  onWatch,
   holdingSessionId,
 }: {
   projectId: ProjectId
-  /** The session whose transcript HOLDER is showing, so the roster can mark it.
-   *  Owned by the route. */
-  watching: SessionId | null
-  /** `null` is reachable: `Workers` calls this with `null` to clear the
-   *  selection when the marked row is clicked again. */
-  onWatch: (sessionId: SessionId | null) => void
   /** Where an autonomy write is recorded. `null` renders the panel read-only
    *  rather than offering controls that would 404 -- `AutonomyPanel`'s rule,
    *  unchanged by the move. */
@@ -124,14 +122,6 @@ export const QueueHeader = ({
       Be asked about this project
       <span aria-hidden="true">-&gt;</span>
     </a>
-
-    <section className={CARD} aria-label="Working now">
-      <Workers projectId={projectId} watching={watching} onWatch={onWatch} />
-      {/* Inside the same card rather than beside it: the roster row is the
-          summary -- "an extraction is running" -- and this is the detail under
-          it, so a reader who sees the row is asking the question this answers. */}
-      <ExtractionPane projectId={projectId} />
-    </section>
 
     <section className={CARD} aria-label="Autonomous research">
       <RunPanel projectId={projectId} />

@@ -14,7 +14,6 @@
 
      - `AutonomyPanel`   (15 rules), and the policy is instance-wide
      - `ExtractionPane`  (12)
-     - `WorkerList`      (8 + `worker-dot-${kind}`)
 
    The plan for the route merge expected this file to die in the QUEUE slice
    and named two passengers to rescue first. There were six. All three families
@@ -53,153 +52,123 @@
    two languages -- and is deleted with both halves. Nothing replaces it because
    there is no longer a pair to keep in step. */
 
-/* ---------------------------------------------------------------- workers
- *
- * A run's own counters say nothing about a turn or extraction that is also
- * in flight, so this panel lists them by kind rather than folding them into
- * the run's summary. The dot carries the kind's colour so a scan of the list
- * reads as a legend for itself, the same rule the event log follows. */
-.worker-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.worker-title {
-  margin: 0;
-  font-size: var(--t-sm);
-  font-weight: 600;
-}
-
-.worker-sub {
-  margin: 0;
-}
-
-.worker-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.worker-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--t-sm);
-}
-/* Indented under its parent rather than repeating the parent's name, since
- * `nest()` already did the work of establishing which worker owns which. */
-.worker-child {
-  margin-left: 22px;
-  padding-left: 8px;
-  border-left: 1px solid var(--line-soft);
-}
-
-.worker-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-}
-.worker-dot-run {
-  background: var(--k-session);
-}
-.worker-dot-turn {
-  background: var(--k-turn);
-}
-.worker-dot-extraction {
-  background: var(--k-tool);
-}
-/* `dispatch` has been a `WorkerKind` since #79 and has never had a dot rule
-   here, so every dispatch worker in the roster has rendered an undressed
-   (background-less) dot -- invisible, because the base `.worker-dot` sets a
-   size and a radius and no fill. Nothing caught it: the class is written from
-   `worker-dot-${kind}`, so a grep for the literal finds neither the use nor
-   the absence, and jsdom applies no stylesheet.
-
-   `--k-message` because it is the one hue in the palette this file does not
-   already spend -- `run` takes `--k-session`, `turn` takes `--k-turn` and
-   `extraction` takes `--k-tool`. Not the same assignment as `agents.css`,
-   which gives dispatch `--k-session`; the two widgets already disagree about
-   every other kind, and making them agree is a design decision, not a bug fix.
-   The colour was chosen by reading the palette, not verified in a browser. */
-.worker-dot-dispatch {
-  background: var(--k-message);
-}
-.worker-kind {
-  color: var(--fg-dim);
-  font-size: var(--t-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.worker-detail {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-}
-
-.worker-ref {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-}
-
 /* ------------------------------------------------------------ extraction
  *
- * The detail under the roster's extraction row. Indented behind a rule so it
- * reads as belonging to the row above rather than as a second panel, and set
- * in the mono face throughout: every line here is a machine's account of its
- * own progress, and the stage list only scans as a list if the labels align.
- */
+ * The float over the graph stage. Not indented behind a rule any more: it used
+ * to hang under a roster row as its detail, and there is no row now — it sits
+ * on the canvas as one of that pane's floating panels, so it carries their
+ * border and fill rather than a left rule. */
 .extraction {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-left: 10px;
-  border-left: 1px solid var(--line-soft);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-1);
 }
 
-.extraction-title {
+.extraction-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  font-size: var(--t-xs);
+  font-size: var(--t-sm);
+}
+
+.extraction-stage-name {
   font-weight: 600;
+}
+
+/* Right-aligned by taking the slack, so the count sits on the far edge of a
+ * line whose left is the stage name however long that name is. */
+.extraction-count {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
   color: var(--fg-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
-.extraction-sub {
-  margin: 0;
+/* `--k-tool` because that is the colour `.worker-dot-extraction` gave an
+ * extraction in the roster and `agents.css` gives it in the dock. The roster is
+ * gone; the agreement between the dock and this is the half worth keeping. */
+.extraction-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--k-tool);
+  animation: extraction-pulse 2.4s ease-in-out infinite;
 }
 
-/* Wrapping rather than scrolling: the stages are the shape of the work, and
- * a stage pushed off the end would hide the one part of this pane that says
- * how much is left. */
-.extraction-stages {
+.extraction-trail {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
   font-family: var(--mono);
   font-size: var(--t-xs);
 }
 
-.extraction-stage {
+/* Segments touch rather than sitting apart, which is the whole difference from
+ * the pill list this replaces: a gap between them read as five unrelated tags,
+ * and a reader had to know the order to see one. Only the first and last carry
+ * a radius, so a wrapped row still reads as one run. */
+.extraction-seg {
   color: var(--fg-faint);
   padding: 1px 6px;
   border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
+  border-right-width: 0;
+}
+.extraction-seg:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.extraction-seg:last-child {
+  border-right-width: 1px;
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
-/* The stage in flight, carried by colour *and* by a border, so it survives
- * being read by someone who cannot tell the two greys apart. */
-.extraction-now {
+/* Carried by colour *and* by a border, so it survives being read by somebody
+ * who cannot tell the two greys apart — the rule the pill list already had and
+ * the one thing about it that was right. */
+.extraction-seg-now {
   color: var(--accent);
   border-color: var(--accent-dim);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  animation: extraction-shimmer 2.4s ease-in-out infinite;
+}
+
+@keyframes extraction-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes extraction-shimmer {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+  }
+}
+
+/* Both animations off, not slowed. Neither carries information — the dot's
+ * colour and the segment's border say everything the motion says — so there is
+ * nothing to preserve at a reduced amplitude. */
+@media (prefers-reduced-motion: reduce) {
+  .extraction-dot,
+  .extraction-seg-now {
+    animation: none;
+  }
 }
 
 .extraction-line {
