@@ -240,19 +240,23 @@ describe('toRoster', () => {
     expect(roster.workers[0]?.sessionId).toBeNull()
   })
 
-  it('keeps a stage runner labelled as a stage rather than folding it into turn', () => {
-    // The trap #79 fixed for dispatch, guarded for the kind added after it:
-    // the fallback is `turn`, which is a different specific kind, so an
-    // unmapped `stage` would render as a confident wrong answer. Fails if the
-    // server grows a kind the mapper is not told about.
+  it('keeps a dispatch labelled as a dispatch rather than folding it into turn', () => {
+    // The trap #79 fixed, on the kind it was found on: the fallback is `turn`,
+    // which is a different specific kind, so an unmapped `dispatch` renders as
+    // a confident wrong answer. Fails if the mapper stops naming a kind the
+    // server still sends.
+    //
+    // This test read `kind: 'stage'` until the workflow system was removed. It
+    // passed the whole time and proved nothing after `WorkerKind` dropped
+    // `"stage"`: the fixture supplied a wire shape no server could produce.
     const roster = toRoster(
       parse(dto.rosterDto, {
         project_id: '11111111-1111-1111-1111-111111111111',
         workers: [
           {
-            kind: 'stage',
-            ref: 'ubd.stage2.evidence',
-            detail: 'ubd.pure · ubd.stage2.evidence · turn 2',
+            kind: 'dispatch',
+            ref: 'topic-3',
+            detail: 'topic 3 · turn 2',
             session_id: '22222222-2222-2222-2222-222222222222',
             parent: null,
             started_at: null,
@@ -262,7 +266,7 @@ describe('toRoster', () => {
       }),
     )
 
-    expect(roster.workers[0]?.kind).toBe('stage')
+    expect(roster.workers[0]?.kind).toBe('dispatch')
   })
 })
 

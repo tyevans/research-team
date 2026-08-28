@@ -270,7 +270,7 @@ class _CatalogFeatureRunner:
             raise RuntimeError(f"the catalog feature projection failed to start: {failures}")
 
     async def caught_up(self, timeout: float = 10.0) -> None:
-        """A test affordance, matching `definitions_caught_up` and the rest:
+        """A test affordance, matching `interaction_log_caught_up` and the rest:
         waits until the projection has replayed everything appended so far,
         rather than everything that will ever be appended."""
         if self._manager is None:
@@ -1206,7 +1206,7 @@ class Application:
         return self._catalog_runner.features
 
     async def catalog_caught_up(self) -> None:
-        """A test affordance, matching `definitions_caught_up` and the rest:
+        """A test affordance, matching `interaction_log_caught_up` and the rest:
         waits until `catalog_features` has replayed every `CourseFeatured`/
         `CourseUnfeatured` appended so far."""
         await self._catalog_runner.caught_up()
@@ -1385,18 +1385,6 @@ class Application:
         told when its batch landed, and could not use the answer.
         """
         await self.interaction_log.caught_up()
-
-    async def definitions_caught_up(self) -> None:
-        """Wait until the definition cache has seen every event appended.
-
-        A test affordance, like `interaction_log_caught_up` and unlike the
-        other two: nothing on the read path waits for staleness to land. The
-        cost of not waiting in production is one extra read of text that was
-        about to be marked stale, which is the same text the reader would
-        have seen a moment earlier anyway.
-        """
-        await self.definitions.caught_up()
-        await self.ontology.caught_up()
 
     async def reconciled(self) -> None:
         """Wait until startup reconciliation has finished, if it was scheduled.

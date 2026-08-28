@@ -33,7 +33,6 @@ import heapq
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Protocol
 
 from research_team.application.graph_read import Graph, GraphEntity, GraphRelationship
@@ -172,21 +171,6 @@ class SemanticPort(Protocol):
         cleanup.
         """
         ...
-
-
-@dataclass(frozen=True)
-class _Community:
-    """A live community during the merge, keyed by its lowest member id.
-
-    Keyed by the *lowest member id* rather than by a counter, because the key
-    is what ties break on and a counter would make the tie-break depend on
-    allocation order -- which is to say on nothing defensible. With this key
-    the tie-break is a property of the graph, so the same graph orders the
-    same way on every machine.
-    """
-
-    key: str
-    members: frozenset[str]
 
 
 def slugify(name: str, *, fallback: str) -> str:

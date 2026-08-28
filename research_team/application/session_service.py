@@ -58,7 +58,6 @@ from research_team.domain import (
     RecordAttempt,
     RecordChecklistState,
     RecordForkSource,
-    RecordToolDecision,
     RecordToolResult,
     SendUserMessage,
     Session,
@@ -228,11 +227,6 @@ class SessionService:
     def context_strategy(self) -> str:
         """Which context strategy this instance runs under."""
         return self._context.name
-
-    @property
-    def default_system_prompt(self) -> str:
-        """The prompt new sessions are started with. Existing ones keep their own."""
-        return self._default_system_prompt
 
     @property
     def projects(self) -> AggregateRepository[Project]:
@@ -705,36 +699,6 @@ class SessionService:
         """
         aggregate = await self._repository.load(session_id)
         aggregate.execute(WriteFile(path=path, file_data={"content": content}))
-        await self._repository.save(aggregate)
-
-    async def record_tool_decision(
-        self,
-        session_id: UUID,
-        tool_name: str,
-        args: dict[str, Any],
-        decision: str,
-        decided_by: str,
-    ) -> None:
-        """Note in the log that a gated call was allowed, refused, or amended.
-
-        The turn executor records this on the aggregate it is already holding,
-        mid-turn, and needs no use case for it. A caller deciding something
-        *between* turns holds no aggregate, and this is the seam for it.
-
-        Appends immediately rather than deferring to a turn, because there is
-        no turn to defer to: the decision is made and acted on before the next
-        one starts, and a decision that reached the store only if some later
-        turn succeeded would be missing from exactly the runs that went wrong.
-        """
-        aggregate = await self._repository.load(session_id)
-        aggregate.execute(
-            RecordToolDecision(
-                tool_name=tool_name,
-                args=args,
-                decision=decision,
-                decided_by=decided_by,
-            )
-        )
         await self._repository.save(aggregate)
 
     @property

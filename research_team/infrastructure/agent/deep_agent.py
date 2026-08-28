@@ -48,19 +48,22 @@ logger = logging.getLogger(__name__)
 #: Middleware for one turn, resolved when that turn's agent is built.
 #:
 #: A plain sequence would be wrong for anything that depends on where the run
-#: stands, because this executor rebuilds its agent on every pass and a
-#: workflow stage can change between two of them. It takes the session rather
-#: than closing over one so that a single executor can serve many.
+#: stands, because this executor rebuilds its agent on every pass and what the
+#: session holds changes between two of them -- `ComponentFeedback` reads the
+#: file the previous turn's `edit_file` wrote, so a sequence built once would
+#: validate every later turn against the state the first one saw. It takes the
+#: session rather than closing over one so that a single executor can serve
+#: many.
 MiddlewareProvider = Callable[[Session], Awaitable[Sequence[AgentMiddleware]]]
 
 #: Extra tools for one turn, resolved when that turn's agent is built.
 #:
 #: The sibling of `MiddlewareProvider`, and it exists for the same reason plus
 #: one more. `set_tools` covers a tool set that changes when a project is
-#: attached; this covers one that changes when the *project* does, with no
-#: attachment event to hang it off -- selecting a workflow is an HTTP call that
-#: writes an event and returns, and a tool registered only at attach time would
-#: be missing for the entire session that chose it.
+#: attached; this covers one that changes with no attachment event to hang it
+#: off -- a run's fetch grant is registered by `start_run` partway through a
+#: session that is already going, and a tool registered only at attach time
+#: would be missing for the entire run that was granted it.
 #:
 #: Middleware can only filter the registered set down, never add to it, so any
 #: tool a turn might be allowed has to be registered here at creation. Resolving
@@ -331,10 +334,12 @@ class DeepAgentTurnExecutor:
         """The registered tool set: what every turn starts from.
 
         Not the whole of what the next turn gets. A `tools_provider` adds what
-        the run's own state implies -- today, the workflow gate -- and that
-        cannot be reported here, because it depends on a session this property
-        has not been given. A caller asking what a *particular* turn was bound
-        has to watch the model, which is what the tests do.
+        the run's own state implies -- today, a grant-bound `fetch` for a
+        session some run's `FetchGrant` covers, which follows no redirects and
+        charges its spend -- and that cannot be reported here, because it
+        depends on a session this property has not been given. A caller asking
+        what a *particular* turn was bound has to watch the model, which is
+        what the tests do.
         """
         return tuple(self._tools)
 

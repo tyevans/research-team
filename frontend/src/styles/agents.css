@@ -250,14 +250,6 @@
   background: var(--k-session);
 }
 
-/* A stage runner takes the compaction slate rather than a sixth hue. The
-   palette has seven names and this is the fifth kind on a widget that has to
-   stay scannable; a colour nobody can tell from `run` at 6px would be worse
-   than one that is deliberately quiet. */
-.agents-kind-stage {
-  background: var(--k-compaction);
-}
-
 .agents-what {
   font-family: var(--mono);
   font-size: var(--t-xs);

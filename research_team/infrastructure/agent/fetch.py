@@ -93,10 +93,12 @@ _HEADERS = {
 def extract_page(html: str, url: str) -> tuple[str, str | None, str | None] | None:
     """One page's main content and metadata, or None when there is no prose.
 
-    Split out of `format_page` so the text kept for `remember_page` and the
-    text shown to the model come from a single extraction. Two extractions
-    would eventually disagree, and the disagreement would surface as a corpus
-    document that does not match the citation the model was reading from.
+    Split out of a `format_page` that no longer exists, so that the text kept
+    for `remember_page` and the text shown to the model come from a single
+    extraction. Two extractions would eventually disagree, and the
+    disagreement would surface as a corpus document that does not match the
+    citation the model was reading from. The single caller is the fetch tool,
+    which composes this with `_citation` itself.
 
     Metadata is best-effort for `_citation`'s original reason: it reaches into
     a foreign document, and a page with no title is worth reading anyway.
@@ -146,33 +148,6 @@ def _citation(
     if date:
         lines.append(f"date: {date}")
     return "\n".join(lines)
-
-
-def truncate_page(citation: str, text: str, limit: int) -> str:
-    """A citation plus as much of `text` as fits under `limit`, marked if cut.
-
-    Silent truncation is worse than visible truncation: the model would
-    reason about a partial page believing it had the whole one.
-    """
-    if len(text) > limit:
-        text = text[:limit].rstrip() + _TRUNCATED
-    return "\n\n".join(part for part in (citation, text) if part)
-
-
-def format_page(html: str, url: str, limit: int = MAX_CHARS) -> str:
-    """Extract one page's main content as markdown, headed by its citation.
-
-    Total by construction: a server can send anything at all under a
-    `text/html` content type, and an app shell that extracts to nothing is an
-    ordinary thing for the web to be rather than an exception for the agent to
-    reason about. Both arrive here as `None` from `extract_page` and leave as
-    the same sentence.
-    """
-    extracted = extract_page(html, url)
-    if extracted is None:
-        return UNREADABLE
-    text, title, date = extracted
-    return truncate_page(_citation(url, title, date), text, limit)
 
 
 async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str | None:
