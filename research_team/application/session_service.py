@@ -360,6 +360,20 @@ class SessionService:
         Resolved once, here, because every surface that shows a project's files
         needs the same answer -- and two of them computing it separately is two
         answers that will eventually disagree about which session was newer.
+
+        They did. `presenters.topic_documents_view` grew a second resolution
+        that sent `tip_at_event` as the scrub point beside the list this
+        builds, so one response listed a file written after a release and then
+        handed the reader routes a point at which it does not exist. Settled
+        on 2026-08-27 in favour of this one, and the criterion was
+        `_catch_up_tip` rather than an argument: that method exists to drag a
+        stale tip up to `len(history)`, which is HEAD, so an offset below HEAD
+        is never a statement about what the project has. Measured against a
+        `local_copy` of `~/.research-team/sessions.db` -- every live project
+        there had `tip_at_event` exactly equal to its tip session's stream
+        length, so the real data could not separate the two, and the
+        divergence had to be reproduced synthetically. See that function's
+        docstring for the paths.
         """
         state = await self.project_state(project_id)
         if state.active_session_id is not None:
