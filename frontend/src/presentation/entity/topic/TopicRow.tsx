@@ -24,10 +24,19 @@ import { EntityStatus } from '../EntityStatus.tsx'
  * all.
  */
 export interface TopicRowSlots {
-  /** The one verb this row offers — today a dispatch button. The view owns it
-   *  because the view owns the reason it is disabled: R-F3.4's single disabled
-   *  control is carefully reasoned about at its call site, and a row that
-   *  decided its own disabled-ness would have to re-derive that reasoning. */
+  /** The verbs this row offers on the line — today three dispatch icons. The
+   *  view owns them because the view owns the reason one of them is disabled:
+   *  R-F3.4's single disabled control is carefully reasoned about at its call
+   *  site, and a row that decided its own disabled-ness would have to
+   *  re-derive that reasoning.
+   *
+   *  It was one worded button and the slot did not have to change to hold
+   *  three icons, which is the whole argument for it being a `ReactNode`
+   *  rather than a `TopicVerb[]` like `overflow` below. `overflow` is a
+   *  description because a `Menu` will not route the keyboard to anything that
+   *  is not a `MenuItem`; this group has no such contract to protect, and the
+   *  price of that freedom is that its width is the view's to measure —
+   *  `TopicQueue.browser.test.tsx` is where that is done. */
   primary: ReactNode
   /** What the row reports about itself — today a dispatch chip. Not a verb:
    *  it is read, not pressed, so it belongs on the side of the line that gives

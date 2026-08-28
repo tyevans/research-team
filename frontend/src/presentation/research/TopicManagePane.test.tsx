@@ -68,6 +68,9 @@ const fakeTopics = (over: Partial<TopicRepository> = {}): TopicRepository => ({
   dispatchStatus: vi.fn(() => {
     throw new Error('TopicManagePane should never call dispatchStatus()')
   }),
+  dispatchBulk: vi.fn(() => {
+    throw new Error('TopicManagePane should never call dispatchBulk()')
+  }),
   cancelDispatch: vi.fn(() => {
     throw new Error('TopicManagePane should never call cancelDispatch()')
   }),

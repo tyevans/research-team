@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 
 import * as stories from './TopicQueue.stories.tsx'
+import { ROW_VERBS } from './TopicQueue.tsx'
 
 /** The queue tested through its own stories.
  *
@@ -78,7 +79,7 @@ it('keeps a failed dispatch on the row, with its untruncated reason reachable', 
   expect(chip.textContent).toContain('failed')
 })
 
-it('disables the one verb for a topic with nothing gathered, and says why', async () => {
+it('disables only synthesis for a topic with nothing gathered, and says why', async () => {
   const user = userEvent.setup()
   const onDispatch = vi.fn()
   render(<NothingToSynthesise onDispatch={onDispatch} />)
@@ -88,14 +89,101 @@ it('disables the one verb for a topic with nothing gathered, and says why', asyn
   // so the sentence explaining why it is off could only ever be delivered by
   // something that does not need the button to be interactive -- which is what
   // `title` was, and why it reached nobody. The press still has to do nothing.
-  const button = await screen.findByRole('button', { name: 'Write understanding' })
+  const button = await screen.findByRole('button', { name: ROW_VERBS.understanding })
   expect(button).toHaveAttribute('aria-disabled', 'true')
 
   button.focus()
-  expect(await screen.findByText('Nothing gathered for this topic yet')).toBeInTheDocument()
+  expect(await screen.findByText(/Nothing gathered for this topic yet/)).toBeInTheDocument()
 
   await user.click(button)
   expect(onDispatch).not.toHaveBeenCalled()
+})
+
+/** The asymmetry `research` landing created, which nothing else asserts.
+ *
+ * `hasNothingToSynthesise` gates `understanding` because synthesising from
+ * nothing produces the model's prior knowledge presented as project findings.
+ * `research` is precisely the action that ends that state, so gating it on the
+ * same predicate would lock the row shut on exactly the topics that most need
+ * it -- and would look entirely correct, because "all three verbs go off
+ * together" is the tidier-looking rule.
+ *
+ * **Proved red** by widening the predicate to all three verbs (`off={blocked
+ * || empty}` on each `RowVerb` in `TopicQueue.tsx`): both presses below stop
+ * firing and this fails on `research` first. The test above stays green
+ * through that change, which is why the two are separate.
+ *
+ * `refine` is here for a different reason and it is worth naming: the refine
+ * prompt forbids `record_finding`, so what makes ungrounded synthesis
+ * dangerous does not apply to it -- see `docs/design/
+ * topic-actions-on-the-row.md` §3.2a.
+ */
+it('leaves the two verbs that do not synthesise on, for a topic with nothing gathered', async () => {
+  const user = userEvent.setup()
+  const onDispatch = vi.fn()
+  render(<NothingToSynthesise onDispatch={onDispatch} />)
+
+  for (const action of ['research', 'refine'] as const) {
+    const button = await screen.findByRole('button', { name: ROW_VERBS[action] })
+    expect(button).toHaveAttribute('aria-disabled', 'false')
+    await user.click(button)
+    expect(onDispatch).toHaveBeenCalledWith(expect.any(String), action)
+  }
+})
+
+/** One press, one action, and the pairing is the thing that can silently
+ *  break.
+ *
+ * Three icons that all dispatch `understanding` typecheck, render identically,
+ * and are indistinguishable from correct until somebody reads a file that was
+ * written by the wrong prompt -- which is the shape `useTopicQueue`'s
+ * hard-coded `action: 'understanding'` had. Parametrised over all three rather
+ * than sampling one, because the case that separates a correct implementation
+ * from `onDispatch(topicId, 'understanding')` in every handler is *any verb
+ * other than the one that was there before*.
+ *
+ * **Proved red** by pointing every `RowVerb` at `'understanding'`: `research`
+ * fails first.
+ */
+it.each(['research', 'understanding', 'refine'] as const)(
+  'dispatches %s from the icon that offers it',
+  async (action) => {
+    const onDispatch = vi.fn()
+    render(<Queue onDispatch={onDispatch} />)
+
+    await userEvent.click((await screen.findAllByRole('button', { name: ROW_VERBS[action] }))[1]!)
+
+    expect(onDispatch).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222', action)
+  },
+)
+
+/** The label §3.2a of the design constrains, held against the one wording it
+ *  forbids rather than against the wording chosen.
+ *
+ * `refine` cannot rewrite the question -- no tool a dispatch turn holds can --
+ * so it writes `refinement.md` and a person applies it. "Refine this question"
+ * over a control that produces a proposal is a label that lies about who
+ * decided, and it is the label both the original ask and §3.2 use, which is
+ * exactly why it is the one a future edit would drift back towards.
+ *
+ * Asserting the absence of two words rather than the presence of the chosen
+ * sentence, deliberately: pinning the exact wording would make this a
+ * change-detector that fails on every rephrasing, where the contract is only
+ * that the control must not promise an edit it does not make. The tooltip is
+ * asserted positively instead, because *that* is where the document is named
+ * and a reader who never opens it is the reader this constraint is about.
+ *
+ * **Proved red** by relabelling the verb `Refine this question`.
+ */
+it('never offers to rewrite the question, because refine does not', async () => {
+  render(<Queue />)
+
+  const refine = (await screen.findAllByRole('button', { name: ROW_VERBS.refine }))[0]!
+  expect(refine).toHaveAccessibleName(expect.not.stringMatching(/rewrite|refine this question/i))
+
+  refine.focus()
+  expect(await screen.findByText(/Writes refinement\.md/)).toBeInTheDocument()
+  expect(screen.getByText(/You decide whether to apply it/)).toBeInTheDocument()
 })
 
 /** The hook the ring measurement finds the scroller by.
@@ -135,7 +223,7 @@ it('reports each row’s verbs against that row’s own topic', async () => {
 
   // The second row: blocked sorts first in the story's own data, so this is
   // deliberately not the one a bug closing over "the first topic" would hit.
-  await userEvent.click(screen.getAllByRole('button', { name: 'Write understanding' })[1]!)
+  await userEvent.click(screen.getAllByRole('button', { name: ROW_VERBS.understanding })[1]!)
 
   // `Manage` is behind a `⋯` now, which #40 needed for its 34px and which also
   // fixes the thing the index above is working around: the trigger is named
@@ -146,6 +234,6 @@ it('reports each row’s verbs against that row’s own topic', async () => {
   await userEvent.click(more)
   await userEvent.click(await screen.findByRole('menuitem', { name: 'Manage' }))
 
-  expect(onDispatch).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222')
+  expect(onDispatch).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222', 'understanding')
   expect(onManage).toHaveBeenCalledWith('22222222-2222-2222-2222-222222222222')
 })

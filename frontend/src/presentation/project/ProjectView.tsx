@@ -541,7 +541,9 @@ export const ProjectView = ({
           // sibling, which is what made it a band; `QueueHeader` carries the
           // measurement of what that cost. Handed down as a node because
           // `TopicQueue` fetches nothing and must keep not fetching.
-          toolbar={<QueueHeader projectId={projectId} />}
+          toolbar={(shownTopicIds) => (
+            <QueueHeader projectId={projectId} shownTopicIds={shownTopicIds} />
+          )}
           open={openTopic}
           onOpen={(topicId) => select(topicId === null ? null : { facet: 'topic', id: topicId })}
         />

@@ -25,18 +25,36 @@ export const TopicList = ({
   toolbar,
 }: {
   projectId: ProjectId
-  /** Passed straight through to `TopicQueue`'s toolbar line. Threaded rather
-   *  than rendered here because the controls on it are the *project page's* --
+  /** Passed through to `TopicQueue`'s toolbar line. Threaded rather than
+   *  rendered here because the controls on it are the *project page's* --
    *  `QueueHeader` lives under `presentation/project`, and a container in
    *  `presentation/research` reaching up into it would point the dependency
-   *  between the two directories backwards. `ProjectView` owns both. */
-  toolbar?: ReactNode
+   *  between the two directories backwards. `ProjectView` owns both.
+   *
+   *  **A function of the shown ids, and that signature is the safety
+   *  property.** The toolbar opens the drawer that holds "find sources for
+   *  every topic shown", whose whole guarantee is that the number on the
+   *  button and the number enqueued are the same by construction rather than
+   *  by two pieces of code agreeing. The ids handed here are the very array
+   *  the rows below are rendered from, so there is no second definition of
+   *  "shown" to drift from the first -- which is the reason the route refuses
+   *  an "all" and makes the client name every id (`dispatch_topics` in
+   *  `app.py`).
+   *
+   *  It is `[]` in both fetch states below, and that is honest rather than
+   *  convenient: a queue that has not loaded is showing nothing, and the
+   *  control reads "Find sources for 0 topics" and will not press. */
+  toolbar?: (shownTopicIds: readonly TopicId[]) => ReactNode
   /** Which topic is open, owned by the route. Defaulted so the queue can still
    *  be rendered outside a routed page -- see `useTopicQueue`. */
   open?: TopicId | null
   onOpen?: (topicId: TopicId | null) => void
 }) => {
-  const { query, detail, managing, onCloseManage, queue } = useTopicQueue(projectId, open, onOpen)
+  const { query, detail, managing, onCloseManage, queue, shownTopicIds } = useTopicQueue(
+    projectId,
+    open,
+    onOpen,
+  )
 
   // The toolbar outlives both fetch states, and that is not tidiness.
   //
@@ -55,7 +73,7 @@ export const TopicList = ({
   if (query.isPending) {
     return (
       <>
-        <ToolbarLine>{toolbar}</ToolbarLine>
+        <ToolbarLine>{toolbar?.([])}</ToolbarLine>
         <Loading what="topics" />
       </>
     )
@@ -64,7 +82,7 @@ export const TopicList = ({
   if (query.isError) {
     return (
       <>
-        <ToolbarLine>{toolbar}</ToolbarLine>
+        <ToolbarLine>{toolbar?.([])}</ToolbarLine>
         <ErrorBox
           heading="Could not read this project's topics"
           message={query.error instanceof Error ? query.error.message : String(query.error)}
@@ -76,7 +94,7 @@ export const TopicList = ({
 
   return (
     <>
-      <TopicQueue {...queue} toolbar={toolbar} />
+      <TopicQueue {...queue} toolbar={toolbar?.(shownTopicIds)} />
       {/* The wait is the same one the drawer needed and the reason has
           changed: `TopicManagePane` requires a `TopicDetail` to render at
           all, and while it was an overlay, opening on the click would have

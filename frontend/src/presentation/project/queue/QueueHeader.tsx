@@ -1,7 +1,8 @@
-import { type ReactNode, useState } from 'react'
+import { useState } from 'react'
 
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
+import { Glyph } from '../../common/Glyph.tsx'
 import { Tooltip } from '../../common/Tooltip.tsx'
 import { projectHref } from '../../routing/routes.ts'
 import { TopicsDrawer, TOPICS_HEADING } from './TopicsDrawer.tsx'
@@ -45,7 +46,17 @@ const DIALOGUE = 'Be asked about this project'
  * sits on belongs to `TopicQueue`. Putting it back above would restore the
  * separate band this slice exists to remove.
  */
-export const QueueHeader = ({ projectId }: { projectId: ProjectId }) => {
+export const QueueHeader = ({
+  projectId,
+  shownTopicIds,
+}: {
+  projectId: ProjectId
+  /** The topics the queue is currently showing, passed to the drawer's bulk
+   *  fan-out. Threaded down from `TopicList`, which is the only thing that
+   *  knows -- see its `toolbar` prop for why the ids travel rather than the
+   *  filter. */
+  shownTopicIds: readonly TopicId[]
+}) => {
   const [open, setOpen] = useState(false)
 
   return (
@@ -56,7 +67,13 @@ export const QueueHeader = ({ projectId }: { projectId: ProjectId }) => {
         topicsOpen={open}
         onOpenTopics={() => setOpen(true)}
       />
-      {open ? <TopicsDrawer projectId={projectId} onClose={() => setOpen(false)} /> : null}
+      {open ? (
+        <TopicsDrawer
+          projectId={projectId}
+          shownTopicIds={shownTopicIds}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
     </>
   )
 }
@@ -111,22 +128,12 @@ export const QueueToolbar = ({
   </div>
 )
 
-/** Drawn rather than written, for `AutonomyLock`'s reason: the console has no
- *  icon set, and a glyph borrowed from one would be the only borrowed glyph in
- *  it. `currentColor` so all three inherit `.btn-ghost`'s hover and disabled
- *  colours instead of declaring their own, and `aria-hidden` because the
- *  control already carries the sentence.
- *
- * A `viewBox` of 16 rendered at 12, unlike the lock's 12-at-12: the question
- * mark inside the bubble below needs room to be a question mark rather than a
- * smudge, and stroke widths scale with the box.
- *
- * Sliders rather than the `⚙` the design sketches. A gear at 12px is six
+/** Sliders rather than the `⚙` the design sketches. A gear at 12px is six
  * indistinguishable teeth, and the drawer this opens is not "settings" -- it
  * holds what *configures* the queue, which two adjustable rows say better than
  * a cog does.
  */
-const SlidersGlyph = () => (
+export const SlidersGlyph = () => (
   <Glyph>
     <path d="M2 5h9M2 11h9" />
     <circle cx="5" cy="5" r="1.6" />
@@ -147,7 +154,7 @@ const SlidersGlyph = () => (
  * as an `aria-label` and as a tooltip, so a reader who takes the tail to mean
  * the opposite of what it means loses nothing.
  */
-const AskGlyph = ({ incoming = false }: { incoming?: boolean }) => (
+export const AskGlyph = ({ incoming = false }: { incoming?: boolean }) => (
   <Glyph>
     <g transform={incoming ? 'translate(16 0) scale(-1 1)' : undefined}>
       <rect x="1.5" y="2" width="13" height="8.5" rx="2" />
@@ -156,20 +163,4 @@ const AskGlyph = ({ incoming = false }: { incoming?: boolean }) => (
       <circle cx="8.1" cy="9.1" r="0.35" fill="currentColor" stroke="none" />
     </g>
   </Glyph>
-)
-
-const Glyph = ({ children }: { children: ReactNode }) => (
-  <svg
-    width="12"
-    height="12"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.3"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    {children}
-  </svg>
 )

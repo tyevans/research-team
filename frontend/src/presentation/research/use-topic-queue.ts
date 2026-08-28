@@ -8,6 +8,7 @@ import {
   useDispatchTopic,
 } from '@application/research/use-dispatch.ts'
 import { useContainer } from '@app/container-context.tsx'
+import type { DispatchAction } from '@domain/research/dispatch.ts'
 import { byUrgency, focusCounts, matchesTopic, type TopicFocus } from '@domain/research/topic.ts'
 import type { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
@@ -79,9 +80,20 @@ export const useTopicQueue = (
 
   const counts = useMemo(() => focusCounts(query.data ?? []), [query.data])
 
+  /** The ids of exactly the rows on screen, for the bulk fan-out.
+   *
+   * Derived from `shown` rather than recomputed from `query.data`, and that is
+   * the whole safety property rather than a shortcut: the fan-out's guarantee
+   * is that the number on its button and the number of turns it starts are the
+   * same by construction. A second filter expression here would be a second
+   * definition of "shown", and the server refuses an "all" precisely so that
+   * definition lives in one place (`dispatch_topics` in `app.py`). */
+  const shownTopicIds = useMemo(() => shown.map((topic) => topic.topicId), [shown])
+
   return {
     query,
     detail,
+    shownTopicIds,
     managing,
     onManage,
     onCloseManage: () => onManage(null),
@@ -105,8 +117,12 @@ export const useTopicQueue = (
       onStop: () => {
         cancelling.mutate()
       },
-      onDispatch: (topicId: TopicId) => {
-        dispatching.mutate({ topicId, action: 'understanding' })
+      // The action comes from the row rather than being fixed here. It was
+      // `action: 'understanding'` hard-coded, which was honest while that was
+      // the only verb this build ran and is a silent wrong-action bug the
+      // moment the row offers three.
+      onDispatch: (topicId: TopicId, action: DispatchAction) => {
+        dispatching.mutate({ topicId, action })
       },
     },
   }

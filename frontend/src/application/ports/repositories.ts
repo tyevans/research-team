@@ -36,7 +36,7 @@ import type {
 } from '@domain/research/document.ts'
 import type { ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { IgnoredMedia, MediaProposalGroup } from '@domain/research/media-proposal.ts'
-import type { Dispatch } from '@domain/research/dispatch.ts'
+import type { Dispatch, DispatchAction } from '@domain/research/dispatch.ts'
 import type { TopicDocuments } from '@domain/research/topic-document.ts'
 import type { SeedingRun } from '@domain/research/seeding.ts'
 import type { TopicDetail, TopicStatus, TopicView } from '@domain/research/topic.ts'
@@ -238,7 +238,24 @@ export interface TopicRepository {
    *  every topic row cannot answer "the project is busy" to every second
    *  press, so a busy project queues. Rejects 404 for a topic this project
    *  does not have and 422 for an action this build does not run. */
-  dispatch(projectId: ProjectId, topicId: TopicId, action: string): Promise<Dispatch>
+  dispatch(projectId: ProjectId, topicId: TopicId, action: DispatchAction): Promise<Dispatch>
+  /** Send the same agent at every topic in a list, in the order given.
+   *
+   *  **The scope is the caller's and there is no "all".** A route that took
+   *  "all" would have to define it against a queue the browser is filtering,
+   *  and the two definitions would drift; the safety property this buys is
+   *  that the count on screen and the number of turns started are the same
+   *  number by construction rather than by two pieces of code agreeing.
+   *
+   *  Rejects 422 for an empty list, for more than fifty ids, and for an
+   *  action this build does not run. Ids the project does not hold come back
+   *  in `unknown` rather than refusing the whole call -- see
+   *  `BulkDispatchResult`. */
+  dispatchBulk(
+    projectId: ProjectId,
+    action: DispatchAction,
+    topicIds: readonly TopicId[],
+  ): Promise<BulkDispatchResult>
   /** What is running, what is queued and how each topic's last one went.
    *
    *  The catch-up read these frames cannot do without: they carry no feed
@@ -256,6 +273,17 @@ export interface TopicRepository {
    *  that is a state, not a missing resource — and rejects 404 only for a
    *  topic this project does not have. */
   documents(projectId: ProjectId, topicId: TopicId): Promise<TopicDocuments>
+}
+
+/** What one fan-out started, and what it could not.
+ *
+ * `unknown` exists so a caller can say "started 11 of 12" rather than
+ * silently starting fewer than it offered. A client that ignores it is the
+ * failure this field is here to make expressible.
+ */
+export interface BulkDispatchResult {
+  readonly queued: readonly Dispatch[]
+  readonly unknown: readonly string[]
 }
 
 /** Everything a project has dispatched, as one read.

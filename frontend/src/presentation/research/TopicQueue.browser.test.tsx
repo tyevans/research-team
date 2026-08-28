@@ -9,7 +9,7 @@ import { TopicId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { QueueToolbar } from '../project/queue/QueueHeader.tsx'
-import { TopicQueue } from './TopicQueue.tsx'
+import { ROW_VERBS, TopicQueue } from './TopicQueue.tsx'
 
 /** What the row reports about its own dispatch, at the width the row gets.
  *
@@ -128,10 +128,15 @@ it('draws the dispatch chip inside the row it reports on', async () => {
   expect(chipBox.right).toBeLessThanOrEqual(factsBox.right + 1)
 })
 
-it('keeps both verbs on the row while it does', async () => {
+it('keeps every verb on the row while it does', async () => {
   // The other half of the trade, and the reason it needs asserting in the same
   // suite: freeing space for the chip by letting a verb fall off the edge is
   // the defect #38 fixed, arriving from the other direction.
+  //
+  // Four controls now rather than two. `docs/design/
+  // topic-actions-on-the-row.md` §5 names this exact assertion as required
+  // before three icons may sit here at all, and it is the assertion that
+  // decided the split -- see the next test for the numbers.
   await render(<Rail dispatches={new Map([[String(TOPIC.topicId), RUNNING]])} />)
 
   const metaBox = page
@@ -140,12 +145,68 @@ it('keeps both verbs on the row while it does', async () => {
     .closest('.ent-topic-meta')!
     .getBoundingClientRect()
 
-  for (const name of ['Write understanding', 'More actions']) {
-    const verb = page.getByRole('button', { name: new RegExp(name) }).element()
+  for (const name of [...Object.values(ROW_VERBS), 'More actions']) {
+    const verb = page.getByRole('button', { name: new RegExp(escape(name)) }).element()
     const box = verb.getBoundingClientRect()
     expect(box.width).toBeGreaterThan(0)
     expect(box.right).toBeLessThanOrEqual(metaBox.right + 1)
   }
+})
+
+/** `RegExp` metacharacters in an accessible name, of which `ROW_VERBS` has
+ *  none today and would have the moment a verb's sentence ends in a `?`. */
+const escape = (text: string): string => text.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
+
+/** The width decision itself, as the numbers that made it.
+ *
+ * `docs/design/topic-actions-on-the-row.md` §2 sketches **two** icons on the
+ * row with "write our understanding" under the `⋯`, and says out loud that the
+ * split belongs to whoever measures it. This is that measurement, and it went
+ * the other way: three `.btn-ghost.btn-sm` icons plus the `⋯` are **narrower**
+ * than the single worded `Write understanding` button plus the `⋯` they
+ * replace. Moving a verb under the menu would be spending a click to buy width
+ * the row already has.
+ *
+ * Measured in Chromium at the 340px rail above, on the very row the test
+ * before this one renders, by reading `.ent-topic-verbs`:
+ *
+ * - `Write understanding` + `⋯`, which is what shipped: **151.16px**
+ * - three icons + `⋯`, which is what this is: **133px**
+ * - four icons + `⋯`, for the tripwire below: **169px**
+ *
+ * So the facts group beside the verbs *ends further right* after this change
+ * than before it — the opposite of the direction `CHIP` above records losing
+ * twice, and the reason the chip's own assertions did not have to move.
+ *
+ * The bound is the old arrangement's width rather than a tighter round number,
+ * because the property worth keeping is comparative: two verbs were added and
+ * must not have cost the chip beside them any room. A `toBeLessThan(140)` also
+ * passes today and would fail on a font change that moved nothing anybody
+ * could see.
+ *
+ * **Proved red** by adding a fourth `RowVerb` to `RowVerbs`: 169 against a 151
+ * bound. That is the tripwire this test is for — a fourth control on this row
+ * is where §2's split stops being a click spent for nothing, and it fails here
+ * rather than by somebody noticing a clipped glyph.
+ *
+ * `.ent-topic-verbs` is found through the `⋯` rather than through a verb,
+ * deliberately: the `⋯` is the one control in the group that is present in
+ * every arrangement, so this locator survives the split being revisited.
+ */
+it('spends less of the row on three icons than on the one worded button', async () => {
+  await render(<Rail dispatches={new Map([[String(TOPIC.topicId), RUNNING]])} />)
+
+  const verbs = page
+    .getByRole('button', { name: /More actions/ })
+    .element()
+    .closest('.ent-topic-verbs')!
+    .getBoundingClientRect()
+
+  // 151 is not a token. It is the measured width of what stood here -- a
+  // `.btn.btn-sm` reading `Write understanding`, the 28px `⋯`, and the gap
+  // between them -- recorded so the comparison survives this file being read
+  // by somebody who never saw that row.
+  expect(verbs.width).toBeLessThan(151)
 })
 
 /** The toolbar line, which is a width fight and therefore not a jsdom question.
