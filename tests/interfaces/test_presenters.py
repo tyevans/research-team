@@ -28,6 +28,7 @@ from research_team.domain import (
 from research_team.domain.course import CourseFit
 from research_team.domain.course_catalog import ArtRef, CatalogSections, CourseCandidate
 from research_team.domain.learning_area import AreaMember
+from research_team.domain.project import ProjectState
 from research_team.interfaces.web.presenters import (
     SUMMARY_LIMIT,
     catalog_view,
@@ -42,6 +43,7 @@ from research_team.interfaces.web.presenters import (
     project_view,
     source_view,
     summary_view,
+    topic_documents_view,
 )
 
 AGGREGATE = uuid4()
@@ -611,3 +613,76 @@ def test_a_catalogs_orphaned_courses_carry_slug_title_and_realized_at():
             "realizedAt": "2026-08-20T00:00:00+00:00",
         }
     ]
+
+
+def test_a_released_projects_documents_are_reported_at_head_not_the_tip_offset():
+    """The file list and the scrub point sent beside it must name one moment.
+
+    `documents` is built from `SessionService.project_files`, which folds the
+    tip session to HEAD on purpose -- a session goes on accepting turns after
+    a release, and work written afterwards is the project's
+    (`_catch_up_tip`, and
+    `test_a_release_does_not_freeze_the_project_at_the_moment_it_happened`).
+    This view used to send `state.tip_at_event` alongside that HEAD list, so
+    one response listed a file and then handed the reader routes a point at
+    which it does not exist.
+
+    Fails with the change reverted, on `at`, reporting `7` -- the offset the
+    synthetic reproduction recorded on 2026-08-27, where `/topics/00-a/after.md`
+    was listed by HEAD and absent at 7.
+    """
+    tip = uuid4()
+    state = ProjectState(
+        project_id=uuid4(),
+        status="created",
+        name="research",
+        active_session_id=None,
+        tip_session_id=tip,
+        tip_at_event=7,
+    )
+    files = {"/topics/00-a/before.md": {}, "/topics/00-a/after.md": {}}
+
+    view = topic_documents_view("/topics/00-a", files, state)
+
+    assert view["session_id"] == str(tip)
+    assert view["at"] is None
+    assert [document["name"] for document in view["documents"]] == [
+        "after.md",
+        "before.md",
+    ]
+
+
+def test_a_held_project_still_reports_head():
+    """Unchanged by the fix, and here so the two branches are pinned together:
+    a live holder was always HEAD, and now the released branch agrees with it.
+
+    Passes with the change reverted -- it is the control, not the finding.
+    """
+    holder = uuid4()
+    state = ProjectState(
+        project_id=uuid4(),
+        status="created",
+        name="research",
+        active_session_id=holder,
+        tip_session_id=uuid4(),
+        tip_at_event=3,
+    )
+
+    view = topic_documents_view("/topics/00-a", {"/topics/00-a/x.md": {}}, state)
+
+    assert view["session_id"] == str(holder)
+    assert view["at"] is None
+
+
+def test_a_project_nobody_has_joined_names_no_session():
+    """No stream to read from, reported as no session rather than an error.
+
+    Passes with the change reverted; it guards the branch the fix reshaped.
+    """
+    state = ProjectState(project_id=uuid4(), status="created", name="research")
+
+    view = topic_documents_view("/topics/00-a", {}, state)
+
+    assert view["session_id"] is None
+    assert view["at"] is None
+    assert view["documents"] == []
