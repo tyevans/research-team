@@ -6,6 +6,7 @@ import type { ProjectRollup } from '@domain/project/landing.ts'
 import type { Project } from '@domain/project/project.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
+import { Menu, MenuItem, MenuTrigger } from '../../common/Menu.tsx'
 import { Button, Chip } from '../../common/primitives.tsx'
 import { OverlayHost } from '../../layout/OverlayHost.tsx'
 import { ProjectCard } from './ProjectCard.tsx'
@@ -22,8 +23,9 @@ import { ProjectCard } from './ProjectCard.tsx'
  * The defect is not hypothetical for this head in particular. `ProjectRow`,
  * which this card replaced, wrote `flex-wrap: wrap` on `.project-head`, and
  * `.ent-project-head` did not — it was written for a gallery frame with two
- * chips on it, and the landing page puts five things there: a disclosure, a
- * name, a badge, a holder and a run marker. Clipping at rail width is
+ * chips on it, and the landing page put five things there: a disclosure, a
+ * name, a badge, a holder and a run marker (four now, the holder having left).
+ * Clipping at rail width is
  * the same defect already filed twice against the topic row's meta line and
  * its dispatch chip.
  *
@@ -78,15 +80,25 @@ const Rail = () => (
     <div style={{ width: `${RAIL}px` }}>
       <ProjectCard
         rollup={rollup()}
+        href="#/p/3f2a1b9c-1111-2222-3333-444444444444"
         slots={{
-          toggle: (
-            <Button small tone="quiet">
-              all 3 sessions
-            </Button>
-          ),
+          toggle: 'all 3 sessions',
           badges: <Chip>4 areas</Chip>,
           activity: <span className="chip chip-held">⟳ run · round 3</span>,
-          primary: <Button small>Resume 7d41e0aa</Button>,
+          meta: <span>2 days ago</span>,
+          primary: <Button small>Continue</Button>,
+          overflow: [
+            <Menu
+              key="more"
+              label="More actions"
+              open={false}
+              onOpenChange={() => undefined}
+              trigger={<MenuTrigger aria-label="More actions" />}
+            >
+              <MenuItem onSelect={() => undefined}>Delete</MenuItem>
+            </Menu>,
+          ],
+          preview: <p className="preview-text">the current session sits here</p>,
         }}
       />
     </div>
@@ -106,7 +118,7 @@ it('keeps everything in the head inside the card at rail width', async () => {
   // it.
   const card = document.querySelector('.ent-project-card')!.getBoundingClientRect()
 
-  for (const selector of ['.ent-project-name', '.chip', '.ent-project-holder']) {
+  for (const selector of ['.ent-project-name', '.chip', '.ent-project-toggle']) {
     expect(rightEdgeOf(selector)).toBeLessThanOrEqual(card.right)
   }
   expect(rightEdgeOf('.chip-held')).toBeLessThanOrEqual(card.right)
@@ -122,4 +134,74 @@ it('gives the name the room the chips do not need, rather than an equal share', 
   // items that do not shrink there is nothing left for it.
   const name = document.querySelector('.ent-project-name')!.getBoundingClientRect()
   expect(name.width).toBeGreaterThan(RAIL / 2)
+})
+
+/** The card is one link, and every control on it is still a control.
+ *
+ * `entity.css` stretches `.ent-project-name::after` over the whole card so that
+ * the padding and the stat line lead to the project page — the friction this
+ * page's redesign is mostly about, since the name was an inert `<span>` (the
+ * landing page never passed `href`) and the project page was reached through a
+ * small secondary button four controls along. The half of that trade which can
+ * go wrong is invisible: an element under the overlay is not merely hard to
+ * click, it is unreachable by mouse entirely, and it renders completely
+ * normally.
+ *
+ * **jsdom cannot see any of this.** It lays nothing out, so every rect is 0×0
+ * and `elementFromPoint` has nothing to answer with, and it applies no
+ * stylesheet, so the `z-index` rules that raise the controls do not exist there
+ * at all. A card with the overlay and a card without produce identical markup.
+ *
+ * **Both were proved red in Chromium on 2026-08-27**, each against the rule it
+ * is about: deleting `.ent-project-name::after` fails the first (the hit lands
+ * on `.ent-project-stats`), and deleting the `position: relative`
+ * block fails the second (every control reports the anchor). They fail
+ * separately, which is the point of having two — the overlay and the raising
+ * are one mechanism and two mistakes.
+ */
+const centreOf = (selector: string) => {
+  const rect = document.querySelector(selector)!.getBoundingClientRect()
+  return document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+}
+
+it('makes the card itself the way to the project', async () => {
+  await render(<Rail />)
+  await expect.element(page.getByText('⟳ run · round 3')).toBeVisible()
+
+  const card = document.querySelector('.ent-project-card')!.getBoundingClientRect()
+  const link = document.querySelector('.ent-project-name')!
+
+  // The overlay is a pseudo-element and has no rect of its own to read. What
+  // can be read is the consequence: a point inside the card that is over no
+  // control at all hits the anchor. The stat line is that point — metadata,
+  // deliberately left under the overlay, which is the same choice that costs it
+  // drag-selection.
+  expect(centreOf('.ent-project-stats')).toBe(link)
+
+  // And the overlay does not reach past the card into the gap between rows,
+  // which is what `position: relative` on the card is for: without it the
+  // `::after` resolves against the virtualizer's absolutely positioned `<li>`
+  // and would cover the margin as well.
+  const outside = document.elementFromPoint(card.left + card.width / 2, card.bottom + 4)
+  expect(outside).not.toBe(link)
+})
+
+it('leaves every control on the card clickable through the overlay', async () => {
+  await render(<Rail />)
+  await expect.element(page.getByText('⟳ run · round 3')).toBeVisible()
+
+  // Each of these is a real target a reader is meant to hit, and each one sits
+  // over the stretched link. Containment rather than identity, because a
+  // control's centre may be its own text node — what matters is that the hit
+  // lands inside the control rather than on the anchor, and a button whose
+  // label is raised while its padding is not would still fail this.
+  for (const selector of [
+    '.ent-project-toggle',
+    '.chip-held',
+    '.preview-text',
+    '.ent-project-actions .btn',
+  ]) {
+    const control = document.querySelector(selector)!
+    expect(control.contains(centreOf(selector))).toBe(true)
+  }
 })

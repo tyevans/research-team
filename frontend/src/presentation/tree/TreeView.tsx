@@ -10,14 +10,21 @@ import { NewProjectForm } from './NewProjectForm.tsx'
 import { ProjectList } from './ProjectList.tsx'
 import { useSessionForest } from './SessionTree.tsx'
 
-/** The console's landing page: projects, with their sessions inside them.
+/** The console's landing page: projects, and nothing above them.
  *
- * One sentence of purpose, one primary action, then the projects. The page
- * this replaces led with `<h1>Sessions</h1>` at the largest type size in the
- * console and put projects under an `<h2>` below it — the durable unit beneath
- * the ephemeral one, which is backwards: sessions are minted by every
- * `/project use`, every take-over and every fork, while a project is the only
- * thing work outlives a conversation in.
+ * **Two things were removed from the top of this page and the argument is the
+ * same for both: they are read once and rendered forever.** A two-sentence
+ * paragraph explaining what a project is, non-dismissible, and an `<h2>`
+ * reading "Projects" over the only list on the page. Together they pushed the
+ * first row down by roughly a third of the fold on a laptop, every visit, for
+ * a reader who has been here two hundred times. The paragraph is not deleted —
+ * it is on `FirstRun`, where somebody is genuinely reading it for the first
+ * time and where it was always the better version of itself. The heading is
+ * deleted outright: the recency bands below already label the list, and a
+ * heading whose only content is the name of the page it is on is chrome.
+ *
+ * What is left above the fold is the two controls a returning reader uses —
+ * create, and search — and then rows.
  */
 export const TreeView = () => {
   const { projects } = useContainer()
@@ -65,15 +72,6 @@ export const TreeView = () => {
       {/* The scroll container is the section, so the virtualizers measure
           against the whole page; the width lives on the wrapper inside it. */}
       <div className="home-inner">
-        {/* Not dismissible. It costs one line, and it is the only thing on the
-          page telling somebody who did not build this what they are looking
-          at. The sentence it replaces — "Forks branch from an event index" —
-          is true and parses only if you have already read the README. */}
-        <p className="purpose">
-          An agent whose whole session is one event log. A project is where that work outlives one
-          conversation — a filesystem and a knowledge graph its sessions share.
-        </p>
-
         <div className="actions">
           <Button tone="accent" onClick={() => setCreating(!creating)} aria-expanded={creating}>
             + New project
@@ -86,12 +84,24 @@ export const TreeView = () => {
             aria-label="Search projects and sessions"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
+            // Escape clears and gives the page back, which `type="search"`
+            // gives you in WebKit and in no other engine — and even there only
+            // as a clear, leaving focus in a box the reader has finished with.
+            // Two keystrokes were needed to undo one: select-all, delete, then
+            // Tab or a click. A reader who has typed into a filter and changed
+            // their mind is the commonest way out of a search, and it was the
+            // most expensive.
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return
+              event.preventDefault()
+              setSearch('')
+              searchRef.current?.blur()
+            }}
           />
         </div>
 
         {creating ? <NewProjectForm onCreated={() => setCreating(false)} /> : null}
 
-        <h2 className="section">Projects</h2>
         {/* In the page, not only as a badge in the topbar. Every project row
             counts its sessions and names its current one out of the same
             projection, so "the session list may be lying" is a statement about

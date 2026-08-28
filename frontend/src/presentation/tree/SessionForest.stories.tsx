@@ -120,18 +120,22 @@ export const EveryRowState: Story = {
   ),
 }
 
-/** The held session, which is the one a reader is most likely to want.
+/** Two ordinary rows, and the story that used to be `Held`.
  *
- *  `held` is a prop rather than a field on the summary: which session holds
- *  the project is a process fact, not a log fact, and the row is told rather
- *  than deducing it. Shown next to an unheld sibling because the chip is the
- *  only difference. */
+ *  It drew one row with a `held` chip beside one without, on the argument that
+ *  which session holds the project is a process fact the row is told rather
+ *  than deduces. The argument stands and the chip is gone anyway: on the
+ *  landing page the previewed row *is* the holder in the ordinary case, so the
+ *  chip labelled the one session a reader was being shown with a word about
+ *  lock ownership. Kept as a story, and kept under its old name, because it is
+ *  what the gallery has that shows two sibling rows agreeing — a row that
+ *  starts drawing state it should not is visible here and nowhere else. */
 export const Held: Story = {
   render: () => (
-    <Frame heading="held against not held">
+    <Frame heading="two sibling rows, neither marked">
       <ul className="tree">
         <li>
-          <SessionRow session={session({ id: '7d41e0aa-1111-4111-8111-444444444444' })} held />
+          <SessionRow session={session({ id: '7d41e0aa-1111-4111-8111-444444444444' })} />
         </li>
         <li>
           <SessionRow session={session({ id: 'b2c93f17-1111-4111-8111-555555555555' })} />
@@ -187,7 +191,6 @@ export const Lineage: Story = {
             ],
           ),
         ]}
-        heldBy="b2c93f17-1111-4111-8111-555555555555"
       />
     </Frame>
   ),

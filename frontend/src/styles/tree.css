@@ -66,17 +66,13 @@
   max-width: 78ch;
 }
 
-/* `--t-sm` uppercase, not `--t-2xl`. A heading labels a list; it is not the
-   most important text on the page, and at 23px it was the largest text in the
-   whole console. */
-.section {
-  margin: var(--space-6) 0 var(--space-3);
-  font-size: var(--t-sm);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
-}
+/* `.section` stood here, dressing an `<h2>Projects</h2>` over the only list on
+   the page. Both are gone: the recency bands below already label the list, and
+   a heading whose content is the name of the page it is on is a line of chrome
+   a returning reader re-reads on every visit. Deleted rather than left, because
+   a rule that matches no element costs nothing at runtime, fails no gate, and
+   reads to the next person as a live part of the design -- which is the failure
+   the `.view-head` note above this records at length. */
 
 /* --- action bar --------------------------------------------------------- */
 
@@ -92,30 +88,18 @@
   min-width: 0;
 }
 
-/* `.node-actions` had no rule in any of the seventeen stylesheets, so every
-   row's buttons were raw inline-block elements with no gap and no wrap
-   behaviour.
+/* `.node-actions` and `.node-actions-gap` stood here and are both deleted.
 
-   `.view-head-actions` shared this declaration and is deleted with the rest of
-   the `.view-head` family above: `QueueHeader.tsx` records that the course and
-   research views each carried an "Ask" link in one, and the commit that deleted
-   both views deleted the last element that carried the class. */
-.node-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  /* Was a second `.node-actions` block, because the four declarations above
-     were shared with `.view-head-actions` and the margin was not. With the
-     other selector gone there is nothing left to separate them. */
-  margin-top: var(--space-3);
-}
-/* Pushes the two navigation buttons away from the two that start something,
-   so the row reads as two groups rather than four adjacent choices. */
-.node-actions-gap {
-  flex: 1 1 var(--space-4);
-  min-width: var(--space-4);
-}
+   `.node-actions` had already outlived its last element: the landing row draws
+   its buttons in `.ent-project-actions`, which is `entity.css`'s, and the
+   `.view-head-actions` that shared these declarations went with the course and
+   research views.
+
+   `.node-actions-gap` was a flex spacer pushing "the two navigation buttons
+   away from the two that start something, so the row reads as two groups
+   rather than four adjacent choices". It is the clearest artefact of what this
+   redesign removed: a row needing a spacer to be legible is a row with too many
+   verbs on it. There is one verb and one `⋯` now, and nothing to separate. */
 
 .input {
   background: var(--bg-panel);
@@ -247,9 +231,9 @@
    .extraction-summary` recorded: no test, no error, a rule that quietly
    stopped applying.
 
-   `.project-id` and `.project-no-sessions` survive because the *view* still
-   writes both: the short id in the card's `meta` slot, the note in its
-   `preview` slot. They are this page's words, not the card's. */
+   `.project-no-sessions` survives because the *view* still writes it, in the
+   card's `preview` slot. It is this page's words, not the card's.
+   `.project-id` was named here too and no longer is; see below. */
 
 .row-stats {
   display: flex;
@@ -312,9 +296,13 @@
   color: var(--fg-faint);
   font-style: italic;
 }
-/* Trailing, dim, monospace: metadata, which is what an id is. */
-.row-id,
-.project-id {
+/* Trailing, dim, monospace: metadata, which is what an id is.
+
+   `.project-id` shared this rule and is gone with the element: the landing row
+   printed the project's short id under a tooltip carrying the full one, six
+   pixels below the project's name in full -- a tab stop per row, on a
+   virtualized list, for a debugging aid. The project page shows the id. */
+.row-id {
   font-family: var(--mono);
   font-size: var(--t-xs);
   color: var(--fg-faint);

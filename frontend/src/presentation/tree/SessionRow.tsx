@@ -16,7 +16,19 @@ import { navigate } from '../routing/use-route.ts'
  * chips left. The message is the headline now and the id is trailing metadata,
  * which is what it is.
  */
-export const SessionRow = ({ session, held }: { session: SessionSummary; held?: boolean }) => (
+/** **The `held` chip is gone, and so is the `heldBy` that fed it.** It marked
+ *  the session holding the project — which, on the landing page, was almost
+ *  always the row it was drawn on, because `currentSession` prefers the holder
+ *  when choosing what to preview. So the chip told a reader that the one
+ *  session they were being shown was the one being shown, in the vocabulary of
+ *  lock ownership. Which session holds a project decides where the next write
+ *  goes; it is not a property of the session worth a chip on an index.
+ *
+ *  Nothing else read the prop: `SessionForest` took `heldBy` only to pass it
+ *  down, and `ProjectList` was the only caller of either. The fact itself is
+ *  untouched on `Project.activeSessionId`, where the preview choice and the
+ *  delete call still read it. */
+export const SessionRow = ({ session }: { session: SessionSummary }) => (
   <button type="button" className="row" onClick={() => navigate(sessionHref(session.id))}>
     <div className="row-head">
       <span className={session.firstMessage ? 'row-title' : 'row-title row-title-empty'}>
@@ -26,7 +38,6 @@ export const SessionRow = ({ session, held }: { session: SessionSummary; held?: 
       {session.failedTurns ? (
         <Chip tone="fail">{plural(session.failedTurns, 'failed turn')}</Chip>
       ) : null}
-      {held ? <Chip tone="held">held</Chip> : null}
       <span className="row-id">{shortId(session.id)}</span>
     </div>
     <div className="row-stats">
@@ -51,18 +62,16 @@ export const SessionRow = ({ session, held }: { session: SessionSummary; held?: 
 export const SessionForest = ({
   nodes,
   depth = 0,
-  heldBy,
 }: {
   nodes: readonly ForkNode[]
   depth?: number
-  heldBy?: string | null | undefined
 }) => (
   <ul className={depth === 0 ? 'tree' : undefined}>
     {nodes.map((node) => (
       <li key={node.id}>
-        <SessionRow session={node} held={heldBy === node.id} />
+        <SessionRow session={node} />
         {node.children.length > 0 ? (
-          <SessionForest nodes={node.children} depth={depth + 1} heldBy={heldBy} />
+          <SessionForest nodes={node.children} depth={depth + 1} />
         ) : null}
       </li>
     ))}

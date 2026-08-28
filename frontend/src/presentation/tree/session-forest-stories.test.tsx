@@ -61,11 +61,22 @@ it('says where a fork diverged, on the row', () => {
   expect(screen.getByText(/forked @ 61/)).toBeInTheDocument()
 })
 
-/** `held` is a prop rather than a field, so exactly one row can carry it and
- *  the story has to be the thing that says which. */
-it('marks exactly one row as held', () => {
+/** **This asserted `held` on exactly one row, and now asserts on none.**
+ *
+ *  Written as the refusal rather than deleted, which is this repository's
+ *  convention for a capability removed on purpose: the chip named which
+ *  session holds the project, and on an index that is a fact about where the
+ *  next write goes rather than something a reader picks. A row that starts
+ *  drawing it again fails here.
+ *
+ *  Note what it does *not* claim: that the holder is unknown. It is still on
+ *  `Project.activeSessionId`, still what `currentSession` prefers when
+ *  choosing which session a collapsed row previews, and still the `force`
+ *  argument to delete. Only the drawing went. */
+it('marks no row as held', () => {
   render(<Held />)
-  expect(screen.getAllByText('held')).toHaveLength(1)
+  expect(rows()).toHaveLength(2)
+  expect(screen.queryByText('held')).toBeNull()
 })
 
 /** The fixture ids are distinguishable in the eight characters the row shows.

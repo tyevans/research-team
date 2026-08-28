@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
@@ -31,6 +31,32 @@ export const NewProjectForm = ({ onCreated }: { onCreated?: () => void }) => {
   const { projects } = useContainer()
   const queryClient = useQueryClient()
   const [name, setName] = useState('')
+  const field = useRef<HTMLInputElement>(null)
+
+  /** The caret goes in the field the moment the field exists.
+   *
+   * The form is opened by a button and is one control long, so a reader who
+   * pressed "+ New project" has already said what they want to do; without
+   * this they press it, the form appears, and they click a second time to
+   * type. That second click is the entire cost of making creation a
+   * disclosure, and it bought nothing.
+   *
+   * `autoFocus` is what this would obviously be and the repo's lint forbids it
+   * outright (`jsx-a11y/no-autofocus`), on the general grounds that a page
+   * which moves focus on load takes it from a reader who was doing something
+   * else. That objection does not apply to an element which does not exist
+   * until somebody asks for it — the effect runs on *mount*, and this mounts
+   * on a click — so the behaviour is kept and the mechanism is an effect,
+   * which is also the form the rule's own documentation recommends.
+   *
+   * On the first-run page there is no disclosure and this component is on
+   * screen from the start, so the focus does land on load there. That is the
+   * one page where it is unambiguously right: the field is the only control
+   * and creating a project is the only thing to do.
+   */
+  useEffect(() => {
+    field.current?.focus()
+  }, [])
 
   const create = useMutation({
     mutationFn: async () => {
@@ -62,6 +88,7 @@ export const NewProjectForm = ({ onCreated }: { onCreated?: () => void }) => {
         className="input"
         placeholder="project name"
         aria-label="Project name"
+        ref={field}
         value={name}
         onChange={(event) => setName(event.target.value)}
         // Enter submits, because this form is one control and a person who has

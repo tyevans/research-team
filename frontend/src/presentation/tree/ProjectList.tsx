@@ -7,21 +7,18 @@ import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { isHeld, type Project } from '@domain/project/project.ts'
 import { currentSession, matches, rollups, type ProjectRollup } from '@domain/project/landing.ts'
-import { shortId, type ProjectId } from '@domain/shared/identifier.ts'
+import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { Menu, MenuItem, MenuTrigger } from '../common/Menu.tsx'
 import { Button, EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
-import { ProjectCard, projectSessionsId } from '../entity/project/ProjectCard.tsx'
-// `plural` is gone from this file with `ProjectRow`: the card counts its own
-// sessions and files, and its `3 sessions` / `1 session` is character-for-
-// character what `plural` produced — `ProjectCard.test.tsx` pins both forms.
-import { fullTime, relativeTime } from '../formatting/format.ts'
+import { ProjectCard } from '../entity/project/ProjectCard.tsx'
+import { relativeTime } from '../formatting/format.ts'
 import { projectHref, sessionHref } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { ActivityChip, useProjectActivity } from './ProjectActivity.tsx'
-import { ProjectRows, withHeadings } from './ProjectRows.tsx'
+import { ProjectRows, withHeadings, withoutHeadings } from './ProjectRows.tsx'
 import { SessionForest, SessionRow } from './SessionRow.tsx'
 import { useSessionForest } from './SessionTree.tsx'
 import { SkeletonRows } from './Skeletons.tsx'
@@ -58,19 +55,45 @@ export const ProjectList = ({
    * it. Each row shows its current session instead, which is the one line of
    * that list anybody was actually reading. */
   const [open, setOpen] = useState<ReadonlySet<ProjectId>>(new Set())
-  const [pending, setPending] = useState<Confirmation | null>(null)
+  const [pending, setPending] = useState<Project | null>(null)
 
-  const join = useMutation({
-    mutationFn: ({ id, takeOver }: { id: ProjectId; takeOver: boolean }) =>
-      projects.join(id, takeOver),
+  /** The one write this page still makes, and the only one it should.
+   *
+   * **`takeOver` is gone from every call site here**, which is the landing
+   * page's half of "the holding session stops being something a person
+   * manages". Take-over ends somebody's session; it is the single most
+   * holder-shaped verb in the console, and offering it on an *index* asked a
+   * reader to resolve a lock before they had read anything. What is left is
+   * holder-blind: `Continue` opens the session in progress when there is one,
+   * and starts one when there is not, and the reader is never told which
+   * happened because the answer is the same either way — they are looking at
+   * the project's live conversation.
+   *
+   * This is deliberately still a mutation on a list page, and the alternative
+   * was considered: remove `join` too, and let the project page own every verb
+   * that writes. That is the tidier end state and it is not reachable from
+   * here — the project view has no join affordance today, so removing this one
+   * would leave the console with no way to start a session at all. Recorded in
+   * the PR rather than shipped as a dead end.
+   */
+  const carryOn = useMutation({
+    mutationFn: ({ id }: { id: ProjectId }) => projects.join(id, false),
     onSuccess: (result) => {
       if (result.warning) notify(`Joined, but ${result.warning}`, 'bad')
       navigate(sessionHref(result.sessionId))
     },
-    onError: (error) => notify(`Could not join project: ${errorMessage(error)}`, 'bad'),
+    onError: (error) => notify(`Could not open project: ${errorMessage(error)}`, 'bad'),
     onSettled: invalidate,
   })
 
+  /** `isHeld(project)` is the surviving load-bearing read of the holder.
+   *
+   * It is the `force` flag: deleting a held project has to end its session
+   * first, and a `false` here would fail against exactly the projects a person
+   * is most likely to delete. Nothing on the page draws the holder any more,
+   * so this is the argument that would rot silently — hence
+   * `TreeView.test.tsx`'s assertion on the second argument, which is new and
+   * which nothing checked while the holder was on screen. */
   const remove = useMutation({
     mutationFn: ({ project }: { project: Project }) => projects.delete(project.id, isHeld(project)),
     onSuccess: (_result, { project }) => notify(`Deleted project ${project.name}.`, 'good'),
@@ -80,10 +103,25 @@ export const ProjectList = ({
 
   const ranked = useMemo(() => rollups(query.data ?? [], sessions), [query.data, sessions])
   const shown = useMemo(() => ranked.filter((rollup) => matches(rollup, search)), [ranked, search])
+  const filtering = search.trim().length > 0
   // The clock comes from the container, not from `Date.now()` in render: the
   // headings are derived from it, so a test that wants a row under "This week"
   // has to be able to say when now is.
-  const items = useMemo(() => withHeadings(shown, now()), [shown, now])
+  //
+  // **No headings while a search is running.** "Today" over a set of results
+  // that share nothing but a substring labels nothing, and it costs a row of
+  // vertical space per band in the region where a reader is scanning hardest.
+  // There is a second reason and it is the load-bearing one: `itemKey`'s
+  // uniqueness rests on each recency band opening exactly once, which holds
+  // only because the input is sorted by band — so anything that reorders
+  // results (a relevance rank, which is the obvious next step for this search)
+  // silently produces duplicate keys and one measurement cell holding two
+  // rows' heights. Dropping headings from filtered results removes the
+  // precondition rather than relying on it.
+  const items = useMemo(
+    () => (filtering ? withoutHeadings(shown) : withHeadings(shown, now())),
+    [shown, now, filtering],
+  )
 
   if (query.isPending) return <SkeletonRows count={4} />
   if (query.isError) {
@@ -130,23 +168,22 @@ export const ProjectList = ({
             onToggle={() => {
               toggle(rollup.project.id)
             }}
-            onTakeOver={() => setPending({ kind: 'takeOver', project: rollup.project })}
-            onDelete={() => setPending({ kind: 'delete', project: rollup.project })}
-            onOpen={() => join.mutate({ id: rollup.project.id, takeOver: false })}
-            busy={join.isPending || remove.isPending}
+            onDelete={() => setPending(rollup.project)}
+            onContinue={() => {
+              const holder = rollup.project.activeSessionId
+              if (holder) navigate(sessionHref(holder))
+              else carryOn.mutate({ id: rollup.project.id })
+            }}
+            busy={carryOn.isPending || remove.isPending}
           />
         )}
       />
       {pending ? (
         <Confirm
-          {...confirmCopy(pending)}
+          {...deleteCopy(pending)}
           onCancel={() => setPending(null)}
           onConfirm={() => {
-            if (pending.kind === 'takeOver') {
-              join.mutate({ id: pending.project.id, takeOver: true })
-            } else {
-              remove.mutate({ project: pending.project })
-            }
+            remove.mutate({ project: pending })
             setPending(null)
           }}
         />
@@ -155,33 +192,30 @@ export const ProjectList = ({
   )
 }
 
-interface Confirmation {
-  readonly kind: 'takeOver' | 'delete'
-  readonly project: Project
-}
-
-/** The two sentences this page must not lose.
+/** The sentence this page must not lose.
  *
- * Kept word for word from the `window.confirm` calls they replace. "Take over"
- * and "delete" both do something a reader will assume is worse than it is —
- * one ends a session without losing its files, the other retires a project
- * without touching the work done in it — and these are the sentences that say
- * so. Only the box around them changed.
+ * Kept word for word from the `window.confirm` it replaced. "Delete" does
+ * something a reader will assume is worse than it is — it retires a project
+ * without touching the work done in it — and this is the sentence that says
+ * so.
+ *
+ * **The warning survives; the short id in it does not.** It read "Session
+ * 3f2a1b9c is still holding it and will be ended first", which is the last
+ * place on this page a holder was named. A reader about to destroy something
+ * is entitled to know that a session in progress will end with it — that is
+ * the warning, and it is kept. *Which* session is the part they cannot act on:
+ * they are not being offered a choice between ending that one and ending
+ * another, and eight characters of a uuid do not change the decision. So the
+ * existence is stated and the identity is not, which is the same split the
+ * rest of the page now makes.
+ *
+ * The take-over copy that stood beside this is gone with the verb it
+ * explained.
  */
-const confirmCopy = ({ kind, project }: Confirmation) => {
-  if (kind === 'takeOver') {
-    return {
-      heading: `End session ${shortId(project.activeSessionId)} and start a new one in ${project.name}?`,
-      lines: ['Its files carry over to the new session. Its conversation does not.'],
-      confirmLabel: 'End it and start a new session',
-      tone: 'accent' as const,
-    }
-  }
+const deleteCopy = (project: Project) => {
   const lines = []
   if (project.activeSessionId) {
-    lines.push(
-      `Session ${shortId(project.activeSessionId)} is still holding it and will be ended first.`,
-    )
+    lines.push('A session is still holding it, and will be ended first.')
   }
   lines.push(
     'Its sessions keep their own logs, files and history — they just cannot rejoin. ' +
@@ -198,51 +232,50 @@ const confirmCopy = ({ kind, project }: Confirmation) => {
 /** One drawn row: everything that has to be fetched or decided, and nothing
  *  that is drawn.
  *
- * Every page of the console is one click from here, and keeping that true is
- * the point of the row. It has been wrong twice, in opposite directions. It
- * was wrong by *omission* first: the research view had no entry at all,
- * because the one button that said "Research" navigated to the course page.
- * Increment C then merged those two pages into one project view and made it
- * wrong by *duplication* — "Course" and "Research" became two buttons for one
- * page, differing only in which MATERIAL tab opened, named after routes that
- * no longer resolve. Both mistakes are the same mistake: nothing here is
- * derived from the route table, so a button's label and its destination can
- * disagree indefinitely and no gate notices.
+ * **The row had eight targets and now has three.** It carried, in order: a
+ * disclosure, two tooltip-wrapped metadata spans, `Resume 3f2a…`, `New
+ * session`, `Project`, `Ask`, `⋯` and a session preview — with the project
+ * page, which is what the whole console hangs off, reachable only through the
+ * sixth of them, small, in the secondary tone, past a flex spacer. Meanwhile
+ * the largest and most obvious thing on the row, the project's name, was an
+ * inert `<span>`, because `ProjectCard`'s `href` was optional and this file
+ * never passed it. Counting the tab stops is the measurement: roughly eight
+ * per row, so about seventy before a reader reached the second screen of a
+ * list whose entire job is to be scrolled.
  *
- * What the row offers now is one button per *page*: "Project" for the merged
- * view, "Ask" for the one facet `App.tsx` intercepts above it, and the session
- * affordances for `#/s/<id>`, which increment C deliberately keeps standalone
- * because a transcript read on its own is still its own page.
+ * What is left: the card itself is the link to the project page (⌘-click
+ * works, and it did not before); one `Continue`; one `⋯` for the two verbs
+ * that are not "read this project". `Project` is deleted because the card *is*
+ * that button now, and `Ask` moves into the menu — it is a facet `App.tsx`
+ * intercepts above `ProjectView`, so it genuinely cannot be reached by opening
+ * the project and clicking a tab, and it still needs a door. That reasoning is
+ * the one thing kept verbatim from the button it replaces, because the whole
+ * history of this row is destinations quietly losing their entrances.
  *
  * **This is a container, not a card.** It renders no markup of its own: the
  * drawing is `ProjectCard`, which is props-only and therefore has a story and
- * a test that need neither a query client nor a container. What is left here
- * is the three things a card may not know — what is running (a fetch), which
- * verb a held project offers (a branch over what taking over *means*), and the
- * menu's open state.
+ * a test that need neither a query client nor a container.
  *
  * **Why the hook is still per row.** A hook cannot be called in a loop, and
  * `VirtualList`'s children argument is a render callback rather than a
  * component, so "one `useProjectActivity` per drawn row" has to be a component
- * per drawn row — this one. It no longer costs a request per row: every call
- * reads the one `queryKeys.runningAgents()` entry, so N mounts are N
- * subscribers to one fetch. `ProjectActivity.test.tsx` pins the request count.
+ * per drawn row — this one. It costs no request per row: every call reads the
+ * one `queryKeys.runningAgents()` entry, so N mounts are N subscribers to one
+ * fetch. `ProjectActivity.test.tsx` pins the request count.
  */
 const ProjectListRow = ({
   rollup,
   open,
   onToggle,
-  onTakeOver,
   onDelete,
-  onOpen,
+  onContinue,
   busy,
 }: {
   rollup: ProjectRollup
   open: boolean
   onToggle: () => void
-  onTakeOver: () => void
   onDelete: () => void
-  onOpen: () => void
+  onContinue: () => void
   busy: boolean
 }) => {
   const { project, sessions, sessionCount, lastActivity } = rollup
@@ -253,7 +286,9 @@ const ProjectListRow = ({
   return (
     <ProjectCard
       rollup={rollup}
+      href={projectHref(project.id)}
       open={open}
+      onOpenChange={onToggle}
       slots={{
         // Nothing to badge: the workflow chip that filled this was "which
         // preset, and how far through it", and there are no presets. The slot
@@ -261,153 +296,71 @@ const ProjectListRow = ({
         badges: null,
         activity: <ActivityChip label={activity.label} />,
 
-        /* The disclosure's control, at the head rather than under the row.
-           `Disclosure` cannot be used here: it renders its button and its body
-           as one element, and the card puts the two in different places -- the
-           control beside the name, the contents below everything else. So
-           `aria-expanded`, `aria-controls` and the caret are reproduced by
-           hand, and the two ARIA attributes are deliberately on the *same*
-           element: split across two, the DOM reads correct and a screen reader
-           announces a button that expands nothing.
-
-           `projectSessionsId` rather than a string written twice. The id is
-           the contract between a slot the view builds and a region the card
-           draws, and the failure mode of two spellings is silent -- an IDREF
-           that resolves to nothing announces exactly as much as no IDREF at
-           all.
-
-           Both labels are kept word for word, because they are what a reader
-           and a test both find this control by. */
+        /* A label, not a control. The card owns the button, the caret, the
+           click and all three ARIA attributes; this file used to write
+           `aria-expanded` and `aria-controls` by hand against an id derived
+           through an exported helper, which is three chances for a silent
+           mismatch to reach a screen reader and none for a gate to notice.
+           Both wordings are kept exactly, because they are what a reader and a
+           test both find this control by. */
         toggle:
-          sessionCount > 1 ? (
-            <Button
-              small
-              tone="quiet"
-              aria-expanded={open}
-              aria-controls={projectSessionsId(project.id)}
-              onClick={onToggle}
-            >
-              <span className="disc-caret" aria-hidden="true">
-                {open ? '▾' : '▸'}
-              </span>
-              {open ? `sessions (${sessionCount})` : `all ${sessionCount} sessions`}
-            </Button>
-          ) : null,
+          sessionCount > 1
+            ? open
+              ? `sessions (${sessionCount})`
+              : `all ${sessionCount} sessions`
+            : null,
 
-        /* Both of these show an abbreviation of something exact — a relative
-           time over a timestamp, eight characters over a full id — so the
-           tooltip is not a duplicate of the visible text and cannot simply be
-           deleted. Neither span is interactive, so the wrapper trigger costs
-           two tab stops per project row and buys the exact value for a reader
-           who never had it.
+        /* **Plain text, and it used to be two tooltips.** The relative time
+           wrapped a `Tooltip` giving the exact timestamp, and the short id
+           wrapped another giving the full one: two tab stops per row, on a
+           virtualized list, for an abbreviation nobody was reading and an
+           identifier that names a project already named in full six pixels
+           above. The id is deleted outright rather than moved — a `ProjectId`
+           on an index is a debugging aid, and the project page shows it.
 
            They are the view's words rather than the card's on purpose:
            `lastActivity` is the newest session *start*, not the last turn, and
            "no sessions yet" against "nothing has run in this project" is this
-           page choosing what it can honestly claim. */
-        meta: (
-          <>
-            <Tooltip
-              explanation={
-                lastActivity ? fullTime(lastActivity) : 'nothing has run in this project'
-              }
-            >
-              {lastActivity ? relativeTime(lastActivity) : 'no sessions yet'}
-            </Tooltip>
-            <Tooltip explanation={project.id} className="project-id">
-              {shortId(project.id)}
-            </Tooltip>
-          </>
-        ),
+           page choosing what it can honestly claim.
 
-        /* A held project offers two honest choices instead of one that
-           fails: go to whoever holds it, or end that session and take
-           the project on. "Join" was only ever right for a free one.
+           The second reason they are not tooltips is a stacking one: the
+           card's stretched link covers the stat line, so a hover target there
+           would be a target a mouse cannot reach. A tooltip that only a
+           keyboard can open is the S-D3 defect with the sides swapped. */
+        meta: <span>{lastActivity ? relativeTime(lastActivity) : 'no sessions yet'}</span>,
 
-           This branch is the reason `primary` is a slot: deciding it requires
-           knowing what taking over *means*, which is a fact about this page's
-           mutations rather than about a project. */
-        primary: project.activeSessionId ? (
-          <>
-            <Tooltip asChild explanation="Open the session currently holding this project">
-              <Button small onClick={() => navigate(sessionHref(project.activeSessionId!))}>
-                Resume {shortId(project.activeSessionId)}
-              </Button>
-            </Tooltip>
-            <Tooltip
-              asChild
-              explanation="End the holding session, then start a new one from its work"
-            >
-              <Button small tone="accent" disabled={busy} onClick={onTakeOver}>
-                New session
-              </Button>
-            </Tooltip>
-          </>
-        ) : (
-          <Button small tone="accent" disabled={busy} onClick={onOpen}>
-            Open
-          </Button>
+        /* One verb, and it does not name a session.
+
+           This was `Resume 3f2a…` beside `New session` for a held project and
+           `Open` for a free one — a branch a reader had to resolve before
+           acting, expressed in a vocabulary (holding, taking over) that is
+           about where the next write goes rather than about anything they
+           wanted. `Continue` answers the only question an index is asked:
+           carry on with this. Which of the two things it does is decided in
+           the list above, from a field the reader never sees. */
+        primary: (
+          <Tooltip
+            asChild
+            explanation="Pick up this project's conversation, starting one if none is open"
+          >
+            <Button small tone="accent" disabled={busy} onClick={onContinue}>
+              Continue
+            </Button>
+          </Tooltip>
         ),
 
         overflow: [
-          /* Pushes the two navigation buttons away from the two that start
-             something, so the row reads as two groups rather than four
-             adjacent choices. */
-          <span className="node-actions-gap" key="gap" />,
-
-          /* Unconditional, and it used to be "Course" and `aria-disabled` for
-             a project that had chosen no workflow. That was correct while it
-             went to the *course page*, which such a project genuinely did not
-             have; it stopped being correct when it went to the project view,
-             where the course was one region of several. The workflow system is
-             gone and the condition has nothing left to test, so what remains is
-             a link to a page every project has. */
-          <Tooltip
-            asChild
-            key="project"
-            explanation="Its queue, whoever is holding it, and everything it has produced"
-          >
-            <Button small onClick={() => navigate(projectHref(project.id))}>
-              Project
-            </Button>
-          </Tooltip>,
-
           /* Ask is a page rather than a tab, so it needs its own door.
              `App.tsx` intercepts the `ask` facet above `ProjectView` and
              renders `AskPage` instead — which means it cannot be reached by
              opening the project and clicking a MATERIAL tab, the way the graph
              and the documents can. An entrance here is the difference between
-             a page a reader can find and one only a typed URL reaches. */
-          <Tooltip
-            asChild
-            key="ask"
-            explanation="Put a question to this project's sources and findings"
-          >
-            <Button
-              small
-              onClick={() => navigate(projectHref(project.id, { facet: 'ask', id: null }))}
-            >
-              Ask
-            </Button>
-          </Tooltip>,
+             a page a reader can find and one only a typed URL reaches. It is
+             in the menu rather than on the row because the row is now one
+             verb, and this is not the verb.
 
-          /* Destructive things behind one more click, so the row's default
+             Destructive things are behind the same click, so the row's default
              reading is "ways in" rather than "ways to lose things".
-
-             **Was a `Disclosure` wearing menu chrome**, which is what
-             `tree.css` said it was and what it should not have been: a
-             disclosure announces `aria-expanded` over a region, and everything
-             else a menu owes -- `role="menu"`, Up and Down between items,
-             Escape closing it, focus coming back to the button -- was simply
-             absent. A keyboard reader tabbed in, tabbed straight through into
-             the rest of the row, and had no route back.
-
-             The `Tooltip` that wrapped Delete is deleted rather than moved.
-             "Retire this project" beside an item that says *Delete* is the
-             third of the three cases phase 3 sorted `title` attributes into --
-             an explanation that repeats the text next to it -- and a tooltip
-             inside a menu item is two floating layers arguing over one
-             keypress. The item's own label is the explanation.
 
              `disabled` while busy rather than `aria-disabled`: unlike the
              dispatch button in `TopicQueue`, this carries no sentence that
@@ -421,6 +374,11 @@ const ProjectListRow = ({
             onOpenChange={setMenuOpen}
             trigger={<MenuTrigger aria-label={`More actions for ${project.name}`} />}
           >
+            <MenuItem
+              onSelect={() => navigate(projectHref(project.id, { facet: 'ask', id: null }))}
+            >
+              Ask
+            </MenuItem>
             <MenuItem tone="danger" disabled={busy} onSelect={onDelete}>
               Delete
             </MenuItem>
@@ -434,18 +392,23 @@ const ProjectListRow = ({
            and worth the space; collapsed, that lineage is a `forked @` chip on
            one row.
 
+           **No `held` marker on it, and none in the forest either.** The
+           previewed row *is* the holder in the usual case, so the chip labelled
+           the thing a reader was already looking at with a word about lock
+           ownership. `currentSession` still prefers the holder — that is the
+           head state, and it is the half of this concept the page keeps.
+
            The note takes the same slot because the two are alternatives: a
            project with no sessions has nothing to preview and nothing to
            expand, so it is the only case where this says something instead of
-           showing something. A project with one session shows it and needs no
-           note. */
+           showing something. */
         preview: current ? (
-          <SessionRow session={current} held={current.id === project.activeSessionId} />
+          <SessionRow session={current} />
         ) : sessionCount === 0 ? (
           <p className="project-no-sessions">Nothing has run in this project yet.</p>
         ) : null,
 
-        sessions: <SessionForest nodes={sessions} heldBy={project.activeSessionId} />,
+        sessions: <SessionForest nodes={sessions} />,
       }}
     />
   )

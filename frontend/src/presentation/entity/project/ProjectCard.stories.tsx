@@ -59,7 +59,7 @@ const Frame = ({ children }: { children: React.ReactNode }) => (
   <div style={{ width: '420px', padding: 'var(--space-3)' }}>{children}</div>
 )
 
-/** A free project: one honest verb. */
+/** A free project: one verb. */
 export const Free: Story = {
   render: () => (
     <Frame>
@@ -69,7 +69,7 @@ export const Free: Story = {
         slots={{
           primary: (
             <Button small tone="accent">
-              Open
+              Continue
             </Button>
           ),
         }}
@@ -78,10 +78,19 @@ export const Free: Story = {
   ),
 }
 
-/** A held project: two honest choices instead of one that fails. The card does
- *  not decide between them — the view does, because the view owns what taking
- *  over means. The holder is named by short id, because a session has no name
- *  and the card may not go and look for one. */
+/** A held project, drawn **identically** — which is the whole story.
+ *
+ *  It used to draw `held by 7d41e0aa` in the head and offer `Resume 7d41e0aa`
+ *  beside `New session`, so a reader had to resolve a lock before acting. The
+ *  card no longer knows the difference is worth showing: the fixture below
+ *  still sets `activeSessionId`, and the only place it now goes is
+ *  `currentSession`'s choice of which session to preview and the delete call's
+ *  `force` flag, neither of which is drawing.
+ *
+ *  Kept beside `Free` for exactly that reason — put the two stories side by
+ *  side and a card that starts drawing the holder again is visible at a
+ *  glance. A story that is the same as its neighbour is the point here, not an
+ *  oversight. */
 export const Held: Story = {
   render: () => (
     <Frame>
@@ -91,12 +100,11 @@ export const Held: Story = {
         })}
         href="#project"
         slots={{
-          primary: <Button small>Resume 7d41e0aa</Button>,
-          overflow: [
-            <Button small tone="accent" key="take">
-              New session
-            </Button>,
-          ],
+          primary: (
+            <Button small tone="accent">
+              Continue
+            </Button>
+          ),
         }}
       />
     </Frame>
@@ -117,7 +125,7 @@ export const WithActivity: Story = {
           activity: <EntityStatus status="running" detail="synthesising 2 topics" />,
           primary: (
             <Button small tone="accent">
-              Open
+              Continue
             </Button>
           ),
         }}
@@ -149,26 +157,27 @@ export const AsTheLandingPageDrawsIt: Story = {
             activeSessionId: SessionId('7d41e0aa-1111-2222-3333-444444444444'),
           }),
         })}
+        href="#project"
         slots={{
           badges: <Chip>4 areas</Chip>,
           activity: <EntityStatus status="running" detail="synthesising 2 topics" />,
-          meta: (
-            <>
-              <span>2 days ago</span>
-              <span className="project-id">3f2a1b9c</span>
-            </>
+          // One span, and it used to be two. The second was the project's
+          // short id under a tooltip carrying the full one -- a tab stop per
+          // row, on a virtualized list, for an identifier that names a project
+          // named in full six pixels above.
+          meta: <span>2 days ago</span>,
+          primary: (
+            <Button small tone="accent">
+              Continue
+            </Button>
           ),
-          primary: <Button small>Resume 7d41e0aa</Button>,
+          // One `⋯`, and it used to be four buttons and a flex spacer:
+          // `New session`, a gap, `Project` and `Ask`. `Project` is gone
+          // because the card *is* that link now, `New session` went with the
+          // take-over verb, and `Ask` moved into the menu.
           overflow: [
-            <Button small tone="accent" key="take">
-              New session
-            </Button>,
-            <span className="node-actions-gap" key="gap" />,
-            <Button small key="project">
-              Project
-            </Button>,
-            <Button small key="ask">
-              Ask
+            <Button small key="more">
+              ⋯
             </Button>,
           ],
           preview: <p style={{ margin: 0 }}>the current session sits here</p>,
@@ -211,10 +220,12 @@ export const Expanded: Story = {
         href="#project"
         open
         slots={{
-          toggle: <Button small>▾</Button>,
+          // A label rather than a control: the card owns the button, the caret
+          // and the three ARIA attributes.
+          toggle: 'sessions (3)',
           primary: (
             <Button small tone="accent">
-              Open
+              Continue
             </Button>
           ),
           sessions: (
