@@ -5142,3 +5142,25 @@ stylesheet sweep is its own change with its own verification, and folding it
 into a placement change would make the diff harder to review for the thing the
 change is actually about. Left as a header manifest already down to two
 families, which is the shape a future sweep would start from.
+
+### B155. `font-medium`, `font-semibold` and `font-normal` generate no rule, at 29 sites
+
+Measured 2026-08-27, by adding `font` to `check-tailwind.mjs`'s `FAMILIES` and
+running against `origin/main`: `font-semibold` at 16 sites, `font-medium` at
+12, `font-normal` at 1. None of them emits anything. Font weights live in
+Tailwind's default theme, `theme.css` omits that theme on purpose, and
+`--font-weight-*` is not declared -- so every heading, label and emphasis
+written this way has been shipping at the weight it inherited. `font-mono` and
+`font-sans` are unaffected; those two families *are* declared.
+
+The gate does not cover `font-*` for that reason, and its comment says so:
+there is no nearest declared token to reach for, and declaring
+`--font-weight-medium` to make the class valid is the move `theme.css` exists
+to refuse -- it turns "this class was a typo" into "this class is now real"
+and grows the palette by accident.
+
+So the work is a type-scale decision, not a sweep: either declare the two or
+three weights this console actually wants and turn the family on in the same
+commit, or decide the console has one weight and delete the 29 classes. Both
+are visual changes and want a browser check, which is the other reason this
+was not folded into the commit that found it.

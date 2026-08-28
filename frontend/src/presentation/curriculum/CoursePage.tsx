@@ -149,10 +149,10 @@ export const CoursePage = ({
           {titleCase(candidate.title)}
         </h2>
         {candidate.blurb !== null && (
-          <p className="crs-course-blurb text-fg-muted text-sm">
+          <p className="crs-course-blurb text-sm text-fg-dim">
             {candidate.blurb.text}
             {stale && (
-              <span className="crs-course-blurb-stale text-fg-muted ml-1 text-xs italic">
+              <span className="crs-course-blurb-stale ml-1 text-xs text-fg-dim italic">
                 (out of date)
               </span>
             )}
@@ -166,7 +166,7 @@ export const CoursePage = ({
             Make this course
           </Button>
           {realize.isError && (
-            <p className="crs-course-realize-error text-danger text-xs">
+            <p className="crs-course-realize-error text-xs text-k-failure">
               {realize.error instanceof Error
                 ? realize.error.message
                 : 'Could not realize this course.'}
@@ -182,7 +182,7 @@ export const CoursePage = ({
           <p className="crs-course-realized-at m-0 text-fg">
             Made into a course on {new Date(course.realizedAt).toLocaleDateString()}.
           </p>
-          <p className="crs-course-fit text-fg-muted m-0 text-xs">{fitSummary(course.fit)}</p>
+          <p className="crs-course-fit m-0 text-xs text-fg-dim">{fitSummary(course.fit)}</p>
           {course.authoredSessionId !== null && (
             // Demoted, not removed. It used to be the only way to reach the
             // authored text, which meant a reader wanting their course was
@@ -220,10 +220,10 @@ export const CoursePage = ({
       ) : (
         outline !== null && (
           <section className="crs-course-outline flex flex-col gap-2 rounded-md border border-line bg-bg-panel p-3">
-            <p className="text-fg-muted m-0 text-sm">
+            <p className="m-0 text-sm text-fg-dim">
               {outline.promise}
               {outlineStale && (
-                <span className="crs-course-outline-stale text-fg-muted ml-1 text-xs italic">
+                <span className="crs-course-outline-stale ml-1 text-xs text-fg-dim italic">
                   (out of date)
                 </span>
               )}
@@ -232,7 +232,7 @@ export const CoursePage = ({
               {outline.sections.map((section, index) => (
                 <li key={index} className="text-sm text-fg">
                   <span className="font-medium">{section.heading}</span>
-                  <p className="text-fg-muted m-0 text-xs">{section.summary}</p>
+                  <p className="m-0 text-xs text-fg-dim">{section.summary}</p>
                 </li>
               ))}
             </ol>

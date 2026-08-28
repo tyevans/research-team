@@ -193,7 +193,7 @@ const ReadingToggle = ({
         aria-checked={reading === value}
         onClick={() => onReading(value)}
         className={[
-          'rounded focus-visible:lay-ring-inward border border-line px-2 py-1 text-xs',
+          'focus-visible:lay-ring-inward rounded-md border border-line px-2 py-1 text-xs',
           reading === value ? 'border-accent bg-bg-raise text-fg' : 'bg-bg-panel text-fg-dim',
         ].join(' ')}
       >

@@ -256,7 +256,7 @@ const Player = ({
         controls
         src={url}
         onError={() => setFailed(true)}
-        className="bg-black max-h-[60vh] w-full rounded-md"
+        className="max-h-[60vh] w-full rounded-md bg-bg"
       />
     )
   }

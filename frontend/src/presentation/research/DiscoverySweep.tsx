@@ -166,7 +166,7 @@ export const DiscoverySweep = ({
             : 'No document stated a class.'}{' '}
           {progress.barren > 0 && `${progress.barren} states no classes. `}
           {progress.declined > 0 && (
-            <span className="text-k-warning">
+            <span className="text-accent">
               {progress.declined} was not read — too long, or the reply could not be used. Those
               stay on the list and can be tried again.
             </span>

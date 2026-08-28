@@ -72,7 +72,10 @@ const AreaCard = ({
         only falsify a cluster by seeing what is in it. */}
     <ul className="mt-2 mb-0 flex list-none flex-wrap gap-1 p-0">
       {area.members.map((member) => (
-        <li key={member.entityId} className="rounded bg-bg-panel-2 px-2 py-1 text-xs text-fg-dim">
+        <li
+          key={member.entityId}
+          className="rounded-md bg-bg-panel-2 px-2 py-1 text-xs text-fg-dim"
+        >
           {member.name}
         </li>
       ))}
