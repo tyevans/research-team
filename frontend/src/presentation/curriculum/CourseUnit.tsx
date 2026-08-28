@@ -52,7 +52,7 @@ export const CourseUnit = ({ projectId, slug }: { projectId: ProjectId; slug: st
 
   if (text.state === 'authoring') {
     return (
-      <p className="crs-course-authoring text-fg-muted m-0 text-sm">
+      <p className="crs-course-authoring m-0 text-sm text-fg-dim">
         This course is being written now. It will appear here when the turns finish.
       </p>
     )

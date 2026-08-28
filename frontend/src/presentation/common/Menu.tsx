@@ -171,7 +171,7 @@ export const MenuItem = ({
       // 1.5 × 4px the fractional step was reaching for, so this is the same
       // intent spelled on the scale. It makes each item 12px taller than it
       // has been shipping.
-      'rounded-sm flex w-full cursor-pointer items-center px-3 py-2 text-sm outline-none select-none',
+      'flex w-full cursor-pointer items-center rounded-md px-3 py-2 text-sm outline-none select-none',
       'data-[disabled]:cursor-default data-[disabled]:text-fg-faint data-[highlighted]:bg-bg-hover',
       tone === 'danger' ? 'text-k-failure' : 'text-fg',
     )}

@@ -198,12 +198,12 @@ const Thumbnail = ({ url, kind }: { url: string | null; kind: string }) => {
     // `alt=""`: the title beside this image already carries the same
     // information a description would, and a screen reader announcing both
     // is announcing the same card twice.
-    return <img src={url} alt="" className="rounded h-[64px] w-[64px] shrink-0 object-cover" />
+    return <img src={url} alt="" className="h-[64px] w-[64px] shrink-0 rounded-md object-cover" />
   }
   return (
     <div
       aria-hidden="true"
-      className="rounded bg-bg-muted flex h-[64px] w-[64px] shrink-0 items-center justify-center border border-line text-xs text-fg-dim uppercase"
+      className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-md border border-line bg-bg-raise text-xs text-fg-dim uppercase"
     >
       {kind || 'media'}
     </div>

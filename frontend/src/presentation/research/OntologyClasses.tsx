@@ -45,11 +45,11 @@ const CARD = [
 /** An ordered scale's member: the ordinal is shown because it *is* the
  *  information -- `D C B A S` is not recoverable from anything else on the
  *  row, and a scale drawn without it is a bag with extra steps. */
-const SCALE_MEMBER = 'flex items-baseline gap-2 rounded bg-bg-raise px-2 py-1 text-sm'
+const SCALE_MEMBER = 'flex items-baseline gap-2 rounded-md bg-bg-raise px-2 py-1 text-sm'
 
 /** A set's member: no number, deliberately. A reader shown `01 02 03` beside
  *  an unordered set would read a sequence the document never stated. */
-const SET_MEMBER = 'rounded bg-bg-raise px-2 py-1 text-sm'
+const SET_MEMBER = 'rounded-md bg-bg-raise px-2 py-1 text-sm'
 
 const Checksum = ({ klass }: { klass: OntologyClass }) => {
   if (klass.declaredCount === null) {
@@ -165,7 +165,7 @@ const ClassCard = ({
         </div>
       </div>
       {!klass.evidenceQuoted && (
-        <p className="text-k-warning m-0 mt-1 mb-1 text-xs">
+        <p className="m-0 mt-1 mb-1 text-xs text-accent">
           {/* The strongest warning on this card, and the only one about whether
               the class is real rather than current. `stale` below says the
               graph moved; this says nothing ever checked that the document

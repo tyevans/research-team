@@ -46,6 +46,6 @@ export const GraphExportBar = ({
  *  are the two things that would make these read as prose rather than as the
  *  controls beside them. */
 const LINK = [
-  'rounded focus-visible:lay-ring-inward border border-solid border-line',
+  'rounded-md focus-visible:lay-ring-inward border border-solid border-line',
   'bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover',
 ].join(' ')

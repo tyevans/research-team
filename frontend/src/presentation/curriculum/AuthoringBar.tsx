@@ -71,7 +71,7 @@ export const AuthoringBar = ({
           type="button"
           disabled={running || pending || pathLength === 0}
           onClick={() => onAuthor({})}
-          className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
+          className="focus-visible:lay-ring-inward rounded-md border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
         >
           {/* +1 for the path's own overview file, which the run writes last.
               Counted rather than rounded away: the number's whole job is that
@@ -85,7 +85,7 @@ export const AuthoringBar = ({
             type="button"
             disabled={running || pending}
             onClick={() => onAuthor({ area: areaSlug })}
-            className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
+            className="focus-visible:lay-ring-inward rounded-md border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
           >
             Write “{areaTitle ?? areaSlug}” (~{TURNS_PER_AREA} model turns)
           </button>
@@ -95,7 +95,7 @@ export const AuthoringBar = ({
             type="button"
             disabled={stopping}
             onClick={onCancel}
-            className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
+            className="focus-visible:lay-ring-inward rounded-md border border-line bg-bg-panel px-2 py-1 text-xs hover:bg-bg-hover disabled:opacity-50"
           >
             {/* "Stop writing", not "Cancel". Cancel reads as undoing, and the
                 courses already written are kept -- they exist, in sessions
@@ -185,7 +185,7 @@ export const AuthoringBar = ({
           <a
             href={courseUrl()}
             download
-            className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
+            className="focus-visible:lay-ring-inward rounded-md border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
           >
             Download all courses (.zip)
           </a>
@@ -195,7 +195,7 @@ export const AuthoringBar = ({
           <a
             href={courseUrl(undefined, 'html')}
             download
-            className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
+            className="focus-visible:lay-ring-inward rounded-md border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
           >
             Download all courses (.html)
           </a>
@@ -206,7 +206,7 @@ export const AuthoringBar = ({
             <a
               href={courseUrl(areaSlug)}
               download
-              className="rounded focus-visible:lay-ring-inward border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
+              className="focus-visible:lay-ring-inward rounded-md border border-line bg-bg-panel px-2 py-1 text-xs text-fg no-underline hover:bg-bg-hover"
             >
               Download “{areaTitle ?? areaSlug}” (.zip)
             </a>

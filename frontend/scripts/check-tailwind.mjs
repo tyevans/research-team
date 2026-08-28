@@ -24,13 +24,47 @@
  * (`sub`, `chip`, `row`) is not decidable from the string, and a check that
  * fires on correct code is a check somebody turns off -- `check-deleted.mjs`
  * makes the same argument about its own patterns and narrows them for the same
- * reason. So this is a list that grows when a family bites, and it starts as
- * the spacing families because those are the ones that have.
+ * reason. So this is a list that grows when a family bites, and it started as
+ * the spacing families because those were the ones that had.
  *
- * The honest gap that leaves: a *colour* or *breakpoint* typo is still silent.
- * Breakpoints in particular are the next one to fail this way -- `theme.css`
- * declares none, so `md:` generates nothing today -- and they are covered here
- * only when they prefix a family below.
+ * **The colour families bit next, and this is where they were added.** The
+ * paragraph above used to end by naming a colour typo as "the honest gap", and
+ * the gap was occupied the whole time it said so. Measured on 2026-08-27, by
+ * adding the families below and running against `origin/main`: `text-fg-muted`
+ * at seven sites, `text-k-warning` at two, `text-danger`, `bg-bg-muted`,
+ * `bg-black` and `rounded-sm` at one each -- plus a bare `rounded`, which is
+ * not a static utility in this build because `--radius` is not declared. Every
+ * one of them was in the attribute and absent from the bundle, and the two
+ * radius ones had been drawing square corners for as long as they had shipped.
+ *
+ * **Which families are checked, and which are deliberately not.** Checked:
+ * the spacing families, and the appearance families whose every value comes
+ * from a token declared in `theme.css` -- radius, colour on `text`/`bg`/
+ * `border`/`ring`/`outline`/`fill`/`stroke`/`divide`/`accent`/`caret`/
+ * `decoration`, and `shadow`. That set was run over the whole of `src/` before
+ * being committed and produced no false positive, which is the bar: a family
+ * goes on this list once somebody has watched it stay quiet on correct code.
+ *
+ * Not checked, and each for a stated reason rather than an oversight:
+ *
+ * - **`font-*`.** It would fire, and correctly -- `font-medium`, `font-semibold`
+ *   and `font-normal` generate nothing across 29 sites, because font weights
+ *   live in Tailwind's default theme and `theme.css` omits it. They are left
+ *   out because there is no fix available inside this check's remit: the
+ *   nearest declared token does not exist, and declaring `--font-weight-*`
+ *   would grow the palette to make a class valid, which is the move
+ *   `theme.css` exists to refuse. Turning this family on is a decision about
+ *   the type scale, and belongs in the commit that makes it. See BACKLOG.
+ * - **Gradient stops (`from-*`, `via-*`, `to-*`).** `to-` in particular is a
+ *   common prefix in ordinary strings, this console draws no gradients, and a
+ *   family with nothing to catch is only a false-positive surface.
+ * - **Breakpoints.** `theme.css` declares none, so `md:` generates nothing
+ *   today. A variant is not a class name, so it is covered here only when it
+ *   prefixes a family above -- `md:p-3` is caught, a bare `md:flex` is not.
+ * - **Bare family names other than `rounded`.** `text`, `bg` and `font` alone
+ *   are not utilities at all, so a string containing the word would be
+ *   reported as a defect. `rounded` is the one worth the exception, because it
+ *   reads as a complete class and silently is not.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -45,7 +79,14 @@ const ASSETS = fileURLToPath(
  *  scale. Every one of these is `calc(var(--spacing) * N)` for a step with no
  *  explicit `--spacing-N` key, which is the whole defect. Written out rather
  *  than pattern-matched on `-\d` because `border-2`, `z-10` and `opacity-50`
- *  are all bare numbers on scales that have nothing to do with spacing. */
+ *  are all bare numbers on scales that have nothing to do with spacing.
+ *
+ *  Below them, the radius and colour families, which fail the same way for the
+ *  other half of the same omission: no default theme means no `--radius-lg`
+ *  and no `--color-red-500`, so `rounded-lg` and `bg-red-500` are names with
+ *  no rule. Their static values (`rounded-full`, `outline-none`, `text-center`)
+ *  are emitted by `utilities.css` regardless of the theme and so pass this
+ *  check without being listed anywhere. */
 const FAMILIES = `
   m mx my ms me mt mr mb ml
   p px py ps pe pt pr pb pl
@@ -53,16 +94,31 @@ const FAMILIES = `
   inset inset-x inset-y start end top right bottom left
   size w h min-w min-h max-w max-h basis
   translate translate-x translate-y indent
+  rounded rounded-t rounded-r rounded-b rounded-l
+  rounded-s rounded-e rounded-ss rounded-se rounded-ee rounded-es
+  rounded-tl rounded-tr rounded-br rounded-bl
+  text bg border border-t border-r border-b border-l border-x border-y
+  ring ring-offset outline divide decoration accent caret
+  fill stroke shadow inset-shadow drop-shadow text-shadow
 `
   .trim()
   .split(/\s+/)
+
+/** Families that are also a complete utility name on their own. Only
+ *  `rounded`: in a build with the default theme it is `border-radius: .25rem`
+ *  from `--radius`, and with the theme omitted it is nothing at all --
+ *  measured, `.rounded{` appears zero times in the built stylesheet, and
+ *  `MediaProposalCard` had been drawing a square thumbnail because of it. The
+ *  other families are not utilities bare (`text`, `bg`, `border` is a static
+ *  width and needs no check), so listing them here would report English. */
+const BARE = new Set(['rounded'])
 
 /** A candidate is `[-]family-value`, optionally behind variants (`hover:`,
  *  `md:`, `data-[open]:`). The value half is left deliberately loose: an
  *  arbitrary value, a fraction, a keyword and a bare step all have to reach the
  *  emission check, because "is this a real value" is the question the built
  *  stylesheet answers and this regex must not pre-empt. */
-const CANDIDATE = new RegExp(`^-?(?:${FAMILIES.join('|')})-[^\\s]+$`)
+const CANDIDATE = new RegExp(`^-?(?:${FAMILIES.join('|')})-[^\\s]+$|^(?:${[...BARE].join('|')})$`)
 
 /** Values that are not utilities and never emit: `w-full` is one, but so is a
  *  string like `p-` from a truncated template. A token containing any of these
@@ -186,6 +242,6 @@ if (process.argv[1]?.endsWith('check-tailwind.mjs')) {
     process.exit(1)
   }
   console.log(
-    `· ${String(candidates.size)} spacing-family utilities in src/, all of them emitting a rule.`,
+    `· ${String(candidates.size)} checked-family utilities in src/, all of them emitting a rule.`,
   )
 }
