@@ -81,12 +81,12 @@ learning, which is the thing an autonomous run needs told.
 """
 
 
-BLOCKING_SEVERITIES: frozenset[str] = frozenset({"invariant", "blocking", "human_gate"})
-"""Severities that stop a topic being worked, out of `FindingSeverity`'s five.
+BLOCKING_SEVERITIES: frozenset[str] = frozenset({"blocking", "human_gate"})
+"""Severities that stop a topic being worked, out of `FindingSeverity`'s three.
 
-`advisory` is worth a look and does not block. `critic_gate` is deliberately
-absent: it names a model call this library will not make, and no trigger here
-produces one -- listing it would imply a path that does not exist.
+`advisory` is worth a look and does not block, which leaves this set as the
+other two. Named rather than written as `!= "advisory"` so that adding a fourth
+severity is a decision about whether it blocks, not a silent yes.
 """
 
 POSITION_WIDTH = 12

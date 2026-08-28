@@ -63,7 +63,8 @@ Lives here rather than in `topic_seeding.py` because seeding is not the only
 caller of `open_topic` -- an autonomous round opens topics mid-run and never
 sees the seeding prompt. `TOPICS_PROMPT` below is appended exactly where
 `build_topic_tools` binds the tool, so this arrives with the tool and with
-nothing else, the scoping `components.component_guidance` argues for.
+nothing else: an instruction reaches a prompt when the tool it governs does,
+so a turn with no topic tool is not carrying rules for one.
 """
 
 

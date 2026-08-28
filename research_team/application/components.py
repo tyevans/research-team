@@ -86,10 +86,9 @@ from typing import Any, ClassVar, Literal
 
 import yaml
 
-from research_team.application.artifacts import parse_frontmatter
+from research_team.application.frontmatter import parse_frontmatter
 from research_team.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
 from research_team.application.timeline_read import MAX_TIMELINE_BANDS
-from research_team.domain.workflow import ArtifactType
 
 _YAML_LOADER: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 """The fastest *safe* loader this PyYAML has.
@@ -1248,108 +1247,6 @@ def component_reference(only: Iterable[str] | None = None) -> str:
             lines += ["Writing a good one:", ""]
             lines += [f"- {note}" for note in component.craft]
             lines += [""]
-    return "\n".join(lines)
-
-
-COMPONENTS_FOR: Mapping[ArtifactType, tuple[str, ...]] = {
-    # UbD Stage 2 evidence, and ADDIE's assessment items: the components that
-    # have a right answer. A deck is not evidence of anything.
-    ArtifactType.EVIDENCE_SPEC: ("mcq", "cloze"),
-    # UbD Stage 3's learning plan and ADDIE's treatment: practice, not
-    # assessment. Recall and procedure, where being wrong costs nothing.
-    ArtifactType.EXPERIENCE: ("flashcards", "cloze", "checklist"),
-    # ADDIE Development. §3.8: "the whole catalog; this is where components get
-    # authored." The one stage that should reach for anything -- anything a
-    # course file can actually render, which is not the same as the registry.
-    #
-    # This was `tuple(REGISTRY)`, and that is how five widgets that cannot
-    # work here joined this prompt without anyone deciding to add them. A
-    # resolved component fetches from the project's graph, and a course file is
-    # read from a *session*, which has no project in scope: every resolved
-    # widget in a lesson renders `unavailable` and draws the plain name it was
-    # given. Advertising them here teaches a model to write a block that is
-    # inert wherever this prompt applies.
-    #
-    # Enumerated rather than filtered by `spec.resolved` for the same reason
-    # `tuple(REGISTRY)` was wrong: a new entry should join a prompt because
-    # somebody put it here, not because its flags happened to line up.
-    # `test_a_resolved_type_does_not_reach_the_build_prompt_by_existing` fails
-    # if a resolved type reaches any artifact type, here or below.
-    ArtifactType.BUILD: ("flashcards", "mcq", "cloze", "checklist"),
-    # Organising experiences: a sequence a learner or facilitator works
-    # through is a checklist, and `ordering` is not registered yet.
-    ArtifactType.SEQUENCE: ("checklist",),
-    # Implementation: the facilitator's run-of-show.
-    ArtifactType.MONITORING_PLAN: ("checklist",),
-}
-"""Which components belong in which artifact, from the design's §3.8 table.
-
-Keyed by artifact type rather than by framework stage, because a stage's
-*outputs* are what this codebase actually declares -- so the guidance a stage
-receives is derived from the preset, the same way its paths and its frontmatter
-already are, and adding an output to a stage updates its component guidance
-with it rather than leaving the two to drift.
-
-Deliberately partial. `Rubric`, `Criteria` and `TaxonomySelection` all have a
-natural component in §3.8 and none of it is registered yet, so they are absent
-rather than mapped to an approximation: telling a model to express a rubric as
-a checklist would get a rubric-shaped checklist, which is worse than prose.
-"""
-
-
-def component_guidance(outputs: Iterable[Any]) -> str:
-    """What to tell a stage about components, or nothing at all.
-
-    Nothing is the common case and it is the point. A stage writing source
-    claims has no use for two kilobytes of widget syntax, and a prompt that
-    carries it anyway teaches the model that most of its instructions do not
-    apply to it -- which is a habit that costs far more than the tokens.
-
-    When a stage *does* write a component-bearing artifact, the occasion and
-    the syntax arrive together: knowing that an assessment item wants an `mcq`
-    is useless without knowing how to write one, and knowing how to write one
-    is useless without knowing when.
-    """
-    fits: dict[str, tuple[str, ...]] = {}
-    for output in outputs:
-        names = COMPONENTS_FOR.get(output.artifact_type)
-        if not names:
-            continue
-        label = output.artifact_type.value
-        if getattr(output, "subtype", None):
-            label = f"{label} ({output.subtype})"
-        fits[label] = names
-    if not fits:
-        return ""
-
-    lines = [
-        "",
-        "",
-        "## Interactive components in this stage's artifacts",
-        "",
-        "These outputs are read by a learner, not only by a reviewer. Where one",
-        "of them would be better done than read, write the component rather than",
-        "describing it in prose:",
-        "",
-    ]
-    lines += [f"- **{label}** — {', '.join(names)}" for label, names in fits.items()]
-    lines += [
-        "",
-        "Prose is still right for explanation. A component earns its place when",
-        "the learner should *do* something -- recall it, decide it, work through",
-        "it -- not when they should understand it.",
-        "",
-        "If you delegate any of this with `task`, put the component requirement",
-        "in the task you write. A subagent cannot see this conversation or these",
-        'instructions, so a task that says only "draft the assessment items"',
-        "comes back as prose, and nothing will tell you why -- it reads like a",
-        "model that ignored a requirement it was never given. Name the component",
-        "types it should use and tell it to emit fenced `component:` blocks.",
-        "",
-        # Narrowed to what this stage was just told fits, in registry order so
-        # the reference reads the same wherever it appears.
-        component_reference(only=[n for n in REGISTRY if any(n in v for v in fits.values())]),
-    ]
     return "\n".join(lines)
 
 

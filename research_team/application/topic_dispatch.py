@@ -16,13 +16,12 @@ scrubbable, already diffable. Findings the agent records land as
 that is the strongest property this shape has: a feature that adds no
 vocabulary to the log cannot break anyone's stored history.
 
-**Why `/topics/<nn>-<slug>/` and not `/course/`.** `COURSE_DIR`'s docstring
-says it is "everything a workflow produces", and a topic synthesis is not
-produced by a workflow -- it has no preset, no stage and no stage number.
-Two directories, two provenances. The `<nn>` prefix is borrowed from
-`artifacts.py` for the reason that module gives: alphabetical file listing is
-the only ordering a file viewer has, so without a numeric prefix the directory
-sorts by whatever the questions happen to start with.
+**Why `/topics/<nn>-<slug>/` and not `/course/`.** `/course` is where authoring
+writes, and a topic synthesis is not authoring -- it answers a question somebody
+asked rather than building a lesson. Two directories, two provenances. The
+`<nn>` prefix is there because alphabetical file listing is the only ordering a
+file viewer has, so without a numeric prefix the directory sorts by whatever the
+questions happen to start with.
 """
 
 from collections.abc import Callable
@@ -31,8 +30,8 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
-from research_team.application.artifacts import slugify
 from research_team.application.session_service import SessionService
+from research_team.application.text import slugify
 from research_team.application.topic_read import TopicDetail, TopicReadPort
 from research_team.domain import SessionPurpose
 
@@ -159,10 +158,9 @@ UNDERSTANDING_PROMPT = (
 Two things it deliberately does *not* say. It does not mention `web_search`
 availability -- a prompt that branched on a tool's presence would describe two
 deployments instead of one, which is the mistake `SEEDING_PROMPT`'s docstring
-warns against at length. And it asks for no widgets: `SourceDossier` is absent
-from `COMPONENTS_FOR` and should stay absent, because a synthesis is
-explanation and "a component earns its place when the learner should *do*
-something". A dossier padded with flashcards is a worse dossier.
+warns against at length. And it asks for no widgets, because a synthesis is
+explanation and a component earns its place when the learner should *do*
+something. A dossier padded with flashcards is a worse dossier.
 """
 
 

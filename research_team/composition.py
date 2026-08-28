@@ -3305,11 +3305,6 @@ def build_application(
         # queue the routes enqueue into and the one the roster reads must be
         # the same object, and only the process that owns both can say so.
         dispatches=dispatches,
-        # The same runner the `stage_runner` field exposes. A second instance
-        # would hold its own in-flight dict and the dock would show nothing
-        # while a stage was being driven -- the exact failure #79 fixed for
-        # extractions by insisting on one buffer.
-        stages=stage_runner,
         # The projection, not the service: `everywhere` needs session -> project
         # for the turns it finds, and asking the service would fold a session
         # per running turn to learn something a read-model column already says.

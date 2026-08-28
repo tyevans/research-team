@@ -7,7 +7,6 @@ store, model provider, or user interface.
 from research_team.application.autonomy import (
     GATED_TOOLS,
     SEARCH_TOOL,
-    STAGE_GATE_TOOLS,
     AutonomyPolicy,
     Level,
 )
@@ -109,7 +108,6 @@ __all__ = [
     "REMEMBER_TOOL",
     "ROUND_INSTRUCTIONS",
     "SEARCH_TOOL",
-    "STAGE_GATE_TOOLS",
     "UNMERGE_TOOL",
     "ActiveRun",
     "ActivityReporter",

@@ -1,20 +1,17 @@
-"""What a check or a trigger reports, in the one shape everything downstream reads.
+"""What a trigger reports, in the one shape everything downstream reads.
 
-This lives in its own module rather than in `checks.py` for a dependency
-reason and no other. The check registry has to import the modules that
-implement checks -- `coverage.py` implements `matrix_density` -- and those
-modules have to return findings. With the type declared in `checks.py` that is
-a cycle; with it here, the arrow runs one way from the registry to the
-implementations, and both sides name one `Finding` instead of two that agree
-until they quietly stop.
+A module for one dataclass, which is more separation than one consumer would
+justify. It had two: the check library, whose registry could not declare this
+without a cycle back to the modules implementing its checks, and
+`topic_attention.py`. The check library is deleted and `topic_attention.py` is
+what remains.
 
-The definitions are `checks.py`'s, moved rather than rewritten.
-
-**`topic_attention.py` is the second consumer**, and its arrival is what
-renamed `affected_artifact_ids`. That module briefly declared a `Finding` of its
-own -- exactly the second type this module exists to prevent -- because it was
-written while the check library was unmerged. The two are now one. What the join
-cost is one field name: see `cites`.
+Kept as its own module rather than folded into `topic_attention.py`, because
+that module briefly declared a `Finding` of its own -- written while the check
+library was unmerged -- and the two spent a release agreeing until somebody
+joined them. A type with one consumer and a history of being duplicated is
+cheaper to leave where a second consumer can find it than to move back. What
+the join cost is one field name: see `cites`.
 """
 
 from dataclasses import dataclass
@@ -22,17 +19,18 @@ from typing import Literal
 
 __all__ = ["Finding", "FindingSeverity"]
 
-FindingSeverity = Literal["invariant", "blocking", "advisory", "human_gate", "critic_gate"]
-"""Wider than the domain's `Severity`, by exactly three values.
+FindingSeverity = Literal["blocking", "advisory", "human_gate"]
+"""How much a finding stops the work it is about.
 
-`blocking` and `advisory` are what a preset may choose. `invariant` is what the
-harness enforces regardless. The last two mark findings no run can clear by
-itself, and they are distinct because who is owed the answer differs:
-`human_gate` needs a person because no automated substitute exists at all,
-while `critic_gate` needs a model call that the check library is deliberately
-not allowed to make. Keeping all five in one vocabulary means a reviewer reads
-one list; keeping the last three out of the domain's `Severity` means a preset
-author cannot accidentally write one.
+`blocking` means the thing cannot be usefully worked until it is addressed;
+`advisory` means it is worth a look. `human_gate` is neither: it marks a
+finding no run can clear by itself, because no automated substitute for the
+answer exists at all.
+
+Two more values were here -- `invariant`, for what the check harness enforced
+regardless of a preset, and `critic_gate`, for a finding needing a model call
+the check library was not allowed to make. Both named machinery that no longer
+exists, and no trigger produced either.
 """
 
 
@@ -45,14 +43,15 @@ class Finding:
     human's -- so anything more structured here would be a promise the library
     cannot keep.
 
-    `cites` is legitimately empty, and not as a degenerate case: a whole-matrix
-    finding is about the grid rather than any cell of it, and an intrinsic
-    matrix's empty row reports that *no artifact exists* for that axis value,
-    which is precisely a finding with no id to name.
+    `cites` is legitimately empty rather than degenerate: a finding can be
+    about the absence of the thing it would otherwise name.
     """
 
     check: str
-    """The rule that produced this. A check name, or a `topic.*` trigger name."""
+    """The rule that produced this: a `topic.*` trigger name. Named `check`
+    while a check library was the other producer, and left alone rather than
+    renamed with it -- the field is a rule's name either way, and a rename
+    costs every stored and rendered reference to buy a synonym."""
 
     severity: FindingSeverity
     message: str
@@ -63,12 +62,13 @@ class Finding:
     It was `affected_artifact_ids` while checks were the only producer, which
     was exact and stopped being true: a topic trigger cites source ids and
     sub-question keys, and neither is an artifact. The two candidate names each
-    fit one side and lied about the other -- for a check the ids are the thing
+    fit one side and lied about the other -- for a check the ids were the thing
     *at fault*, and for a trigger they are the thing that *raised it*.
 
-    `cites` is the honest common ground: both answer "what should I look at",
-    and neither is claimed to be evidence or to be a defect. The alternative
-    was two finding types, which is the thing this module exists to prevent.
+    `cites` is the common ground both answered: "what should I look at", with
+    nothing claimed about whether it is evidence or a defect. Kept now that the
+    check half is gone, because the surviving producer is the one it was
+    renamed *for*.
     """
 
     suggested_edit: str | None = None

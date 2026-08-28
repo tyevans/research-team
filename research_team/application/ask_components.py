@@ -49,8 +49,9 @@ word rather than an error -- which is what makes offering all six at once
 reasonable rather than reckless.
 
 Written out rather than derived from `REGISTRY`, deliberately. A derived tuple
-is how `COMPONENTS_FOR[BUILD]` came to advertise five widgets that cannot
-resolve where its prompt is used: a registry entry joined a prompt by existing.
+is how the old stage-prompt guidance came to advertise five widgets that could
+not resolve where its prompt was used: a registry entry joined a prompt by
+existing. That guidance is deleted; the way it went wrong is not.
 The cost of this list is that a new type has to be added in two places; the
 benefit is that adding it is a decision somebody made. Measured on 2026-08-17:
 this reference is 3,040 characters with the three original types, 7,947 with

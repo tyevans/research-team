@@ -54,7 +54,6 @@ from research_team.application import (
     build_fork_tree,
 )
 from research_team.application.area_projection import GraphTooLarge
-from research_team.application.artifacts import parse_frontmatter
 from research_team.application.ask import (
     AskAnswer,
     AskConversationOpened,
@@ -78,6 +77,7 @@ from research_team.application.course_realization import CourseService
 from research_team.application.curriculum import CurriculumService
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.entity_definitions import DefinitionService, serve_citations
+from research_team.application.frontmatter import parse_frontmatter
 from research_team.application.grading import GradingError, grade
 from research_team.application.graph_read import (
     MAX_GRAPH_NODES,

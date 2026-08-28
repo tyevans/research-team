@@ -438,77 +438,6 @@ def test_an_unknown_type_is_not_reported_as_a_problem():
     assert validation_report(parse_document("```component:from-the-future\nx: 1\n```\n")) == ""
 
 
-# --- knowing when to reach for one -----------------------------------------
-#
-# A syntax reference alone is a grammar with no occasion. These pin the other
-# half: that a stage writing an assessment artifact is told which components an
-# assessment is made of, and -- just as importantly -- that a stage writing a
-# source claim is told nothing, because 2kB of widget syntax in an intake
-# stage's prompt is 2kB of noise it will never act on.
-
-
-def test_a_stage_that_writes_no_component_bearing_artifact_gets_no_guidance():
-    from research_team.application.components import component_guidance
-    from research_team.domain.workflow import ArtifactType, StageOutput
-
-    outputs = (StageOutput(artifact_type=ArtifactType.SOURCE_CLAIM, cardinality="1..n"),)
-    assert component_guidance(outputs) == ""
-
-
-def test_an_evidence_stage_is_pointed_at_the_assessment_components():
-    from research_team.application.components import component_guidance
-    from research_team.domain.workflow import ArtifactType, StageOutput
-
-    outputs = (
-        StageOutput(
-            artifact_type=ArtifactType.EVIDENCE_SPEC,
-            subtype="assessment_item",
-            cardinality="1..n",
-        ),
-    )
-    guidance = component_guidance(outputs)
-
-    assert "EvidenceSpec" in guidance
-    assert "mcq" in guidance
-    # The deck belongs in a learning plan, not in the evidence an assessment is.
-    assert "flashcards" not in guidance.split("### mcq")[0]
-
-
-def test_a_learning_plan_is_pointed_at_practice_rather_than_assessment():
-    from research_team.application.components import component_guidance
-    from research_team.domain.workflow import ArtifactType, StageOutput
-
-    outputs = (StageOutput(artifact_type=ArtifactType.EXPERIENCE, cardinality="1..n"),)
-    guidance = component_guidance(outputs)
-
-    assert "Experience" in guidance
-    assert "flashcards" in guidance and "checklist" in guidance
-
-
-def test_guidance_carries_the_syntax_reference_so_the_two_arrive_together():
-    """Knowing a component fits and not knowing how to write one is no better
-    than the reverse, so they are one block or neither."""
-    from research_team.application.components import component_guidance
-    from research_team.domain.workflow import ArtifactType, StageOutput
-
-    outputs = (StageOutput(artifact_type=ArtifactType.BUILD, cardinality="1"),)
-    guidance = component_guidance(outputs)
-
-    assert "```component:mcq" in guidance
-    assert "block scalar" in guidance
-
-
-def test_every_component_named_in_the_map_is_actually_registered():
-    """The map is prose handed to a model; an unregistered name in it would be
-    an instruction to write a component that renders as a code block."""
-    from research_team.application.components import COMPONENTS_FOR, REGISTRY
-
-    for artifact, names in COMPONENTS_FOR.items():
-        assert names, f"{artifact} maps to nothing; drop the entry instead"
-        for name in names:
-            assert name in REGISTRY, f"{artifact} names unregistered {name!r}"
-
-
 def test_the_generated_reference_covers_every_registered_type():
     """The reference is generated so it cannot drift from the schemas.
 
@@ -552,54 +481,6 @@ def test_craft_notes_are_scoped_to_the_types_asked_for():
 
     assert "one fact per card" in reference.lower()
     assert "distractor" not in reference
-
-
-# --- B31: the guidance has to survive being handed to a subagent ------------
-#
-# Component guidance rides `StageMiddleware`, which wraps the *caller's* model
-# call. A subagent spawned through `task` gets `delegation.py`'s own static
-# system prompt and none of this, so a delegated "draft the assessment items"
-# comes back as prose no renderer will use -- and it fails silently, looking
-# like a model that ignored instructions it was genuinely never given.
-#
-# The fix is the cheaper of B31's two options: tell the *caller* to put the
-# requirement in the task it writes. That is consistent with delegation.py's
-# own "give it everything it needs; it cannot see this conversation", and it
-# keeps the subagent prompt static so every delegation does not pay for
-# guidance most of them have no use for.
-
-
-def test_a_component_stage_is_told_to_carry_the_requirement_into_a_delegated_task():
-    from research_team.application.components import component_guidance
-    from research_team.domain.workflow import ArtifactType, StageOutput
-
-    outputs = (
-        StageOutput(
-            artifact_type=ArtifactType.EVIDENCE_SPEC,
-            subtype="assessment_item",
-            cardinality="1..n",
-        ),
-    )
-    guidance = component_guidance(outputs)
-
-    assert "delegate" in guidance.lower()
-    # Naming the tool matters: "delegate" alone is a concept, `task` is the
-    # thing the model actually calls.
-    assert "task" in guidance.lower()
-    # The instruction has to be to restate the requirement, not merely to know
-    # that subagents exist.
-    assert "cannot see" in guidance.lower()
-
-
-def test_a_stage_with_no_components_is_told_nothing_about_delegation_either():
-    """The delegation note is part of the component block, not a new always-on
-    paragraph. A stage writing source claims has no component requirement to
-    carry into a subagent task, so there is nothing here for it to be told."""
-    from research_team.application.components import component_guidance
-    from research_team.domain.workflow import ArtifactType, StageOutput
-
-    outputs = (StageOutput(artifact_type=ArtifactType.SOURCE_CLAIM, cardinality="1..n"),)
-    assert component_guidance(outputs) == ""
 
 
 # --- B29: the parse was nine times slower than it needed to be -------------
@@ -1250,37 +1131,6 @@ def test_the_generated_reference_carries_every_resolved_example():
 
     for name in ("definition", "evidence", "graph", "timeline", "compare", "explorer"):
         assert f"component:{name}" in reference
-
-
-def test_a_resolved_type_does_not_reach_the_build_prompt_by_existing():
-    """`COMPONENTS_FOR[BUILD]` was `tuple(REGISTRY)`, so every new registry
-    entry joined a course-authoring prompt silently -- and did so five times
-    during this feature.
-
-    It is the wrong default for these five specifically: a course file is read
-    from a session, which has no project in scope, so a resolved widget in a
-    lesson renders `unavailable` and draws the plain name every time. The
-    prompt was advertising five widgets that cannot resolve where it is used.
-
-    Red against `ArtifactType.BUILD: tuple(REGISTRY)`.
-    """
-    from research_team.application.components import COMPONENTS_FOR, REGISTRY
-    from research_team.domain.workflow import ArtifactType
-
-    resolved = {name for name, spec in REGISTRY.items() if spec.resolved}
-
-    assert resolved, "this test is vacuous with no resolved types registered"
-    for artifact, names in COMPONENTS_FOR.items():
-        assert not (resolved & set(names)), f"{artifact} offers unresolvable {names}"
-    # Pinned as a literal rather than as `set(REGISTRY) - resolved`, which
-    # would be the same derivation the entry just stopped making -- a sixth
-    # unresolved type would join this prompt and this test would agree.
-    assert set(COMPONENTS_FOR[ArtifactType.BUILD]) == {
-        "flashcards",
-        "mcq",
-        "cloze",
-        "checklist",
-    }
 
 
 def test_an_entity_id_written_where_a_name_belongs_is_warned_about():

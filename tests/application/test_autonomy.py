@@ -5,6 +5,8 @@ so raising or lowering autonomy lands on the next tool call -- including
 partway through a turn already running.
 """
 
+from inspect import signature
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -16,12 +18,7 @@ from research_team.application import (
     UNMERGE_TOOL,
     AutonomyPolicy,
 )
-from research_team.application.autonomy import (
-    ADVANCE_STAGE_TOOL,
-    FETCH_MEDIA_TOOL,
-    STAGE_GATE_TOOLS,
-    TOOL_FLOORS,
-)
+from research_team.application.autonomy import FETCH_MEDIA_TOOL, TOOL_FLOORS
 
 LEVELS = ("auto", "ask", "deny")
 
@@ -158,30 +155,22 @@ def test_the_knowledge_writes_are_gated_but_the_read_is_not():
     assert policy.level_for(GRAPH_SEARCH_TOOL) == "auto"
 
 
-def test_relax_all_leaves_the_stage_gate_alone():
-    """`advance_stage`'s floor is the workflow review, not a hazard rating.
+def test_relax_all_exempts_nothing():
+    """It swept every gated tool but `advance_stage`, which was a review gate
+    rather than a hazard and needed asking for by name. Both are gone, and
+    what remains in `GATED_TOOLS` is hazards only -- so a relax-all that
+    withheld one would be withholding it for being dangerous.
 
-    "Stop asking me about fetch" must not quietly mean "and let the run cross
-    every stage boundary unseen", which is the silent-progress failure the
-    staging design exists to prevent.
+    Red against any surviving exemption, and against `relax_all` taking a
+    keyword to grant one.
     """
-    policy = AutonomyPolicy()
+    policy = AutonomyPolicy(default="deny")
 
     changed = policy.relax_all()
 
-    assert ADVANCE_STAGE_TOOL not in changed
-    assert policy.level_for(ADVANCE_STAGE_TOOL) == "ask"
-    assert STAGE_GATE_TOOLS == (ADVANCE_STAGE_TOOL,)
-
-
-def test_relax_all_can_be_asked_to_include_the_stage_gate():
-    """A deliberate, separate act -- but a supported one."""
-    policy = AutonomyPolicy()
-
-    changed = policy.relax_all(include_stage_gates=True)
-
-    assert changed[ADVANCE_STAGE_TOOL] == "auto"
-    assert policy.level_for(ADVANCE_STAGE_TOOL) == "auto"
+    assert set(changed) == set(GATED_TOOLS)
+    assert all(policy.level_for(tool) == "auto" for tool in GATED_TOOLS)
+    assert not signature(policy.relax_all).parameters
 
 
 def test_relax_all_reports_only_the_levels_that_actually_moved():

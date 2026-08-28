@@ -19,10 +19,11 @@ from research_team.application.components import View, parse_document, project
 SOCRATIC_COMPONENT_TYPES: tuple[str, ...] = ("mcq", "cloze")
 """What a socratic dialogue may author.
 
-Two types, and the list is a ruling rather than an inheritance -- the same
-defect `COMPONENTS_FOR[BUILD]` was fixed to avoid, where a registry entry joined
-a prompt by existing. The cost is that a third type has to be added in two
-places; the benefit is that adding it is a decision somebody made.
+Two types, and the list is a ruling rather than an inheritance -- avoiding the
+defect a derived list produced in the old stage-prompt guidance, where a
+registry entry joined a prompt by existing. The cost is that a third type has
+to be added in two places; the benefit is that adding it is a decision somebody
+made.
 
 **Gradeable only, because grading is what feeds the stopping condition.** A
 dialogue that asks an `mcq` and marks the answer has evidence that the reader
