@@ -8,11 +8,19 @@ import type { ProjectId, SessionId } from '../shared/identifier.ts'
  * that could not see the holder would show a single "join" button and no way to
  * know that pressing it will fail.
  */
-export interface Project {
+export interface ProjectDetail {
   readonly id: ProjectId
   readonly name: string
   readonly activeSessionId: SessionId | null
   readonly tipAtEvent: number
+}
+
+/** A listing row: the detail above, plus the two columns only the list draws.
+ *
+ * Extended rather than declared afresh so a field added to a project reaches
+ * both — the same reason `project_view` is built on `project_detail_view`
+ * server-side. */
+export interface Project extends ProjectDetail {
   readonly workflow: WorkflowRef | null
   readonly stage: StageRef | null
 }

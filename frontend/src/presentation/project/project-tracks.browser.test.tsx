@@ -170,7 +170,19 @@ const container = () =>
     preferences: new InMemoryPreferenceStore(),
     now: () => new Date('2026-08-10T00:00:00Z'),
     stream: { connect: vi.fn(), disconnect: vi.fn() },
-    projects: { course: vi.fn().mockResolvedValue(COURSE) },
+    projects: {
+      course: vi.fn().mockResolvedValue(COURSE),
+      // The page's identity and holder come from here now rather than from the
+      // course. Omitting it does not fail the type -- the container is cast --
+      // it leaves the header with no holding session and the Workspace tab
+      // hidden, which is a layout difference these files measure.
+      project: vi.fn().mockResolvedValue({
+        id: ATLAS,
+        name: 'atlas',
+        activeSessionId: HOLDER,
+        tipAtEvent: 0,
+      }),
+    },
     sessions: {
       read: vi.fn().mockResolvedValue({
         id: HOLDER,

@@ -222,6 +222,7 @@ from research_team.interfaces.web.presenters import (
     preset_view,
     progress_view,
     project_change,
+    project_detail_view,
     project_view,
     roster_view,
     run_view,
@@ -1259,6 +1260,26 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no project {project_id}") from error
         if state.status == "new":
             raise HTTPException(status_code=404, detail=f"no project {project_id}")
+
+    @app.get("/api/projects/{project_id}")
+    async def read_project(project_id: UUID):
+        """One project: who it is, and which session holds it.
+
+        Separate from the listing rather than "the row you already fetched",
+        because the console reaches a project page by URL as often as by a
+        click -- a reload, a bookmark, a link somebody sent -- and on that path
+        no listing has been fetched. The alternative was for a project page to
+        read `/api/projects` and filter, which is O(projects) of server-side
+        fold to answer a question about one.
+        """
+        await _require_project(project_id)
+        state = await service.project_state(project_id)
+        return project_detail_view(
+            project_id,
+            state.name,
+            active_session_id=state.active_session_id,
+            tip_at_event=state.tip_at_event,
+        )
 
     @app.get("/api/projects/{project_id}/workflow")
     async def get_workflow(project_id: UUID):

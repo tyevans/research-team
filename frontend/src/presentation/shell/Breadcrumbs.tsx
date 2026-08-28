@@ -1,7 +1,6 @@
 import { shortId } from '@domain/shared/identifier.ts'
 import type { SessionProjection } from '@domain/session/session.ts'
 import { forkOrigin } from '@domain/session/session.ts'
-import type { Course } from '@domain/project/course.ts'
 
 import type { Route } from '../routing/routes.ts'
 import { projectHref, sessionHref, homeHref } from '../routing/routes.ts'
@@ -14,11 +13,16 @@ import { projectHref, sessionHref, homeHref } from '../routing/routes.ts'
 export const Breadcrumbs = ({
   route,
   session,
-  course,
+  projectName,
 }: {
   route: Route
   session: SessionProjection | null
-  course: Course | null
+  /** The project's name, or `null` until the read that carries it settles --
+   *  the crumb falls back to a short id for that paint. A name rather than the
+   *  course it used to be read off: this crumb wanted one field of a run's
+   *  progress, and on a project running no workflow that request answers 409,
+   *  so the crumb showed an id forever. */
+  projectName: string | null
 }) => {
   if (route.name === 'project') {
     const facet = route.selection?.facet ?? null
@@ -32,10 +36,10 @@ export const Breadcrumbs = ({
             following a link into one topic. */}
         {facet ? (
           <a className="sid" href={projectHref(route.id)}>
-            {course?.projectName || shortId(route.id)}
+            {projectName || shortId(route.id)}
           </a>
         ) : (
-          <span className="sid">{course?.projectName || shortId(route.id)}</span>
+          <span className="sid">{projectName || shortId(route.id)}</span>
         )}
         {facet ? (
           <>

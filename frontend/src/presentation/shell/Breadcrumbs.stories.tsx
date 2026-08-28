@@ -3,9 +3,14 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { SessionProjection } from '@domain/session/session.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
-import { course, PROJECT } from '../course/course-fixtures.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { Breadcrumbs } from './Breadcrumbs.tsx'
+
+// Declared here rather than imported from the course fixtures, which is where
+// it used to come from: this file no longer renders a course, and borrowing an
+// id from a fixture module it otherwise has nothing to do with is a dependency
+// that reads as a relationship.
+const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
 /** The trail, which is the console's only answer to "where am I".
  *
@@ -71,7 +76,7 @@ const Frame = ({ heading, children }: { heading: string; children: React.ReactNo
 export const Home: Story = {
   render: () => (
     <Frame heading="home">
-      <Breadcrumbs route={{ name: 'home' }} session={null} course={null} />
+      <Breadcrumbs route={{ name: 'home' }} session={null} projectName={null} />
     </Frame>
   ),
 }
@@ -84,7 +89,7 @@ export const AProjectWithAName: Story = {
       <Breadcrumbs
         route={{ name: 'project', id: PROJECT, selection: null }}
         session={null}
-        course={course({ projectName: 'ancient-rome' })}
+        projectName="ancient-rome"
       />
     </Frame>
   ),
@@ -102,7 +107,7 @@ export const AProjectWithAFacet: Story = {
       <Breadcrumbs
         route={{ name: 'project', id: PROJECT, selection: { facet: 'entity', id: 'e-42' } }}
         session={null}
-        course={course({ projectName: 'ancient-rome' })}
+        projectName="ancient-rome"
       />
     </Frame>
   ),
@@ -113,11 +118,11 @@ export const AProjectWithAFacet: Story = {
  *  trail with an id in it. */
 export const AProjectWithoutAName: Story = {
   render: () => (
-    <Frame heading="no course loaded yet">
+    <Frame heading="no name loaded yet">
       <Breadcrumbs
         route={{ name: 'project', id: PROJECT, selection: null }}
         session={null}
-        course={null}
+        projectName={null}
       />
     </Frame>
   ),
@@ -133,7 +138,7 @@ export const ASession: Story = {
       <Breadcrumbs
         route={{ name: 'session', id: SESSION, at: ScrubPoint.head(), path: null }}
         session={projection()}
-        course={null}
+        projectName={null}
       />
     </Frame>
   ),
@@ -151,7 +156,7 @@ export const AForkedSession: Story = {
       <Breadcrumbs
         route={{ name: 'session', id: SESSION, at: ScrubPoint.head(), path: null }}
         session={projection({ forkedFrom: PARENT, forkedAt: 42 })}
-        course={null}
+        projectName={null}
       />
     </Frame>
   ),
@@ -169,7 +174,7 @@ export const ASessionWithoutAProject: Story = {
       <Breadcrumbs
         route={{ name: 'session', id: SESSION, at: ScrubPoint.head(), path: null }}
         session={projection({ projectId: null })}
-        course={null}
+        projectName={null}
       />
     </Frame>
   ),
@@ -181,20 +186,20 @@ export const EveryShape: Story = {
   render: () => (
     <>
       <Frame heading="home">
-        <Breadcrumbs route={{ name: 'home' }} session={null} course={null} />
+        <Breadcrumbs route={{ name: 'home' }} session={null} projectName={null} />
       </Frame>
       <Frame heading="project">
         <Breadcrumbs
           route={{ name: 'project', id: ProjectId(PROJECT), selection: { facet: 'doc', id: null } }}
           session={null}
-          course={course({ projectName: 'ancient-rome' })}
+          projectName="ancient-rome"
         />
       </Frame>
       <Frame heading="session">
         <Breadcrumbs
           route={{ name: 'session', id: SESSION, at: ScrubPoint.head(), path: null }}
           session={projection({ forkedFrom: PARENT, forkedAt: 42 })}
-          course={null}
+          projectName={null}
         />
       </Frame>
     </>

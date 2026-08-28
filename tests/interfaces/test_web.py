@@ -1491,6 +1491,62 @@ async def test_list_projects_starts_empty_then_shows_a_created_one(client):
     ]
 
 
+async def test_reading_one_project_answers_its_identity_and_its_holder(client):
+    """`GET /api/projects/{id}`, the console's only single-project read.
+
+    Asserted against the whole body rather than field by field: the workflow
+    columns the *listing* carries are absent here on purpose, and a test that
+    only checks the keys it wants would pass with them present.
+
+    The holder is what earns the route. A project page resolves its transcript,
+    its composer and its Workspace tab off `active_session_id`, and joining is
+    what sets it -- so the read has to reflect a join rather than a creation.
+    """
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
+
+    response = await client.get(f"/api/projects/{project_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == project_id
+    assert body["name"] == "atlas"
+    assert body["active_session_id"] == session_id
+    assert set(body) == {"id", "name", "active_session_id", "tip_at_event"}
+
+
+async def test_reading_an_unknown_project_is_a_404(client):
+    """Not an empty project: an id nothing was written under folds to a `new`
+    state rather than raising, so without the `_require_project` check this
+    route would answer 200 with a nameless project -- which reads to a caller
+    as a project that exists and happens to be bare."""
+    response = await client.get(f"/api/projects/{uuid4()}")
+
+    assert response.status_code == 404
+
+
+async def test_a_deleted_project_still_reads_its_name(client):
+    """Pinned because it surprises, and because it is not this route's decision.
+
+    `_require_project` -- which every project-scoped route in this file goes
+    through -- refuses only the `new` state, so a deleted project passes it and
+    answers 200 here exactly as it does on `/sources` and `/topics`. Only
+    `DELETE` and `POST /join` distinguish deletion, and each does so with its
+    own check and a 409.
+
+    This test would pass with the route reverted to no check at all; what it
+    guards is the *other* direction -- somebody tightening this one route to
+    404 and leaving twenty others answering 200 for the same id.
+    """
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    await client.delete(f"/api/projects/{project_id}")
+
+    response = await client.get(f"/api/projects/{project_id}")
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "atlas"
+
+
 async def test_creating_a_project_with_a_taken_name_does_not_create_a_second(client):
     first = await client.post("/api/projects", json={"name": "atlas"})
     assert first.status_code == 200

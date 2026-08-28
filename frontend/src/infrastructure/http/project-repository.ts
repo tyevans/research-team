@@ -11,14 +11,22 @@ import type {
 } from '@application/ports/repositories.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type { Course } from '@domain/project/course.ts'
-import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { Project, ProjectDetail, WorkflowPreset } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toCourse, toExtractionFrame, toPreset, toProject, toRoster, toRun } from './mappers.ts'
+import {
+  toCourse,
+  toExtractionFrame,
+  toPreset,
+  toProject,
+  toProjectDetail,
+  toRoster,
+  toRun,
+} from './mappers.ts'
 
 export class HttpProjectRepository implements ProjectRepository {
   constructor(private readonly http: HttpClient) {}
@@ -26,6 +34,10 @@ export class HttpProjectRepository implements ProjectRepository {
   async list(): Promise<readonly Project[]> {
     const rows = await this.http.get('/api/projects', z.array(dto.projectDto))
     return rows.map(toProject)
+  }
+
+  async project(id: ProjectId): Promise<ProjectDetail> {
+    return toProjectDetail(await this.http.get(`/api/projects/${seg(id)}`, dto.projectDetailDto))
   }
 
   async presets(): Promise<readonly WorkflowPreset[]> {

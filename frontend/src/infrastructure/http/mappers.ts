@@ -55,7 +55,7 @@ import type {
   Provenance,
   Finding,
 } from '@domain/project/course.ts'
-import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { Project, ProjectDetail, WorkflowPreset } from '@domain/project/project.ts'
 import type {
   DocumentText,
   MediaSummary,
@@ -314,11 +314,15 @@ export const toApproval = (raw: Dto<typeof dto.approvalDto>): Approval => ({
   context: raw.context ? toGateContext(raw.context) : null,
 })
 
-export const toProject = (raw: Dto<typeof dto.projectDto>): Project => ({
+export const toProjectDetail = (raw: Dto<typeof dto.projectDetailDto>): ProjectDetail => ({
   id: ProjectId(raw.id),
   name: raw.name,
   activeSessionId: raw.active_session_id ? SessionId(raw.active_session_id) : null,
   tipAtEvent: raw.tip_at_event,
+})
+
+export const toProject = (raw: Dto<typeof dto.projectDto>): Project => ({
+  ...toProjectDetail(raw),
   workflow: raw.workflow,
   stage: raw.stage,
 })

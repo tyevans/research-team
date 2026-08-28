@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { notify } from '@application/notifications/toast-store.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
-import type { Course } from '@domain/project/course.ts'
 import { AskView } from '@presentation/ask/AskView.tsx'
 import { DialogueView } from '@presentation/dialogue/DialogueView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
@@ -102,7 +101,7 @@ const Console = () => {
   )
 
   const head = sessionStore((state) => state.head)
-  const [course, setCourse] = useState<Course | null>(null)
+  const [projectName, setProjectName] = useState<string | null>(null)
 
   useTreeRefresh(route.name === 'home')
 
@@ -139,7 +138,7 @@ const Console = () => {
             <Breadcrumbs
               route={route}
               session={route.name === 'session' ? head : null}
-              course={route.name === 'project' ? course : null}
+              projectName={route.name === 'project' ? projectName : null}
             />
             <div className="chrome-right">
               {/* In the bar rather than floating over the page: as a fixed panel
@@ -181,7 +180,7 @@ const Console = () => {
           route={route}
           seekSeconds={seekSeconds}
           store={sessionStore}
-          onCourse={setCourse}
+          onProjectName={setProjectName}
         />
       </Shell>
     </InteractionLogProvider>
@@ -226,7 +225,7 @@ const CurrentView = ({
   route,
   seekSeconds,
   store,
-  onCourse,
+  onProjectName,
 }: {
   route: Route
   /** The `doc` route's own `?t=`, threaded down rather than re-read: it comes
@@ -236,7 +235,7 @@ const CurrentView = ({
    *  anywhere to put it -- see its own prop for where it lands. */
   seekSeconds: number | null
   store: SessionStore
-  onCourse: (course: Course | null) => void
+  onProjectName: (name: string | null) => void
 }) => {
   if (route.name === 'session') {
     return <SessionView store={store} sessionId={route.id} at={route.at} path={route.path} />
@@ -282,7 +281,7 @@ const CurrentView = ({
       selection={selection}
       seekSeconds={seekSeconds}
       store={store}
-      onLoaded={onCourse}
+      onLoaded={onProjectName}
     />
   )
 }

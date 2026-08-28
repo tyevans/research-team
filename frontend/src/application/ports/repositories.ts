@@ -28,7 +28,7 @@ import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { Course } from '@domain/project/course.ts'
-import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { Project, ProjectDetail, WorkflowPreset } from '@domain/project/project.ts'
 import type {
   DocumentText,
   MediaSummary,
@@ -174,6 +174,11 @@ export interface AutonomyRepository {
 
 export interface ProjectRepository {
   list(): Promise<readonly Project[]>
+  /** One project, for a page that was reached by URL rather than from the
+   *  list. Separate from `list()` rather than a lookup in its result: a
+   *  reload, a bookmark or a shared link arrives with no listing fetched, and
+   *  filtering one would fold every project to answer about one. */
+  project(id: ProjectId): Promise<ProjectDetail>
   presets(): Promise<readonly WorkflowPreset[]>
   create(name: string): Promise<ProjectId>
   chooseWorkflow(id: ProjectId, presetId: string): Promise<string>

@@ -152,6 +152,17 @@ const containerWith = (over: Record<string, unknown> = {}) =>
       create: vi.fn(),
       chooseWorkflow: vi.fn(),
       course: vi.fn().mockResolvedValue(COURSE),
+      // The breadcrumb's project name, the transcript's session and the
+      // Workspace tab all read this now rather than the course. Held by the
+      // same session the row above reports, because a container that
+      // disagreed with itself would make "the page found the holder" depend
+      // on which read answered first.
+      project: vi.fn().mockResolvedValue({
+        id: ATLAS,
+        name: 'atlas',
+        activeSessionId: HOLDER,
+        tipAtEvent: 0,
+      }),
       join: vi.fn(),
       delete: vi.fn().mockResolvedValue(undefined),
     },

@@ -486,6 +486,33 @@ def course_view(
     }
 
 
+def project_detail_view(
+    project_id: UUID,
+    name: str,
+    *,
+    active_session_id: UUID | None = None,
+    tip_at_event: int = 0,
+) -> dict[str, Any]:
+    """One project, as `GET /api/projects/{id}` answers it.
+
+    Identity and holder, and nothing else. It exists because the only
+    single-project read this API had was `/course`, which carries the project's
+    name and its holding session alongside a workflow's stages -- so four
+    surfaces that want a name were reading a run's progress to get one, and
+    would have gone dark on a project that runs no workflow.
+
+    `project_view` below is this plus the workflow columns the *listing* draws;
+    the shared half is here rather than duplicated so that a field added to a
+    project cannot arrive in the list and be missing from the detail.
+    """
+    return {
+        "id": str(project_id),
+        "name": name,
+        "active_session_id": str(active_session_id) if active_session_id else None,
+        "tip_at_event": tip_at_event,
+    }
+
+
 def project_view(
     project_id: UUID,
     name: str,
@@ -509,10 +536,12 @@ def project_view(
     are `None` for every project written before workflows existed.
     """
     return {
-        "id": str(project_id),
-        "name": name,
-        "active_session_id": str(active_session_id) if active_session_id else None,
-        "tip_at_event": tip_at_event,
+        **project_detail_view(
+            project_id,
+            name,
+            active_session_id=active_session_id,
+            tip_at_event=tip_at_event,
+        ),
         "workflow": workflow,
         "stage": stage,
     }

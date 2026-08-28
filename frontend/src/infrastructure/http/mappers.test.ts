@@ -10,6 +10,7 @@ import {
   toLogEntry,
   toMessage,
   toNeighborhood,
+  toProjectDetail,
   toRoster,
   toRun,
   toSession,
@@ -535,4 +536,43 @@ it('reads an entity written before the field existed as not inferred', () => {
   )
 
   expect(node.inferred).toBe(false)
+})
+
+describe('toProjectDetail', () => {
+  it('renames every field the server spells differently', () => {
+    const project = toProjectDetail(
+      parse(dto.projectDetailDto, {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'atlas',
+        active_session_id: '22222222-2222-4222-8222-222222222222',
+        tip_at_event: 7,
+      }),
+    )
+
+    expect(project).toEqual({
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'atlas',
+      activeSessionId: '22222222-2222-4222-8222-222222222222',
+      tipAtEvent: 7,
+    })
+  })
+
+  it('reads an unheld project as a null holder rather than an empty string', () => {
+    // The distinction the page turns on: `null` is "nobody has joined", which
+    // is what hides the transcript and the composer. An empty string would be
+    // truthy through `activeSessionId ?? null` and resolve to a session id of
+    // `''`, which reads as held and 404s on the first request made with it.
+    const project = toProjectDetail(
+      parse(dto.projectDetailDto, {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'atlas',
+        active_session_id: null,
+      }),
+    )
+
+    expect(project.activeSessionId).toBeNull()
+    // Defaulted by the schema, not sent: an older server omits it entirely and
+    // a project with no tip is 0, not `undefined` rendered as a blank.
+    expect(project.tipAtEvent).toBe(0)
+  })
 })

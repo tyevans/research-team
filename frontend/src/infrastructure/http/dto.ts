@@ -287,11 +287,17 @@ export const stageRefDto = z.object({
   of: z.number(),
 })
 
-export const projectDto = z.object({
+export const projectDetailDto = z.object({
   id: z.string(),
   name: z.string(),
   active_session_id: maybe(z.string()),
   tip_at_event: z.number().default(0),
+})
+
+/** The listing row: the detail plus the two workflow columns. `.extend` rather
+ *  than a second literal, so the shared half cannot drift between the two
+ *  routes that answer it. */
+export const projectDto = projectDetailDto.extend({
   workflow: workflowRefDto.nullish().transform((v) => v ?? null),
   stage: stageRefDto.nullish().transform((v) => v ?? null),
 })

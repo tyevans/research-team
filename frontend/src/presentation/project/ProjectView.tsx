@@ -1,5 +1,5 @@
 import type { UseQueryResult } from '@tanstack/react-query'
-import { useCallback, type ReactNode } from 'react'
+import { useCallback, useEffect, type ReactNode } from 'react'
 
 import { errorMessage } from '@application/ports/errors.ts'
 import type { SessionStore } from '@application/session/session-store.ts'
@@ -15,6 +15,7 @@ import { ArtifactList } from '../course/ArtifactList.tsx'
 import { Findings } from '../course/Findings.tsx'
 import { StageList, stagesLeftBehind } from '../course/StageList.tsx'
 import { useCourse } from '../course/use-course.ts'
+import { useProject } from './use-project.ts'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
@@ -386,11 +387,17 @@ export const ProjectView = ({
    *  holding session and the shell needs the same session's head for the
    *  breadcrumb. */
   store: SessionStore
-  /** Reported upward because the breadcrumb wants the project's name, and the
-   *  course request is the one that already has it. */
-  onLoaded?: (course: Course | null) => void
+  /** Reported upward because the breadcrumb wants the project's name, and this
+   *  page is where the read that carries it happens. */
+  onLoaded?: (name: string | null) => void
 }) => {
-  const { course } = useCourse(projectId, onLoaded)
+  const { projectName, holdingSessionId } = useProject(projectId)
+  const { course } = useCourse(projectId)
+
+  useEffect(() => {
+    onLoaded?.(projectName)
+    return () => onLoaded?.(null)
+  }, [projectName, onLoaded])
   const panes = useProjectPanes()
 
   const openStage = selection?.facet === 'stage' ? (selection.id ?? null) : null
@@ -400,7 +407,7 @@ export const ProjectView = ({
    *  project's holding session as the default, or neither. `null` is a real and
    *  common state — a project nobody has joined — and it is why the screen hook
    *  below takes a nullable id rather than being called from inside a branch. */
-  const sessionId: SessionId | null = watching ?? course.data?.holdingSessionId ?? null
+  const sessionId: SessionId | null = watching ?? holdingSessionId
 
   const openPath: FilePath | null =
     selection?.facet === 'file'
@@ -548,7 +555,7 @@ export const ProjectView = ({
           // Pushed rather than replaced: opening a worker's transcript is a
           // destination, and the back button should come back out of it.
           onWatch={(sessionId) => select(sessionSelection(sessionId), false)}
-          holdingSessionId={course.data?.holdingSessionId ?? null}
+          holdingSessionId={holdingSessionId}
         />
 
         {course.isError ? (

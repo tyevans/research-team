@@ -41,6 +41,7 @@ from research_team.interfaces.web.presenters import (
     file_history,
     message_view,
     preset_view,
+    project_detail_view,
     project_view,
     source_view,
     stage_view,
@@ -470,6 +471,40 @@ def test_a_project_without_a_workflow_reports_both_fields_as_null():
     view = project_view(AGGREGATE, "atlas")
     assert view["workflow"] is None
     assert view["stage"] is None
+
+
+def test_the_project_detail_carries_identity_and_holder_and_no_workflow():
+    """What `GET /api/projects/{id}` owes its four consumers, and no more.
+
+    The holder is the load-bearing half: the project page's transcript, its
+    composer and its Workspace tab all resolve off `active_session_id`, and
+    they read it from `/course` today -- which answers 409 on a project that
+    runs no workflow. Asserting the absent keys rather than only the present
+    ones, because the point of this presenter is what it does *not* carry.
+    """
+    session_id = uuid4()
+
+    view = project_detail_view(
+        AGGREGATE, "atlas", active_session_id=session_id, tip_at_event=7
+    )
+
+    assert view == {
+        "id": str(AGGREGATE),
+        "name": "atlas",
+        "active_session_id": str(session_id),
+        "tip_at_event": 7,
+    }
+
+
+def test_the_listing_row_is_the_detail_plus_the_workflow_columns():
+    """A field added to a project cannot reach one route and miss the other.
+
+    `project_view` builds on `project_detail_view` for exactly this; the test
+    fails if somebody re-inlines the shared half, which is how the two drift.
+    """
+    row = project_view(AGGREGATE, "atlas", tip_at_event=3)
+
+    assert row.items() >= project_detail_view(AGGREGATE, "atlas", tip_at_event=3).items()
 
 
 def test_a_session_summary_carries_its_project_so_rows_can_be_grouped():

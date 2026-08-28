@@ -60,6 +60,12 @@ export const queryKeys = {
    *  corrects both. */
   autonomy: () => ['autonomy'] as const,
 
+  /** One project's identity and holder. Its own key rather than a slice of
+   *  `projects()`: that key is the landing page's whole list as one cache
+   *  entry, and a project page invalidating it would refetch every row to
+   *  refresh one. */
+  project: (project: ProjectId) => ['project', project] as const,
+
   course: (project: ProjectId) => ['course', project] as const,
   run: (project: ProjectId) => ['run', project] as const,
   workers: (project: ProjectId) => ['workers', project] as const,
