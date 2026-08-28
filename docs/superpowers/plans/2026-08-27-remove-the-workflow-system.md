@@ -218,13 +218,22 @@ Delete the 18 wholesale test files the survey names. Amputate
 `tests/domain/test_project.py`, `test_persistence.py`, `test_web.py`,
 `test_presenters.py`, `test_repl.py`.
 
-**One decision inside this slice.** `application/components.py:1254`'s
-`COMPONENTS_FOR: Mapping[ArtifactType, ...]` is the last live consumer of
-`ArtifactType`. Read its callers before choosing: if nothing on the authoring
-path reads the mapping, delete it with the enum. If something does, the mapping
-must be rekeyed off a vocabulary the new path owns. Do not move `ArtifactType`
-into the new path to preserve the mapping -- that carries the dead system's
-vocabulary forward for one table's sake.
+**The `COMPONENTS_FOR` question is settled -- delete it.** It was the last live
+consumer of `ArtifactType`, and its only reader is `component_guidance`, whose
+only production caller is `composition.py:2332` inside the stage prompt build
+(traced 2026-08-27). So `component_guidance`, `COMPONENTS_FOR` and
+`ArtifactType` all die together and nothing needs rekeying. This belongs in
+Slice 3 with the rest of `components.py`'s amputation rather than here; Slice 7
+only removes the tests.
+
+**One hazard it leaves.** Two surviving files cite `component_guidance`'s
+*argument* in prose -- `application/topics.py:66` and
+`tests/application/test_session_service_project.py:265`, both saying "the
+scoping `component_guidance` argues for". The argument (do not carry two
+kilobytes of widget syntax into a prompt that has no use for it) is sound and
+outlives its subject, but a citation pointing at a deleted function is a
+dangling reference. Restate the argument in one clause where it is cited;
+do not leave the name.
 
 Gates: all four.
 
