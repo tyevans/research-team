@@ -521,7 +521,7 @@ export const ProjectView = ({
         {/* The four panels slice 0 parked loose here, now one band of chrome.
             That slice's comment named this as the change that would make it
             true, and `QueueHeader` carries the argument. */}
-        <QueueHeader projectId={projectId} holdingSessionId={holdingSessionId} />
+        <QueueHeader projectId={projectId} />
 
         {/* Replaced rather than pushed, like every MATERIAL selection below: a topic is a **glance**, not a
             destination. The queue is a list a reader scans — open a question,

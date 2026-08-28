@@ -1,7 +1,6 @@
-import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { projectHref } from '../../routing/routes.ts'
-import { AutonomyPanel } from './AutonomyPanel.tsx'
 import { RunPanel } from './RunPanel.tsx'
 import { SeedPanel } from '../../research/SeedPanel.tsx'
 
@@ -25,10 +24,16 @@ import { SeedPanel } from '../../research/SeedPanel.tsx'
  *
  * **Order, and why it is not the course page's.** What is happening now
  * (roster, and the extraction detail under it), then what starts more of it
- * (the run panel), then what adds to the queue by hand (seeding), then the
- * policy the first two run under. That is a descending order of "how often does
- * somebody touch this", which is the ordering a header band earns; the course
- * page's order was the order the features landed in.
+ * (the run panel), then what adds to the queue by hand (seeding). That is a
+ * descending order of "how often does somebody touch this", which is the
+ * ordering a header band earns; the course page's order was the order the
+ * features landed in.
+ *
+ * **The autonomy panel is no longer the fourth band**, and it did not move for
+ * room. It is reached from the lock in the chrome now (`AutonomyLock`): the
+ * policy is instance-wide, so a control over it filed under one project's page
+ * said it was local, and this region's stated job is what a reader *acts* on
+ * rather than what the run is configured with.
  *
  * **Dressed in utilities, which is the standing policy and not a port.** The
  * three `<section>`s that carried `worker-panel`, `run-panel` and
@@ -58,19 +63,10 @@ import { SeedPanel } from '../../research/SeedPanel.tsx'
  * property of the page you happen to be on" -- and a per-project roster polled
  * every two seconds was this page answering a question the dock already
  * answers for free. What is left in this header is only what a reader *acts*
- * on: ask, be asked, run, seed, autonomy. That is the region's stated job and
+ * on: ask, be asked, run, seed. That is the region's stated job and
  * this is the first time the header has held only that.
  */
-export const QueueHeader = ({
-  projectId,
-  holdingSessionId,
-}: {
-  projectId: ProjectId
-  /** Where an autonomy write is recorded. `null` renders the panel read-only
-   *  rather than offering controls that would 404 -- `AutonomyPanel`'s rule,
-   *  unchanged by the move. */
-  holdingSessionId: SessionId | null
-}) => (
+export const QueueHeader = ({ projectId }: { projectId: ProjectId }) => (
   <div
     className="flex flex-col gap-3 border-0 border-b border-solid border-line pb-3"
     data-region-header="queue"
@@ -129,10 +125,6 @@ export const QueueHeader = ({
 
     <section className={CARD} aria-label="Seeding">
       <SeedPanel projectId={projectId} />
-    </section>
-
-    <section className={CARD} aria-label="Autonomy">
-      <AutonomyPanel sessionId={holdingSessionId} />
     </section>
   </div>
 )

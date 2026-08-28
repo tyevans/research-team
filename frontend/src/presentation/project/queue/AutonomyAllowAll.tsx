@@ -3,7 +3,7 @@ import { levelOf } from '@domain/autonomy/autonomy.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 
 import { Button } from '../../common/primitives.tsx'
-import { INSTANCE_WIDE, NO_POLICY } from './autonomy-copy.ts'
+import { INSTANCE_WIDE, NO_POLICY } from '../../shell/autonomy-copy.ts'
 
 /** "Stop asking me", where the asking happens.
  *

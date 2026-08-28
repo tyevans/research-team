@@ -4,7 +4,14 @@ import { expect, it } from 'vitest'
 import composerCss from '../../styles/composer.css?raw'
 import courseCss from '../../styles/course.css?raw'
 import treeCss from '../../styles/tree.css?raw'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+import type { Container } from '@app/container.ts'
+import { ContainerProvider } from '@app/container-context.tsx'
+import { SessionId } from '@domain/shared/identifier.ts'
+
 import { OverlayHost } from '../layout/OverlayHost.tsx'
+import { AutonomyPanel } from '../shell/AutonomyPanel.tsx'
 import { Chip } from './primitives.tsx'
 import { Drawer } from './Drawer.tsx'
 
@@ -265,4 +272,74 @@ it('survives the route merge: the dressing holds with the view stylesheets delet
     expect(getComputedStyle(chip('blocking')).color).toBe('rgb(226, 164, 87)') // --accent
     expect(getComputedStyle(chip('plain')).color).toBe('rgb(167, 177, 189)') // --fg-dim
   })
+})
+
+/** The fifth surface, added when `AutonomyPanel` moved out of the project
+ *  page's queue header and behind the chrome's lock.
+ *
+ * It is the same finding as the four above, found the same way and one screen
+ * later: the panel took fifteen `.autonomy-*` rules from `course.css` with it
+ * into a dialog reachable on every route. Its rules are utilities now, and this
+ * is the measurement that says so — the two that carry meaning rather than
+ * merely looking tidy.
+ *
+ * **The scope warning's 2px accent edge** is the one thing in the panel that
+ * must not be quiet: a reader skimming past it and flipping a switch that
+ * changes every session on the instance is the failure the whole panel is
+ * shaped around. **The row's single top rule** is the `border-solid` hazard
+ * `CLAUDE.md` records: `border-0` beside `border-t` is both halves of one fix,
+ * and dropping the zero draws a box on every row.
+ */
+const renderPanel = () => {
+  const policy = { levels: new Map([['fetch', 'ask']]), gated: ['fetch'] }
+  const container = {
+    autonomy: {
+      read: () => Promise.resolve(policy),
+      setLevel: () => Promise.resolve(policy),
+      allowAll: () => Promise.resolve({ changed: new Map(), policy }),
+    },
+  } as unknown as Container
+
+  return render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}
+    >
+      <ContainerProvider container={container}>
+        <AutonomyPanel sessionId={SessionId('22222222-2222-2222-2222-222222222222')} />
+      </ContainerProvider>
+    </QueryClientProvider>,
+  )
+}
+
+it('keeps the autonomy panel dressed without the stylesheet it came from', async () => {
+  const { findByText } = renderPanel()
+  const row = (await findByText('fetch')).closest('li')!
+  const warn = [...document.querySelectorAll('p')].find((node) =>
+    node.textContent?.startsWith('This applies to every session'),
+  )!
+
+  const measure = () => {
+    const edge = getComputedStyle(warn)
+    // The loudest line in the panel: 2px, accent, and only on the left.
+    expect(edge.borderLeftWidth).toBe('2px')
+    expect(edge.borderLeftStyle).toBe('solid')
+    expect(edge.borderLeftColor).toBe('rgb(226, 164, 87)') // --accent
+    expect(edge.borderTopWidth).toBe('0px')
+    expect(edge.borderRightWidth).toBe('0px')
+
+    const rule = getComputedStyle(row)
+    // One rule, on top. The three sides `border-0` zeroes are what the
+    // browser's `medium` default would otherwise draw at ~3px each.
+    expect(rule.borderTopWidth).toBe('1px')
+    expect(rule.borderTopStyle).toBe('solid')
+    expect(rule.borderBottomWidth).toBe('0px')
+    expect(rule.borderLeftWidth).toBe('0px')
+    expect(rule.borderRightWidth).toBe('0px')
+    // The fieldset's own chrome is off: the row is the frame.
+    expect(getComputedStyle(row.querySelector('fieldset')!).borderTopWidth).toBe('0px')
+  }
+
+  measure()
+  // And again with `course.css` gone, which is the state this move created.
+  asIfDeleted(measure)
 })

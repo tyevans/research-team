@@ -11,7 +11,7 @@ import type { AutonomyRepository } from '@application/ports/repositories.ts'
 import type { AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import { SessionId } from '@domain/shared/identifier.ts'
 
-import { AutonomyAllowAll } from './AutonomyAllowAll.tsx'
+import { AutonomyAllowAll } from '../project/queue/AutonomyAllowAll.tsx'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
 
 const SESSION = SessionId('22222222-2222-2222-2222-222222222222')
@@ -233,27 +233,25 @@ it('offers a level the server reported that this build does not know', async () 
   expect(screen.getByText(/unfamiliar level/i)).toBeInTheDocument()
 })
 
-it('starts closed, and says how the gated tools are set without being opened', async () => {
+/** The tally survives the fold that used to justify it.
+ *
+ * It stood in for hidden content while this was a `<details>` in the project
+ * page's queue header; the panel is a dialog now and the rows are visible
+ * beside it. Kept because "two ask, one auto" is the sentence a reader would
+ * otherwise assemble by counting eight rows, and this test is what fails if it
+ * is dropped as redundant. */
+it('counts how the gated tools are set, beside the rows themselves', async () => {
   const autonomy = fakeAutonomy(policyWith({ fetch: 'ask', zip_files: 'ask', run: 'auto' }))
   renderWith(<AutonomyPanel sessionId={SESSION} />, { autonomy: autonomy.repo })
 
   expect(await screen.findByText('2 ask')).toBeInTheDocument()
   expect(screen.getByText('1 auto')).toBeInTheDocument()
 
-  // Closed by default: this policy is instance-wide and rarely touched, and
-  // open it pushed the course itself below the fold.
-  const disclosure = document.querySelector('details.autonomy-disclosure')
-  expect(disclosure).not.toBeNull()
-  expect((disclosure as HTMLDetailsElement).open).toBe(false)
-})
-
-it('opens onto the controls when its summary is activated', async () => {
-  const autonomy = fakeAutonomy(policyWith({ fetch: 'ask' }))
-  renderWith(<AutonomyPanel sessionId={SESSION} />, { autonomy: autonomy.repo })
-
-  await screen.findByText('1 ask')
-  const disclosure = document.querySelector('details.autonomy-disclosure') as HTMLDetailsElement
-  await userEvent.click(screen.getByText(/what the agent may do without asking/i))
-
-  expect(disclosure.open).toBe(true)
+  // Nothing is folded: the controls are in the document without anything being
+  // activated first. **Proved red** by wrapping the body back in a closed
+  // `<details>` -- `getAllByRole('radio')` finds them either way, since
+  // `<details>` hides its content visually rather than from the accessibility
+  // tree, so the assertion is `toBeVisible` and not `toBeInTheDocument`.
+  expect(screen.getAllByRole('radio', { name: 'auto' })[0]).toBeVisible()
+  expect(document.querySelector('details')).toBeNull()
 })
