@@ -33,8 +33,8 @@ export const Button = ({ tone = 'default', small, className, ...rest }: ButtonPr
  * which supplies the tab stop the chip cannot. */
 /** The shape: mono face, `--t-xs`, a 1px hairline and a 3px radius. Utilities
  *  rather than `tree.css`'s `.chip`, because `Chip` outlives the landing view
- *  that stylesheet dresses -- `GateReview` renders one from the decision bar on
- *  every route, and seventeen other files render one. Taking `tree.css` with
+ *  that stylesheet dresses -- one is rendered from the decision bar on every
+ *  route, and seventeen other files render one. Taking `tree.css` with
  *  its screen would have left every chip in the console as unbordered,
  *  unpadded body text at inherited size. `px-2` is `--spacing-2` (6px);
  *  `py-px`, `rounded-[3px]` and the 1px border are arbitrary because 1px and
@@ -61,7 +61,13 @@ export const Chip = ({
   tone?: string
   /** Utility dressing that *replaces* `CHIP_DRESS`, for a tone whose stylesheet
    *  is on the deletion list and whose caller therefore has to carry it.
-   *  `GateReview` is the only user today; see `SEVERITY_DRESS` there.
+   *  **No production caller today.** `GateReview` was the only one and went
+   *  with the workflow system, taking `SEVERITY_DRESS` with it. Kept rather
+   *  than deleted: the mechanism is about a tone whose stylesheet is on the
+   *  deletion list, which is a standing condition of this migration rather
+   *  than a fact about that component, and `shell-reached-dressing.browser.test.tsx`
+   *  measures that a `dress` replaces `CHIP_DRESS` rather than layering under
+   *  it. That measurement is the thing worth keeping.
    *
    *  `| undefined` explicitly, because `exactOptionalPropertyTypes` is on and
    *  the one caller reaches this through a `Record` lookup that may miss — a

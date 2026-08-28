@@ -26,10 +26,9 @@ const SESSION = SessionId('22222222-2222-2222-2222-222222222222')
 const policyWith = (levels: Record<string, string>): AutonomyPolicyView => ({
   levels: new Map(Object.entries(levels)),
   gated: Object.keys(levels),
-  stageGates: ['advance_stage'],
 })
 
-const BASE = policyWith({ zip_files: 'ask', fetch: 'ask', advance_stage: 'ask' })
+const BASE = policyWith({ zip_files: 'ask', fetch: 'ask', run: 'ask' })
 
 /** Same harness as `Workers.test.tsx`: a fake container behind the providers
  *  the real app wraps every view in. The `QueryClient` is returned so a test
@@ -75,19 +74,16 @@ const fakeAutonomy = (start: AutonomyPolicyView = BASE, over: Partial<AutonomyRe
       return Promise.resolve(current)
     })
 
-  const allowAll = vi
-    .fn<AutonomyRepository['allowAll']>()
-    .mockImplementation((_id, includeGates) => {
-      const changed = new Map<string, string>()
-      for (const tool of current.gated) {
-        if (!includeGates && current.stageGates.includes(tool)) continue
-        if (current.levels.get(tool) !== 'auto') changed.set(tool, 'auto')
-      }
-      const levels = new Map(current.levels)
-      for (const tool of changed.keys()) levels.set(tool, 'auto')
-      current = { ...current, levels }
-      return Promise.resolve({ changed, policy: current })
-    })
+  const allowAll = vi.fn<AutonomyRepository['allowAll']>().mockImplementation(() => {
+    const changed = new Map<string, string>()
+    for (const tool of current.gated) {
+      if (current.levels.get(tool) !== 'auto') changed.set(tool, 'auto')
+    }
+    const levels = new Map(current.levels)
+    for (const tool of changed.keys()) levels.set(tool, 'auto')
+    current = { ...current, levels }
+    return Promise.resolve({ changed, policy: current })
+  })
 
   const repo: AutonomyRepository = { read, setLevel, allowAll, ...over }
   return { repo, read, setLevel, allowAll }
@@ -100,7 +96,7 @@ it('renders one control per tool the server listed, not per tool this build know
   // `zip_files` exists nowhere in this frontend. A hardcoded list would miss it.
   expect(await screen.findByText('zip_files')).toBeInTheDocument()
   expect(screen.getByText('fetch')).toBeInTheDocument()
-  expect(screen.getByText('advance_stage')).toBeInTheDocument()
+  expect(screen.getByText('run')).toBeInTheDocument()
   expect(screen.getAllByRole('radio', { name: 'auto' })).toHaveLength(3)
 })
 
@@ -174,38 +170,26 @@ it('warns on both surfaces that the policy is instance-wide', async () => {
   )
 })
 
-it('leaves the review gate asking after allow-all, and says that is deliberate', async () => {
-  // The load-bearing case for the drawer control. `advance_stage` stays at
-  // `ask` by design, so the UI must explain it rather than look half-broken.
-  const autonomy = fakeAutonomy()
+/** Allow-all now means everything, and this test replaced its own opposite.
+ *
+ * It read "leaves the review gate asking after allow-all, and says that is
+ * deliberate": `advance_stage` was held back and the panel said so, because a
+ * control that appears to have half-failed is worse than one that explains
+ * itself. The workflow system is gone and with it the gate, so the exclusion
+ * has nothing to exclude. What is still worth pinning is the honest reporting
+ * that outlives it -- `changed`, not the whole map, so the UI cannot claim
+ * changes nobody made. */
+it('reports what allow-all actually moved rather than the whole policy', async () => {
+  const autonomy = fakeAutonomy(policyWith({ fetch: 'auto', zip_files: 'ask', run: 'ask' }))
   renderWith(<AutonomyAllowAll sessionId={SESSION} />, { autonomy: autonomy.repo })
 
-  await userEvent.click(
-    await screen.findByRole('button', { name: /allow everything except the review gate/i }),
-  )
+  await userEvent.click(await screen.findByRole('button', { name: /^allow everything$/i }))
 
-  expect(autonomy.allowAll).toHaveBeenCalledWith(SESSION, false)
-  // Reports `changed` (two), not the whole map (three) — otherwise the UI
-  // claims changes nobody made.
+  expect(autonomy.allowAll).toHaveBeenCalledWith(SESSION)
   const result = await screen.findByRole('status')
   expect(result).toHaveTextContent('Changed 2 tool(s)')
-  expect(result).toHaveTextContent('advance_stage')
-  expect(result).toHaveTextContent(/workflow review gate/i)
-})
-
-it('autos the review gate only through the separate control', async () => {
-  const autonomy = fakeAutonomy(policyWith({ fetch: 'auto', advance_stage: 'ask' }))
-  renderWith(<AutonomyAllowAll sessionId={SESSION} />, { autonomy: autonomy.repo })
-
-  await userEvent.click(await screen.findByRole('button', { name: /also allow the review gate/i }))
-
-  expect(autonomy.allowAll).toHaveBeenCalledWith(SESSION, true)
-  const result = await screen.findByRole('status')
-  await waitFor(() => expect(result).toHaveTextContent('Changed 1 tool(s): advance_stage'))
-  // Nothing is held back any more, so the exclusion sentence must not appear —
-  // it would be describing a state that no longer exists. Asserted on the
-  // result line rather than the document, because the second button's own
-  // tooltip legitimately names the review gate.
+  // The sentence that explained the old exclusion must not survive it: it would
+  // be describing a hold-back that no longer happens.
   expect(result).not.toHaveTextContent(/left asking on purpose/i)
 })
 
@@ -213,7 +197,7 @@ it('shows the same state on both surfaces after a write', async () => {
   // The consistency guarantee. Both go through one query key, so the drawer's
   // allow-all is visible in the course panel without the panel refetching on
   // its own — a second key would leave the panel showing pre-write levels.
-  const autonomy = fakeAutonomy(policyWith({ fetch: 'ask', advance_stage: 'ask' }))
+  const autonomy = fakeAutonomy(policyWith({ fetch: 'ask', run: 'ask' }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
 
   renderWith(<AutonomyPanel sessionId={SESSION} />, { autonomy: autonomy.repo }, client)
@@ -230,9 +214,7 @@ it('shows the same state on both surfaces after a write', async () => {
   await waitFor(() => expect(fetchRadios()).not.toHaveLength(0))
   expect(fetchRadios().find((input) => input.value === 'ask')?.checked).toBe(true)
 
-  await userEvent.click(
-    screen.getByRole('button', { name: /allow everything except the review gate/i }),
-  )
+  await userEvent.click(screen.getByRole('button', { name: /^allow everything$/i }))
 
   // The panel, which issued no request of its own, now shows `fetch` as auto.
   await waitFor(() =>
@@ -244,7 +226,7 @@ it('shows the same state on both surfaces after a write', async () => {
 it('offers a level the server reported that this build does not know', async () => {
   // Otherwise selecting an unfamiliar level would be one-way: the current
   // setting would show as nothing selected, with no radio to return to.
-  const autonomy = fakeAutonomy(policyWith({ fetch: 'sometimes', advance_stage: 'ask' }))
+  const autonomy = fakeAutonomy(policyWith({ fetch: 'sometimes', run: 'ask' }))
   renderWith(<AutonomyPanel sessionId={SESSION} />, { autonomy: autonomy.repo })
 
   expect(await screen.findByRole('radio', { name: 'sometimes' })).toBeChecked()
@@ -252,7 +234,7 @@ it('offers a level the server reported that this build does not know', async () 
 })
 
 it('starts closed, and says how the gated tools are set without being opened', async () => {
-  const autonomy = fakeAutonomy(policyWith({ fetch: 'ask', advance_stage: 'ask', run: 'auto' }))
+  const autonomy = fakeAutonomy(policyWith({ fetch: 'ask', zip_files: 'ask', run: 'auto' }))
   renderWith(<AutonomyPanel sessionId={SESSION} />, { autonomy: autonomy.repo })
 
   expect(await screen.findByText('2 ask')).toBeInTheDocument()

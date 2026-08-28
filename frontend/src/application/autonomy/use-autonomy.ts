@@ -9,8 +9,8 @@ import type { SessionId } from '@domain/shared/identifier.ts'
 /** The one reader and writer of autonomy state, shared by every surface.
  *
  * Two surfaces show this policy — the allow-all control in the worker drawer,
- * beside the approvals where the pain is, and the full per-tool panel on the
- * course page. They must never disagree, and the only reliable way to
+ * beside the approvals where the pain is, and the full per-tool panel in the
+ * project page's queue header. They must never disagree, and the only reliable way to
  * guarantee that is for both to go through here: one query key
  * (`queryKeys.autonomy()`, deliberately unparameterised because the policy is
  * instance-wide), one cache entry, and a write that seeds *and* invalidates it
@@ -44,7 +44,7 @@ export interface AutonomyControls {
   readonly readNotFound: boolean
   readonly canWrite: boolean
   readonly setLevel: (tool: string, level: string) => void
-  readonly allowAll: (includeStageGates: boolean) => void
+  readonly allowAll: () => void
   readonly writing: boolean
   /** The server's own message from a rejected write, verbatim — it names the
    *  offending value, which nothing this side could reconstruct. */
@@ -84,12 +84,12 @@ export const useAutonomy = (sessionId: SessionId | null): AutonomyControls => {
   })
 
   const allow = useMutation({
-    mutationFn: (includeStageGates: boolean) => {
+    mutationFn: () => {
       if (!sessionId)
         throw new Error(
           'No session is attached, so there is nothing to record this change against.',
         )
-      return autonomy.allowAll(sessionId, includeStageGates)
+      return autonomy.allowAll(sessionId)
     },
     onSuccess: (result) => seed(result.policy),
     onSettled: invalidate,
@@ -102,7 +102,7 @@ export const useAutonomy = (sessionId: SessionId | null): AutonomyControls => {
     readNotFound: policy.error instanceof ApiError && policy.error.isNotFound,
     canWrite: sessionId !== null,
     setLevel: (tool, level) => set.mutate({ tool, level }),
-    allowAll: (includeStageGates) => allow.mutate(includeStageGates),
+    allowAll: () => allow.mutate(),
     writing: set.isPending || allow.isPending,
     // Errors are surfaced inline by both callers rather than as a toast: a
     // rejected autonomy change has to stay on screen next to the control that

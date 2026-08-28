@@ -14,8 +14,8 @@ import { emptyActivity } from '@domain/activity/activity.ts'
 import { SessionId } from '@domain/shared/identifier.ts'
 import { TurnState } from '@domain/session/turn.ts'
 
-import { OverlayHost } from '../layout/OverlayHost.tsx'
-import { StreamProvider } from '../shell/StreamProvider.tsx'
+import { OverlayHost } from '../../layout/OverlayHost.tsx'
+import { StreamProvider } from '../../shell/StreamProvider.tsx'
 import { WorkerDrawer } from './WorkerDrawer.tsx'
 
 const SESSION = SessionId('22222222-2222-2222-2222-222222222222')

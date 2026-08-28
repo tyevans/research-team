@@ -31,10 +31,6 @@ export interface AutonomyPolicyView {
   readonly levels: ReadonlyMap<string, string>
   /** Every tool under the policy, in the order to render switches. */
   readonly gated: readonly string[]
-  /** The subset "allow all" deliberately leaves alone. Not a hazard rating:
-   *  these *are* the review gates, the point where a person looks at what was
-   *  produced before the run builds on it. */
-  readonly stageGates: readonly string[]
 }
 
 /** What a write returned: what actually moved, and the whole policy after.
@@ -50,25 +46,12 @@ export interface AutonomyChange {
 export const emptyPolicy: AutonomyPolicyView = {
   levels: new Map(),
   gated: [],
-  stageGates: [],
 }
 
 /** Null when the server named a tool in `gated` and gave it no level. Callers
  *  must render that as unknown rather than defaulting it. */
 export const levelOf = (policy: AutonomyPolicyView, tool: string): string | null =>
   policy.levels.get(tool) ?? null
-
-export const isStageGate = (policy: AutonomyPolicyView, tool: string): boolean =>
-  policy.stageGates.includes(tool)
-
-/** Whether every stage gate is still waiting on a person.
- *
- * The question "did allow-all appear to half-fail?" — a UI that ran allow-all
- * and showed `advance_stage` still asking, with no sentence explaining that
- * this was the point, reads as a bug rather than as a decision.
- */
-export const stageGatesStillAsking = (policy: AutonomyPolicyView): readonly string[] =>
-  policy.stageGates.filter((tool) => levelOf(policy, tool) !== 'auto')
 
 /** A level in words. Unknown values come back as themselves, so a future
  *  server's fourth level reads as an unfamiliar setting rather than as an

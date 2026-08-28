@@ -1,20 +1,17 @@
-import type { UseQueryResult } from '@tanstack/react-query'
-import { useCallback, useEffect, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useCallback, useEffect } from 'react'
 
-import { errorMessage } from '@application/ports/errors.ts'
+import { queryKeys } from '@application/queries/keys.ts'
 import type { SessionStore } from '@application/session/session-store.ts'
-import type { Course } from '@domain/project/course.ts'
+import { useContainer } from '@app/container-context.tsx'
+import { isClosed } from '@domain/research/topic.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import { SourceId, TopicId, type ProjectId, type SessionId } from '@domain/shared/identifier.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
-import { EmptyState, Loading } from '../common/primitives.tsx'
+import { EmptyState } from '../common/primitives.tsx'
 import { TabList, TabPanel, Tabs } from '../common/Tabs.tsx'
-import { ArtifactList } from '../course/ArtifactList.tsx'
-import { Findings } from '../course/Findings.tsx'
-import { StageList, stagesLeftBehind } from '../course/StageList.tsx'
-import { useCourse } from '../course/use-course.ts'
 import { useProject } from './use-project.ts'
 import { Pane } from '../layout/Pane.tsx'
 import { Split } from '../layout/Split.tsx'
@@ -51,7 +48,9 @@ import { PROJECT_TRACKS, useProjectPanes } from './use-project-panes.ts'
  * MATERIAL is "what has come of it". The two pages this replaces cut across
  * both — the course page held stages (QUEUE) and artifacts (MATERIAL); the
  * research page held topics (QUEUE) and documents and a graph (MATERIAL) — so a
- * reader following one thread crossed a route boundary to do it.
+ * reader following one thread crossed a route boundary to do it. The stages and
+ * the artifacts are gone with the workflow system; the split they motivated is
+ * not, because the research half made the same cut.
  *
  * **There were three.** HOLDER answered "what is working on it right now" and
  * was the middle column; it is a tab in MATERIAL now, and `regionOf` below
@@ -77,8 +76,12 @@ export type Region = 'queue' | 'material'
  */
 export const regionOf = (facet: Facet): Region => {
   switch (facet) {
-    // A stage and a topic are both work items — things this project owes
-    // somebody. That they arrived from two different pages is the accident.
+    // QUEUE is the questions this project still owes an answer to. It used to
+    // be that plus a stage rail, on the argument that a stage and a topic are
+    // both work items; the rail was the half that was never alive (measured
+    // 2026-08-27 against the real database: zero workflow events of any kind,
+    // against 64 topics across six projects), so what is left is not a
+    // diminished pane but the honest one.
     //
     // `dialogue` joins `ask` at the end of this group for the same reason and
     // with the same caveat: `App.tsx` intercepts both above this view, so
@@ -87,7 +90,6 @@ export const regionOf = (facet: Facet): Region => {
     // belongs. (The comment lives up here rather than beside those two cases
     // because `no-fallthrough` defaults to `allowEmptyCase: false`, and a
     // comment between empty cases reads to it as a fallthrough.)
-    case 'stage':
     case 'topic':
     case 'ask':
     case 'dialogue':
@@ -125,8 +127,6 @@ export const regionOf = (facet: Facet): Region => {
     case 'ontology':
     case 'doc':
     case 'media':
-    case 'artifact':
-    case 'finding':
       return 'material'
   }
 }
@@ -149,27 +149,17 @@ export const regionOf = (facet: Facet): Region => {
  * rather than assumed when the session took first place — `npm run size`:
  * app 75.1 kB of 80.
  *
- * **Artifacts then Workspace, and the order is an argument rather than an
- * accident.**
- * Artifacts and the workspace are the same shelf at two ages: an artifact is
- * what a stage declared it produced, and the workspace is the tree those
- * declarations are made *of*, live and at any scrub point. Putting them
- * adjacent means a reader checking whether a declared output actually exists
- * moves one tab rather than three. Findings, documents and the graph are all
- * about material that arrived from outside the course, so they sit after.
+ * **Workspace is second, and what used to argue for that position is gone.**
+ * The argument was an adjacency: Artifacts sat first of the pair because an
+ * artifact was what a stage declared it produced and the workspace is the tree
+ * those declarations were made *of*, so a reader checking a declaration against
+ * the files moved one tab. Artifacts is deleted with the workflow system and the
+ * adjacency has nothing to be adjacent to. What survives is the workspace on its
+ * own terms: it is the only tab showing this project live and at any scrub
+ * point, and everything after it is material that arrived from outside.
  */
 type MaterialFacet =
-  | 'session'
-  | 'artifact'
-  | 'file'
-  | 'finding'
-  | 'doc'
-  | 'media'
-  | 'entity'
-  | 'tree'
-  | 'ontology'
-  | 'timeline'
-  | 'area'
+  'session' | 'file' | 'doc' | 'media' | 'entity' | 'tree' | 'ontology' | 'timeline' | 'area'
 
 /** Exported so `project-tracks.browser.test.tsx` can compare the strip it
  *  measures against the strip that was declared — a count taken from the
@@ -192,9 +182,7 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // survives: the session's panels were a permanent region before they became
   // a tab, so every one of them is in the main chunk already.
   { id: 'session', label: 'Holding session' },
-  { id: 'artifact', label: 'Artifacts' },
   { id: 'file', label: 'Workspace' },
-  { id: 'finding', label: 'Findings' },
   { id: 'doc', label: 'Documents' },
   // Directly after Documents: a proposal is a candidate for the same corpus
   // that tab lists, one step earlier in its life -- see `MediaProposalPane`'s
@@ -218,8 +206,8 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // After Graph, not before: this list is ordered by what the reader is asking,
   // and the timeline is a second reading of the graph's own material. Last also
   // keeps it out of the default position, which matters for the same bundle
-  // reason `artifact` is default -- `TimelineCanvas` is lazy, and a default of
-  // `timeline` would pull it on every project page anybody opened.
+  // reason `DEFAULT_MATERIAL` is not a canvas -- `TimelineCanvas` is lazy, and a
+  // default of `timeline` would pull it on every project page anybody opened.
   { id: 'timeline', label: 'Timeline' },
   // **One tab for two facets**, and the second one is deliberately not here.
   //
@@ -230,6 +218,12 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // 646px against 837px of tabs, and `project-stacked.browser.test.tsx` found
   // two clipped controls in the narrow band. Eleven tabs is where this strip
   // stops fitting, which is worth knowing before the twelfth is added.
+  //
+  // Nine now, since Artifacts and Findings came out with the workflow system.
+  // That is about 150px of headroom and it is deliberately unspent: what to put
+  // in it is an information-architecture decision (splitting `course` out of
+  // this tab is the standing candidate) and not something to settle inside a
+  // deletion.
   //
   // Last for the bundle reason the graph tabs are last, and deliberately
   // *after* Timeline rather than beside Graph: an area is a fold over the same
@@ -249,53 +243,39 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
  * **A tab whose panel can only say "there is nothing here" is worse than no
  * tab**, because a reader cannot tell it apart from one that might have
  * something until they have spent the click. Measured over
- * `~/.research-team/interactions.db` on 2026-08-23 (2,476 events): Artifacts
- * 13 entries at 0.8s median and 85% bounce, Findings 17 at 0.9s and 88%,
- * Workspace 14 at 0.7s and **100%** — every single visit under three seconds.
- * Those are not readers finding a page thin; that is what arriving at an
- * `EmptyState` and leaving looks like in aggregate.
+ * `~/.research-team/interactions.db` on 2026-08-23 (2,476 events): Workspace
+ * took 14 entries at a 0.7s median and **100% bounce** — every single visit
+ * under three seconds. That is not readers finding a page thin; it is what
+ * arriving at an `EmptyState` and leaving looks like in aggregate. The same
+ * measurement covered Artifacts and Findings, which is the argument that
+ * deleted them; it is in this commit's message, because the code that held it
+ * went with them.
  *
- * **The condition is the query's, not a field's.** There is no `workflow` on
- * `Course` to test — a project that runs no workflow gets a **409** from
- * `/api/projects/<id>/course` (see `CourseTab`, which exists because of it),
- * so "this project has no course" is `course.isError` and nothing else.
- * `isError` rather than `!course.data` deliberately: `data` is `undefined`
- * while the request is in flight too, and hiding three tabs during a load
- * would make the strip rearrange itself under a reader's cursor. The cost of
- * waiting for the query to settle is the reverse — the three tabs are present
- * for one paint on a project that has no course, and then go. That is the
- * cheaper of the two flickers.
+ * **One condition, and it survives on its own terms.** A project's files belong
+ * to the session holding it, so the tab is dead when nothing holds the project
+ * — which is true of plenty of projects. The second condition was `hasCourse`
+ * and it went with the course query.
  *
- * The workspace's condition is a different one and is not folded in: a
- * project's files belong to the session holding it, so the tab is dead when
- * nothing holds the project, which is true of plenty of projects that do have
- * a course.
+ * **A tab the route explicitly names is always offered**, whatever the
+ * condition says. `#/p/<id>/file/<path>` is a link somebody sent, and the
+ * alternatives are both worse than a tab reading "No workspace yet.": dropping
+ * the tab leaves Radix with a selected value no trigger carries, so the strip
+ * shows nothing chosen while a panel is open below it; and redirecting would
+ * swallow the link. `openTab` is that facet already mapped through
+ * `materialTab`, so a `catalog` selection compares as `area` here.
  *
- * **A tab the route explicitly names is always offered**, whatever the two
- * conditions say. `#/p/<id>/artifact/objectives.md` is a link somebody sent,
- * and the alternatives are both worse than a tab reading "No course to show.":
- * dropping the tab leaves Radix with a selected value no trigger carries, so
- * the strip shows nothing chosen while a panel is open below it; and
- * redirecting would swallow the link. `openTab` is that facet already mapped
- * through `materialTab`, so a `catalog` selection compares as `area` here.
- *
- * **Not a deletion.** `BACKLOG` B147 covers removing these panes and is
- * blocked on other work; every module, panel and route stays exactly where it
- * was and a typed address still reaches it.
+ * **A function for one predicate, deliberately.** It reads as over-built and
+ * somebody will want to inline it. The deep-link exemption is the reason not
+ * to: it is non-obvious, its failure is silent (a strip with nothing selected
+ * over an open panel), and it gets re-derived wrong. It is also the seam the
+ * next conditional tab goes in.
  */
 export const visibleMaterialTabs = (
-  {
-    hasCourse,
-    hasSession,
-  }: {
-    hasCourse: boolean
-    hasSession: boolean
-  },
+  { hasSession }: { hasSession: boolean },
   openTab: Facet,
 ): readonly { id: MaterialFacet; label: string }[] =>
   MATERIAL_TABS.filter((tab) => {
     if (tab.id === openTab) return true
-    if (tab.id === 'artifact' || tab.id === 'finding') return hasCourse
     if (tab.id === 'file') return hasSession
     return true
   })
@@ -348,10 +328,9 @@ export const DEFAULT_MATERIAL: Facet = 'catalog'
  * together leaves no way to tell which half broke. Slice 1 gave QUEUE its header
  * band; slice 2 took the nesting out of HOLDER and gave MATERIAL the workspace;
  * slice 3 rewrote three of MATERIAL's tabs in utilities and threaded their route
- * ids in. The stage list is still the course page's rail and the topic list is
- * still the research page's, both in QUEUE, and neither is MATERIAL's to
- * rewrite — which is also why neither `course.css` nor `research.css` has died
- * yet.
+ * ids in. The topic list is still the research page's, in QUEUE, and it is not
+ * MATERIAL's to rewrite — which is also why `research.css` has not died yet.
+ * The stage rail that sat above it is gone with the workflow system.
  *
  * **This slice made it two regions rather than three**, and the tenants moved
  * again without being rewritten: HOLDER's four panels are MATERIAL's first tab,
@@ -392,7 +371,7 @@ export const ProjectView = ({
   onLoaded?: (name: string | null) => void
 }) => {
   const { projectName, holdingSessionId } = useProject(projectId)
-  const { course } = useCourse(projectId)
+  const openTopics = useOpenTopicCount(projectId)
 
   useEffect(() => {
     onLoaded?.(projectName)
@@ -400,7 +379,6 @@ export const ProjectView = ({
   }, [projectName, onLoaded])
   const panes = useProjectPanes()
 
-  const openStage = selection?.facet === 'stage' ? (selection.id ?? null) : null
   const watching: SessionId | null = selection?.facet === 'session' ? selection.id : null
 
   /** Whose transcript HOLDER is reading: an explicitly watched session, the
@@ -457,16 +435,13 @@ export const ProjectView = ({
   /** The id the route carries for a MATERIAL facet, or `null`.
    *
    * **This is the half of "already linkable" that was not true.** `topic`,
-   * `doc`, `artifact` and `finding` all parse an id, land on `selection` and
-   * reach the right region — and were then mounted with `projectId` or `course`
-   * alone, each component holding its open item in its own `useState`. Four
-   * linkable states that opened the right tab and forgot what the link was
-   * about, and one of them was a shipped broken link: `CitationList` writes
+   * `doc`, `artifact` and `finding` all parsed an id, landed on `selection` and
+   * reached the right region — and were then mounted with `projectId` alone,
+   * each component holding its open item in its own `useState`. Four linkable
+   * states that opened the right tab and forgot what the link was about, and one
+   * of them was a shipped broken link: `CitationList` writes
    * `#/p/<id>/doc/<sourceId>` and following it produced an unfiltered corpus.
-   *
-   * The plan's §1 says "a topic, a stage and an artifact are already linkable
-   * states … a precondition that is met". Only the stage half was true, which
-   * is why no slice had budgeted this.
+   * Two of the four are deleted now; the defect and its fix were general.
    *
    * Two literal comparisons rather than one helper taking a facet: comparing
    * against a *variable* narrows nothing, so `selection.id` would still be the
@@ -474,8 +449,6 @@ export const ProjectView = ({
    * and would reach a row as `[object Object]` through any `String()` that
    * silenced the type error.
    */
-  const openArtifact = selection?.facet === 'artifact' ? selection.id : null
-  const openFinding = selection?.facet === 'finding' ? selection.id : null
   const openDoc =
     selection?.facet === 'doc' && selection.id !== null ? SourceId(selection.id) : null
   /** QUEUE's, not MATERIAL's, and the fourth of the four that parsed an id and
@@ -499,10 +472,9 @@ export const ProjectView = ({
    * from the route does — one mapping for both, instead of a default that has
    * to be a tab id and a route facet that does not. */
   /** What this project has, which decides which tabs are offered. Read here
-   *  rather than inside the strip so the two conditions sit beside the
-   *  queries that answer them: `course.isError` is the 409 `CourseTab`
-   *  documents, and `sessionId` is already resolved above. */
-  const has = { hasCourse: !course.isError, hasSession: sessionId !== null }
+   *  rather than inside the strip so the condition sits beside the value that
+   *  answers it -- `sessionId` is already resolved above. */
+  const has = { hasSession: sessionId !== null }
 
   const openFacet: Facet =
     selection && regionOf(selection.facet) === 'material' ? selection.facet : DEFAULT_MATERIAL
@@ -519,8 +491,8 @@ export const ProjectView = ({
         ? 'area'
         : openFacet
 
-  /** Replaced rather than pushed by default, which is the rule the course
-   *  page's stage toggle and the graph's entity selection both already follow:
+  /** Replaced rather than pushed by default, which is the rule the graph's
+   *  entity selection already follows:
    *  a selection here is a glance, and forty glances in the back stack make the
    *  back button useless. The caller says otherwise for the one selection that
    *  is a destination — watching a worker. */
@@ -540,11 +512,7 @@ export const ProjectView = ({
       <Pane
         id="queue"
         label="Queue"
-        meta={
-          course.data
-            ? `${String(stagesLeftBehind(course.data))} of ${String(course.data.stageCount)} stages left behind`
-            : undefined
-        }
+        meta={openTopics === null ? undefined : `${String(openTopics)} open`}
       >
         {/* The four panels slice 0 parked loose here, now one band of chrome.
             That slice's comment named this as the change that would make it
@@ -558,24 +526,7 @@ export const ProjectView = ({
           holdingSessionId={holdingSessionId}
         />
 
-        {course.isError ? (
-          // The two 409s — no workflow, or one this build does not ship — are
-          // the interesting failures and the server's message names which.
-          <EmptyState heading="No course to show." detail={errorMessage(course.error)} />
-        ) : course.isPending ? (
-          <Loading what="course" />
-        ) : (
-          <StageList
-            course={course.data}
-            openStage={openStage}
-            onToggleStage={(stageId) =>
-              select(openStage === stageId ? null : { facet: 'stage', id: stageId })
-            }
-          />
-        )}
-
-        {/* Replaced rather than pushed, like the stage toggle above it and
-            every MATERIAL selection below: a topic is a **glance**, not a
+        {/* Replaced rather than pushed, like every MATERIAL selection below: a topic is a **glance**, not a
             destination. The queue is a list a reader scans — open a question,
             read what it is blocked on, go back to the list, open the next —
             and the honest test is what the back button should do after
@@ -625,8 +576,25 @@ export const ProjectView = ({
             // `path`, so `{ facet, id }` is not a legal selection for it and
             // the compiler says so. The `Exclude` is what keeps that true if a
             // second such facet is ever added.
+            //
+            // **It wrote `select(null)` and that had silently stopped working.**
+            // The argument was that `null` lands back on this tab through
+            // `DEFAULT_MATERIAL`, which was true while the default was
+            // `session`. The default moved to `catalog` on the interaction
+            // log's dwell figures (#286) and this arm was not moved with it, so
+            // clicking Holding session wrote `#/p/<id>`, which resolves to the
+            // catalog -- the tab bounced the reader to Curriculum. Nothing
+            // caught it: the jsdom suite asserts the strip and the panels, and
+            // the one file that clicks this tab is in the browser project,
+            // outside CI.
+            //
+            // `sessionSelection` rather than `null` therefore, at the head with
+            // no file open, which is the same default `useSessionScreen` reads
+            // when nothing is explicitly watched. With nothing holding the
+            // project there is no id to write and `null` is correct -- the
+            // panel's own empty state is what the reader gets either way.
             if (next === 'session') {
-              select(null)
+              select(sessionId === null ? null : sessionSelection(sessionId, ScrubPoint.head()))
               return
             }
             // The Curriculum tab opens on the catalog, not the area map --
@@ -767,12 +735,6 @@ export const ProjectView = ({
             )}
           </TabPanel>
 
-          <TabPanel value="artifact" className="min-h-0 flex-1 overflow-auto">
-            <CourseTab course={course} what="artifacts">
-              {(loaded) => <ArtifactList course={loaded} open={openArtifact} />}
-            </CourseTab>
-          </TabPanel>
-
           {/* No `overflow-auto`, for the same reason the document list has
               none: `WorkspacePanel` is a file list over a file viewer, each
               scrolling on its own — `workspace.css` gives `.files` its own
@@ -782,8 +744,8 @@ export const ProjectView = ({
           <TabPanel value="file" className="flex min-h-0 flex-1 flex-col">
             {sessionId === null ? (
               // The other half of "nothing is holding this project", and it
-              // needs its own sentence for the reason `ProjectFindings` below
-              // does: a blank panel reads as a load that failed. A project
+              // needs its own sentence: a blank panel reads as a load that
+              // failed rather than as an absence. A project
               // workspace is a *session's* workspace, so with no session there
               // is no tree to show rather than an empty one.
               <EmptyState
@@ -793,12 +755,6 @@ export const ProjectView = ({
             ) : (
               <WorkspacePanel screen={screen} sessionId={sessionId} openPath={openPath} />
             )}
-          </TabPanel>
-
-          <TabPanel value="finding" className="min-h-0 flex-1 overflow-auto">
-            <CourseTab course={course} what="findings">
-              {(loaded) => <ProjectFindings course={loaded} open={openFinding} />}
-            </CourseTab>
           </TabPanel>
 
           {/* No `overflow-auto`: the document list owns a virtualizer, which
@@ -919,52 +875,28 @@ const SectionHead = ({ label, meta }: { label: string; meta: string | undefined 
   </div>
 )
 
-/** The three states of the course query, wherever a panel draws off it.
+/** How many questions this project still owes an answer to.
  *
- * The error branch is the reason this exists. Both panels used to be
- * `course.data ? <list/> : <Loading/>`, which reads as a load in progress and
- * is not one: the course query is `retry: false`, so a failure settles once and
- * `data` stays `undefined` forever. Measured against the running console on
- * 2026-08-23 -- a project with no workflow selected answers **409** on
- * `/api/projects/<id>/course`, and the Findings tab printed `loading findings…`
- * indefinitely while the Queue pane beside it correctly said "No course to
- * show." That split is why it survived: the two halves of the same page
- * disagreed, and only one of them was ever on screen at a time.
+ * QUEUE's `meta`, and the pane's only statement about itself. It replaces
+ * "N of M stages left behind", which was folded from a course that no real
+ * project ever had -- measured 2026-08-27 against `~/.research-team/sessions.db`:
+ * zero workflow events, 64 topics across six projects.
  *
- * Same heading and same message as the Queue pane, on purpose. The server's
- * 409 detail names which of the two failures it is -- no workflow, or one this
- * build does not ship -- and a reader who opened this tab first should not have
- * to find the other pane to be told.
+ * The same query key `TopicList` uses, deliberately, rather than a count route
+ * or a prop threaded up out of the list. React Query serves both readers from
+ * one cache entry and one request, so the header and the list below it can
+ * never disagree about how long the queue is -- which is the failure a second
+ * source would produce, silently, and only under a stale cache.
  *
- * A render prop rather than a third copy of the ternary: the next panel to read
- * the course is the case this is protecting against, not these two.
+ * `null` while the read is in flight or after it fails, and the pane renders no
+ * `meta` at all rather than "0 open". A count of zero is a claim about the
+ * project; not knowing is not.
  */
-const CourseTab = ({
-  course,
-  what,
-  children,
-}: {
-  course: UseQueryResult<Course>
-  what: string
-  children: (course: Course) => ReactNode
-}) =>
-  course.isError ? (
-    <EmptyState heading="No course to show." detail={errorMessage(course.error)} />
-  ) : course.data === undefined ? (
-    <Loading what={what} />
-  ) : (
-    children(course.data)
-  )
-
-/** `Findings` renders `null` when a stage has nothing to report, which is right
- *  inside a page with other content on it and wrong as the whole of a tab: an
- *  empty panel reads as a load that failed. */
-const ProjectFindings = ({ course, open }: { course: Course; open: string | null }) =>
-  course.findings.length === 0 && course.unimplementedChecks.length === 0 ? (
-    <EmptyState
-      heading="No checks have reported on this stage."
-      detail="Findings appear here when a gate or a critic runs against the current stage."
-    />
-  ) : (
-    <Findings course={course} open={open} />
-  )
+const useOpenTopicCount = (projectId: ProjectId): number | null => {
+  const { topics } = useContainer()
+  const query = useQuery({
+    queryKey: queryKeys.topics(projectId),
+    queryFn: () => topics.list(projectId),
+  })
+  return query.data === undefined ? null : query.data.filter((topic) => !isClosed(topic)).length
+}

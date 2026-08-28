@@ -24,8 +24,6 @@ const project = (id: ProjectId, name: string, over: Partial<Project> = {}): Proj
   name,
   activeSessionId: null,
   tipAtEvent: 0,
-  workflow: null,
-  stage: null,
   ...over,
 })
 
@@ -69,9 +67,7 @@ const containerWith = ({
     },
     projects: {
       list: vi.fn().mockResolvedValue(projects),
-      presets: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
-      chooseWorkflow: vi.fn(),
       join: vi.fn(),
       delete: vi.fn().mockResolvedValue(undefined),
     },
@@ -160,13 +156,7 @@ it('leads with projects and puts their sessions inside them', async () => {
 
 it('reaches all four of a project’s destinations from its row', async () => {
   const container = containerWith({
-    projects: [
-      project(ATLAS, 'atlas', {
-        activeSessionId: HOLDER,
-        workflow: { id: 'hybrid', name: 'hybrid', version: 1 },
-        stage: { id: 's4', name: 'design', index: 4, of: 15 },
-      }),
-    ],
+    projects: [project(ATLAS, 'atlas', { activeSessionId: HOLDER })],
     sessions: [session('a', { projectId: ATLAS })],
   })
   const user = userEvent.setup()
@@ -196,25 +186,19 @@ it('reaches all four of a project’s destinations from its row', async () => {
   expect(within(dialog).getByText(/Its files carry over to the new session/)).toBeInTheDocument()
 })
 
-/** A project with no workflow still has a project page, and this is the
- *  assertion that replaced its opposite.
+/** Every project has a project page, and this is the assertion that replaced
+ *  its opposite twice over.
  *
- * What was here before: "disables Course with the server's own reason rather
- * than relabelling it". It was right about the reason and right about
- * `aria-disabled` over `disabled`, and both stopped mattering when the
- * destination changed. `get_course` still 409s forever for a project that
- * chose no workflow, but the button no longer goes to the course page — it
- * goes to the project view, where the course is one region of three and
- * `ProjectView`'s `course.isError` branch renders that same 409 as an empty
- * state. Refusing the whole page over one empty region is a worse answer than
- * showing it, so the disabling is gone and this test now fails if it returns.
- *
- * **Not proved red**, and deliberately: a benchmark had this machine and no
- * test was run locally for this change. CI is the first execution. `BACKLOG.md`
- * B54 is the precedent for recording an unverified claim as unverified rather
- * than writing "proved red by" for a run that did not happen.
+ * It was first "disables Course with the server's own reason rather than
+ * relabelling it" -- right about the reason and right about `aria-disabled`
+ * over `disabled`, and both stopped mattering when the destination became the
+ * project view rather than a course page. It then read "offers the project page
+ * for a project that chose no workflow", which was a claim about a state that
+ * no longer exists: there are no presets to choose or decline. What it still
+ * guards is the button being unconditional, which is why it is kept rather than
+ * deleted with the concept in its old name.
  */
-it('offers the project page for a project that chose no workflow', async () => {
+it('offers the project page for every project', async () => {
   const user = userEvent.setup()
   renderPage(
     <TreeView />,

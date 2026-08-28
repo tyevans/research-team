@@ -10,11 +10,11 @@ import { useContainer } from '@app/container-context.tsx'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 
-import { Drawer } from '../common/Drawer.tsx'
-import { sessionHref } from '../routing/routes.ts'
-import { ActivityFeed } from '../session/ActivityFeed.tsx'
-import { Conversation } from '../session/Conversation.tsx'
-import { useSessionStream } from '../session/use-session-stream.ts'
+import { Drawer } from '../../common/Drawer.tsx'
+import { sessionHref } from '../../routing/routes.ts'
+import { ActivityFeed } from '../../session/ActivityFeed.tsx'
+import { Conversation } from '../../session/Conversation.tsx'
+import { useSessionStream } from '../../session/use-session-stream.ts'
 
 /** A worker's real transcript, over the course page.
  *

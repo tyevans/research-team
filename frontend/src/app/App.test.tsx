@@ -6,14 +6,13 @@ import { beforeEach, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
-import { ApiError } from '@application/ports/errors.ts'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import type { MediaSummary } from '@domain/research/document.ts'
 import { ComponentId, ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { componentBlock } from '@presentation/ask/ask-fixtures.ts'
-import { parseRoute, projectHref } from '@presentation/routing/routes.ts'
+import { parseRoute } from '@presentation/routing/routes.ts'
 
 import { App, viewNameOf } from './App.tsx'
 
@@ -43,68 +42,6 @@ const NOW = Date.parse('2026-08-09T12:00:00Z')
 
 /** Two stages, because a deep link to one is only interesting if the other
  *  stays shut. */
-const COURSE = {
-  projectId: ATLAS,
-  projectName: 'atlas',
-  holdingSessionId: null,
-  preset: { id: 'hybrid.default', name: 'Hybrid', version: '1' },
-  position: 1,
-  stageCount: 2,
-  stages: [
-    {
-      index: 1,
-      id: 'step0.intake',
-      name: 'Intake',
-      kind: 'author',
-      spine: 0,
-      scopeLevel: 'course',
-      status: 'done',
-      outputs: [],
-      gateDecisions: [],
-      reviewerRole: null,
-      findingsReport: null,
-    },
-    {
-      index: 2,
-      id: 'step1.framing',
-      name: 'Framing',
-      kind: 'author',
-      spine: 0,
-      scopeLevel: 'course',
-      status: 'current',
-      // One artifact and one finding, so that the three route ids MATERIAL
-      // carries have something to land on. Every test above asserts on rail
-      // rows, tabs and regions and none of them can see these two.
-      outputs: [
-        {
-          path: 'course/framing/objectives.md',
-          artifactType: 'objectives',
-          subtype: null,
-          cardinality: 'one',
-          stageId: 'step1.framing',
-          present: true,
-          hasFrontmatter: true,
-          missingFields: [],
-          bodyChars: 100,
-          provenance: null,
-        },
-      ],
-      gateDecisions: [],
-      reviewerRole: null,
-      findingsReport: null,
-    },
-  ],
-  findings: [
-    {
-      check: 'objectives.count',
-      severity: 'advisory',
-      message: 'Three objectives is thin for a course this long.',
-      suggestedEdit: null,
-      cites: [],
-    },
-  ],
-  unimplementedChecks: [],
-}
 
 /** The spy the interaction-log assertions read, rebuilt per container so one
  *  test cannot see another's events. Absent entirely until this round: every
@@ -148,10 +85,7 @@ const containerWith = (over: Record<string, unknown> = {}) =>
           stage: null,
         },
       ]),
-      presets: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
-      chooseWorkflow: vi.fn(),
-      course: vi.fn().mockResolvedValue(COURSE),
       // The breadcrumb's project name, the transcript's session and the
       // Workspace tab all read this now rather than the course. Held by the
       // same session the row above reports, because a container that
@@ -290,38 +224,6 @@ it('opens a dialog, which needs the overlay host the shell mounts', async () => 
   expect(within(dialog).getByText(/cannot rejoin/)).toBeInTheDocument()
 })
 
-it('opens the stage a link named, rather than loading collapsed', async () => {
-  // The point of the `stage` facet, and the fix for a course page that always
-  // loaded fully collapsed: `openStage` was `useCourse`'s `useState`, so the
-  // only way to see a stage's body was to click it, and "the stage whose gate
-  // is blocking this project" could not be sent to anybody.
-  //
-  // Asserted through `aria-expanded` on the two rail rows rather than through
-  // the prop, because a route that reached `CourseView` and did not reach
-  // `StageList` is the failure worth catching, and the prop cannot see it.
-  window.location.hash = `#/p/${ATLAS}/stage/step1.framing`
-  renderApp()
-
-  const framing = await screen.findByRole('button', { name: /Framing/ })
-  expect(framing).toHaveAttribute('aria-expanded', 'true')
-  expect(screen.getByRole('button', { name: /Intake/ })).toHaveAttribute('aria-expanded', 'false')
-})
-
-it('puts a clicked stage in the address bar without a history entry', async () => {
-  // Replaced rather than pushed, which is the answer to the objection
-  // `useCourse` used to raise against routing this at all: linkable, and forty
-  // glances still leave the back button pointing where the reader came from.
-  const user = userEvent.setup()
-  window.location.hash = `#/p/${ATLAS}`
-  renderApp()
-
-  const before = window.history.length
-  await user.click(await screen.findByRole('button', { name: /Framing/ }))
-
-  expect(window.location.hash).toBe(`#/p/${ATLAS}/stage/step1.framing`)
-  expect(window.history.length).toBe(before)
-})
-
 it('gives one project route a sidebar and a content region, not a choice of two pages', async () => {
   // The merge, seen from the route: every project facet lands on the same page.
   // Reverted, this fails on the first assertion -- there was no `Project
@@ -341,18 +243,6 @@ it('gives one project route a sidebar and a content region, not a choice of two 
     expect(screen.getByRole('region', { name: region })).toBeInTheDocument()
   }
   expect(screen.queryByRole('region', { name: 'Holding session' })).toBeNull()
-})
-
-it('reaches the material region for a facet that used to reach nothing', async () => {
-  // `artifact` parsed and was linkable and no view read it: it fell through
-  // `RESEARCH_FACETS` onto the course page, which renders nothing about an
-  // artifact selection. Asserted through the open tab rather than through the
-  // region, because a page that mounted MATERIAL and ignored the facet would
-  // satisfy the test above.
-  window.location.hash = `#/p/${ATLAS}/artifact/objectives.md`
-  renderApp()
-
-  expect(await screen.findByRole('tab', { name: 'Artifacts', selected: true })).toBeInTheDocument()
 })
 
 it('keeps ask a view of its own rather than a region', async () => {
@@ -437,53 +327,6 @@ it('hands the selected entity to the graph, not just the view', async () => {
   )
 
   await waitFor(() => expect(neighborhood).toHaveBeenCalledWith(ATLAS, 'e1'))
-})
-
-/** The three MATERIAL facets that parsed an id, reached the right tab, and then
- *  dropped it.
- *
- * `App.test.tsx` already asserted that `#/p/<id>/artifact/<path>` opens the
- * Artifacts tab, and that assertion is satisfied by a page that mounts MATERIAL
- * and ignores the facet entirely — which is exactly what shipped. `topic`,
- * `doc`, `artifact` and `finding` each held their open item in a component's
- * own `useState`, so the id reached the tab and stopped there. The `doc` half
- * was a live broken link: `CitationList` writes `#/p/<id>/doc/<sourceId>` and
- * following it produced an unfiltered corpus.
- *
- * Asserted through `aria-current` on the row, for the reason the stage test
- * above asserts through `aria-expanded`: the prop cannot see a route that
- * reached the page and not the list.
- *
- * `topic` is deliberately not here — it is QUEUE's, slice 3 did not rewrite it,
- * and it is still `useState` in `use-topic-queue.ts`. */
-it('marks the artifact the route names, not merely the tab it lives in', async () => {
-  // Built rather than hand-typed: an artifact id is a path, and the grammar
-  // keeps it in one segment by percent-encoding the slashes. A literal
-  // `/artifact/course/framing/...` parses the id as `course`.
-  window.location.hash = projectHref(ATLAS, {
-    facet: 'artifact',
-    id: 'course/framing/objectives.md',
-  })
-  renderApp()
-
-  // `closest('[aria-current]')` rather than `getByRole('listitem', {current})`:
-  // the row is found through the text a reader sees, and the marking is then
-  // asserted on the element that carries it. The role query would work too and
-  // would depend on a testing-library option version rather than on the DOM.
-  const name = await screen.findByText('objectives.md')
-  expect(name.closest('li')).toHaveAttribute('aria-current', 'true')
-})
-
-it('marks the finding the route names', async () => {
-  // Matched on the check name, which is the only stable id a finding has: the
-  // array index is not, because the list is recomputed against a growing
-  // course.
-  window.location.hash = projectHref(ATLAS, { facet: 'finding', id: 'objectives.count' })
-  renderApp()
-
-  await screen.findByRole('tab', { name: 'Findings', selected: true })
-  const message = await screen.findByText(/thin for a course/)
-  expect(message.closest('li')).toHaveAttribute('aria-current', 'true')
 })
 
 it('puts a watched worker in the address bar under the session facet', async () => {
@@ -815,9 +658,7 @@ it.each([
   [`#/p/${ATLAS}/doc/d1`, 'project/doc'],
   [`#/p/${ATLAS}/ask`, 'project/ask'],
   [`#/p/${ATLAS}/topic/t1`, 'project/topic'],
-  [`#/p/${ATLAS}/stage/step1.framing`, 'project/stage'],
   [`#/p/${ATLAS}/timeline`, 'project/timeline'],
-  [`#/p/${ATLAS}/artifact/objectives.md`, 'project/artifact'],
   // An unrecognised facet parses as home rather than as a project route, so
   // the log cannot grow a view name nobody chose.
   [`#/p/${ATLAS}/wat`, 'home'],
@@ -829,51 +670,6 @@ it.each([
   ['#/i?kind=ViewExited', 'interactions'],
 ])('names the view for %s', (hash, expected) => {
   expect(viewNameOf(parseRoute(hash))).toBe(expected)
-})
-
-/** The Findings tab, on a project that runs no workflow.
- *
- * Measured against the running console on 2026-08-23: `/api/projects/<Star
- * Trek>/course` answers **409** ("this project runs no workflow, so there is
- * no course to show"), the course query is `retry: false`, and the Findings
- * panel branched on `course.data` alone -- so it rendered `loading findings…`
- * for as long as the tab stayed open. The query had already settled; nothing
- * was in flight and nothing ever would be.
- *
- * Asserted on the rendered *message* rather than on "the panel is not
- * loading": a panel that renders nothing at all would pass the negative and is
- * the same defect wearing a different face. The Queue pane beside it already
- * said "No course to show." the whole time, which is why this was only ever
- * visible one tab at a time.
- */
-it('says why the Findings tab has nothing, rather than loading forever', async () => {
-  window.location.hash = `#/p/${ATLAS}/finding`
-  renderApp(
-    containerWith({
-      projects: {
-        ...(containerWith().projects as object),
-        course: vi.fn().mockRejectedValue(new ApiError('this project runs no workflow', 409)),
-      },
-    }),
-  )
-
-  // Scoped to the tab panel, not to the page: the Queue pane beside it renders
-  // the very same server message under "No course to show.", so an unscoped
-  // `findByText` passes with this panel still stuck on `loading findings…`.
-  // The first draft of this test did exactly that.
-  // Re-queried inside `waitFor` rather than held: the panel mounts before the
-  // course query settles, so a handle taken at the first render is a handle on
-  // `loading findings…` and asserting against it is a race the fix loses.
-  await waitFor(() =>
-    expect(
-      within(screen.getByRole('tabpanel', { name: 'Findings' })).getByText(
-        /this project runs no workflow/,
-      ),
-    ).toBeInTheDocument(),
-  )
-  expect(
-    within(screen.getByRole('tabpanel', { name: 'Findings' })).queryByText(/loading findings/),
-  ).not.toBeInTheDocument()
 })
 
 /** The tab a bare project link opens.
@@ -909,8 +705,9 @@ it('opens a bare project link on the catalog, not the holding session', async ()
 /** A project nothing is holding has no workspace, so it is offered no
  *  Workspace tab.
  *
- * `COURSE` above carries `holdingSessionId: null`, which is the condition --
- * a project's files belong to the session holding it, and with none there is
+ * The container's `project` read answers a null `activeSessionId`, which is the
+ * condition -- a project's files belong to the session holding it, and with none
+ * there is
  * no tree to show rather than an empty one. The tab's own panel already said
  * so in an `EmptyState`; what the interaction log measured is that saying so
  * costs a reader a click, 0.7s and a departure, 14 times out of 14.
@@ -929,40 +726,6 @@ it('offers no Workspace tab when nothing is holding the project', async () => {
   expect(screen.getByRole('tab', { name: 'Documents' })).toBeInTheDocument()
 })
 
-/** A project that runs no workflow is offered no Artifacts or Findings tab.
- *
- * The same 409 the Findings test above measured against the running console:
- * `/api/projects/<id>/course` answers "this project runs no workflow", the
- * query is `retry: false`, and both panels can only ever say so. There is no
- * `workflow` field on `Course` to test -- the query's own failure *is* the
- * condition, which is why `visibleMaterialTabs` takes `hasCourse` rather than
- * a course.
- *
- * `waitFor`, because the strip is honest about not knowing yet: the tabs are
- * present until the query settles, which is the flicker `DEFAULT_MATERIAL`'s
- * neighbouring docstring chooses over rearranging the strip during every
- * load.
- *
- * Graph is asserted present in the same breath so this cannot pass by the
- * strip having emptied. */
-it('offers no Artifacts or Findings tab on a project that runs no workflow', async () => {
-  window.location.hash = `#/p/${ATLAS}`
-  renderApp(
-    containerWith({
-      projects: {
-        ...(containerWith().projects as object),
-        course: vi.fn().mockRejectedValue(new ApiError('this project runs no workflow', 409)),
-      },
-    }),
-  )
-
-  await waitFor(() =>
-    expect(screen.queryByRole('tab', { name: 'Artifacts' })).not.toBeInTheDocument(),
-  )
-  expect(screen.queryByRole('tab', { name: 'Findings' })).not.toBeInTheDocument()
-  expect(screen.getByRole('tab', { name: 'Graph' })).toBeInTheDocument()
-})
-
 /** A link to a hidden tab still opens it, with its trigger.
  *
  * The alternative was measured against the primitive rather than guessed:
@@ -975,30 +738,20 @@ it('offers no Artifacts or Findings tab on a project that runs no workflow', asy
  * one that would rot silently: nothing else in the suite navigates to a tab
  * that the same render has decided to hide.
  *
- * Reverted -- the `tab.id === openTab` line removed -- this fails on the first
- * assertion, and the third would fail too. */
+ * It ran against `finding` on a project whose course 409'd, until both went
+ * with the workflow system. `file` is the only conditional tab now, so this
+ * runs against the same project as the test above -- nothing holds it, the
+ * Workspace tab is hidden there, and naming it in the route brings it back
+ * selected.
+ *
+ * Reverted -- the `tab.id === openTab` line removed -- this fails on both
+ * assertions. */
 it('keeps a hidden tab that the route explicitly names, and selects it', async () => {
-  window.location.hash = `#/p/${ATLAS}/finding`
-  renderApp(
-    containerWith({
-      projects: {
-        ...(containerWith().projects as object),
-        course: vi.fn().mockRejectedValue(new ApiError('this project runs no workflow', 409)),
-      },
-    }),
-  )
+  window.location.hash = `#/p/${ATLAS}/file/notes.md`
+  renderApp()
 
-  // Waited on **first**, and the order is the whole test. Every tab is present
-  // until the course query settles, so a `findByRole('tab', { name:
-  // 'Findings' })` up here resolves against the pre-settle paint and passes
-  // with the `openTab` arm deleted entirely -- measured, on the first draft of
-  // this test. Artifacts disappearing is the signal that the condition has
-  // fired; only after that does "Findings is still here" mean anything.
-  await waitFor(() =>
-    expect(screen.queryByRole('tab', { name: 'Artifacts' })).not.toBeInTheDocument(),
-  )
-  const findings = screen.getByRole('tab', { name: 'Findings' })
-  expect(findings).toHaveAttribute('aria-selected', 'true')
+  const workspace = await screen.findByRole('tab', { name: 'Workspace' })
+  expect(workspace).toHaveAttribute('aria-selected', 'true')
 })
 
 /** The header link, and then the page it reaches.

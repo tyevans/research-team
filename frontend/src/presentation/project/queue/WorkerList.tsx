@@ -1,8 +1,8 @@
 import { isBusy, nest, type Roster, type WorkerNode } from '@domain/worker/worker.ts'
 import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 
-import { Chip } from '../common/primitives.tsx'
-import { Tooltip } from '../common/Tooltip.tsx'
+import { Chip } from '../../common/primitives.tsx'
+import { Tooltip } from '../../common/Tooltip.tsx'
 
 /** What is running on a project, drawn from a roster somebody else fetched.
  *

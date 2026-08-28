@@ -20,19 +20,6 @@ export const INSTANCE_WIDE =
   'This applies to every session on this instance, not just this one. ' +
   'The change is recorded on the session you make it from.'
 
-/** Why allow-all leaves the stage gate alone.
- *
- * Said out loud, because the alternative is worse in both directions: silence
- * makes a deliberate exclusion look like a half-failed request, and hiding the
- * exclusion would let somebody auto every stage boundary without noticing they
- * had. The floor on a stage gate is not a hazard rating — it *is* the review
- * point where a person looks at what was produced before the run builds on it.
- */
-export const STAGE_GATE_HELD =
-  'left asking on purpose: it is the workflow review gate, the point where a ' +
-  'person looks at what was produced before the run builds on it. Auto-ing it ' +
-  'lets a run cross every stage boundary with nobody looking.'
-
 export const NO_SESSION =
   'No session is attached here, so there is nothing to record a change against. ' +
   'These levels are read-only until one is.'

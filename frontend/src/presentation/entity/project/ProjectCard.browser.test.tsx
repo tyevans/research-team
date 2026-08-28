@@ -6,10 +6,9 @@ import type { ProjectRollup } from '@domain/project/landing.ts'
 import type { Project } from '@domain/project/project.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
-import { Button } from '../../common/primitives.tsx'
+import { Button, Chip } from '../../common/primitives.tsx'
 import { OverlayHost } from '../../layout/OverlayHost.tsx'
 import { ProjectCard } from './ProjectCard.tsx'
-import { WorkflowChip } from './WorkflowChip.tsx'
 
 /** What the card's head costs at the width the landing page's rail gets.
  *
@@ -24,7 +23,7 @@ import { WorkflowChip } from './WorkflowChip.tsx'
  * which this card replaced, wrote `flex-wrap: wrap` on `.project-head`, and
  * `.ent-project-head` did not — it was written for a gallery frame with two
  * chips on it, and the landing page puts five things there: a disclosure, a
- * name, a workflow chip, a holder and a run marker. Clipping at rail width is
+ * name, a badge, a holder and a run marker. Clipping at rail width is
  * the same defect already filed twice against the topic row's meta line and
  * its dispatch chip.
  *
@@ -53,8 +52,6 @@ const project = (over: Partial<Project> = {}): Project => ({
   name: 'a project with a name long enough to want the room',
   activeSessionId: SessionId('7d41e0aa-1111-2222-3333-444444444444'),
   tipAtEvent: 128,
-  workflow: { id: 'hybrid', name: 'hybrid', version: 1 },
-  stage: { id: 's4', name: 'design', index: 4, of: 15 },
   ...over,
 })
 
@@ -67,9 +64,15 @@ const rollup = (over: Partial<ProjectRollup> = {}): ProjectRollup => ({
   ...over,
 })
 
-/** The head as `ProjectList` fills it, because the measurement is of what the
+/** The head with every slot filled, because the measurement is of what the
  *  *view's* slots cost. A card rendered with two of its five head items would
- *  go on passing while the landing page clipped. */
+ *  go on passing while the landing page clipped.
+ *
+ * `badges` is a plain chip here and the landing page passes `null` today -- the
+ * workflow chip that filled it went with the workflow system. Kept filled
+ * deliberately: this file measures the widest head the card can be asked to
+ * draw, and dropping the slot because nobody fills it right now would retire
+ * the measurement the day somebody fills it again. */
 const Rail = () => (
   <OverlayHost>
     <div style={{ width: `${RAIL}px` }}>
@@ -81,7 +84,7 @@ const Rail = () => (
               all 3 sessions
             </Button>
           ),
-          badges: <WorkflowChip project={project()} />,
+          badges: <Chip>4 areas</Chip>,
           activity: <span className="chip chip-held">⟳ run · round 3</span>,
           primary: <Button small>Resume 7d41e0aa</Button>,
         }}

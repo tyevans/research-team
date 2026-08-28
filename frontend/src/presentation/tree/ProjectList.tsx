@@ -14,7 +14,6 @@ import { Menu, MenuItem, MenuTrigger } from '../common/Menu.tsx'
 import { Button, EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
 import { ProjectCard, projectSessionsId } from '../entity/project/ProjectCard.tsx'
-import { WorkflowChip } from '../entity/project/WorkflowChip.tsx'
 // `plural` is gone from this file with `ProjectRow`: the card counts its own
 // sessions and files, and its `3 sessions` / `1 session` is character-for-
 // character what `plural` produced — `ProjectCard.test.tsx` pins both forms.
@@ -256,7 +255,10 @@ const ProjectListRow = ({
       rollup={rollup}
       open={open}
       slots={{
-        badges: <WorkflowChip project={project} />,
+        // Nothing to badge: the workflow chip that filled this was "which
+        // preset, and how far through it", and there are no presets. The slot
+        // stays because the card declares it, not because this page wants it.
+        badges: null,
         activity: <ActivityChip label={activity.label} />,
 
         /* The disclosure's control, at the head rather than under the row.
@@ -353,19 +355,13 @@ const ProjectListRow = ({
              adjacent choices. */
           <span className="node-actions-gap" key="gap" />,
 
-          /* **Not disabled without a workflow any more, and that is the
-             substantive change here.** This button used to be "Course", it
-             used to carry `get_course`'s own 409 sentence, and it used to be
-             `aria-disabled` for a project that chose no workflow — all correct
-             while it went to the *course page*, which such a project genuinely
-             does not have. It goes to the project view now, where the course
-             is one region of three: a workflow-less project still has a
-             holding session, a workspace, documents and a graph, and QUEUE
-             renders the 409 as an empty state rather than an error
-             (`ProjectView.tsx`, the `course.isError` branch). Keeping the
-             button off would deny a reader four fifths of a page over the one
-             fifth that is genuinely absent, and would do it silently, since
-             the empty state says the same sentence the tooltip used to. */
+          /* Unconditional, and it used to be "Course" and `aria-disabled` for
+             a project that had chosen no workflow. That was correct while it
+             went to the *course page*, which such a project genuinely did not
+             have; it stopped being correct when it went to the project view,
+             where the course was one region of several. The workflow system is
+             gone and the condition has nothing left to test, so what remains is
+             a link to a page every project has. */
           <Tooltip
             asChild
             key="project"

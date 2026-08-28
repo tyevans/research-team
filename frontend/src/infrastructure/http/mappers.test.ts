@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import * as dto from './dto.ts'
 import {
   toApproval,
-  toCourse,
   toForkNode,
   toGraphLink,
   toGraphNode,
@@ -18,7 +17,6 @@ import {
   toTurnRange,
   toWholeGraph,
 } from './mappers.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
 
 /** The boundary. A mapper bug does not throw — it renders a blank row or the
  *  wrong number — so these go through the real schemas rather than hand-built
@@ -193,77 +191,6 @@ describe('toRun', () => {
   })
 })
 
-describe('toCourse', () => {
-  it('carries the project id the source links are addressed by', () => {
-    const course = toCourse(
-      parse(dto.courseDto, { preset: { id: 'hybrid', name: 'Hybrid' } }),
-      ProjectId('p1'),
-    )
-    expect(course.projectId).toBe('p1')
-  })
-
-  it('renames live_findings to what the view actually calls them', () => {
-    const course = toCourse(
-      parse(dto.courseDto, {
-        preset: { id: 'h', name: 'H' },
-        live_findings: [{ check: 'c', severity: 'blocking', message: 'm' }],
-        unimplemented_checks: ['x'],
-      }),
-      ProjectId('p1'),
-    )
-    expect(course.findings[0]?.check).toBe('c')
-    expect(course.unimplementedChecks).toEqual(['x'])
-  })
-
-  it('keeps an unresolvable position null rather than inventing one', () => {
-    const course = toCourse(
-      parse(dto.courseDto, { preset: { id: 'h', name: 'H' } }),
-      ProjectId('p1'),
-    )
-    expect(course.position).toBeNull()
-  })
-
-  /* Passes with this change reverted, and is here anyway: the old
-     `(string & {})` accepted every one of these too. It is the lock on the
-     fold below -- without it, folding an unheard status onto `unknown` could
-     be made to pass by folding *everything* onto `unknown`. */
-  it('keeps the four statuses the server actually sends', () => {
-    const course = toCourse(
-      parse(dto.courseDto, {
-        preset: { id: 'h', name: 'H' },
-        stages: ['done', 'current', 'upcoming', 'unknown'].map((status, i) => ({
-          index: i,
-          id: `s${i}`,
-          name: `S${i}`,
-          status,
-        })),
-      }),
-      ProjectId('p1'),
-    )
-    expect(course.stages.map((s) => s.status)).toEqual(['done', 'current', 'upcoming', 'unknown'])
-  })
-
-  /* Red before this change for two separate reasons, which is why it is one
-     test rather than two: `upcoming` was not in `StageStatus` at all, and a
-     stage omitting `status` defaulted to `todo` -- a name no stylesheet
-     matches, so it drew an unstyled chip claiming a state that does not
-     exist. Both now land on `unknown`, which is the state the console is
-     actually in when it cannot place a stage. */
-  it('folds a status it has not heard of onto unknown', () => {
-    const course = toCourse(
-      parse(dto.courseDto, {
-        preset: { id: 'h', name: 'H' },
-        stages: [
-          { index: 0, id: 's0', name: 'S0', status: 'skipped' },
-          { index: 1, id: 's1', name: 'S1' },
-        ],
-      }),
-      ProjectId('p1'),
-    )
-    expect(course.stages.map((s) => s.status)).toEqual(['unknown', 'unknown'])
-  })
-})
-
 describe('toRoster', () => {
   it('maps the wire shape, parsing timestamps to epoch milliseconds', () => {
     const roster = toRoster(
@@ -431,12 +358,6 @@ describe('toApproval', () => {
     expect(toApproval(parse(dto.approvalDto, legacy)).allowedDecisions).toEqual([])
   })
 
-  it('reads no context into a gate that carries none', () => {
-    // `presenters.py` omits the key rather than nulling it, so absence — not
-    // null — is what this has to survive.
-    expect(toApproval(parse(dto.approvalDto, legacy)).context).toBeNull()
-  })
-
   it('drops a decision this build cannot post', () => {
     const approval = toApproval(
       parse(dto.approvalDto, {
@@ -445,72 +366,6 @@ describe('toApproval', () => {
       }),
     )
     expect(approval.allowedDecisions).toEqual(['approve', 'respond'])
-  })
-
-  it('carries every field of a stage gate across', () => {
-    const approval = toApproval(
-      parse(dto.approvalDto, {
-        ...legacy,
-        tool_name: 'advance_stage',
-        description: 'Leave survey',
-        args: { stage: 'survey' },
-        allowed_decisions: ['approve', 'edit', 'reject', 'respond'],
-        context: {
-          stage: 'survey',
-          findings_artifact: 'findings/survey.md',
-          artifact_paths: ['notes/a.md', 'notes/b.md'],
-          blocked: true,
-          artifacts_reviewed: 2,
-          links_reviewed: 7,
-          unimplemented_checks: ['freshness'],
-          unreadable_artifacts: ['notes/c.md'],
-          findings: [
-            {
-              check: 'citations',
-              severity: 'error',
-              message: 'Two claims cite nothing.',
-              cites: ['notes/a.md#L3'],
-              suggested_edit: 'Cite or cut.',
-            },
-            {
-              check: 'coverage',
-              severity: 'warning',
-              message: 'Thin on prior art.',
-              cites: [],
-              suggested_edit: null,
-            },
-          ],
-        },
-      }),
-    )
-
-    expect(approval.allowedDecisions).toEqual(['approve', 'edit', 'reject', 'respond'])
-    expect(approval.context).toEqual({
-      stage: 'survey',
-      findingsArtifact: 'findings/survey.md',
-      artifactPaths: ['notes/a.md', 'notes/b.md'],
-      blocked: true,
-      artifactsReviewed: 2,
-      linksReviewed: 7,
-      unimplementedChecks: ['freshness'],
-      unreadableArtifacts: ['notes/c.md'],
-      findings: [
-        {
-          check: 'citations',
-          severity: 'error',
-          message: 'Two claims cite nothing.',
-          cites: ['notes/a.md#L3'],
-          suggestedEdit: 'Cite or cut.',
-        },
-        {
-          check: 'coverage',
-          severity: 'warning',
-          message: 'Thin on prior art.',
-          cites: [],
-          suggestedEdit: null,
-        },
-      ],
-    })
   })
 })
 

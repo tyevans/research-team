@@ -15,9 +15,9 @@ import {
 } from '@domain/research/run.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
-import { Button, Chip } from '../common/primitives.tsx'
-import { Tooltip } from '../common/Tooltip.tsx'
-import { sessionHref } from '../routing/routes.ts'
+import { Button, Chip } from '../../common/primitives.tsx'
+import { Tooltip } from '../../common/Tooltip.tsx'
+import { sessionHref } from '../../routing/routes.ts'
 
 const POLL_MS = 2_000
 

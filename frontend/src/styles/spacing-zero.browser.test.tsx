@@ -49,7 +49,10 @@ it('gives the decision bar the zero margin its markup asks for', () => {
       <pre data-testid="pre" className="m-0 font-mono text-xs" />
       <pre data-testid="pre-ua" className="font-mono text-xs" />
 
-      {/* `GateReview.tsx`'s findings heading. `1.33em` of the inherited size.
+      {/* An `<h4>` at `text-sm`: `1.33em` of the inherited size. The caller
+          this was taken from was `GateReview.tsx`, deleted with the workflow
+          system; the UA margin it measures is a property of the element and
+          not of that file, and the next `m-0` heading inherits the guard.
           Given text because `jsx-a11y/heading-has-content` is right that an
           empty heading is a defect, and because a margin is measurable on an
           empty box while a heading's is not the thing a reader sees. */}
@@ -79,11 +82,12 @@ it('gives the decision bar the zero margin its markup asks for', () => {
   }
 })
 
-it('gives the finding lists the zero padding their markup asks for', () => {
+it('gives an unmarked list the zero padding its markup asks for', () => {
   // `<ul>` is the one where `p-0` carries the visible weight rather than `m-0`:
   // the UA's `padding-inline-start: 40px` is what indents a list, and
-  // `list-none` removes the marker without removing the indent. A findings list
-  // has been sitting 40px in from the heading above it.
+  // `list-none` removes the marker without removing the indent. Found on a
+  // findings list sitting 40px in from the heading above it; that list is
+  // deleted and the rule is the element's, not the list's.
   const { container } = render(
     <>
       <ul data-testid="ul" className="m-0 list-none p-0" />

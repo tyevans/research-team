@@ -27,8 +27,7 @@ import type { CourseDetail, CourseText } from '@domain/knowledge/course.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
-import type { Course } from '@domain/project/course.ts'
-import type { Project, ProjectDetail, WorkflowPreset } from '@domain/project/project.ts'
+import type { Project, ProjectDetail } from '@domain/project/project.ts'
 import type {
   DocumentText,
   MediaSummary,
@@ -166,10 +165,15 @@ export interface AutonomyRepository {
    *  own validation and comes back as its message, naming the offending value,
    *  rather than being swallowed by a type this build made up. */
   setLevel(id: SessionId, tool: string, level: string): Promise<AutonomyPolicyView>
-  /** Autos every gated tool. Stage gates are excluded unless asked for: their
-   *  floor is the workflow review gate, and auto-ing them lets a run cross
-   *  every stage boundary with nobody looking. */
-  allowAll(id: SessionId, includeStageGates: boolean): Promise<AutonomyChange>
+  /** Autos every gated tool.
+   *
+   * Parameterless since the workflow system came out. It used to take
+   * `includeStageGates`, and the exclusion it defaulted to was the stage review
+   * gate -- the one place a person was guaranteed to be looking before a run
+   * built on what it had produced. There is no such gate now, so there is no
+   * subset to hold back and nothing for the flag to select.
+   */
+  allowAll(id: SessionId): Promise<AutonomyChange>
 }
 
 export interface ProjectRepository {
@@ -179,13 +183,10 @@ export interface ProjectRepository {
    *  reload, a bookmark or a shared link arrives with no listing fetched, and
    *  filtering one would fold every project to answer about one. */
   project(id: ProjectId): Promise<ProjectDetail>
-  presets(): Promise<readonly WorkflowPreset[]>
   create(name: string): Promise<ProjectId>
-  chooseWorkflow(id: ProjectId, presetId: string): Promise<string>
   /** `takeOver` ends the holding session first. */
   join(id: ProjectId, takeOver: boolean): Promise<{ sessionId: SessionId; warning: string | null }>
   delete(id: ProjectId, releaseHolder: boolean): Promise<void>
-  course(id: ProjectId): Promise<Course>
 }
 
 export interface ResearchRepository {

@@ -10,53 +10,30 @@ import type {
   WorkerRepository,
 } from '@application/ports/repositories.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
-import type { Course } from '@domain/project/course.ts'
-import type { Project, ProjectDetail, WorkflowPreset } from '@domain/project/project.ts'
+import type { Project, ProjectDetail } from '@domain/project/project.ts'
 import type { ResearchRun } from '@domain/research/run.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import {
-  toCourse,
-  toExtractionFrame,
-  toPreset,
-  toProject,
-  toProjectDetail,
-  toRoster,
-  toRun,
-} from './mappers.ts'
+import { toExtractionFrame, toProjectDetail, toRoster, toRun } from './mappers.ts'
 
 export class HttpProjectRepository implements ProjectRepository {
   constructor(private readonly http: HttpClient) {}
 
   async list(): Promise<readonly Project[]> {
-    const rows = await this.http.get('/api/projects', z.array(dto.projectDto))
-    return rows.map(toProject)
+    const rows = await this.http.get('/api/projects', z.array(dto.projectDetailDto))
+    return rows.map(toProjectDetail)
   }
 
   async project(id: ProjectId): Promise<ProjectDetail> {
     return toProjectDetail(await this.http.get(`/api/projects/${seg(id)}`, dto.projectDetailDto))
   }
 
-  async presets(): Promise<readonly WorkflowPreset[]> {
-    const rows = await this.http.get('/api/workflows', z.array(dto.presetDto))
-    return rows.map(toPreset)
-  }
-
   async create(name: string): Promise<ProjectId> {
     const created = await this.http.post('/api/projects', { name }, dto.idDto)
     return ProjectId(created.id)
-  }
-
-  async chooseWorkflow(id: ProjectId, presetId: string): Promise<string> {
-    const result = await this.http.post(
-      `/api/projects/${seg(id)}/workflow`,
-      { preset_id: presetId },
-      z.object({ workflow: dto.workflowRefDto.nullish() }),
-    )
-    return result.workflow?.name ?? presetId
   }
 
   async join(
@@ -83,10 +60,6 @@ export class HttpProjectRepository implements ProjectRepository {
     // was never made.
     const params = releaseHolder ? query({ release_holder: 'true' }) : ''
     await this.http.delete(`/api/projects/${seg(id)}${params}`, dto.okDto)
-  }
-
-  async course(id: ProjectId): Promise<Course> {
-    return toCourse(await this.http.get(`/api/projects/${seg(id)}/course`, dto.courseDto), id)
   }
 }
 

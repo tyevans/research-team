@@ -90,7 +90,6 @@ it('records no ApprovalDecided when the decision is reached for an approval this
     description: null,
     args: {},
     allowedDecisions: ['approve', 'edit', 'reject'] as const,
-    context: null,
   }
 
   act(() => {
@@ -140,7 +139,6 @@ it('reports the backgrounded portion of the wait as hidden_ms', async () => {
     description: null,
     args: {},
     allowedDecisions: ['approve', 'edit', 'reject'] as const,
-    context: null,
   }
   feed.deliver({ kind: 'approvalRequested', approval } as never)
 

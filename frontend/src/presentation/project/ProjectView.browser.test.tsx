@@ -43,32 +43,6 @@ import { ProjectView } from './ProjectView.tsx'
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
 
-const COURSE = {
-  projectId: ATLAS,
-  projectName: 'atlas',
-  holdingSessionId: HOLDER,
-  preset: { id: 'hybrid.default', name: 'Hybrid', version: '1' },
-  position: 1,
-  stageCount: 1,
-  stages: [
-    {
-      index: 1,
-      id: 'step0.intake',
-      name: 'Intake',
-      kind: 'author',
-      spine: 0,
-      scopeLevel: 'course',
-      status: 'current',
-      outputs: [],
-      gateDecisions: [],
-      reviewerRole: null,
-      findingsReport: null,
-    },
-  ],
-  findings: [],
-  unimplementedChecks: [],
-}
-
 /** Only the ports this page and its store reach for. A fake that implemented
  *  the whole container would hide which dependencies the page really has, and
  *  the list below is itself informative: the project page touches nine. */
@@ -78,7 +52,6 @@ const container = () =>
     now: () => new Date('2026-08-10T00:00:00Z'),
     stream: { connect: vi.fn(), disconnect: vi.fn() },
     projects: {
-      course: vi.fn().mockResolvedValue(COURSE),
       // The page's identity and holder come from here now rather than from the
       // course. Omitting it does not fail the type -- the container is cast --
       // it leaves the header with no holding session and the Workspace tab
@@ -117,7 +90,7 @@ const container = () =>
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
     research: { current: vi.fn().mockResolvedValue(null) },
-    topics: { queue: vi.fn().mockResolvedValue([]) },
+    topics: { list: vi.fn().mockResolvedValue([]) },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
   }) as unknown as Container
 
@@ -128,7 +101,7 @@ const container = () =>
  * one to move, and the difference is not cosmetic — the material tabs are
  * derived from the route rather than held in state, so a static `selection`
  * makes every tab click a no-op that still *looks* like a working page. The
- * first version of claim 7 passed a click to Artifacts and asserted against a
+ * first version of claim 7 passed a click to another tab and asserted against a
  * panel that had never changed.
  *
  * Reading `navigate` back out of the address bar would be the faithful thing
@@ -182,10 +155,17 @@ const show = async () => {
     </ContainerProvider>,
   )
 
-  // HOLDER's sections only exist once the course resolves and names a holding
-  // session, so every test waits on one of them. `Event log` is now a
-  // `<section aria-label>` rather than a `Pane`, and it is the same role and
-  // the same name — which is the point of labelling them by hand.
+  // The Holding session tab, chosen explicitly, because every claim in this
+  // file is about how height travels through the transcript's own boxes and
+  // `DEFAULT_MATERIAL` is the catalog. This used to arrive selected: the file
+  // was written when the session was the default tab, and 0273fc4 moved the
+  // default to `catalog` on the interaction log's dwell figures without
+  // running this suite -- which is outside CI, so nothing said so. Waiting on
+  // `Event log` has been failing here since 2026-08-24.
+  await page.getByRole('tab', { name: 'Holding session' }).click()
+  // `Event log` is a `<section aria-label>` rather than a `Pane`, and it is
+  // the same role and the same name -- which is the point of labelling them by
+  // hand.
   await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
 
   return { preferences: deps.preferences as InMemoryPreferenceStore }
@@ -416,7 +396,7 @@ it('keeps the queue header out of the queue pane’s scroller', async () => {
  * The holding session was a permanent column until it became a tab, so nothing
  * had ever taken its state away; the move made a tab-away discard a draft
  * message and a scrub position, which is a data loss a reader would meet by
- * checking the Artifacts tab mid-sentence.
+ * checking the Documents tab mid-sentence.
  *
  * **The second assertion is the one that is not obvious, and it is the reason
  * this is a browser test.** `Pane`'s `unmountWhenCollapsed` documents the trap
@@ -445,9 +425,9 @@ it('keeps a half-typed message and the transcript across a tab switch', async ()
   // absent under the defect and merely hidden under the fix, so a check on it
   // would read differently for two reasons at once and could not say which.
   // What both agree on is that the reader left.
-  await page.getByRole('tab', { name: 'Artifacts' }).click()
+  await page.getByRole('tab', { name: 'Documents' }).click()
   await expect
-    .poll(() => page.getByRole('tab', { name: 'Artifacts' }).element().ariaSelected)
+    .poll(() => page.getByRole('tab', { name: 'Documents' }).element().ariaSelected)
     .toBe('true')
 
   await page.getByRole('tab', { name: 'Holding session' }).click()
@@ -483,9 +463,9 @@ it('drops the kept panel out of the layout while another tab is open', async () 
   await show()
   const { body } = holder()
 
-  await page.getByRole('tab', { name: 'Artifacts' }).click()
+  await page.getByRole('tab', { name: 'Documents' }).click()
   await expect
-    .poll(() => page.getByRole('tab', { name: 'Artifacts' }).element().ariaSelected)
+    .poll(() => page.getByRole('tab', { name: 'Documents' }).element().ariaSelected)
     .toBe('true')
 
   // Selected by `data-state` rather than by `[hidden]`, because under the

@@ -1,5 +1,5 @@
-/* What the course view left behind: the stage rail, the worker roster, the
-   extraction pane and the autonomy panel — all four of them in QUEUE.
+/* What the course view left behind: the worker roster, the extraction pane and
+   the autonomy panel — all three of them in the project page's queue header.
 
    **There is no course view any more, and this file did not die with it.**
    That is a departure from the policy — stylesheets die with the screen they
@@ -7,25 +7,25 @@
    and every rule that was a claim about *its* markup went with it in the same
    commit: `.view-course`, the four `.lay-split[data-split='course']`
    combinators, `.course-findings`, and their four counterparts in
-   `responsive.css`. Slice 3 then took the two families that had landed in
-   MATERIAL — `Artifacts` (7 rules + `.prov-src` + four chip tones) and
-   `Findings` (4 + `finding-${severity}`) — and rewrote them in utilities; the
-   note where they stood says what moved where. What is left dresses four
-   families, every one of them in QUEUE:
+   `responsive.css`. A later slice rewrote the artifacts and findings shelves
+   in utilities, and the workflow system's removal deleted those components and
+   the whole stage rail; the note below says what went. What is left dresses
+   three families:
 
-     - `AutonomyPanel`   (16 rules), and the policy is instance-wide
+     - `AutonomyPanel`   (15 rules), and the policy is instance-wide
      - `ExtractionPane`  (12)
-     - `WorkerList`      (9 + `worker-dot-${kind}`)
-     - `StageRail`       (13 + `rail-${status}` + `chip-${tone}`), until the
-                         row union replaces it
+     - `WorkerList`      (8 + `worker-dot-${kind}`)
 
    The plan for the route merge expected this file to die in the QUEUE slice
-   and named two passengers to rescue first. There were six. Three of the four
-   families above are written from template literals and so are invisible to a
-   grep for a class name, and deleting the file today would silently strip the
-   autonomy panel, the extraction pane, the roster and the whole rail — the
-   `AutonomyAllowAll` trap at four times the size. So the file stays until the
-   components do, and the components are QUEUE's, not MATERIAL's.
+   and named two passengers to rescue first. There were six. All three families
+   above are written from template literals and so are invisible to a grep for a
+   class name, and deleting the file today would silently strip the autonomy
+   panel, the extraction pane and the roster — the `AutonomyAllowAll` trap at
+   three times the size. So the file stays until the components do. The
+   components moved directories in the same commit that took the rail
+   (`presentation/course/` → `presentation/project/queue/`) and the file's name
+   is now the last thing in the tree calling any of this "course"; renaming it
+   is a separate diff.
 
    One correction to the note further down, since a stale comment about a
    deletion trap is itself a trap: `.autonomy-warn` and `.autonomy-error` are
@@ -33,168 +33,25 @@
    not, any more — `AutonomyAllowAll` is utilities throughout, and these two are
    `AutonomyPanel`'s alone. */
 
-/* ---------------------------------------------------------------- course
- *
- * The rail's whole job is to make three states distinguishable at a glance --
- * left behind, standing here, not yet reached -- so status is carried by the
- * dot's fill as well as its colour. Colour alone would collapse for a
- * red/green reader on exactly the axis the pane exists to show. */
+/* **The stage rail was here, and is gone with the workflow system.**
+   Twenty-six class names: `.rail`, `.rail-item/row/dot/index/name/count`,
+   `.rail-count-none`, `.rail-short`, `.rail-detail`, `.rail-meta-row`,
+   `.rail-gate`, `.rail-report`, `.rail-outputs`, the four `.rail-${status}`
+   fills and the four `.chip-${status}` tones. `StageRail.tsx`, `StageList.tsx`
+   and the `stage` facet went in the same commit, so nothing writes any of
+   them.
 
-.rail {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
+   Also gone from further up this file, in an earlier slice and recorded here
+   because the note that recorded it went too: the artifacts and findings
+   shelves, rewritten in utilities and then deleted outright. `Artifacts.tsx`,
+   `ArtifactList.tsx` and `Findings.tsx` no longer exist, so `PRESENT_DRESS`,
+   `SEVERITY_EDGE` and the rest of what was rescued out of this file went with
+   them; nothing here needs to be found a new home.
 
-.rail-item {
-  border-bottom: 1px solid var(--line-soft);
-}
-.rail-item:last-child {
-  border-bottom: none;
-}
-
-.rail-row {
-  display: grid;
-  grid-template-columns: 14px 22px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  background: none;
-  border: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.rail-row:hover {
-  background: var(--bg-hover);
-}
-.rail-row:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
-.rail-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 1.5px solid var(--fg-faint);
-}
-.rail-done {
-  background: var(--k-file);
-  border-color: var(--k-file);
-}
-.rail-current {
-  background: var(--accent);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(226, 164, 87, 0.18);
-}
-.rail-upcoming {
-  background: transparent;
-}
-.rail-unknown {
-  background: var(--k-failure);
-  border-color: var(--k-failure);
-}
-
-.rail-index {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--fg-faint);
-}
-.rail-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.rail-count {
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  color: var(--fg-dim);
-}
-/* A stage that declares no artifact of its own. Dimmer than a count, because
- * there is nothing to count -- and deliberately not the global `.empty`, whose
- * padding belongs to a whole-pane empty state and not to a grid cell. */
-.rail-count-none {
-  color: var(--fg-faint);
-}
-
-/* Written < declared. Not an error -- a stage in progress is expected to be
- * short -- so it is marked, not alarmed. */
-.rail-short {
-  color: var(--accent);
-}
-
-.chip-done {
-  color: var(--k-file);
-  border-color: #24402c;
-  background: #131f17;
-}
-.chip-current {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: #241d10;
-}
-.chip-upcoming {
-  color: var(--fg-faint);
-}
-.chip-unknown {
-  color: var(--k-failure);
-  border-color: #45272a;
-  background: #241417;
-}
-
-.rail-detail {
-  padding: 4px 10px 12px 44px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px dashed var(--line-soft);
-}
-.rail-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  font-size: var(--t-sm);
-}
-.rail-gate,
-.rail-report {
-  font-size: var(--t-sm);
-}
-.rail-outputs {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-/* The artifacts and findings shelves were here, and are gone: `Artifacts.tsx`,
-   `ArtifactList.tsx` and `Findings.tsx` are dressed in utilities now. Twenty-two
-   class names -- `.artifacts`, `.artifact`, `.artifact-top/name/type/card`,
-   `.artifact-note`, `.artifact-prov`, `.prov-src`, the four
-   `.chip-present/missing/inferred/bad` tones, `.findings-head`, `.findings`,
-   `.finding`, the five `.finding-${severity}` edges, `.finding-check`,
-   `.finding-msg` and `.finding-fix`.
-
-   Three things left this file that a diff does not show, and each is a defect
-   if it is lost rather than moved:
-
-   - The four artifact chip tones are `PRESENT_/MISSING_/INFERRED_/BAD_DRESS` in
-     `Artifacts.tsx`, with the hexes unchanged and named as tokens where a token
-     exists. A `Chip` whose `tone` names a class nobody declares is a silent
-     collapse into one grey.
-   - The five finding edges are `SEVERITY_EDGE` in `Findings.tsx`, as
-     `border-l-*` utilities over a `border-0` base -- the single-side rule
-     `CLAUDE.md` records, in the direction where forgetting the zero draws three
-     unwanted sides.
-   - `.artifact-missing` had already been emptied of declarations and kept as a
-     hook; it is `data-missing` on the row now, because a class with no rule
-     sitting in a file of classes with rules cannot be told from one whose rule
-     was lost.
-
-   **What did not leave, and why the file is still alive:** the rail, the
-   workers, the extraction pane, the drawer and the autonomy panel -- five
-   families, all of them in QUEUE, none of them this slice's. */
+   `scripts/stage-status.test.ts` held the `.rail-${status}`/`.chip-${status}`
+   families against the `StageStatus` union -- one vocabulary written twice, in
+   two languages -- and is deleted with both halves. Nothing replaces it because
+   there is no longer a pair to keep in step. */
 
 /* ---------------------------------------------------------------- workers
  *
@@ -256,10 +113,6 @@
 .worker-dot-extraction {
   background: var(--k-tool);
 }
-.worker-dot-stage {
-  background: var(--k-compaction);
-}
-
 .worker-kind {
   color: var(--fg-dim);
   font-size: var(--t-xs);
@@ -537,13 +390,6 @@
   padding: 4px 0;
   border-top: 1px solid var(--line-soft);
 }
-/* The review gate is marked in the layout as well as in words: it is the one
- * row whose level means something different in kind from the others. */
-.autonomy-row-gate {
-  border-left: 2px solid var(--k-tool);
-  padding-left: 8px;
-}
-
 /* A fieldset for the arrow-key grouping and the announced legend; the browser
  * chrome that comes with it is removed, since the row itself is the frame. */
 .autonomy-field {

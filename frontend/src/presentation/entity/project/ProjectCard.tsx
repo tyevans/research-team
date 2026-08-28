@@ -79,12 +79,15 @@ export const ProjectCard = ({
      *  request per card. */
     activity: ReactNode
     /** Whatever else this card's view wants said about the project itself,
-     *  between its name and who holds it. The landing page's workflow chip is
-     *  the one caller: "which preset, and how far through it" is a fact about
-     *  a *project*, but the phrasing — `hybrid · 4/15` — is that page's
-     *  editorial choice about what a scanning reader needs, and a card that
-     *  rendered it would be deciding for every future list. A slot keeps the
-     *  decision where the words are written. */
+     *  between its name and who holds it. Every caller passes `null` today: the
+     *  one filler was the landing page's workflow chip, deleted with the
+     *  workflow system. Kept rather than removed with it, because the argument
+     *  for a slot never depended on that chip -- which facts about a project
+     *  are worth a badge is an editorial decision belonging to the page that
+     *  writes the words, and a card that rendered them would be deciding for
+     *  every future list. The cost is a slot with nothing in it, and it is
+     *  visible in `ProjectCard.stories.tsx`'s slots story rather than only
+     *  here. */
     badges: ReactNode
     /** The verb this card leads with. The view owns it because it owns the
      *  branch: a held project offers two honest choices — open the holder, or

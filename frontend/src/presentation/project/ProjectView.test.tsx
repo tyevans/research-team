@@ -32,17 +32,16 @@ it('sends every facet the grammar declares to a region', () => {
 
 /** Reverted, this test fails: before the merge there were two whole-page
  *  components and no regions at all, so there was no function to import. It is
- *  not reassurance. */
-it('puts the three facets that reached no view in a region each', () => {
-  // All three in MATERIAL, and `file` is the one that moved: slice 1 put it in
-  // HOLDER on the argument that a project file is a file in a session's
-  // workspace. That is true about where the bytes live and not about what the
-  // reader is asking, and MATERIAL is the region for "what has this project
-  // produced" — the workspace tree is the live half of the same shelf the
-  // artifacts sit on. `ProjectView.tsx` carries the full argument.
+ *  not reassurance.
+ *
+ * It covered `artifact` and `finding` beside `file` until those two facets were
+ * deleted with the workflow system. `file` is the one that moved and the one
+ * worth pinning: slice 1 put it in HOLDER on the argument that a project file
+ * is a file in a session's workspace. That is true about where the bytes live
+ * and not about what the reader is asking, and MATERIAL is the region for "what
+ * has this project produced". */
+it('puts the workspace in MATERIAL rather than beside the session it belongs to', () => {
   expect(regionOf('file')).toBe<Region>('material')
-  expect(regionOf('artifact')).toBe<Region>('material')
-  expect(regionOf('finding')).toBe<Region>('material')
 })
 
 /** HOLDER is gone, and `session` is a tab in MATERIAL rather than a region of
@@ -65,13 +64,16 @@ it('puts the holding session in MATERIAL, where its tab is', () => {
   expect(FACETS.filter((facet) => regionOf(facet) === 'material')).toContain('session')
 })
 
-/** The split that used to be a route boundary. `stage` came from the course
- *  page and `topic` from the research page, and a reader following one thread
- *  crossed between them; they are the same kind of thing and now sit in the
- *  same region. */
-it('puts a stage and a topic in the same region, which the old routes did not', () => {
-  expect(regionOf('stage')).toBe(regionOf('topic'))
-  expect(regionOf('stage')).toBe<Region>('queue')
+/** QUEUE is the questions this project still owes an answer to.
+ *
+ * It used to be that plus a stage rail, and the test here was that a stage and
+ * a topic landed in the same region -- the merge's own argument, since the two
+ * arrived from two different pages. The rail is deleted and the topic is the
+ * whole of QUEUE, so what is left to pin is that a topic is not in MATERIAL:
+ * it is work owed, not material produced, and a facet that defaulted into the
+ * wrong region would be silent. */
+it('puts a topic in QUEUE and not in MATERIAL', () => {
+  expect(regionOf('topic')).toBe<Region>('queue')
 })
 
 /** **A tripwire, not a measurement.** Eleven is where the material strip was
@@ -96,9 +98,16 @@ it('puts a stage and a topic in the same region, which the old routes did not', 
  * This line is what makes that a conversation instead of a merge. It runs in
  * the `app` project, which CI does run.
  *
+ * **Nine now, and eleven is still the measurement.** Artifacts and Findings
+ * came out with the workflow system, which buys back roughly 150px of strip.
+ * The number below tracks what is *declared*, not what fits -- raising it to
+ * eleven "because eleven was measured" would spend headroom no measurement has
+ * been re-taken for at these labels, and adding tabs is deliberately out of
+ * scope for the removal.
+ *
  * **What it cannot do**, stated so nobody mistakes it for the measurement it
- * stands in for: it cannot tell a twelfth tab from a relabelled eleventh, and a
- * set of shorter labels might genuinely fit twelve. If this fails, the answer is
+ * stands in for: it cannot tell a new tab from a relabelled one, and a set of
+ * shorter labels might genuinely fit more. If this fails, the answer is
  * not to raise the number -- it is to run `npm run test:browser` and let the
  * assertion that measures pixels say whether the strip still fits, then update
  * both this count and the sentence in `MATERIAL_TABS` together.
@@ -118,20 +127,20 @@ it('puts a stage and a topic in the same region, which the old routes did not', 
  * than something more clever: the thing being defended is a pixel measurement
  * in another suite, and a cleverer proxy here would invite belief it cannot
  * support. */
-it('keeps the material strip at the eleven tabs it was measured to fit', () => {
-  expect(MATERIAL_TABS).toHaveLength(11)
+it('keeps the material strip at the nine tabs it declares', () => {
+  expect(MATERIAL_TABS).toHaveLength(9)
 })
 
 const ids = (tabs: readonly { id: string }[]) => tabs.map((tab) => tab.id)
 
-const EVERYTHING = { hasCourse: true, hasSession: true }
+const EVERYTHING = { hasSession: true }
 
 /** The default tab, asserted as a value rather than through a render.
  *
  * **Two claims, and the second is the one that would be missed.** That the
  * default is the catalog is the decision; that the catalog has no tab of its
  * own is the fact that makes the decision cost something -- `MATERIAL_TABS`
- * declares eleven ids and `catalog` is not among them, so a default set here
+ * declares nine ids and `catalog` is not among them, so a default set here
  * and not mapped in `materialTab` selects nothing at all. The rendered proof
  * that the mapping happens is in `App.test.tsx`; this is the half that fails
  * at the declaration.
@@ -147,59 +156,43 @@ it('defaults to the catalog, which is a facet with no tab of its own', () => {
 
 /** What a project with everything is offered: everything.
  *
- * The control for the three tests below -- without it, "Artifacts is absent"
- * is satisfied by a filter that drops every tab. */
-it('offers the whole declared strip to a project that has a course and a session', () => {
+ * The control for the tests below -- without it, "the Workspace is absent" is
+ * satisfied by a filter that drops every tab. */
+it('offers the whole declared strip to a project something is holding', () => {
   expect(visibleMaterialTabs(EVERYTHING, DEFAULT_MATERIAL)).toEqual(MATERIAL_TABS)
 })
 
-/** Artifacts and Findings are the course's tabs, and there is no `workflow`
- *  field to test -- `hasCourse` is `!course.isError`, the 409. */
-it('drops Artifacts and Findings when the project has no course', () => {
-  const shown = ids(visibleMaterialTabs({ hasCourse: false, hasSession: true }, DEFAULT_MATERIAL))
-  expect(shown).not.toContain('artifact')
-  expect(shown).not.toContain('finding')
-  // The workspace is a *session's*, not a course's, so it is untouched by
-  // this condition. Written down because folding all three into one flag is
-  // the obvious simplification and it would be wrong.
-  expect(shown).toContain('file')
-})
-
 /** The workspace is the holding session's tree, so nothing holding the
- *  project means no tab -- independent of the course. */
-it('drops the Workspace when nothing holds the project, and keeps the course tabs', () => {
-  const shown = ids(visibleMaterialTabs({ hasCourse: true, hasSession: false }, DEFAULT_MATERIAL))
+ *  project means no tab.
+ *
+ * The one surviving condition. There were two, and `hasCourse` -- which hid
+ * Artifacts and Findings on the 409 from a project running no workflow -- went
+ * with the tabs it gated. */
+it('drops the Workspace when nothing holds the project', () => {
+  const shown = ids(visibleMaterialTabs({ hasSession: false }, DEFAULT_MATERIAL))
   expect(shown).not.toContain('file')
-  expect(shown).toContain('artifact')
-  expect(shown).toContain('finding')
+  // Everything else is unconditional, which is what makes the one condition
+  // worth asserting rather than the absence.
+  expect(shown).toEqual(ids(MATERIAL_TABS).filter((id) => id !== 'file'))
 })
 
 /** **A tab the route names survives its own condition**, so a link somebody
  *  sent still lands on a selected tab rather than on a strip with nothing
  *  chosen.
  *
- * Parametrised over the three hideable tabs rather than exercising one,
- * because the arm being tested is `tab.id === openTab` and a single case
- * cannot tell it from a special case for whichever tab was picked --
- * `CLAUDE.md`'s note about tests that sample only the cases the code already
- * handles.
+ * One hideable tab now rather than three, so this is no longer parametrised --
+ * and what the parametrisation bought is worth recording, because it is gone:
+ * with three cases, "keeps the open tab" could not be satisfied by a special
+ * case for whichever tab happened to be picked. With one it can. What still
+ * separates the arm from `hasSession` being ignored altogether is the test
+ * above: `file` is absent when the route is open on anything else.
  *
- * Reverted -- that arm deleted -- all three go red. */
-it.each([['artifact'], ['finding'], ['file']])(
-  'keeps the %s tab when the route is open on it, condition or not',
-  (open) => {
-    const shown = ids(
-      visibleMaterialTabs(
-        { hasCourse: false, hasSession: false },
-        open as Parameters<typeof visibleMaterialTabs>[1],
-      ),
-    )
-    expect(shown).toContain(open)
-    // Exactly one of the three survives: the arm is about the open tab and
-    // not about the conditions having stopped applying.
-    expect(shown.filter((id) => ['artifact', 'finding', 'file'].includes(id))).toEqual([open])
-  },
-)
+ * Reverted -- that arm deleted -- this goes red. */
+it('keeps the Workspace tab when the route is open on it, condition or not', () => {
+  const shown = ids(visibleMaterialTabs({ hasSession: false }, 'file'))
+  expect(shown).toContain('file')
+  expect(shown).toEqual(ids(MATERIAL_TABS))
+})
 
 /** The strip keeps its declared order when it is filtered.
  *
@@ -209,8 +202,6 @@ it.each([['artifact'], ['finding'], ['file']])(
  * one line: it pins the property against a future rewrite that builds the
  * list some other way. */
 it('filters the strip without reordering it', () => {
-  const shown = ids(visibleMaterialTabs({ hasCourse: false, hasSession: false }, DEFAULT_MATERIAL))
-  expect(shown).toEqual(
-    ids(MATERIAL_TABS).filter((id) => !['artifact', 'finding', 'file'].includes(id)),
-  )
+  const shown = ids(visibleMaterialTabs({ hasSession: false }, DEFAULT_MATERIAL))
+  expect(shown).toEqual(ids(MATERIAL_TABS).filter((id) => id !== 'file'))
 })

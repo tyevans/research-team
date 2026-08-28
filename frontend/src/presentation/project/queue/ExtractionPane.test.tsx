@@ -10,7 +10,7 @@ import type { EventStream, EventStreamListener } from '@application/ports/event-
 import type { ExtractionRepository } from '@application/ports/repositories.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
-import { StreamProvider } from '../shell/StreamProvider.tsx'
+import { StreamProvider } from '../../shell/StreamProvider.tsx'
 import { ExtractionPane } from './ExtractionPane.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')

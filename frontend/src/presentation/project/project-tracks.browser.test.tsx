@@ -73,37 +73,6 @@ const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
  *  the same literal to `matchMedia`. */
 const BP_WIDE = 1181
 
-const STAGES = [
-  ['step0.intake', 'Intake', 'current'],
-  ['step1.survey', 'Survey the literature', 'done'],
-  ['step2.synthesis', 'Synthesis and contradiction hunt', 'done'],
-  ['step3.review', 'Reviewer pass', 'pending'],
-].map(([id, name, status], index) => ({
-  index: index + 1,
-  id,
-  name,
-  kind: 'author',
-  spine: 0,
-  scopeLevel: 'course',
-  status,
-  outputs: [],
-  gateDecisions: [],
-  reviewerRole: null,
-  findingsReport: null,
-}))
-
-const COURSE = {
-  projectId: ATLAS,
-  projectName: 'atlas',
-  holdingSessionId: HOLDER,
-  preset: { id: 'hybrid.default', name: 'Hybrid', version: '1' },
-  position: 1,
-  stageCount: STAGES.length,
-  stages: STAGES,
-  findings: [],
-  unimplementedChecks: [],
-}
-
 /** Questions of real length, because a topic row's question is the widest text
  *  QUEUE holds and a fixture of `'Topic 1'` would never reach an edge. */
 const TOPICS = [
@@ -171,7 +140,6 @@ const container = () =>
     now: () => new Date('2026-08-10T00:00:00Z'),
     stream: { connect: vi.fn(), disconnect: vi.fn() },
     projects: {
-      course: vi.fn().mockResolvedValue(COURSE),
       // The page's identity and holder come from here now rather than from the
       // course. Omitting it does not fail the type -- the container is cast --
       // it leaves the header with no holding session and the Workspace tab

@@ -46,8 +46,6 @@ const project = (id: ProjectId, name: string): Project => ({
   name,
   activeSessionId: null,
   tipAtEvent: 0,
-  workflow: null,
-  stage: null,
 })
 
 const session = (id: string, projectId: ProjectId): SessionSummary => ({
@@ -102,9 +100,7 @@ const setup = (
     },
     projects: {
       list: vi.fn().mockResolvedValue(projects),
-      presets: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
-      chooseWorkflow: vi.fn(),
       join: vi.fn(),
       delete: vi.fn(),
     },

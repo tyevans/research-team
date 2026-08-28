@@ -1,6 +1,5 @@
 import { useAutonomy } from '@application/autonomy/use-autonomy.ts'
 import {
-  isStageGate,
   levelMeaning,
   levelOf,
   levelsToOffer,
@@ -9,14 +8,15 @@ import {
 } from '@domain/autonomy/autonomy.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 
-import { Chip } from '../common/primitives.tsx'
-import { Tooltip } from '../common/Tooltip.tsx'
-import { INSTANCE_WIDE, NO_POLICY, NO_SESSION, STAGE_GATE_HELD } from './autonomy-copy.ts'
+import { Chip } from '../../common/primitives.tsx'
+import { Tooltip } from '../../common/Tooltip.tsx'
+import { INSTANCE_WIDE, NO_POLICY, NO_SESSION } from './autonomy-copy.ts'
 
 /** Every gated tool, and what the agent may do with it without asking.
  *
- * On the course page rather than in the drawer because eight tools by three
- * levels needs room, and because this is the reading surface: the drawer's
+ * In the project page's queue header rather than in the drawer because eight
+ * tools by three levels needs room, and because this is the reading surface:
+ * the drawer's
  * `AutonomyAllowAll` is for the person mid-approval who wants it to stop.
  * Both go through `useAutonomy`, one query key, so a write on either is
  * reflected on the other — they are not two copies of this state, they are two
@@ -34,10 +34,10 @@ import { INSTANCE_WIDE, NO_POLICY, NO_SESSION, STAGE_GATE_HELD } from './autonom
  * from the control, so it is written above the controls where it cannot be
  * missed. See `INSTANCE_WIDE`.
  *
- * **A stage gate is marked and explained rather than hidden.** `advance_stage`
- * can be set to `auto` here, one deliberate click at a time — what it is not is
- * swept along by "allow everything". The row says why its floor exists, so the
- * reader choosing to lift it knows what they are removing.
+ * **No row is marked any more, and that is a subtraction rather than a
+ * simplification.** `advance_stage` used to carry a "review gate" chip and a
+ * sentence saying "allow everything" would leave it alone. The workflow system
+ * is gone, so no tool is held back from allow-all and there is nothing to mark.
  *
  * Radio inputs, not a custom widget: a fieldset of radios gives arrow-key
  * traversal, a group label a screen reader announces, and a selected state
@@ -135,20 +135,12 @@ const ToolRow = ({
   onChoose: (level: string) => void
 }) => {
   const current = levelOf(policy, tool)
-  const gate = isStageGate(policy, tool)
 
   return (
-    <li className={gate ? 'autonomy-row autonomy-row-gate' : 'autonomy-row'}>
+    <li className="autonomy-row">
       <fieldset className="autonomy-field" disabled={disabled}>
         <legend className="autonomy-tool">
           <span className="autonomy-tool-name">{tool}</span>
-          {gate ? (
-            <Tooltip
-              explanation={`“Allow everything” leaves this alone — it is ${STAGE_GATE_HELD}`}
-            >
-              <Chip tone="readonly">review gate</Chip>
-            </Tooltip>
-          ) : null}
         </legend>
 
         <div className="autonomy-levels">
@@ -184,7 +176,6 @@ const ToolRow = ({
             // "ask" here would be inventing a safety claim nobody made.
             'This build was not told what level this tool is at.'
           : levelMeaning(current)}
-        {gate ? ` — ${STAGE_GATE_HELD}` : ''}
       </span>
     </li>
   )

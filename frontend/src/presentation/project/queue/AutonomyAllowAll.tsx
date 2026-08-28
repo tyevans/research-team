@@ -1,25 +1,25 @@
 import { useAutonomy } from '@application/autonomy/use-autonomy.ts'
-import { levelOf, stageGatesStillAsking } from '@domain/autonomy/autonomy.ts'
+import { levelOf } from '@domain/autonomy/autonomy.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 
-import { Button } from '../common/primitives.tsx'
-import { Tooltip } from '../common/Tooltip.tsx'
-import { INSTANCE_WIDE, NO_POLICY, STAGE_GATE_HELD } from './autonomy-copy.ts'
+import { Button } from '../../common/primitives.tsx'
+import { INSTANCE_WIDE, NO_POLICY } from './autonomy-copy.ts'
 
 /** "Stop asking me", where the asking happens.
  *
  * This lives in the worker drawer, immediately under `Approvals`, because that
  * is where the pain is: somebody answering the same approval for the fifth
  * time should not have to navigate to a settings page to make it stop. The
- * full per-tool panel on the course page reads and writes the same state
- * through `useAutonomy`, so the two can never show different levels.
+ * full per-tool panel in the project page's queue header reads and writes the
+ * same state through `useAutonomy`, so the two can never show different levels.
  *
- * **Two buttons, not one with a checkbox.** Allow-all deliberately leaves the
- * stage gates asking, and the second button is the only way to include them.
- * Splitting them makes auto-ing the review gate possible but never accidental
- * — a checkbox left ticked from a previous visit is exactly the accident that
- * matters here. After a default allow-all the panel says what stayed put and
- * why, rather than appearing to have half-failed.
+ * **One button, and there used to be two.** The second one also autoed the
+ * stage review gate, which allow-all deliberately held back -- the gate was the
+ * one place a person was guaranteed to be looking before a run built on what it
+ * had produced. The workflow system is gone and so is that gate, so there is no
+ * subset left to hold back and nothing for a second button to select. What that
+ * costs is stated rather than left to be found: nothing in this build now
+ * reserves a tool from allow-all, so "allow everything" means everything.
  *
  * The scope warning is rendered on the control, not in a tooltip: see
  * `INSTANCE_WIDE`.
@@ -110,10 +110,7 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
     )
   }
 
-  const held = stageGatesStillAsking(policy)
-  const gatedNotAuto = policy.gated.filter(
-    (tool) => !policy.stageGates.includes(tool) && levelOf(policy, tool) !== 'auto',
-  )
+  const gatedNotAuto = policy.gated.filter((tool) => levelOf(policy, tool) !== 'auto')
 
   return (
     // The indent behind a rule is `.extraction`'s language, borrowed on the
@@ -133,7 +130,7 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
         <span className="text-fg-dim">
           {gatedNotAuto.length > 0
             ? `${gatedNotAuto.length} tool(s) still wait for a person.`
-            : 'Every tool outside the review gate already runs without asking.'}
+            : 'Every gated tool already runs without asking.'}
         </span>
       </div>
 
@@ -146,25 +143,10 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
           tone="accent"
           small
           disabled={!canWrite || writing || gatedNotAuto.length === 0}
-          onClick={() => allowAll(false)}
+          onClick={() => allowAll()}
         >
-          {writing ? 'Changing…' : 'Allow everything except the review gate'}
+          {writing ? 'Changing…' : 'Allow everything'}
         </Button>
-        {/* Deliberately separate, deliberately not the primary tone: this one
-            removes the last place a person is guaranteed to be looking. */}
-        <Tooltip
-          asChild
-          explanation="Also autos the workflow review gate, so a run can cross stage boundaries unattended"
-        >
-          <Button
-            tone="quiet"
-            small
-            disabled={!canWrite || writing || held.length === 0}
-            onClick={() => allowAll(true)}
-          >
-            Also allow the review gate
-          </Button>
-        </Tooltip>
       </div>
 
       {lastAllowAll ? (
@@ -172,12 +154,6 @@ export const AutonomyAllowAll = ({ sessionId }: { sessionId: SessionId }) => {
           {lastAllowAll.changed.size === 0
             ? 'Nothing moved — those tools were already set that way.'
             : `Changed ${lastAllowAll.changed.size} tool(s): ${[...lastAllowAll.changed.keys()].join(', ')}.`}
-          {held.length > 0 ? (
-            <>
-              {' '}
-              <strong>{held.join(', ')}</strong> {STAGE_GATE_HELD}
-            </>
-          ) : null}
         </p>
       ) : null}
 

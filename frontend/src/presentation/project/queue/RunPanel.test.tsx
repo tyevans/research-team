@@ -4,7 +4,7 @@ import { expect, it } from 'vitest'
 import type { ResearchRun, RunProgress } from '@domain/research/run.ts'
 import { ProjectId, RunId, SessionId } from '@domain/shared/identifier.ts'
 
-import { OverlayHost } from '../layout/OverlayHost.tsx'
+import { OverlayHost } from '../../layout/OverlayHost.tsx'
 import { RunView } from './RunPanel.tsx'
 
 /** The one claim this panel makes in the present tense.
