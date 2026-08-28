@@ -4592,9 +4592,22 @@ async def test_bulk_dispatch_runs_each_topic_rather_than_one_of_them_twice(
     await queue.wait(UUID(project_id))
 
     finished = queue.finished(UUID(project_id))
-    assert {frame["path"] for frame in finished} == {
-        "/topics/00-how-does-spacing-work/understanding.md",
-        "/topics/01-what-is-recall/understanding.md",
+    # The slug, not the whole path, and the numeric prefix is deliberately not
+    # asserted. `TopicRunner.list` orders by `(created_at, str(row.id))`, so
+    # two topics opened in the same instant tie on the timestamp and the
+    # tie-break is a random uuid -- which decides the `00-`/`01-` prefix and
+    # nothing else. Asserting the prefix passed locally, where the two opens
+    # land on different timestamps, and failed on CI, where they do not.
+    #
+    # Nothing is lost. The defect this test exists for is a `lambda` that
+    # closed over the loop variable, handing every dispatch the *last* topic;
+    # under it both files would carry the same slug, which this still catches.
+    # Position instability is a separate, already-documented property -- see
+    # `topic_directory`, which reads the position at dispatch time and says
+    # what that costs.
+    assert {frame["path"].split("-", 1)[1] for frame in finished} == {
+        "how-does-spacing-work/understanding.md",
+        "what-is-recall/understanding.md",
     }
 
 
