@@ -20,7 +20,6 @@ async def _run() -> None:
             application.service,
             application.policy,
             application.research,
-            application.check_telemetry_readers,
         )
     finally:
         await application.close()

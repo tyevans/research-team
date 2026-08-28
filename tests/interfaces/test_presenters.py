@@ -40,14 +40,11 @@ from research_team.interfaces.web.presenters import (
     event_summary,
     file_history,
     message_view,
-    preset_view,
     project_detail_view,
     project_view,
     source_view,
-    stage_view,
     summary_view,
 )
-from research_team.workflows import hybrid_default, ubd_pure
 
 AGGREGATE = uuid4()
 
@@ -387,7 +384,7 @@ def test_a_feed_event_always_has_a_summary_string():
         assert isinstance(payload["summary"], str)
 
 
-# ---------------- workflows ----------------
+# ---------------- project events ----------------
 
 
 def test_a_selected_workflow_is_summarised_by_the_preset_it_chose():
@@ -427,60 +424,14 @@ def test_a_changed_autonomy_is_summarised_by_the_tool_and_its_new_level():
     assert "auto" in summary
 
 
-def test_a_preset_is_described_by_what_it_produces_and_where_it_stops():
-    view = preset_view(ubd_pure)
-
-    assert view["id"] == "ubd.pure"
-    assert view["produces"] == "design"
-    assert view["stage_count"] == len(ubd_pure.stages)
-    assert view["terminates_at"]["id"] == ubd_pure.stages[-1].id
-    assert view["terminates_at"]["spine"] == ubd_pure.terminal_spine
-    assert view["has_value_filter"] is False
-
-
-def test_a_presets_label_says_what_it_produces_and_where_it_ends():
-    """The label is the `<select>` option text, so it carries the whole choice.
-
-    A dropdown of three methodology names is only meaningful to someone who
-    has read the research; what a preset produces and where it stops is
-    meaningful to everyone.
-    """
-    label = preset_view(ubd_pure)["label"]
-    assert ubd_pure.name in label
-    assert "design" in label
-    assert ubd_pure.stages[-1].name in label
-
-
-def test_a_preset_producing_only_a_design_says_so_against_one_producing_materials():
-    assert preset_view(hybrid_default)["produces"] == "materials"
-    assert "materials" in preset_view(hybrid_default)["label"]
-
-
-def test_a_stage_is_placed_in_its_preset_rather_than_merely_named():
-    """ "Stage 4 of 15" is the fact a chip needs; the id alone is not readable."""
-    view = stage_view(hybrid_default, hybrid_default.stages[3])
-
-    assert view["id"] == hybrid_default.stages[3].id
-    assert view["name"] == hybrid_default.stages[3].name
-    assert view["index"] == 4
-    assert view["of"] == len(hybrid_default.stages)
-
-
-def test_a_project_without_a_workflow_reports_both_fields_as_null():
-    """Every project written before workflows existed is this case."""
-    view = project_view(AGGREGATE, "atlas")
-    assert view["workflow"] is None
-    assert view["stage"] is None
-
-
-def test_the_project_detail_carries_identity_and_holder_and_no_workflow():
+def test_the_project_detail_carries_identity_and_holder_and_nothing_else():
     """What `GET /api/projects/{id}` owes its four consumers, and no more.
 
     The holder is the load-bearing half: the project page's transcript, its
-    composer and its Workspace tab all resolve off `active_session_id`, and
-    they read it from `/course` today -- which answers 409 on a project that
-    runs no workflow. Asserting the absent keys rather than only the present
-    ones, because the point of this presenter is what it does *not* carry.
+    composer and its Workspace tab all resolve off `active_session_id`. They
+    read it from `/course` until that route was removed, which answered 409 on
+    a project that ran no workflow. Asserted as a whole dict rather than key by
+    key, because the point of this presenter is what it does *not* carry.
     """
     session_id = uuid4()
 
@@ -496,15 +447,17 @@ def test_the_project_detail_carries_identity_and_holder_and_no_workflow():
     }
 
 
-def test_the_listing_row_is_the_detail_plus_the_workflow_columns():
+def test_the_listing_row_and_the_detail_are_one_answer():
     """A field added to a project cannot reach one route and miss the other.
 
-    `project_view` builds on `project_detail_view` for exactly this; the test
-    fails if somebody re-inlines the shared half, which is how the two drift.
+    The two came apart only over `workflow` and `stage`; with those gone
+    `project_view` is an alias rather than a wrapper. Asserting the identity
+    rather than only that the dicts match, because two functions producing
+    equal output today is exactly the state they drifted out of before -- and
+    an alias cannot drift at all. This is the test to change, not delete, on
+    the day the listing earns a column the detail does not.
     """
-    row = project_view(AGGREGATE, "atlas", tip_at_event=3)
-
-    assert row.items() >= project_detail_view(AGGREGATE, "atlas", tip_at_event=3).items()
+    assert project_view is project_detail_view
 
 
 def test_a_session_summary_carries_its_project_so_rows_can_be_grouped():

@@ -19,7 +19,6 @@ from redstring import (
 )
 
 from research_team.application import GATED_TOOLS, SummaryProjects, WorkerRoster
-from research_team.application.autonomy import ADVANCE_STAGE_TOOL
 from research_team.application.entity_definitions import Definition
 from research_team.application.graph_read import MAX_GRAPH_NODES
 from research_team.application.knowledge import ExtractionNote
@@ -1477,16 +1476,12 @@ async def test_list_projects_starts_empty_then_shows_a_created_one(client):
     listed = (await client.get("/api/projects")).json()
     # A fresh project is held by nobody and has no tip: exactly the state a
     # row needs to offer "open" rather than a join that would be rejected.
-    # No workflow either -- creating and choosing one are separate decisions,
-    # and the aggregate refuses a second choice, so nothing may be assumed.
     assert listed == [
         {
             "id": created["id"],
             "name": "atlas",
             "active_session_id": None,
             "tip_at_event": 0,
-            "workflow": None,
-            "stage": None,
         }
     ]
 
@@ -1494,9 +1489,12 @@ async def test_list_projects_starts_empty_then_shows_a_created_one(client):
 async def test_reading_one_project_answers_its_identity_and_its_holder(client):
     """`GET /api/projects/{id}`, the console's only single-project read.
 
-    Asserted against the whole body rather than field by field: the workflow
-    columns the *listing* carries are absent here on purpose, and a test that
-    only checks the keys it wants would pass with them present.
+    Asserted against the whole body rather than field by field, so a key
+    added here has to be added to this test's set as well -- which is what
+    `set(body)` is for. The listing answers the same four fields now, and
+    `test_list_projects_starts_empty_then_shows_a_created_one` asserts the
+    listing row as a whole dict for the same reason, and the two now describe
+    one shape: `project_view` is an alias of `project_detail_view`.
 
     The holder is what earns the route. A project page resolves its transcript,
     its composer and its Workspace tab off `active_session_id`, and joining is
@@ -2422,237 +2420,6 @@ async def test_a_status_change_on_a_foreign_topic_is_the_same_404(app_and_client
     assert response.json() == never_existed.json()
 
 
-# ---------------- workflows ----------------
-
-
-async def test_the_workflow_list_says_what_each_preset_produces_and_where_it_stops(client):
-    """The list is the whole basis for the choice, so it carries the consequences.
-
-    A preset that stops before the production half yields a design and not
-    materials, and someone who expected materials finding out at the end is
-    the failure this endpoint exists to prevent.
-    """
-    body = (await client.get("/api/workflows")).json()
-
-    by_id = {row["id"]: row for row in body}
-    assert set(by_id) == {"hybrid.default", "ubd.pure", "addie.pure"}
-    assert by_id["ubd.pure"]["produces"] == "design"
-    assert by_id["hybrid.default"]["produces"] == "materials"
-    assert by_id["ubd.pure"]["terminates_at"]["spine"] < 8
-    assert all(row["label"] for row in body)
-
-
-async def test_the_recommended_preset_is_listed_first(client):
-    """Order is the recommendation. Whichever pure methodology a user picks,
-    they inherit that tradition's structural defect, and knowing which defect
-    to tolerate needs the expertise they came here without."""
-    body = (await client.get("/api/workflows")).json()
-    assert body[0]["id"] == "hybrid.default"
-
-
-async def test_selecting_a_workflow_puts_the_project_at_the_presets_first_stage(client):
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await client.post(
-        f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"}
-    )
-    assert response.status_code == 200
-
-    body = (await client.get(f"/api/projects/{project_id}/workflow")).json()
-    assert body["workflow"]["id"] == "ubd.pure"
-    # No event records entering a stage nobody advanced to, so "the first
-    # stage" is resolved from the preset rather than read off the log.
-    assert body["stage"]["index"] == 1
-    assert body["stage"]["of"] == 6
-
-
-async def test_a_project_row_carries_its_workflow_and_stage(client):
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-    await client.post(f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"})
-
-    [row] = (await client.get("/api/projects")).json()
-
-    assert row["workflow"]["id"] == "ubd.pure"
-    assert row["workflow"]["name"] == "Understanding by Design (unit plan)"
-    assert row["stage"]["index"] == 1
-
-
-async def test_a_project_with_no_workflow_reports_neither(client):
-    await client.post("/api/projects", json={"name": "atlas"})
-
-    [row] = (await client.get("/api/projects")).json()
-
-    assert row["workflow"] is None
-    assert row["stage"] is None
-
-
-async def test_selecting_a_second_workflow_is_a_409_naming_the_first(client):
-    """The domain's refusal names the running preset, and that name is the
-    whole value of it -- "already selected" leaves the user with no idea what
-    they are already running."""
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-    await client.post(f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"})
-
-    response = await client.post(
-        f"/api/projects/{project_id}/workflow", json={"preset_id": "addie.pure"}
-    )
-
-    assert response.status_code == 409
-    assert "ubd.pure" in response.json()["detail"]
-
-    # The refusal changed nothing, which is the half an error code cannot say.
-    body = (await client.get(f"/api/projects/{project_id}/workflow")).json()
-    assert body["workflow"]["id"] == "ubd.pure"
-
-
-async def test_an_unknown_preset_is_a_404_naming_the_ones_that_exist(client):
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await client.post(
-        f"/api/projects/{project_id}/workflow", json={"preset_id": "tyler.pure"}
-    )
-
-    assert response.status_code == 404
-    assert "hybrid.default" in response.json()["detail"]
-
-
-async def test_an_unknown_project_is_a_404_on_both_workflow_routes(client):
-    missing = uuid4()
-
-    assert (await client.get(f"/api/projects/{missing}/workflow")).status_code == 404
-    post = await client.post(
-        f"/api/projects/{missing}/workflow", json={"preset_id": "ubd.pure"}
-    )
-    assert post.status_code == 404
-
-
-async def test_a_deleted_project_refuses_a_workflow(client):
-    """404 now, and this test's own docstring used to argue the opposite.
-
-    It read: "409 rather than 404: a tombstone is not an absence. The project
-    is still there and still readable -- that is what retiring means here."
-    That was the settled reading until 2026-08-27, and it is the one being
-    overturned: a project that answers its name, its sources and its topics
-    after deletion is not retired, it is deleted in the listing only.
-
-    Kept through that reversal rather than deleted with it, even though the
-    route it exercises comes out in the next slice of this same branch, so
-    that the changed assertion is visible in one diff beside the docstring
-    that justified the old one.
-    """
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-    await client.delete(f"/api/projects/{project_id}")
-
-    response = await client.post(
-        f"/api/projects/{project_id}/workflow", json={"preset_id": "ubd.pure"}
-    )
-
-    assert response.status_code == 404
-    # Not "deleted" in the body any more: naming the state confirms the project
-    # exists, which is the half of the old 409 this change is removing.
-    assert str(project_id) in response.json()["detail"]
-
-
-# ---------------- the course ----------------
-
-
-async def _course_project(client, preset_id: str = "ubd.pure") -> str:
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-    await client.post(f"/api/projects/{project_id}/workflow", json={"preset_id": preset_id})
-    return project_id
-
-
-async def test_the_course_lists_every_stage_whether_or_not_it_has_run(client):
-    """The rail shows the plan, so a stage that has produced nothing still appears.
-
-    A view built from the `/course` directory instead would show what happened
-    and leave what was supposed to happen underivable -- backwards for a
-    surface whose job is to show a run against its plan.
-    """
-    project_id = await _course_project(client)
-
-    body = (await client.get(f"/api/projects/{project_id}/course")).json()
-
-    assert body["preset"]["id"] == "ubd.pure"
-    assert body["position"] == 1
-    assert body["stage_count"] == len(body["stages"]) == 6
-    assert body["stages"][0]["status"] == "current"
-    assert {stage["status"] for stage in body["stages"][1:]} == {"upcoming"}
-
-
-async def test_declared_artifacts_appear_as_named_gaps_before_anything_is_written(client):
-    project_id = await _course_project(client)
-
-    body = (await client.get(f"/api/projects/{project_id}/course")).json()
-    slots = [slot for stage in body["stages"] for slot in stage["outputs"]]
-
-    assert slots, "the preset declares outputs; the course must name them"
-    assert all(slot["present"] is False for slot in slots)
-    assert all(slot["path"].startswith("/course/") for slot in slots)
-    assert all(slot["provenance"] is None for slot in slots)
-
-
-async def test_a_written_artifact_shows_up_with_the_provenance_it_claims(client, service):
-    """The course reads the filesystem of whichever session currently holds it.
-
-    Written through the session that joined the project rather than through a
-    fixture, because "which stream carries this project's files" is the part
-    the endpoint has to get right.
-    """
-    project_id = await _course_project(client)
-    body = (await client.get(f"/api/projects/{project_id}/course")).json()
-    path = body["stages"][0]["outputs"][0]["path"]
-
-    session_id = (await client.post(f"/api/projects/{project_id}/join")).json()["id"]
-    session = await service.load(UUID(session_id))
-    session.execute(
-        WriteFile(
-            path=path,
-            file_data={
-                "content": (
-                    "---\n"
-                    "artifact_type: Intent\n"
-                    "stage: s\n"
-                    "preset: ubd.pure\n"
-                    "preset_version: '1.0'\n"
-                    "provenance:\n"
-                    "  - source_id: doc-1\n"
-                    "    start: 0\n"
-                    "    end: 40\n"
-                    "---\n\nthe body\n"
-                )
-            },
-        )
-    )
-    await service._repository.save(session)
-
-    slot = (await client.get(f"/api/projects/{project_id}/course")).json()["stages"][0][
-        "outputs"
-    ][0]
-
-    assert slot["present"] is True
-    assert slot["has_frontmatter"] is True
-    assert slot["missing_fields"] == []
-    assert slot["provenance"]["sources"] == [{"source_id": "doc-1", "start": 0, "end": 40}]
-    assert slot["provenance"]["empty"] is False
-    assert slot["provenance"]["inferred"] is False
-
-
-async def test_a_project_with_no_workflow_has_no_course(client):
-    """409, not 404: the project is here; the choice has not been made."""
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await client.get(f"/api/projects/{project_id}/course")
-
-    assert response.status_code == 409
-    assert "no workflow" in response.json()["detail"]
-
-
-async def test_an_unknown_project_has_no_course(client):
-    response = await client.get(f"/api/projects/{uuid4()}/course")
-    assert response.status_code == 404
-
-
 # ---------------- components ----------------
 #
 # The parsed route and the attempt route are two halves of one decision: the
@@ -3474,15 +3241,20 @@ async def test_seeding_frames_ride_the_stream_without_an_id(repository):
 
 
 async def test_get_autonomy_reports_levels_and_the_tool_lists(client):
-    """The read the UI draws its switches from, including the two lists that
-    keep it from hardcoding `GATED_TOOLS` in JavaScript and drifting from it.
+    """The read the UI draws its switches from, including the list that keeps
+    it from hardcoding `GATED_TOOLS` in JavaScript and drifting from it.
+
+    `stage_gates` was a third key here until the workflow removal. It named
+    exactly one tool and that tool is being deleted, so the key would shortly
+    have named nothing. `set(body)` rather than only checking the two keys
+    present, because a test that asserts what it wants passes with a removed
+    key still being sent.
     """
     body = (await client.get("/api/autonomy")).json()
 
     assert set(body["levels"]) == set(GATED_TOOLS)
     assert body["gated"] == list(GATED_TOOLS)
-    assert body["stage_gates"] == [ADVANCE_STAGE_TOOL]
-    assert body["levels"][ADVANCE_STAGE_TOOL] == "ask"
+    assert set(body) == {"levels", "gated"}
 
 
 async def test_setting_one_tool_changes_the_reported_level(client):
@@ -3543,33 +3315,6 @@ async def test_a_tool_that_is_not_gated_is_a_400(client):
 
     assert response.status_code == 400
     assert "read_file" in response.json()["detail"]
-
-
-async def test_allow_all_leaves_the_stage_gate_asking(client):
-    """ "Stop asking me" must not silently mean "and cross every stage boundary
-    unseen" -- the review gate is not a hazard rating.
-    """
-    session_id = await _new_session(client)
-
-    body = (await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")).json()
-
-    assert ADVANCE_STAGE_TOOL not in body["changed"]
-    assert body["levels"][ADVANCE_STAGE_TOOL] == "ask"
-    assert body["levels"]["fetch"] == "auto"
-
-
-async def test_allow_all_can_be_asked_to_include_the_stage_gate(client):
-    session_id = await _new_session(client)
-
-    body = (
-        await client.post(
-            f"/api/sessions/{session_id}/autonomy/allow-all",
-            json={"include_stage_gates": True},
-        )
-    ).json()
-
-    assert body["changed"][ADVANCE_STAGE_TOOL] == "auto"
-    assert body["levels"][ADVANCE_STAGE_TOOL] == "auto"
 
 
 async def test_allow_all_records_exactly_the_changes_it_made(client, service):

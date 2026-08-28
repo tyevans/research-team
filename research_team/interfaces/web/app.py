@@ -66,7 +66,6 @@ from research_team.application.blobs import BlobStorePort
 from research_team.application.components import View, parse_document, project
 from research_team.application.corpus_editing import CorpusEditor, DocumentExists, NotDropped
 from research_team.application.corpus_spans import quote
-from research_team.application.course import course_progress
 from research_team.application.course_authoring import CourseAuthor
 from research_team.application.course_catalog import (
     ArtGeneratorPort,
@@ -129,8 +128,6 @@ from research_team.domain import (
     Corpus,
     CreateProject,
     Project,
-    ProjectState,
-    SelectWorkflow,
     SessionPurpose,
 )
 from research_team.domain.course import AbandonCourse, Course, RealizeCourse, course_stream_id
@@ -144,7 +141,6 @@ from research_team.domain.media_proposals import (
     UnignoreMediaAsset,
     UnignoreMediaHost,
 )
-from research_team.domain.project import current_stage_of
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import (
     AddSubQuestion,
@@ -204,7 +200,6 @@ from research_team.interfaces.web.presenters import (
     catalog_view,
     corpus_change,
     course_detail_view,
-    course_view,
     curriculum_view,
     definition_view,
     dialogue_progress_view,
@@ -219,7 +214,6 @@ from research_team.interfaces.web.presenters import (
     media_change,
     neighborhood_view,
     path_view,
-    preset_view,
     progress_view,
     project_change,
     project_detail_view,
@@ -230,7 +224,6 @@ from research_team.interfaces.web.presenters import (
     session_view,
     source_text_view,
     source_view,
-    stage_view,
     summary_view,
     timeline_view,
     topic_change,
@@ -241,7 +234,6 @@ from research_team.interfaces.web.presenters import (
     usages_view,
 )
 from research_team.interfaces.web.seeding import SeedingActivity
-from research_team.workflows import PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -586,12 +578,6 @@ class JoinOptions(BaseModel):
     """Whether a join may end the session currently holding the project."""
 
     take_over: bool = False
-
-
-class WorkflowChoice(BaseModel):
-    """Which preset a project runs. Chosen once; `decide` refuses a second."""
-
-    preset_id: str
 
 
 class StatusChange(BaseModel):
@@ -1001,17 +987,6 @@ class AutonomyChoice(BaseModel):
     level: str
 
 
-class AllowAll(BaseModel):
-    """Whether "stop asking me" also crosses the workflow review gates.
-
-    Defaults to false, and the default is the point: see
-    `AutonomyPolicy.relax_all` for why `advance_stage` is not swept along with
-    the hazards. A client that wants it says so.
-    """
-
-    include_stage_gates: bool = False
-
-
 ReembedProject = Callable[[UUID], Awaitable[int]]
 """Re-embed one project's entities from its current graph. Returns how many.
 
@@ -1112,36 +1087,6 @@ def create_app(
     async def list_sessions():
         return [summary_view(summary) for summary in await service.list_sessions()]
 
-    def _workflow_of(state: ProjectState) -> dict[str, Any]:
-        """Which preset a project runs and where it stands in it, both nullable.
-
-        Two absences, kept distinct. No preset selected is the ordinary case
-        and answers `None` for both. A preset id this build does not ship --
-        a project started against a preset since renamed or removed -- still
-        reports the workflow, because the id is the only honest thing to say,
-        but reports no stage: resolving a position needs the stage list, and
-        inventing one would be worse than admitting the gap. Neither is a
-        server error, so neither raises; a listing that 500s because one row
-        names an unknown preset is a listing nobody can use to fix it.
-        """
-        if state.preset_id is None:
-            return {"workflow": None, "stage": None}
-        preset = PRESETS.get(state.preset_id)
-        if preset is None:
-            return {
-                "workflow": {
-                    "id": state.preset_id,
-                    "name": state.preset_id,
-                    "version": state.preset_version,
-                },
-                "stage": None,
-            }
-        stage = current_stage_of(state, preset)
-        return {
-            "workflow": {"id": preset.id, "name": preset.name, "version": preset.version},
-            "stage": stage_view(preset, stage) if stage is not None else None,
-        }
-
     @app.get("/api/projects")
     async def list_projects():
         projects = await service.list_projects()
@@ -1154,25 +1099,9 @@ def create_app(
                     name,
                     active_session_id=state.active_session_id,
                     tip_at_event=state.tip_at_event,
-                    **_workflow_of(state),
                 )
             )
         return rows
-
-    @app.get("/api/workflows")
-    async def list_workflows():
-        """The presets on offer, in recommendation order.
-
-        Order is the recommendation, and it is load-bearing: whichever pure
-        methodology a user picks they inherit that tradition's structural
-        defect, and knowing which defect to tolerate takes exactly the
-        expertise they came here without. The hybrid is first because it is
-        the one that does not require that judgement.
-
-        Static: presets are code in `research_team/workflows/`, validated at
-        import, so there is nothing to load and nothing that can fail here.
-        """
-        return [preset_view(preset) for preset in PRESETS.values()]
 
     @app.post("/api/projects")
     async def create_project(body: NewProject):
@@ -1308,84 +1237,6 @@ def create_app(
             state.name,
             active_session_id=state.active_session_id,
             tip_at_event=state.tip_at_event,
-        )
-
-    @app.get("/api/projects/{project_id}/workflow")
-    async def get_workflow(project_id: UUID):
-        """Which workflow this project runs, and the stage it is at."""
-        await _require_project(project_id)
-        return _workflow_of(await service.project_state(project_id))
-
-    @app.post("/api/projects/{project_id}/workflow")
-    async def select_workflow(project_id: UUID, body: WorkflowChoice):
-        """Bind a project to a preset. Once only -- a second is the domain's 409.
-
-        Goes through the aggregate the way `create_project` does, rather than
-        adding a use case to `SessionService`: there is no cross-front-end
-        convention to enforce here (unlike project names, which are only
-        unique because that route says so), so the one rule that exists is
-        already in `decide` and reaching it directly keeps it that way.
-
-        A re-selection is relayed with the domain's own message because that
-        message names the preset already running. "Already selected" would
-        leave the user knowing they cannot choose without knowing what they
-        chose -- and re-selection is refused precisely because a run's audit
-        trail is gated by one preset's stage list, so what that list is is the
-        first thing they need.
-        """
-        await _require_project(project_id)
-        preset = PRESETS.get(body.preset_id)
-        if preset is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"no workflow {body.preset_id!r}; try one of {', '.join(PRESETS)}",
-            )
-        project = await service.projects.load(project_id)
-        try:
-            project.execute(SelectWorkflow(preset=preset))
-        except CommandRejectedError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        await service.projects.save(project)
-        return _workflow_of(project.state)
-
-    @app.get("/api/projects/{project_id}/course")
-    async def get_course(project_id: UUID):
-        """The whole run: every stage of the preset, and every artifact it owes.
-
-        409 rather than 404 when no workflow is selected. The project exists
-        and the request was well formed; what is missing is a choice nobody has
-        made yet, and the fix is to select a preset rather than to look
-        somewhere else. A 404 would say the course is not here, which reads as
-        "you have the wrong project".
-
-        A preset the project names but this build does not ship is a 409 too,
-        with the id in the message: there is no stage list to build a rail
-        from, and the id is the only thing that lets anyone work out why.
-        """
-        await _require_project(project_id)
-        state = await service.project_state(project_id)
-        if state.preset_id is None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "this project runs no workflow, so there is no course to show; "
-                    f"select one of {', '.join(PRESETS)} first"
-                ),
-            )
-        preset = PRESETS.get(state.preset_id)
-        if preset is None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"this project runs workflow {state.preset_id!r}, which this "
-                    f"build does not ship; its stage list is unknown here"
-                ),
-            )
-        files = await service.project_files(project_id)
-        return course_view(
-            course_progress(preset, state, files),
-            project_name=state.name,
-            holding_session_id=state.active_session_id,
         )
 
     def _reader(project_id: UUID) -> ProjectCorpusReader:
@@ -5825,8 +5676,16 @@ def create_app(
         return autonomy_view(instance)
 
     @app.post("/api/sessions/{session_id}/autonomy/allow-all")
-    async def allow_all_autonomy(session_id: UUID, body: AllowAll | None = None):
-        """Stop asking about everything -- except the workflow review gates.
+    async def allow_all_autonomy(session_id: UUID):
+        """Stop asking about every hazard. No body, because there is nothing
+        left to ask for.
+
+        It used to take `include_stage_gates`, which crossed the workflow
+        review gate as well. The console stopped sending it a slice before
+        this and the gate itself is deleted a slice after, so the flag would
+        be a switch over a tool that is on its way out. `relax_all`'s own
+        parameter goes with that tool; this call takes its default until then,
+        which is the behaviour a client omitting the flag already got.
 
         The instance-wide/per-session asymmetry described on `set_autonomy`
         applies here too, and more loudly: this relaxes every hazard for every
@@ -5840,8 +5699,7 @@ def create_app(
         """
         instance = _policy()
         await _load(session_id)
-        options = body or AllowAll()
-        changed = instance.relax_all(include_stage_gates=options.include_stage_gates)
+        changed = instance.relax_all()
         # One append, not one per tool. Each append is a chance for a turn
         # running on this session to lose its version, and this route issues
         # its writes back to back -- see `record_autonomy_changes`.

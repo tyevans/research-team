@@ -3,7 +3,6 @@ from uuid import UUID, uuid4
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage, message_to_dict
 
-from research_team.application.check_telemetry_read import CheckStat, CheckTelemetryReadError
 from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
 from research_team.domain import (
     FileEdited,
@@ -15,7 +14,6 @@ from research_team.domain import (
 from research_team.interfaces.cli import repl
 from research_team.interfaces.cli.formatters import (
     format_activity,
-    format_checks,
     format_diff,
     format_file_history,
     format_files,
@@ -515,150 +513,3 @@ def test_plain_prose_prints_nothing():
 def test_deltas_print_nothing():
     """The terminal shows the reply when the turn completes, not token by token."""
     assert format_activity(ActivityDelta(message_id="a1", text="hel")) is None
-
-
-# ---- /checks ----
-
-
-def _stat(check: str = "shared.coverage", **overrides) -> CheckStat:
-    """A `CheckStat` with the dull answer everywhere the test does not care."""
-    fields = {
-        "check": check,
-        "evaluated": 4,
-        "fired": 1,
-        "findings": 1,
-        "unimplemented": 0,
-        "decided": 4,
-        "overridden": 0,
-        "refused": 1,
-        "auto_approved": 0,
-        "standing_gate": False,
-        "median_seconds_to_decision": 12.0,
-    }
-    return CheckStat(**(fields | overrides))
-
-
-class _Stats:
-    """A `CheckTelemetryReadPort` answering with whatever it was handed."""
-
-    def __init__(self, stats: list[CheckStat] | Exception) -> None:
-        self._stats = stats
-
-    async def stats(self) -> list[CheckStat]:
-        if isinstance(self._stats, Exception):
-            raise self._stats
-        return self._stats
-
-
-async def test_checks_needs_a_session_like_every_other_project_command(
-    build_service, fake_model
-):
-    """It is not in `_WITHOUT_A_SESSION`, and it must not be.
-
-    `/checks` reads a *project's* measurements and finds the project through
-    the current session, so a REPL that has not joined one has nothing to scope
-    the answer to. Fails if anyone adds it to that set for symmetry with
-    `/health`, which really is about the database rather than about a session.
-    """
-    fresh = await repl.Repl.start(await build_service(model=fake_model))
-
-    assert await repl.handle_command(fresh, "/checks") == repl.NO_SESSION
-
-
-async def test_checks_renders_what_the_reader_answers(current):
-    """The whole command: project off the session, port, table.
-
-    Fails if the dispatch branch is missing (`unknown command`) or if the
-    project is taken from anywhere but the current session.
-    """
-    current.check_telemetry_readers = lambda _project_id: _Stats(
-        [_stat("shared.coverage", evaluated=4, fired=3)]
-    )
-
-    output = await repl.handle_command(current, "/checks")
-
-    assert "shared.coverage" in output
-    assert "75%" in output
-
-
-async def test_checks_says_so_when_no_telemetry_is_wired(current):
-    """A REPL built over a bare service answers rather than raising.
-
-    `Repl` has no composition root in most tests, so the reader factory is
-    optional -- and an `AttributeError` at the prompt would be a worse answer
-    than a sentence.
-    """
-    assert current.check_telemetry_readers is None
-
-    assert "not wired" in await repl.handle_command(current, "/checks")
-
-
-async def test_a_broken_instrument_does_not_read_as_an_empty_one(current):
-    """`CheckTelemetryReadError` is reported, not rendered as no measurements.
-
-    An unstarted projection answers the same shape as a project where no gate
-    has run, and only one of the two is worth acting on.
-    """
-    current.check_telemetry_readers = lambda _project_id: _Stats(
-        CheckTelemetryReadError("the check telemetry projection has not been started")
-    )
-
-    output = await repl.handle_command(current, "/checks")
-
-    assert "unavailable" in output
-    assert "not been started" in output
-
-
-def test_the_tool_path_renders_as_no_measurement_rather_than_zero():
-    """`-`, never `0.0`.
-
-    The last place the honesty constraint can be undone: an aggregation that
-    correctly reports None, rendered through an `f"{value or 0:.1f}"`, prints a
-    zero that reads as an instant approval.
-    """
-    output = format_checks([_stat(median_seconds_to_decision=None)])
-
-    assert output.splitlines()[1].split()[-1] == "-"
-
-
-def test_a_standing_gate_is_marked_and_explained():
-    """Marked rather than excluded, and the mark says what it means.
-
-    A 100% fire rate on `ubd.uncoverage` is its specification. Dropping the row
-    would leave a bound check with no line at all; printing it unmarked beside
-    a check that chose to fire is the confusion the column exists to prevent.
-    """
-    output = format_checks([_stat("ubd.uncoverage", standing_gate=True, fired=4)])
-
-    assert "ubd.uncoverage*" in output
-    assert "standing gate" in output
-
-
-def test_a_check_that_never_ran_has_no_rate_to_print():
-    """`fire%` is `-` for a binding that names no registered check.
-
-    0% would be a claim about a check that has never executed a line, and
-    `evaluated == 0` would make the obvious spelling divide by zero.
-    """
-    output = format_checks(
-        [_stat("addie.no_such_check", evaluated=0, fired=0, unimplemented=3)]
-    )
-
-    assert "-" in output.splitlines()[1]
-    assert "bound but not registered: addie.no_such_check" in output
-
-
-async def test_an_application_wires_a_reader_that_is_actually_following(build_application):
-    """The projection is started, not merely constructed.
-
-    `ProjectCheckTelemetryReader` raises `CheckTelemetryReadError` from an
-    unstarted runner, so this fails with that error if `Application.start`
-    forgets the new runner -- which is the failure mode `test_web_entrypoint`
-    exists for on the other front end, and which no other test here would
-    notice.
-    """
-    application = await build_application()
-
-    stats = await application.check_telemetry_readers(uuid4()).stats()
-
-    assert stats == []
