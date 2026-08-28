@@ -61,12 +61,15 @@ const useProjectRefresh = (projectId: ProjectId) => {
     true,
     (frame) => frame.kind === 'project' && frame.projectId === projectId,
     () => {
+      // The header's "Open holding session" link comes off a project's
+      // lifecycle events, and `ProjectSessionJoined` is the frame that moves
+      // it. The roster used to read off this same frame too -- one frame, two
+      // reads -- but the roster is gone (Task 2 of the activity-placement
+      // plan: a per-project poll of what the agent dock already answers for
+      // everything, for free). This invalidation is still worth the
+      // subscription on its own: it is the only thing that moves the link
+      // without a reload.
       void queryClient.invalidateQueries({ queryKey: queryKeys.project(projectId) })
-      // The header's "Open holding session" link and the roster both come off
-      // a project's lifecycle events, and `ProjectSessionJoined` is the frame
-      // that moves them. One frame, two reads -- cheaper than two
-      // subscriptions that would each fire on all of them anyway.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.workers(projectId) })
       // `queryKeys.projects()` is deliberately not invalidated here, and the
       // argument is the one `useCourseRefresh` already made: the list is the
       // landing page's data, this hook is only mounted on a project page, and

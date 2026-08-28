@@ -150,7 +150,6 @@ it('does not count a session that is merely attached', async () => {
     stream,
     preferences,
     workers: {
-      on: vi.fn(),
       everywhere: vi
         .fn()
         .mockResolvedValue([{ projectId: PROJECT, workers: [], idleSessionIds: [SESSION] }]),
@@ -362,7 +361,7 @@ it('says it could not tell, rather than reporting zero, when the read fails', as
   const { stream } = fakeStream()
   setup(<AgentWidget />, {
     stream,
-    workers: { on: vi.fn(), everywhere: vi.fn().mockRejectedValue(new Error('nope')) },
+    workers: { everywhere: vi.fn().mockRejectedValue(new Error('nope')) },
   })
 
   expect(await screen.findByText('agents unknown')).toBeInTheDocument()

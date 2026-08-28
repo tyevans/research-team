@@ -809,9 +809,6 @@ export interface TimelineRepository {
 }
 
 export interface WorkerRepository {
-  /** Everything in flight on a project. Rejects when this build has no
-   *  roster, which a caller must distinguish from an empty one. */
-  on(projectId: ProjectId): Promise<Roster>
   /** Every project that has something running, in one request.
    *
    * For a reader with no project in view -- the agent widget sits on every
