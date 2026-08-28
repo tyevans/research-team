@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { createGraphStore } from '@application/research/graph-store.ts'
 import { useContainer } from '@app/container-context.tsx'
@@ -8,6 +8,7 @@ import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState, Loading } from '../common/primitives.tsx'
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
+import { ExtractionPane } from './ExtractionPane.tsx'
 import { GraphDetail } from './GraphDetail.tsx'
 import { GraphExportBar } from './GraphExportBar.tsx'
 import { GraphLegend } from './GraphLegend.tsx'
@@ -230,6 +231,7 @@ export const GraphPane = ({
   return (
     <GraphBrowser
       projectId={projectId}
+      extraction={<ExtractionPane projectId={projectId} />}
       view={view}
       results={results}
       knownTypes={knownTypes}
@@ -287,9 +289,15 @@ export const GraphPane = ({
  *
  * Named `GraphBrowser` after the element it owns: the stage, the floats on it,
  * and nothing above them.
+ *
+ * The extraction float is a prop rather than a mount, for the reason the rest
+ * of this component's props are: the states worth looking at -- a run in
+ * flight over an empty canvas, a finished run over a drawn one -- are reachable
+ * without a live feed or a fake extraction repository.
  */
 export const GraphBrowser = ({
   projectId,
+  extraction,
   view,
   results,
   knownTypes,
@@ -313,6 +321,11 @@ export const GraphBrowser = ({
   graphUrl,
 }: {
   projectId: ProjectId
+  /** The extraction detail, or `null` when nothing has run and there is
+   *  nothing to say. A node rather than a `projectId`, so this component keeps
+   *  taking everything it needs from its caller -- which is what lets the
+   *  browser-mode test render it against a partial container. */
+  extraction: ReactNode
   view: GraphView
   results: readonly GraphNode[]
   knownTypes: readonly string[]
@@ -406,6 +419,17 @@ export const GraphBrowser = ({
           stage would read as a header and cover the drawing it is meant to sit
           on. */}
       <div className="lay-region-float absolute top-3 left-3 flex w-[min(320px,calc(100%_-_20px))] flex-col gap-2">
+        {/* First in the column, above the search box, because a running
+            extraction outranks a search for the reader's attention and is the
+            only row here that is time-bounded -- everything else in this stack
+            is a control or a standing notice.
+
+            In this column rather than anywhere else on the stage: bottom-left
+            is `GraphLegend` and the right is `GraphDetail`'s full-height
+            column whenever an entity is selected, which is most of the time a
+            reader is doing anything. This column is already where every
+            transient panel on this pane lives. */}
+        {extraction}
         <div className={`flex gap-2 p-2 ${PANEL}`}>
           <input
             type="search"

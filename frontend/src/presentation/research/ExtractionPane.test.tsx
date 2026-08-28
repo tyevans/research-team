@@ -10,7 +10,7 @@ import type { EventStream, EventStreamListener } from '@application/ports/event-
 import type { ExtractionRepository } from '@application/ports/repositories.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
-import { StreamProvider } from '../../shell/StreamProvider.tsx'
+import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { ExtractionPane } from './ExtractionPane.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -56,8 +56,14 @@ const fakeStream = () => {
   }
 }
 
-/** Mirrors `Workers.test.tsx`'s harness, plus the `StreamProvider` this pane
- *  reads its frames from. */
+/** The pane, driven through the provider's fan-out rather than around it: a
+ *  `QueryClientProvider` with retries off, a partial container, and a fake
+ *  `EventStream` whose listener the test keeps so frames arrive the way the
+ *  real socket delivers them.
+ *
+ *  This used to say it mirrored `Workers.test.tsx`, which no longer exists --
+ *  the roster left the project page. Described rather than cross-referenced
+ *  this time, so the next deletion does not strand it again. */
 const renderWithContainer = (ui: ReactElement, parts: Partial<AppContainer>) => {
   const container = parts as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
