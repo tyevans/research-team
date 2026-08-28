@@ -364,6 +364,7 @@ describe('toProjectDetail', () => {
         name: 'atlas',
         active_session_id: '22222222-2222-4222-8222-222222222222',
         tip_at_event: 7,
+        reading_head_session_id: '33333333-3333-4333-8333-333333333333',
       }),
     )
 
@@ -372,7 +373,43 @@ describe('toProjectDetail', () => {
       name: 'atlas',
       activeSessionId: '22222222-2222-4222-8222-222222222222',
       tipAtEvent: 7,
+      readingHeadSessionId: '33333333-3333-4333-8333-333333333333',
     })
+  })
+
+  it('keeps the reading head apart from the holder', () => {
+    // The two are equal on every held project, which is most of them and all
+    // of the ones a fixture reaches for first. The state that separates them
+    // is a *released* project: no holder, and a tip session its files still
+    // fold out of. A mapper that read `active_session_id` into both fields
+    // passes the test above and fails here.
+    const project = toProjectDetail(
+      parse(dto.projectDetailDto, {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'atlas',
+        active_session_id: null,
+        tip_at_event: 4,
+        reading_head_session_id: '33333333-3333-4333-8333-333333333333',
+      }),
+    )
+
+    expect(project.activeSessionId).toBeNull()
+    expect(project.readingHeadSessionId).toBe('33333333-3333-4333-8333-333333333333')
+  })
+
+  it('reads a project with nothing written in it as no reading head', () => {
+    // `null` rather than an empty string, for `activeSessionId`'s own reason:
+    // `''` is truthy through a `?? null` and resolves to a session id that
+    // 404s on the first file request made with it.
+    const project = toProjectDetail(
+      parse(dto.projectDetailDto, {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'atlas',
+        reading_head_session_id: null,
+      }),
+    )
+
+    expect(project.readingHeadSessionId).toBeNull()
   })
 
   it('reads an unheld project as a null holder rather than an empty string', () => {

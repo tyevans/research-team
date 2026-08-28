@@ -245,11 +245,24 @@ export const approvalDto = z.object({
  *  `/api/projects/{id}` answers one. There was a `projectDto` extending this
  *  with `workflow` and `stage`, and the two columns went with the workflow
  *  system -- so the listing and the detail are one shape again. */
-export const projectDetailDto = z.object({
+/** A listing row of `GET /api/projects`. */
+export const projectDto = z.object({
   id: z.string(),
   name: z.string(),
   active_session_id: maybe(z.string()),
   tip_at_event: z.number().default(0),
+})
+
+/** `GET /api/projects/{id}`, which carries one field the listing does not.
+ *
+ * `reading_head_session_id` is the session a project's files fold out of —
+ * the holder if there is one, the tip session otherwise. It is not on the
+ * listing because that route folds one aggregate per row already, and no
+ * listing surface reads files. Extended rather than duplicated so a field
+ * added for both cannot reach one schema and miss the other, which is the
+ * property the two shared while they were one object. */
+export const projectDetailDto = projectDto.extend({
+  reading_head_session_id: maybe(z.string()),
 })
 
 export const healthDto = z.object({
@@ -406,7 +419,11 @@ export const bulkDispatchDto = z.object({
 export const topicDocumentsDto = z.object({
   directory: z.string(),
   session_id: maybe(z.string()),
-  at: maybe(z.number()),
+  // No `at`. It was sent as the tip offset, was measured on 2026-08-27 to
+  // contradict the `documents` list it travelled with, spent one slice as a
+  // constant `null`, and is gone from both sides now. A reader that wants a
+  // scrub point uses `ScrubPoint.head()`, which says the same thing without a
+  // round trip to say it.
   documents: z.array(z.object({ path: z.string(), name: z.string() })).default([]),
 })
 

@@ -9,7 +9,6 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import { SourceId, TopicId, type ProjectId, type SessionId } from '@domain/shared/identifier.ts'
 
-import { Confirm } from '../common/Confirm.tsx'
 import { EmptyState } from '../common/primitives.tsx'
 import { TabList, TabPanel, Tabs } from '../common/Tabs.tsx'
 import { useProject } from './use-project.ts'
@@ -27,16 +26,7 @@ import { TimelinePane } from '../research/TimelinePane.tsx'
 import { TopicList } from '../research/TopicList.tsx'
 import { projectHref, sessionSelection, type Facet, type Selection } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
-import {
-  ComposerPanel,
-  ConversationPanel,
-  conversationMeta,
-  TimelineFeed,
-  TimelinePanel,
-  timelineMeta,
-  WorkspacePanel,
-} from '../session/panels.tsx'
-import { ScrubBar } from '../session/ScrubBar.tsx'
+import { WorkspacePanel } from '../session/panels.tsx'
 import { useSessionScreen } from '../session/use-session-screen.ts'
 import { QueueHeader } from './queue/QueueHeader.tsx'
 import { PROJECT_TRACKS, useProjectPanes } from './use-project-panes.ts'
@@ -158,30 +148,32 @@ export const regionOf = (facet: Facet): Region => {
  * own terms: it is the only tab showing this project live and at any scrub
  * point, and everything after it is material that arrived from outside.
  */
-type MaterialFacet =
-  'session' | 'file' | 'doc' | 'media' | 'entity' | 'tree' | 'ontology' | 'timeline' | 'area'
+type MaterialFacet = 'file' | 'doc' | 'media' | 'entity' | 'tree' | 'ontology' | 'timeline' | 'area'
 
 /** Exported so `project-tracks.browser.test.tsx` can compare the strip it
  *  measures against the strip that was declared — a count taken from the
  *  rendered row alone cannot tell "eight tabs" from "eight of nine rendered". */
 export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
-  // First, and no longer the default. The argument for first place was that
-  // this is "what the page is about: a reader opening a project is asking what
-  // is happening to it". The interaction log disagreed: 118 entries at a 2.3s
-  // median with 55% bouncing under three seconds is what a default tab people
-  // leave looks like, not what a reader asking a question looks like.
-  // `DEFAULT_MATERIAL` carries the measurement and the replacement.
+  // **"Holding session" was first and is gone.** Not demoted -- removed. A
+  // person does not choose which session to read a project through: the
+  // reading head answers that, and it answers it whether or not anybody is
+  // holding. What the tab actually offered was a transcript, a scrub bar, an
+  // event log and a composer, which is a whole session view standing as a peer
+  // of Curriculum and Graph in a strip of things to *look at*. The session
+  // route is where somebody studying a run goes, and it still is.
   //
-  // Kept first anyway, and that is a claim rather than inertia: dwell measures
-  // what readers were *handed*, not what they would pick, so it can say the
-  // holding session is a bad default without saying it is a bad first tab.
-  // Costing it one click is this change; demoting it down the strip would be a
-  // second change nothing here has measured.
+  // The measurement that started it: 118 entries -- the second most-entered
+  // view in the product -- at a 2.3s median with 55% bouncing under three
+  // seconds. That was read as a bad *default* when the default moved to
+  // `catalog` (#286), and deliberately not read as a bad tab, because dwell
+  // measures what readers were handed rather than what they would pick. It is
+  // read as neither here: the tab is not losing a competition for a place in
+  // the strip, it is answering a question a reader was never asking.
   //
-  // Still free to sit here, which is the half of the old argument that
-  // survives: the session's panels were a permanent region before they became
-  // a tab, so every one of them is in the main chunk already.
-  { id: 'session', label: 'Holding session' },
+  // First now, and the promotion is not a claim about attention: this is the
+  // only tab showing the project's own files, and everything after it is
+  // material that arrived from outside. Nothing in it is lazy, so the bundle
+  // argument in this list's docstring is untouched by the move.
   { id: 'file', label: 'Workspace' },
   { id: 'doc', label: 'Documents' },
   // Directly after Documents: a proposal is a candidate for the same corpus
@@ -251,10 +243,19 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
  * deleted them; it is in this commit's message, because the code that held it
  * went with them.
  *
- * **One condition, and it survives on its own terms.** A project's files belong
- * to the session holding it, so the tab is dead when nothing holds the project
- * — which is true of plenty of projects. The second condition was `hasCourse`
- * and it went with the course query.
+ * **The condition moved with its data source, which is the only honest way to
+ * widen it.** It was `hasSession` — is somebody holding this project — on the
+ * argument that "a project's files belong to the session holding it". That was
+ * true of where the tab read from, not of the project: a released project has
+ * files, and the tab hid them. It is `hasWorkspace` now, meaning the reading
+ * head resolves to a session, and the panel behind it folds files out of that
+ * same session. Widening `hasSession` on its own would have produced a tab that
+ * is present and still empty — which is exactly the defect the 100% bounce
+ * condemned, with the gate removed instead of the cause.
+ *
+ * The tab still hides, and it still should: a project nothing has ever been
+ * written in resolves no reading head and has nothing to show. The second
+ * condition was `hasCourse` and it went with the course query.
  *
  * **A tab the route explicitly names is always offered**, whatever the
  * condition says. `#/p/<id>/file/<path>` is a link somebody sent, and the
@@ -271,12 +272,12 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
  * next conditional tab goes in.
  */
 export const visibleMaterialTabs = (
-  { hasSession }: { hasSession: boolean },
+  { hasWorkspace }: { hasWorkspace: boolean },
   openTab: Facet,
 ): readonly { id: MaterialFacet; label: string }[] =>
   MATERIAL_TABS.filter((tab) => {
     if (tab.id === openTab) return true
-    if (tab.id === 'file') return hasSession
+    if (tab.id === 'file') return hasWorkspace
     return true
   })
 
@@ -370,7 +371,7 @@ export const ProjectView = ({
    *  page is where the read that carries it happens. */
   onLoaded?: (name: string | null) => void
 }) => {
-  const { projectName, holdingSessionId } = useProject(projectId)
+  const { projectName, readingHeadSessionId } = useProject(projectId)
   const openTopics = useOpenTopicCount(projectId)
 
   useEffect(() => {
@@ -381,11 +382,21 @@ export const ProjectView = ({
 
   const watching: SessionId | null = selection?.facet === 'session' ? selection.id : null
 
-  /** Whose transcript HOLDER is reading: an explicitly watched session, the
-   *  project's holding session as the default, or neither. `null` is a real and
-   *  common state — a project nobody has joined — and it is why the screen hook
-   *  below takes a nullable id rather than being called from inside a branch. */
-  const sessionId: SessionId | null = watching ?? holdingSessionId
+  /** Whose files this page is reading: an explicitly named session, the
+   *  project's **reading head** as the default, or neither.
+   *
+   * **This was `holdingSessionId` and the change is the point of the slice.**
+   * The holder answers "who is driving"; the reading head answers "what is
+   * there to read", and the second question has an answer whether or not
+   * anybody is holding. Resolved off the holder, the Workspace tab was empty
+   * for every project between sessions — which is what the 100% bounce
+   * `visibleMaterialTabs` records was measuring, and why that tab was hidden
+   * rather than fixed.
+   *
+   * `null` is still a real state — a project nothing has ever been written in
+   * — and it is still why the screen hook below takes a nullable id rather
+   * than being called from inside a branch. */
+  const sessionId: SessionId | null = watching ?? readingHeadSessionId
 
   const openPath: FilePath | null =
     selection?.facet === 'file'
@@ -473,14 +484,23 @@ export const ProjectView = ({
    * to be a tab id and a route facet that does not. */
   /** What this project has, which decides which tabs are offered. Read here
    *  rather than inside the strip so the condition sits beside the value that
-   *  answers it -- `sessionId` is already resolved above. */
-  const has = { hasSession: sessionId !== null }
+   *  answers it -- `sessionId` is already resolved above, and it is the
+   *  reading head now rather than the holder, which is what makes the gate
+   *  mean "there is a workspace" rather than "somebody is holding this". */
+  const has = { hasWorkspace: sessionId !== null }
 
   const openFacet: Facet =
     selection && regionOf(selection.facet) === 'material' ? selection.facet : DEFAULT_MATERIAL
 
   const materialTab: Facet =
-    openFacet === 'session' && selection?.facet === 'session' && selection.path !== null
+    // **`session` is a facet with no tab, and it maps to Workspace.** It had
+    // one until this slice, and the arm here was narrower: only a session
+    // selection *carrying a path* was a workspace selection, because a bare
+    // one meant "watch this transcript". There is no transcript on this page
+    // now, so every `session` selection is a workspace one — which includes
+    // the scrub-with-no-file-open that `href` above writes, and which would
+    // otherwise resolve to a tab that no longer exists and select nothing.
+    openFacet === 'session'
       ? 'file'
       : // `path`, `catalog` and `course` are facets with no tab of their own:
         // all three are readings of the Curriculum tab, chosen by a toggle
@@ -561,42 +581,23 @@ export const ProjectView = ({
           // controlled by `string`, and every value it can hand back is an id
           // this component declared in `MATERIAL_TABS`.
           //
-          // `session` is the arm that cannot go through the cast, because it is
-          // the one facet whose `Selection` carries more than an id — an `at`
-          // and a `path` the grammar requires. Choosing the tab is not choosing
-          // a session to watch, so it writes the *default* selection rather
-          // than inventing a scrub point: `null` lands back on this tab through
-          // `DEFAULT_MATERIAL`, and the holding session is what the region
-          // reads when nothing is explicitly watched. Watching a specific
-          // worker still comes from `QueueHeader`, which has a session id to
-          // write.
+          // **There used to be an arm above this one, and it broke silently.**
+          // Clicking "Holding session" wrote `select(null)`, on the argument
+          // that `null` lands back on that tab through `DEFAULT_MATERIAL` --
+          // true while the default was `session`. The default moved to
+          // `catalog` (#286) and this arm did not move with it, so the tab
+          // bounced its own readers to Curriculum for a whole slice. Nothing
+          // caught it, because the only file that clicked this tab was in the
+          // browser project, outside CI.
+          //
+          // The tab is gone now and so is the arm, but the lesson is not: the
+          // assertions that would have caught it -- what a click selects, and
+          // which panel renders after it -- are jsdom's to make and now live
+          // in `ProjectView.test.tsx`, in CI. `session` is still a *facet*
+          // (`href` writes it for every scrub and file open) and it maps to
+          // the Workspace tab through `materialTab` above; no click here
+          // produces one, so no arm here handles one.
           onValueChange={(next) => {
-            // Narrowed before the cast rather than cast to the whole union:
-            // `session` is the one arm whose `Selection` carries an `at` and a
-            // `path`, so `{ facet, id }` is not a legal selection for it and
-            // the compiler says so. The `Exclude` is what keeps that true if a
-            // second such facet is ever added.
-            //
-            // **It wrote `select(null)` and that had silently stopped working.**
-            // The argument was that `null` lands back on this tab through
-            // `DEFAULT_MATERIAL`, which was true while the default was
-            // `session`. The default moved to `catalog` on the interaction
-            // log's dwell figures (#286) and this arm was not moved with it, so
-            // clicking Holding session wrote `#/p/<id>`, which resolves to the
-            // catalog -- the tab bounced the reader to Curriculum. Nothing
-            // caught it: the jsdom suite asserts the strip and the panels, and
-            // the one file that clicks this tab is in the browser project,
-            // outside CI.
-            //
-            // `sessionSelection` rather than `null` therefore, at the head with
-            // no file open, which is the same default `useSessionScreen` reads
-            // when nothing is explicitly watched. With nothing holding the
-            // project there is no id to write and `null` is correct -- the
-            // panel's own empty state is what the reader gets either way.
-            if (next === 'session') {
-              select(sessionId === null ? null : sessionSelection(sessionId, ScrubPoint.head()))
-              return
-            }
             // The Curriculum tab opens on the catalog, not the area map --
             // `catalog` is its default reading (see `routes.ts`'s `FACETS`
             // comment), and `area`/`path` are reached from inside the pane.
@@ -606,7 +607,7 @@ export const ProjectView = ({
               select({ facet: 'catalog', id: null })
               return
             }
-            select({ facet: next as Exclude<MaterialFacet, 'session'>, id: null })
+            select({ facet: next as MaterialFacet, id: null })
           }}
           className="flex min-h-0 flex-1 flex-col"
         >
@@ -618,123 +619,6 @@ export const ProjectView = ({
               triggers. */}
           <TabList label="Material" options={visibleMaterialTabs(has, materialTab)} />
 
-          {/* The old HOLDER region, whole, one level further in.
-
-              `flex min-h-0 flex-col` rather than `overflow-auto`, which is the
-              `scroll="regions"` pane body this used to be: the two sections
-              inside each own a scroller and split the leftover height between
-              them, and a scrolling box here would be a box scrolling around a
-              transcript that already scrolls.
-
-              **Still no `Split` and no `Pane` inside it.** Slice 0 mounted
-              `SessionView` whole, and `SessionView` is itself a three-pane
-              `Split` — a pane header inside a pane header, two collapse groups,
-              and a reader who could fold the event log inside a region they
-              could also fold. Un-nesting it was right then and is right now;
-              the region simply became a tab.
-
-              **`keepMounted`, which is the one thing this panel asks for that
-              the other six do not.** `Tabs` unmounts an inactive panel, and for
-              a list or a graph that is right — it is what makes manual
-              activation mean something. This panel is a live transcript with a
-              composer in it, and it was a permanent column until this slice, so
-              a half-typed message and a scrub position had never been at risk;
-              unmounting discarded both on a trip to Artifacts and back.
-
-              What it costs, plainly: the transcript goes on subscribing behind
-              every other tab, and `hidden` is `display: none`, so everything in
-              here measures zero while it is away. The second one is the danger
-              — `Pane`'s `unmountWhenCollapsed` documents a virtualizer caching
-              exactly that zero and coming back empty — and it is why the claim
-              that covers this is in `ProjectView.browser.test.tsx` and asserts
-              the conversation's height on the way back, not just the draft. */}
-          <TabPanel value="session" keepMounted className="flex min-h-0 flex-1 flex-col">
-            {sessionId === null ? (
-              <EmptyState
-                heading="Nothing is holding this project."
-                detail="Join the project from the landing page, and the session working on it appears here."
-              />
-            ) : (
-              <>
-                <ScrubBar
-                  head={screen.state.head}
-                  log={screen.state.log}
-                  scrub={screen.state.scrub}
-                  loading={screen.state.loadingSnapshot}
-                  onSelect={screen.selectEvent}
-                  onFork={() => {
-                    if (screen.state.scrub.kind === 'historical')
-                      screen.forkAt(screen.state.scrub.at)
-                  }}
-                  onEndSession={() => screen.setEndPending(true)}
-                />
-
-                {screen.endPending ? (
-                  <Confirm
-                    heading="End this session and hand its files back to the project?"
-                    lines={[
-                      'The log stays readable and forkable.',
-                      "The project becomes free, and the next session in it starts from this one's files.",
-                    ]}
-                    confirmLabel="End the session"
-                    onCancel={() => screen.setEndPending(false)}
-                    onConfirm={() => {
-                      screen.setEndPending(false)
-                      screen.endSession()
-                    }}
-                  />
-                ) : null}
-
-                {/* Each section names itself, because it no longer gets a name from
-                a `Pane` header — and losing those two names is the one thing
-                un-nesting could quietly have cost. A screen-reader user
-                navigating by region had "Event log" and "Conversation" here
-                yesterday; `aria-label` on a `<section>` is the same landmark
-                without the visible heading, chrome and a fold toggle that the
-                region above already provides.
-
-                The meta lines are the same strings the pane headers wrote,
-                through the same helpers, which is why they are helpers. */}
-                <section
-                  aria-label="Event log"
-                  className="flex min-h-0 flex-1 flex-col border-0 border-b border-solid border-line"
-                >
-                  <SectionHead label="Event log" meta={timelineMeta(screen.state.log.length)} />
-                  {/* The scroller is this box and not `.timeline`, which has no
-                  overflow of its own — `timeline.css:4` is a bare flex column,
-                  and on `#/s/` the `Pane` body is what scrolls it. Something
-                  here has to, or the log runs the page's whole height. */}
-                  <div className="min-h-0 flex-1 overflow-auto" data-holder-scroll="log">
-                    <TimelinePanel screen={screen} />
-                  </div>
-                  <TimelineFeed store={store} />
-                </section>
-
-                <section aria-label="Conversation" className="flex min-h-0 flex-1 flex-col">
-                  <SectionHead
-                    label="Conversation"
-                    meta={conversationMeta(
-                      screen.messages.length,
-                      screen.compacted,
-                      screen.historicalAt,
-                    )}
-                  />
-                  {/* No scroller of its own: `Conversation` renders `.conv-scroll`,
-                  which is already `flex: 1 1 auto; min-height: 0; overflow:
-                  auto`, and holds a ref on it to stick to the bottom. A box
-                  around it would absorb the wheel from the box that measures. */}
-                  <ConversationPanel screen={screen} />
-                </section>
-
-                {/* Pinned last and outside both scrollers, which is what `Pane`'s
-                `footer` slot did on `#/s/`. Inside either one it scrolls away,
-                and a composer that leaves the screen as the conversation grows
-                is the defect that slot exists for. */}
-                <ComposerPanel screen={screen} store={store} />
-              </>
-            )}
-          </TabPanel>
-
           {/* No `overflow-auto`, for the same reason the document list has
               none: `WorkspacePanel` is a file list over a file viewer, each
               scrolling on its own — `workspace.css` gives `.files` its own
@@ -743,14 +627,20 @@ export const ProjectView = ({
               exactly what the `scroll="regions"` pane body was on `#/s/`. */}
           <TabPanel value="file" className="flex min-h-0 flex-1 flex-col">
             {sessionId === null ? (
-              // The other half of "nothing is holding this project", and it
-              // needs its own sentence: a blank panel reads as a load that
-              // failed rather than as an absence. A project
-              // workspace is a *session's* workspace, so with no session there
-              // is no tree to show rather than an empty one.
+              // A blank panel reads as a load that failed rather than as an
+              // absence, so the empty state says which one it is.
+              //
+              // **The sentence changed with the condition.** It used to read
+              // "A project's files belong to the session holding it. Join the
+              // project and its tree appears here." -- which was accurate
+              // about where the bytes came from and wrong about the project:
+              // a released project has files, and a reader was told to join
+              // to see files that were already there. This branch is now only
+              // reached by a project nothing has ever been written in, and
+              // that is what it says.
               <EmptyState
-                heading="No workspace yet."
-                detail="A project's files belong to the session holding it. Join the project and its tree appears here."
+                heading="Nothing has been written here yet."
+                detail="This project has no files. Start a session in it, and everything it writes appears here."
               />
             ) : (
               <WorkspacePanel screen={screen} sessionId={sessionId} openPath={openPath} />
@@ -855,25 +745,6 @@ export const ProjectView = ({
     </Split>
   )
 }
-
-/** The heading a stacked HOLDER section gets instead of a pane header.
- *
- * Deliberately not a `Pane`. What a pane header carries that this does not is a
- * fold toggle and a `<section>` of its own with the collapse machinery behind
- * it, and HOLDER's sections are not foldable — the region is, once, from the
- * split above. What is kept is the two things a reader actually used the header
- * for: which of the two stacked boxes they are looking at, and its count.
- *
- * `<h3>` because the pane's own `<h2>` is directly above it, so the outline
- * stays in order. Not `sticky`: the scroller is the box *below* this element,
- * so it does not move.
- */
-const SectionHead = ({ label, meta }: { label: string; meta: string | undefined }) => (
-  <div className="flex shrink-0 items-baseline gap-2 px-3 py-1 text-xs text-fg-dim">
-    <h3 className="font-medium tracking-wide m-0 text-xs uppercase">{label}</h3>
-    {meta === undefined ? null : <span className="text-fg-faint">{meta}</span>}
-  </div>
-)
 
 /** How many questions this project still owes an answer to.
  *

@@ -17,16 +17,24 @@ import { parseRoute, type Selection } from '@presentation/routing/routes.ts'
 
 import { ProjectView } from './ProjectView.tsx'
 
-/** That HOLDER's stacked column lays out — which is every claim slice 2 makes,
- *  and jsdom can judge none of them.
+/** That the project page's frame lays out: one split, foldable, remembered.
  *
- * Slice 0 wrote this file to check that a `Split` inside a `Split` laid out.
- * Slice 2 removes that nesting, so the claims changed with it: HOLDER is now a
- * scrub bar, two self-scrolling sections and a pinned composer in one flex
- * column, and "which box owns the overflow" is the entire design. Every one of
- * those is a computed style or a rectangle. `vitest.setup.ts` pins
- * `offsetWidth`/`offsetHeight` to constants and answers `false` to every media
- * query, so the jsdom suite reports the same numbers whatever the markup does.
+ * **Four of this file's six claims are deleted rather than rewritten**, and
+ * that is the honest move rather than a loss of coverage. Claims 1, 2, 7 and 8
+ * measured the holding session's stacked column -- which box owned the
+ * overflow, how the two sections shared the leftover height, that a half-typed
+ * message survived a tab switch, and that `keepMounted` did not leave a
+ * `flex-1` sibling in the layout. That panel is gone: a person does not pick
+ * which session to read a project through, and the transcript lives at the
+ * session route. A rewritten version of any of them would be a test invented
+ * to keep a number in this file, which is what the note under claim 4 already
+ * says about claim 4.
+ *
+ * What survives is what was never about the panel. Both remaining claims are
+ * still a computed style or a rectangle, which is why they are here rather
+ * than in the jsdom suite: `vitest.setup.ts` pins `offsetWidth`/`offsetHeight`
+ * to constants and answers `false` to every media query, so the jsdom suite
+ * reports the same numbers whatever the markup does.
  *
  * **This mounts the real `ProjectView`, not a harness of `Split` and `Pane`.**
  * `SessionView.test.tsx` records why, and its reasoning transfers exactly: the
@@ -61,6 +69,9 @@ const container = () =>
         name: 'atlas',
         activeSessionId: HOLDER,
         tipAtEvent: 0,
+        // The Workspace tab is gated on this rather than on the holder now.
+        // Equal to the holder here, which is what a held project reports.
+        readingHeadSessionId: HOLDER,
       }),
     },
     sessions: {
@@ -154,146 +165,17 @@ const show = async () => {
     </ContainerProvider>,
   )
 
-  // The Holding session tab, chosen explicitly, because every claim in this
-  // file is about how height travels through the transcript's own boxes and
-  // `DEFAULT_MATERIAL` is the catalog. This used to arrive selected: the file
-  // was written when the session was the default tab, and 0273fc4 moved the
-  // default to `catalog` on the interaction log's dwell figures without
-  // running this suite -- which is outside CI, so nothing said so. Waiting on
-  // `Event log` has been failing here since 2026-08-24.
-  await page.getByRole('tab', { name: 'Holding session' }).click()
-  // `Event log` is a `<section aria-label>` rather than a `Pane`, and it is
-  // the same role and the same name -- which is the point of labelling them by
-  // hand.
-  await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
+  // The default tab, which is the catalog, and no click at all. This helper
+  // used to open "Holding session" explicitly because every claim in the file
+  // was about how height travelled through that panel's boxes. Those claims
+  // are gone with the panel; what is left is the split and the fold, which are
+  // the page's own frame and are drawn on whatever tab is open.
+  await expect.element(page.getByRole('tab', { name: 'Curriculum' })).toBeVisible()
 
   return { preferences: deps.preferences as InMemoryPreferenceStore }
 }
 
 const outerSplit = () => document.querySelector<HTMLElement>('.lay-split[data-split="project"]')!
-
-/** The holding session's body, and the three boxes stacked in it.
- *
- * MATERIAL's pane body rather than HOLDER's: the holding session is MATERIAL's
- * first tab now and HOLDER is not a pane. The three boxes inside are the same
- * three, unchanged — which is what makes these claims still worth asserting
- * rather than rewriting. */
-const holder = () => {
-  const body = document.querySelector<HTMLElement>('[data-pane="material"] .lay-pane-body')!
-  return {
-    body,
-    log: body.querySelector<HTMLElement>('[aria-label="Event log"]')!,
-    conversation: body.querySelector<HTMLElement>('[aria-label="Conversation"]')!,
-    composer: body.querySelector<HTMLElement>('.composer')!,
-  }
-}
-
-/** Claim 1. HOLDER is one column of scrollers, and the column itself is not one.
- *
- * The whole shape of the region in one test: the pane body does not scroll, the
- * two sections inside it do, and neither is allowed to be the box that owns the
- * page's overflow. Slice 0's version of this claim was about a nested `Split`
- * taking the height; the boxes changed, the failure mode did not — a page that
- * scrolls in the wrong box.
- *
- * **Proved red**, twice, because the claim has two halves and one inversion
- * only breaks one:
- *
- * - Changing HOLDER's `Pane` from `scroll="regions"` to the default fails at
- *   `expected 'block' to be 'flex'` (`layout.css:234` is what makes the body a
- *   flex column, and a block box is not one, so `flex-1` on the two sections
- *   below means nothing and both run to their content's height).
- * - Dropping `overflow-auto` from the log's scroll box in `ProjectView.tsx`
- *   fails at `expected 'visible' to be 'auto'`. That inversion leaves the first
- *   pair green, which is why they are separate assertions.
- */
-it('stacks HOLDER as scrollers inside a column that does not scroll', async () => {
-  await show()
-  const { body, log, conversation } = holder()
-
-  // The pane body is a flex column and not a scroller. `scroll="regions"` is
-  // what makes that true and it is the prop this half guards.
-  //
-  // **Not** `scrollHeight <= clientHeight`, which is what this asserted first
-  // and which stayed green under the inversion. With `regions` dropped, this
-  // fixture's empty log and empty transcript do not fill 900px, so the body
-  // has nothing to overflow with and a body that *is* a scroller measures
-  // identically to one that is not — slice 1 threw away an assertion for
-  // exactly this reason and recorded it, and the lesson did not transfer until
-  // it happened again here. The declarations are read back from the browser's
-  // own cascade instead, which jsdom answers `''` to whatever the markup says.
-  const bodyStyle = getComputedStyle(body)
-  expect(bodyStyle.display).toBe('flex')
-  expect(bodyStyle.overflowY).toBe('hidden')
-
-  // The log's own scroll box — the element `overflow-auto` is on, which is a
-  // wrapper rather than `.timeline` itself, because `timeline.css:4` gives
-  // `.timeline` no overflow at all and on `#/s/` the pane body scrolls it.
-  //
-  // Found by `data-holder-scroll` rather than by `.timeline`'s parent, which
-  // was the first attempt and threw: this fixture's log is empty, so `Timeline`
-  // renders an `EmptyState` and there is no `.timeline` element to walk up
-  // from. An attribute that exists whether or not there is anything to scroll
-  // is the difference between a test about the arrangement and one about the
-  // data.
-  const logScroller = log.querySelector<HTMLElement>('[data-holder-scroll="log"]')!
-  expect(getComputedStyle(logScroller).overflowY).toBe('auto')
-  // The transcript's is `.conv-scroll`, which `Conversation` renders and holds
-  // a ref on to stick to the bottom — so this asserts the box it already had
-  // still gets a height here rather than that a new one was added.
-  const convScroller = conversation.querySelector<HTMLElement>('.conv-scroll')!
-  expect(getComputedStyle(convScroller).overflowY).toBe('auto')
-  expect(convScroller.getBoundingClientRect().height).toBeGreaterThan(0)
-})
-
-/** Claim 2. The two sections share the leftover height, and the composer is
- *  pinned to the bottom of the region.
- *
- * The brief's requirement, measured: the timeline and the conversation split
- * what the scrub bar and the composer leave, and the composer's bottom edge
- * lands on HOLDER's. Sharing is asserted as "within 40px of each other" rather
- * than as equality — both are `flex-1` against the same basis, but they hold
- * different chrome (the log has an activity feed pinned under it) and an exact
- * comparison would be asserting the feed's height.
- *
- * **Proved red**: replacing the conversation section's `flex-1` with `shrink-0`
- * fails the share at `expected 491.140625 to be less than 40` — one section eats
- * the region and the other becomes a caption. The composer half of the claim
- * survives that inversion (it is still last and still pinned), so it is proved
- * red separately: adding a second `Split` inside HOLDER fails it at
- * `expected 637.9375 to be greater than 898`, the nesting this slice removes
- * pushing the composer up off the region's floor.
- *
- * *(Slice 0's claim 2 — two grid templates on two `.lay-split` elements, neither
- * overwriting the other — is **deleted rather than rewritten**. There is one
- * split on this page now, so the claim has no subject: the mechanism it ruled
- * out cannot occur. Claim 4 asserts the count that makes that true. Deleting a
- * test that no longer describes the product is the right move and this note is
- * the record of it; leaving it green against a single split would have been a
- * test that reports on nothing.)*
- */
-it('shares HOLDER’s leftover height and pins the composer to its bottom', async () => {
-  await show()
-  const { body, log, conversation, composer } = holder()
-
-  const logBox = log.getBoundingClientRect()
-  const convBox = conversation.getBoundingClientRect()
-  const bodyBox = body.getBoundingClientRect()
-
-  expect(logBox.height).toBeGreaterThan(0)
-  expect(convBox.height).toBeGreaterThan(0)
-  expect(Math.abs(logBox.height - convBox.height)).toBeLessThan(40)
-
-  // Pinned, not floating: the composer's bottom edge is the region's. A
-  // composer inside either scroller would leave the screen as the transcript
-  // grew, which is the defect `Pane`'s `footer` slot exists for and which this
-  // arrangement has to reproduce without a `Pane`.
-  const composerBox = composer.getBoundingClientRect()
-  expect(composerBox.bottom).toBeGreaterThan(bodyBox.bottom - 2)
-  expect(composerBox.bottom).toBeLessThanOrEqual(bodyBox.bottom + 1)
-  // And it is below both scrollers rather than between them.
-  expect(composerBox.top).toBeGreaterThanOrEqual(convBox.bottom - 1)
-})
 
 /** Claim 3. Folding a region still folds one region, and remembers it.
  *
@@ -356,104 +238,3 @@ it('leaves exactly one split on the project page', async () => {
  * argument for the removal; `TopicQueue.browser.test.tsx` is where the
  * toolbar's own geometry is now measured.
  */
-
-/** Claim 7. The holding session survives a trip to another tab: a half-typed
- *  message is still there, and the transcript still has its height.
- *
- * **The defect this closes shipped for one commit.** `Tabs` unmounts the panel
- * that is not shown, which is right for panels that fetch — it is why
- * `activationMode` is manual — and wrong for the one panel that is a *session*.
- * The holding session was a permanent column until it became a tab, so nothing
- * had ever taken its state away; the move made a tab-away discard a draft
- * message and a scrub position, which is a data loss a reader would meet by
- * checking the Documents tab mid-sentence.
- *
- * **The second assertion is the one that is not obvious, and it is the reason
- * this is a browser test.** `Pane`'s `unmountWhenCollapsed` documents the trap
- * being walked into deliberately here: a virtualizer inside a hidden-but-mounted
- * box measures a zero-height scroll container and caches that, so the box comes
- * back empty. `forceMount` keeps the panel in the tree with `hidden` on it,
- * which is `display: none` — every measurement inside is zero while it is away.
- * So "the draft survived" is not enough; the transcript has to have laid itself
- * out again on the way back, and jsdom cannot see the difference.
- *
- * **Proved red** by removing `keepMounted` from the session panel: the first
- * assertion fails at `expected '' to be 'half a thought'`, the panel having been
- * unmounted and remounted with a fresh composer.
- */
-it('keeps a half-typed message and the transcript across a tab switch', async () => {
-  await show()
-
-  const composer = document.querySelector<HTMLTextAreaElement>('.composer textarea')!
-  await page.getByRole('textbox', { name: /Send a turn/i }).fill('half a thought')
-  expect(composer.value).toBe('half a thought')
-
-  const before = holder().conversation.getBoundingClientRect().height
-  expect(before).toBeGreaterThan(0)
-
-  // Asserted on the tab rather than on the panel, deliberately: the panel is
-  // absent under the defect and merely hidden under the fix, so a check on it
-  // would read differently for two reasons at once and could not say which.
-  // What both agree on is that the reader left.
-  await page.getByRole('tab', { name: 'Documents' }).click()
-  await expect
-    .poll(() => page.getByRole('tab', { name: 'Documents' }).element().ariaSelected)
-    .toBe('true')
-
-  await page.getByRole('tab', { name: 'Holding session' }).click()
-  await expect
-    .poll(() => document.querySelector<HTMLTextAreaElement>('.composer textarea')?.value)
-    .toBe('half a thought')
-
-  // Laid out again, not merely present. A cached zero from the hidden pass
-  // would satisfy every assertion above this one.
-  expect(holder().conversation.getBoundingClientRect().height).toBeCloseTo(before, 0)
-})
-
-/** Claim 8. The kept panel is out of the layout while another tab is open, and
- *  the open tab's panel gets MATERIAL's whole height under the strip.
- *
- * The defect, exactly: `keepMounted` becomes Radix's `forceMount`, and Radix
- * writes `hidden: !present` where `present` is `forceMount || isSelected` -- so
- * the one panel that asked to survive a tab switch was never hidden at all.
- * The holding session painted on all eight tabs, and being a `flex-1` sibling
- * of the chosen panel it took half of MATERIAL's height and left the tab the
- * reader asked for with the other half. `workspace.css`'s
- * `[role='tabpanel'][data-state='inactive']` is what hides it instead.
- *
- * jsdom can judge none of this: `getComputedStyle` there returns only what an
- * inline style said, so a rule that never applied is indistinguishable from one
- * that did, and every height is zero anyway.
- *
- * **Proved red** by removing that rule: the display assertion fails at
- * `expected 'flex' to be 'none'`, and the height assertion at 439.125 against
- * 878.25 -- exactly the half the report described.
- */
-it('drops the kept panel out of the layout while another tab is open', async () => {
-  await show()
-  const { body } = holder()
-
-  await page.getByRole('tab', { name: 'Documents' }).click()
-  await expect
-    .poll(() => page.getByRole('tab', { name: 'Documents' }).element().ariaSelected)
-    .toBe('true')
-
-  // Selected by `data-state` rather than by `[hidden]`, because under the
-  // defect the kept panel carries neither `hidden` nor any other mark that
-  // separates it from the chosen one -- `data-state` is the attribute that
-  // reads the same either way, which is what makes it the one to assert on.
-  const kept = body.querySelector<HTMLElement>('[role="tabpanel"][data-state="inactive"]')!
-  expect(getComputedStyle(kept).display).toBe('none')
-  expect(kept.getBoundingClientRect().height).toBe(0)
-
-  // The other half of the claim, and the half a reader actually complained
-  // about: the chosen panel is the whole content area under the tab strip, not
-  // the lower part of it. Measured against the strip rather than a constant, so
-  // this does not have to move when MATERIAL's tab count does.
-  const strip = body.querySelector<HTMLElement>('.tabs')!
-  const shown = body.querySelector<HTMLElement>('[role="tabpanel"][data-state="active"]')!
-  expect(shown.getBoundingClientRect().height).toBeCloseTo(
-    body.getBoundingClientRect().height - strip.getBoundingClientRect().height,
-    0,
-  )
-})
