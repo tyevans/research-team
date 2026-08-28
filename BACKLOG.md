@@ -3165,6 +3165,76 @@ reinstating one is a `TOOL_FLOORS` entry against whatever tool an authoring run
 poses -- not a rebuild. The case for doing it is speculative until somebody has
 been burned by an authored area, which is why it is here and not in the PR.
 
+## Rendering
+
+### B158. Rendered markdown is unstyled everywhere, and has been since 2026-08-07
+
+**A live defect, not a cleanup.** `frontend/src/styles/markdown.css` dresses
+nine class families that **nothing emits**: `.md-h` (8 rules), `.md-p`,
+`.md-hr`, `.md-list`, `.md-li`, `.md-task`, `.md-quote`, `.md-inline-code` and
+`.md-table` (4 rules). Measured 2026-08-27 by enumerating every `md-*` literal
+in `frontend/src/**/*.ts{,x}` outside stylesheets and tests:
+
+| Emitted | Where |
+|---|---|
+| `md-link`, `md-link-internal`, `md-link-inert` | `markdown.ts:68,76,81`, the `afterSanitizeAttributes` anchor hook |
+| `md-bare` | `DocumentReader.tsx:117`, `GraphDetail.tsx:334` |
+| `md-ref` | `references.ts:189` |
+| `md-code`, `md-unwrapped` | `LessonDocument.tsx:73,157,176` |
+
+Every other `md-*` family: **zero occurrences**. So headings, paragraphs,
+lists, task lists, blockquotes, inline code and tables all fall back to the
+browser's own defaults -- in a build that imports no Tailwind preflight, which
+is the same condition CLAUDE.md's border-style entry is about. The blast radius
+is every surface that renders markdown: `Content` (`presentation/common/content.tsx`)
+is consumed by `AskTurn`, `CourseFile`, `CourseUnit`, `LessonDocument`,
+`widgets`, `DocumentReader`, `GraphDetail`, `TopicDocuments`, `FileHistory`,
+`FileView` and `Segments` -- eleven components, all wrapping in `.md`.
+
+**How it happened, from the history rather than by inference.** A hand-written
+block-and-inline renderer emitted these classes; it was added in `19d20ef`.
+`57a79e4` (#32, 2026-08-07) replaced it with `marked` + `DOMPurify` -- the
+right call, and `markdown.ts`'s docstring makes the case well -- and carried
+the stylesheet across unchanged. `marked` emits bare `<h1>`, `<p>`, `<ul>`,
+`<blockquote>`, `<table>`, `<code>` with no classes. The rules were dead the
+moment they shipped alongside it, and `c2c2375` (#300, 2026-08-25) added
+**32 more lines** to the same dead families two days before this was found.
+
+**Why no gate caught it, which is the part worth keeping.** jsdom applies no
+stylesheet, so every jsdom test is blind to it by construction. The one browser
+test that reads a margin in this area
+(`mention-snippet.browser.test.tsx:121`) asserts `marginBottom === '0px'` on a
+`.md-bare > :last-child` -- which is satisfied whether `.md-p` applies or not.
+A selector that matches nothing is indistinguishable from one that matches, and
+that is exactly the failure CLAUDE.md's browser-test section exists for.
+
+**This is a unification, not a deletion.** Deleting the dead rules would leave
+the rendering just as unstyled and would throw away the typography. The work is
+to decide *one* story for how markdown gets dressed and apply it to all of it:
+
+- **Element selectors scoped under `.md`** (`.md h2`, `.md table`) -- no
+  renderer change, works for anything `marked` grows support for later, and
+  costs the ability to style a heading differently by origin.
+- **Re-attach classes in `markdown.ts`** via a `marked` renderer override or a
+  second DOMPurify hook -- keeps the existing selectors verbatim, and puts a
+  presentation concern in the sanitiser seam.
+
+Either way the five hand-applied families (`md-bare`, `md-ref`, `md-code`,
+`md-unwrapped`, and the three `md-link*`) should end up explained by the same
+rule rather than left as a second mechanism nobody can date. Two ways to dress
+markdown is how this happened.
+
+**The proof has to be a browser test.** `frontend/src/styles/` already holds
+the pattern (`border-style-default.browser.test.tsx`), and per CLAUDE.md a
+computed style is not assertable in jsdom. A test that renders a document
+containing a heading, a list, a quote and a table and asserts each has a
+non-default computed value is what would have caught this on the day, and it is
+what should land with the fix.
+
+Found by a general dead-code survey during the workflow removal
+(`docs/reports/dead-code-survey.md`, item 7), and independently confirmed
+before filing. Unrelated to that removal.
+
 ## Waiting on redstring
 
 ### B58. `graph = 0.0` across a document boundary is absence of evidence read as disagreement
