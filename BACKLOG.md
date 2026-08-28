@@ -5114,3 +5114,31 @@ for. `/events` returns the `ReadModel` envelope (`id`, `created_at`,
 which is a confusion waiting to happen on the one surface whose job is
 clarity. And `by_decision` has only ever held `approve`, so the rejection path
 of that chart has never rendered with data in it.
+
+### B153. `/api/projects/{id}/workers` may have no callers left
+
+The console's last frontend consumer went with the project-page roster
+(2026-08-27) -- `WorkerRepository.on` is deleted and only `everywhere()`
+remains. Whether the route itself is now dead is a Python-side question this
+change did not open: it has its own gates, its own tests, and the answer may be
+"an external caller depends on it", which nothing on the frontend can see.
+
+The work is a survey, not a deletion: grep the route's handler for references,
+check `tests/interfaces/` for what drives it, and decide. Filed rather than
+guessed at, because deleting a route on the strength of one client's disuse is
+how a public surface disappears.
+
+### B154. `course.css` dresses a float on a research tab, and its name says otherwise
+
+After this plan the file dresses `AutonomyPanel` and `ExtractionPane`, and
+`ExtractionPane` moved to `presentation/research/` as a float on the graph
+canvas -- it is no longer part of course authoring in any sense the filename
+suggests. The file's own header states the doctrine that stylesheets die with
+the screen they dress; nothing here has died, but the screen the file is named
+for is not the screen either remaining rule dresses.
+
+Relocating it was ruled out of scope for this plan deliberately -- a
+stylesheet sweep is its own change with its own verification, and folding it
+into a placement change would make the diff harder to review for the thing the
+change is actually about. Left as a header manifest already down to two
+families, which is the shape a future sweep would start from.
