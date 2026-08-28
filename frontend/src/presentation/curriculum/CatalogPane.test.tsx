@@ -149,18 +149,55 @@ const show = (
   )
 
 describe('CatalogPane', () => {
-  it('renders the three sections, each with its cards, from a stubbed repository', async () => {
+  it('draws every candidate as a card, filed categories included', async () => {
     const catalog = fakeCatalog({
       catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
     })
     show(catalog)
 
+    // The single hero candidate is the spotlight, so its title appears once in
+    // the banner rather than on a shelf; the other two are cards.
     expect(await screen.findByText('Hero Course')).toBeInTheDocument()
     expect(screen.getByText('Highlight Course')).toBeInTheDocument()
-    // The filed section is rendered as category buttons rather than the
-    // candidates themselves -- see `CategoryPage` for the drill-down -- so
-    // this asserts the category is on screen, with its count.
-    expect(screen.getByText('Antiquity (1)')).toBeInTheDocument()
+
+    // **The filed candidate is the assertion that matters here.** The old page
+    // rendered filed categories as a row of buttons reading "Antiquity (1)",
+    // so the card itself was two clicks and a route change away and this test
+    // asserted on the button's label. A category is a shelf now, and its
+    // members are on the page.
+    expect(screen.getByText('Filed Course')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Antiquity' })).toBeInTheDocument()
+  })
+
+  it('narrows to matching candidates as the reader searches', async () => {
+    // The capability the page did not have. Every field this searches is
+    // already in the fetched `Catalog`, so a passing search proves the fetch
+    // and the fold are joined -- a page that filtered a hard-coded list would
+    // fail `calls the repository with the project id` below and this one would
+    // still pass, which is why both exist.
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog)
+
+    await userEvent.type(await screen.findByLabelText(/search the catalog/i), 'Highlight')
+
+    expect(await screen.findByText('Highlight Course')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Filed Course')).not.toBeInTheDocument())
+  })
+
+  it('says so, rather than showing an empty page, when a search matches nothing', async () => {
+    const catalog = fakeCatalog({
+      catalog: vi.fn<CatalogRepository['catalog']>().mockResolvedValue(aCatalog()),
+    })
+    show(catalog)
+
+    await userEvent.type(
+      await screen.findByLabelText(/search the catalog/i),
+      'nothing in this catalog',
+    )
+
+    expect(await screen.findByText(/nothing in this catalog matches/i)).toBeInTheDocument()
   })
 
   // The load-bearing assertion. A pane that fabricates its own data, or whose
@@ -273,7 +310,10 @@ describe('CatalogPane', () => {
     })
     show(catalog, 'antiquity')
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Feature' }))
+    // The label carries the candidate's own title: a shelf of cards each
+    // offering a button called "Feature" is a screen-reader reading with no way
+    // to tell which card the cursor is on. See `FeatureToggle`.
+    await userEvent.click(await screen.findByRole('button', { name: 'Feature Filed Course' }))
 
     // Rank is the hero row's length plus one (one existing hero candidate
     // here) -- see `CatalogPane`'s own comment on why this is a placeholder
