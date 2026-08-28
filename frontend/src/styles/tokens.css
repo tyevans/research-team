@@ -296,12 +296,26 @@ body {
   overflow: hidden;
 }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
+/* In `@layer base` for the same reason as the background rule further down,
+   and it was silently beating more than colour. `font` is a *shorthand*, so
+   `font: inherit` sets `font-size` too -- which meant `text-xs`, `text-sm`,
+   `font-mono` and every `text-<colour>` utility written on a button, input,
+   textarea or select was inert, for the whole life of this rule. Measured in
+   Chromium on 2026-08-28: `text-accent` and `text-fg-dim` on buttons both
+   computed to `rgb(215, 222, 231)`, which is plain `--fg` -- so the catalog's
+   chosen filter tab was drawing in the unchosen colour, among others.
+
+   Unlayered, a rule at (0,0,1) beats a layered utility at (0,1,0), because
+   layer order is consulted before specificity. Layered, the utility wins and a
+   control with no utilities still inherits. */
+@layer base {
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
 }
 
 /* Fields carry the page's background as well as its text colour.
@@ -335,12 +349,40 @@ select {
    control's outline should be is a decision about how the console looks
    rather than about whether its text can be read -- but the sentence is
    updated because a comment that describes a colour the browser stopped
-   painting is worse than none. */
-button,
-input,
-textarea,
-select {
-  background: var(--bg);
+   painting is worse than none.
+
+   **In `@layer base`, and that is load-bearing rather than tidiness.** Left
+   unlayered, this rule beat every `bg-*` utility written on a button, input,
+   textarea or select -- because an unlayered normal declaration wins against a
+   layered one whatever the specificity, and Tailwind emits utilities into
+   `@layer utilities`. Not one of them was working. Measured in Chromium on
+   2026-08-28, on the catalog page: four distinct `bg-*` spellings on buttons,
+   every one computing to `rgb(11, 13, 16)` -- `bg-transparent`,
+   `bg-[transparent]` and `bg-bg-panel-2` alike.
+
+   How it surfaced: `CourseCard` stretches its click target as a `<button
+   class="absolute inset-0 ... bg-[transparent]">` across the whole card, so
+   the inert utility painted `--bg` opaquely over the card's own art, title and
+   blurb. `elementFromPoint` at the title's centre returned the button. Every
+   card but the spotlight -- which has no such button -- rendered as an empty
+   box with a border, and no test could see it: jsdom applies no stylesheet, the
+   class is present in the attribute, and the rule is present in the bundle.
+   The two simply never meet.
+
+   `@layer base` puts it before `utilities` in the order `theme.css` declares,
+   so a utility now wins and a bare control still gets its background. This is
+   the third time this repository has paid for the unlayered-rule trap; the
+   other two are the inward focus ring (`layout.css`) and the `.chip-*`
+   families. The difference here is that the fix belongs in the *rule* rather
+   than in a new class, because the rule is a default and defaults are exactly
+   what a layer is for. */
+@layer base {
+  button,
+  input,
+  textarea,
+  select {
+    background: var(--bg);
+  }
 }
 
 /* Links take the colour around them. The browser's `#0000EE` on `--bg`
