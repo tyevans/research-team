@@ -78,9 +78,6 @@ const container = () =>
       }),
       activity: vi.fn().mockResolvedValue(null),
     },
-    workers: {
-      on: vi.fn().mockResolvedValue({ projectId: ATLAS, workers: [], idleSessionIds: [] }),
-    },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
     research: { current: vi.fn().mockResolvedValue(null) },
     topics: { list: vi.fn().mockResolvedValue([]) },
@@ -248,23 +245,33 @@ it('lets the surface scroll below 821 rather than squeezing every pane', async (
  * (`overflow: auto`): opened alone at 700x900 its body is exactly 540.0 around
  * 590 of content.
  *
+ * **Re-measured at 700x750 on 2026-08-27**, after the roster left the queue
+ * header (Task 2 of the activity-placement plan): QUEUE's content dropped to
+ * ~515px, under the 900-height 540px cap, so at 900 the pane no longer
+ * clipped and this test's premise — that the cap actually binds — went false
+ * along with it. The viewport height is the one free variable a `60vh` cap
+ * has: shortening it to 750 (cap 450) puts the cap back under the unchanged
+ * 515px of content without touching what the pane renders. The other test in
+ * this file that measures QUEUE's own height (claim 2) does not depend on the
+ * cap engaging and was not touched.
+ *
  * So the qualifier is not needed *for the panes that exist today*, and adding
  * one would be a change justified by nothing measured. What would break it is a
  * `regions` pane whose regions do not each shrink and scroll — that is the
  * condition, stated here rather than in a `:not()` because a selector cannot
  * express it.
  *
- * **Proved red** by changing the cap to `max-height: 40vh`, at 700x900:
+ * **Proved red** by changing the cap to `max-height: 40vh`, at 700x750:
  *
- *     AssertionError: expected '360px' to be '540px' // Object.is equality
+ *     AssertionError: expected '300px' to be '450px' // Object.is equality
  */
 it('caps the scrolling body at 60vh and leaves what it hides reachable', async () => {
   await show()
-  await resizeViewport(700)
+  await resizeViewport(700, 750)
 
   // Read off the computed style as well as the geometry, so a cap that changed
   // unit rather than value is visible.
-  expect(getComputedStyle(body('queue')).maxHeight).toBe('540px')
+  expect(getComputedStyle(body('queue')).maxHeight).toBe('450px')
 
   // QUEUE's body reaches the cap on its own content, which is what changed when
   // MATERIAL stopped being collapsible: this used to fold the other two panes
@@ -272,7 +279,7 @@ it('caps the scrolling body at 60vh and leaves what it hides reachable', async (
   // reaches that state. It does not need one — the surface page-scrolls here
   // (claim 2), so QUEUE takes the height its content asks for up to the cap
   // whatever MATERIAL below it is doing.
-  await expect.poll(() => body('queue').clientHeight).toBeCloseTo(540, 0)
+  await expect.poll(() => body('queue').clientHeight).toBeCloseTo(450, 0)
 
   // Bounded, and what it cannot show is reachable by scrolling it.
   expect(body('queue').scrollHeight).toBeGreaterThan(body('queue').clientHeight)

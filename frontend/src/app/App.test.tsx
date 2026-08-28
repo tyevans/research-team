@@ -324,34 +324,24 @@ it('hands the selected entity to the graph, not just the view', async () => {
   await waitFor(() => expect(neighborhood).toHaveBeenCalledWith(ATLAS, 'e1'))
 })
 
-it('puts a watched worker in the address bar under the session facet', async () => {
-  // The drawer's session used to be `#/p/<id>/course/watching/<sid>`, a segment
-  // pair that existed for this one case. It is the `session` facet now, which
-  // is the same grammar `#/s/<sid>` and every other selection use -- and this
-  // is the only test in the repository that sees which one is written, because
-  // `Workers` takes `onWatch` as a prop and never builds an href.
+it('puts the holding session in the address bar under the session facet', async () => {
+  // Inherited from `puts a watched worker in the address bar under the session
+  // facet`, which drove `WorkerList`'s per-worker button. That button is gone
+  // with the roster: the dock opens a worker in a drawer and writes no URL, so
+  // the project page no longer turns "a worker is running" into an address.
+  //
+  // The facet is not gone and neither is its grammar — `ProjectView:411`, the
+  // tab below, and `CoursePage:193` all still write it. This follows the tab,
+  // which is the producer a reader on this page can reach. The old comment
+  // claiming this was the only test that sees the href written was already
+  // stale when it was inherited; `CoursePage` builds one too.
   const user = userEvent.setup()
   window.location.hash = `#/p/${ATLAS}`
   renderApp()
 
-  const worker = await screen.findByRole('button', { name: 'answering' })
-  expect(worker).toHaveAttribute('aria-pressed', 'false')
-
-  await user.click(worker)
+  await user.click(await screen.findByRole('tab', { name: 'Holding session' }))
 
   expect(window.location.hash).toBe(`#/p/${ATLAS}/session/${HOLDER}`)
-  // Read back *off the route*, not held beside it. A view that kept its own
-  // copy would light this row up on a hash it never wrote, and a reload would
-  // then close a drawer the URL still names.
-  // `hidden: true` because watching also opens the transcript drawer, which is
-  // modal — the roster behind it is correctly hidden from the accessibility
-  // tree, and it is still the thing under assertion.
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'answering', hidden: true })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    ),
-  )
 })
 
 const MEDIA = SourceId('m1')
