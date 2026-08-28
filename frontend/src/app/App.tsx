@@ -322,8 +322,10 @@ const useTreeRefresh = (active: boolean) => {
       // rather than borrowing the dock's, and it costs no second subscription
       // because this one is already here and already gated on the route.
       // `ProjectActivity.test.tsx` fails if that nesting is broken.
-      // `allRuns()` survives for `RunPanel`, not for this page.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.allRuns() })
+      //
+      // `allRuns()` was invalidated here too, for `RunPanel` rather than for
+      // this page, and went with it: the autonomous run panel is deleted and
+      // no query reads a run any more.
       void queryClient.invalidateQueries({ queryKey: queryKeys.allWorkers() })
     },
   )

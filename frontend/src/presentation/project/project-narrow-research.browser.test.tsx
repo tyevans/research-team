@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createSessionStore } from '@application/session/session-store.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { Container } from '@app/container.ts'
-import { ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
+import { ProjectId, SessionId, SourceId, TopicId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import type { Selection } from '@presentation/routing/routes.ts'
@@ -76,6 +76,31 @@ const DOCUMENTS = Array.from({ length: 40 }, (_, index) => ({
   droppedReason: null,
 }))
 
+/** A queue with topics in it, because QUEUE's height has to come from QUEUE's
+ *  content and this file measures where height goes.
+ *
+ * It was `[]`, and every claim in this file passed anyway -- the pane was tall
+ * enough because `QueueHeader` was four stacked bands above an empty list,
+ * roughly 320px of chrome. Deleting the run panel and folding the rest into a
+ * toolbar took that away and three claims here went red at 856/856 with
+ * nothing about the layout changed. The precondition was being met by
+ * scaffolding nobody had chosen as a height source, which is the fixture
+ * hazard CLAUDE.md records in a different key: a test whose setup supplies the
+ * condition under test cannot see the condition go missing.
+ *
+ * Twelve, and long enough to wrap, so the list overflows the cap on its own. */
+const TOPICS = Array.from({ length: 12 }, (_, index) => ({
+  topicId: TopicId(`aaaaaaaa-0000-0000-0000-0000000000${String(index).padStart(2, '0')}`),
+  question: `Which of the 2019 replication attempts reused the original instrument (${String(index)})?`,
+  status: index === 0 ? 'investigating' : 'open',
+  sources: 3,
+  findings: 1,
+  openSubQuestions: 2,
+  triggers: ['contested'],
+  needsAttention: index === 0,
+  isBlocked: false,
+}))
+
 const container = () =>
   ({
     preferences: new InMemoryPreferenceStore(),
@@ -119,8 +144,7 @@ const container = () =>
       on: vi.fn().mockResolvedValue({ projectId: ATLAS, workers: [], idleSessionIds: [] }),
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
-    research: { current: vi.fn().mockResolvedValue(null) },
-    topics: { list: vi.fn().mockResolvedValue([]) },
+    topics: { list: vi.fn().mockResolvedValue(TOPICS) },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
     documents: {
       list: vi.fn().mockResolvedValue([

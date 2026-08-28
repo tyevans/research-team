@@ -61,7 +61,6 @@ import type {
   MediaProposalGroup,
   MediaProposalStatus,
 } from '@domain/research/media-proposal.ts'
-import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch, DispatchStatus } from '@domain/research/dispatch.ts'
 import type { TopicDocuments } from '@domain/research/topic-document.ts'
 import type { SeedingRun, SeedingStatus } from '@domain/research/seeding.ts'
@@ -81,7 +80,6 @@ import {
   InstallId,
   MessageId,
   ProjectId,
-  RunId,
   SessionId,
   SourceId,
   TopicId,
@@ -292,33 +290,6 @@ export const toProjectDetail = (raw: Dto<typeof dto.projectDetailDto>): ProjectD
   name: raw.name,
   activeSessionId: raw.active_session_id ? SessionId(raw.active_session_id) : null,
   tipAtEvent: raw.tip_at_event,
-})
-
-export const toRun = (raw: Dto<typeof dto.runDto>): ResearchRun => ({
-  runId: RunId(raw.run_id),
-  projectId: ProjectId(raw.project_id),
-  sessionId: SessionId(raw.session_id),
-  // No status at all is the 202 body: ids only, no fold yet. Modelled as an
-  // absent progress rather than as zeroed counters, because a run reporting
-  // "0 rounds" and one that has not been folded are different facts.
-  progress:
-    raw.status === undefined
-      ? null
-      : {
-          status: raw.status,
-          rounds: raw.rounds ?? 0,
-          turns: raw.turns ?? 0,
-          findings: raw.findings ?? 0,
-          stopReason: raw.stop_reason ?? null,
-          workingOn: raw.working_on ?? null,
-          quietRounds: raw.quiet_rounds ?? 0,
-          failures: raw.failures ?? 0,
-          budget: {
-            maxRounds: raw.budget?.max_rounds ?? null,
-            quietRounds: raw.budget?.quiet_rounds ?? null,
-          },
-          readOnly: raw.read_only ?? false,
-        },
 })
 
 /** An ISO-8601 timestamp as epoch milliseconds, or null.

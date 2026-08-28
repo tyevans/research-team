@@ -1,4 +1,10 @@
-"""Sending one agent at one topic, to write down what we understand of it.
+"""Sending one agent at one topic, for one turn, to do one thing to it.
+
+Three actions: `understanding` writes what the project knows about the
+question, `research` gathers sources for it, `refine` judges the question
+itself. They differ in a prompt and a path and in nothing else, which is why
+`TopicDispatcher.dispatch` takes the action rather than there being three of
+it.
 
 `topic_seeding.py` already made the argument this module rests on, and it
 applies here unchanged: a bounded burst of work whose failure costs seconds is
@@ -52,24 +58,33 @@ list and, on some filesystems, unwritable. The `<nn>` prefix makes the
 collision case impossible anyway -- two topics never share a position.
 """
 
-DispatchAction = Literal["understanding"]
+DispatchAction = Literal["understanding", "research", "refine"]
 """What a dispatch was asked to do.
 
-One value today. `research` and `lesson` are designed and deliberately not
-built: one is blocked on whether a dispatch may fetch unattended, the other on
-whether "course" means a lesson or the staged gated thing. A `Literal` with one
-member reads oddly and is correct -- it is the type that will gain members,
-and widening it later is additive.
+Three values. `lesson` is designed and still not built: it is blocked on
+whether "course" means a lesson or the staged gated thing, which is a question
+about authoring rather than about dispatch.
+
+`research` was blocked on `BACKLOG.md` B24 -- `fetch` floors at `ask`, and an
+unattended loop reaching an approval "either deadlocks on a future nobody will
+resolve or is auto-rejected outright". **That blocker is about being
+unattended, not about fetching.** A dispatch is attended by construction: a
+person pressed a button on a row seconds ago and the approvals surface is on
+that page. So this asks, under a default policy, and the person who pressed
+answers. Nothing here lowers `TOOL_FLOORS`, and nothing may -- B24's "a loop
+that can edit its own permissions makes the floors advisory for everything
+else too" is the rule this stays inside.
 """
 
-DISPATCH_ACTIONS: frozenset[str] = frozenset({"understanding"})
+DISPATCH_ACTIONS: frozenset[str] = frozenset({"understanding", "research", "refine"})
 """The actions this build will actually run, for a route to check against.
 
 A runtime set beside the `Literal` rather than derived from it, because the
-route validates a string off the wire and `typing.get_args` on a one-member
-`Literal` is a clever way to write the same set less readably. Adding an
-action means adding it in both places, and a test asserting the route refuses
-`lesson` by name is what notices if only one is updated.
+route validates a string off the wire and `typing.get_args` is a clever way to
+write the same set less readably. Adding an action means adding it in both
+places, and `test_an_unsupported_action_is_refused_by_name` -- which posts
+`lesson`, the one designed action still absent, and asserts the refusal names
+all three of these -- is what notices if only one is updated.
 """
 
 
@@ -139,6 +154,55 @@ def understanding_path(position: int, question: str) -> str:
     return f"{topic_directory(position, question)}/understanding.md"
 
 
+def refinement_path(position: int, question: str) -> str:
+    """Where `refine` records what it concluded about the question itself.
+
+    Beside `understanding.md` in the same directory, which is the case
+    `TOPICS_DIR`'s docstring anticipated when it chose one directory per topic
+    over one file per topic. Overwritten by a later refinement for
+    `understanding_path`'s reason exactly.
+
+    **This file is `refine`'s only durable output, and that is a smaller claim
+    than the design makes.** §3.2 says refine "writes through the topic's
+    existing events (the question and its sub-questions are already editable
+    through `TopicManagePane`'s routes)". Half of that is wrong: sub-questions
+    are editable (`AddSubQuestion`, and a route for it), but **the question is
+    not** -- there is no command, no event and no route that rewrites a
+    `TopicOpened.question`, and `build_topic_tools` gives the agent five tools
+    of which none touches either. So a refine turn cannot rewrite the question
+    it was asked to rewrite. Rather than inventing an event to close the gap
+    -- which this design explicitly forbids itself -- the turn writes its
+    diagnosis and its proposed wording here, where a person applies it from
+    `TopicManagePane`. See the report on this branch; the missing tool is the
+    next thing to build, not something to fake.
+    """
+    return f"{topic_directory(position, question)}/refinement.md"
+
+
+def dispatch_path(action: DispatchAction, position: int, question: str) -> str:
+    """The file this action is asked to write, or `""` when it writes none.
+
+    `research` is the empty case and it is not an oversight: what a research
+    turn produces is links and findings on the topic aggregate --
+    `TopicSourceLinked`, `TopicFindingRecorded`, real events on the permanent
+    log -- and a summary file beside them would be a second, weaker account of
+    the same work that nothing keeps in step with the first.
+
+    The cost lands on the caller: `DispatchRun.path` and the queue's `done`
+    frame carry `""` for a research dispatch, so a client rendering "open the
+    file it wrote" must treat empty as "no file" rather than as a path. Stated
+    here because the alternative -- `None` -- would make every other reader
+    branch on a case only one action produces.
+    """
+    match action:
+        case "understanding":
+            return understanding_path(position, question)
+        case "refine":
+            return refinement_path(position, question)
+        case "research":
+            return ""
+
+
 UNDERSTANDING_PROMPT = (
     "Write down what this project understands about one topic, as a single "
     "markdown document. Work from what the project already holds -- the "
@@ -164,6 +228,64 @@ explanation and a component earns its place when the learner should *do*
 something. A dossier padded with flashcards is a worse dossier.
 """
 
+RESEARCH_PROMPT = (
+    "Gather sources for one topic. Search for material that bears on the "
+    "question, fetch the pages worth keeping, and attach each one to the "
+    "topic with `link_source`. Record what a source establishes with "
+    "`record_finding`, citing the id you linked; record what you looked for "
+    "and could not find with `record_gap`.\n\n"
+    "This is one turn, not a campaign. Stop when the turn is spent rather "
+    "than when the question is closed -- a person is watching this and can "
+    "press the button again. Do not open new topics, do not write files, and "
+    "do not answer the question from your own knowledge: a turn that reports "
+    "findings it did not fetch is indistinguishable, on the topic, from one "
+    "that did the work, and it is the reason this instruction is here.\n\n"
+    "You may be asked to approve each fetch. That is the tool working as "
+    "configured, not a fault: wait for the answer and carry on."
+)
+"""The rule, then the specifics, matching `UNDERSTANDING_PROMPT`'s register.
+
+The last paragraph is the one that earns its place. `fetch` floors at `ask`
+(`autonomy.py`'s `TOOL_FLOORS`), so on a default install every fetch in this
+turn interrupts -- and a model that reads an approval prompt as a refusal
+gives up and writes from memory, which is exactly the failure the paragraph
+above forbids. Telling it the interruption is expected costs two lines.
+
+It does **not** branch on whether `web_search` is registered, for
+`UNDERSTANDING_PROMPT`'s reason: a prompt that described two deployments would
+be a prompt nobody could read against the one they are running.
+"""
+
+REFINE_PROMPT = (
+    "Judge whether this topic's question is answerable by what the project "
+    "has gathered, and write down what should happen to it. Read the "
+    "material first -- the linked sources, the findings, the gaps -- and let "
+    "it decide the verdict rather than deciding from the wording alone.\n\n"
+    "There are four verdicts and you must pick exactly one: the question is "
+    "fine as it stands; it is too broad and should be narrowed to a stated "
+    "narrower question; it is really several questions and should be split "
+    "into stated sub-questions; or the material shows it was the wrong "
+    "question, and you say what the right one is.\n\n"
+    "Do not fetch, do not search, and do not open new topics. Do not record "
+    "findings -- a finding is something learned about the subject, and this "
+    "turn learns something about the question. Propose the new wording in "
+    "the file; a person applies it."
+)
+"""What a refine turn is for, and the four endings it may reach.
+
+**It proposes rather than applies, and that is a limitation rather than a
+design choice.** See `refinement_path`: nothing in this system can rewrite a
+topic's question, so "rewrites the question" -- which is what §3.2 asks for --
+is not available to any tool this turn holds. The enumeration of four verdicts
+is what makes the proposal usable anyway: a person reading the file gets a
+decision to accept or reject, not an essay to interpret.
+
+Forbidding `record_finding` is deliberate and costs something: a turn that
+genuinely learns about the subject while reading has nowhere to put it. The
+alternative is worse -- findings recorded by a turn that never fetched are the
+`UNDERSTANDING_PROMPT` failure with a different verb.
+"""
+
 
 @dataclass(frozen=True)
 class DispatchRun:
@@ -174,6 +296,10 @@ class DispatchRun:
     reporting the request is the more useful of the two: a caller comparing it
     against `project_files` can tell that case apart, which it could not if
     this field simply went missing.
+
+    `path` is `""` for a `research` dispatch, which asks for no file at all --
+    see `dispatch_path`. A reader must treat empty as "no file" rather than as
+    a path, and that is the cost of not making this field optional.
     """
 
     dispatch_id: UUID
@@ -186,8 +312,13 @@ class DispatchRun:
     reply: str
 
 
-def _briefing(detail: TopicDetail, path: str, at: datetime, project_name: str = "") -> str:
-    """The specifics: which topic, what we already hold, and where to write it.
+def _briefing(detail: TopicDetail, closing: str, project_name: str = "") -> str:
+    """The specifics: which topic, what we already hold, and how to finish.
+
+    `closing` is the last thing said, and it differs per action -- two of the
+    three end in a file and one ends on the topic aggregate. Passed in rather
+    than selected here, so this function has no opinion about actions at all
+    and a fourth one adds nothing to it.
 
     Everything here is also reachable through the agent's own tools. It is
     stated up front anyway because a turn that has to discover its own subject
@@ -253,14 +384,25 @@ def _briefing(detail: TopicDetail, path: str, at: datetime, project_name: str = 
             f"rather than leaving the question to carry it."
         )
 
-    lines.append(
-        f"\nWrite exactly one file, at `{path}`, with `write_file`. Overwrite "
+    lines.append(f"\n{closing}")
+    return "\n".join(lines)
+
+
+def _file_closing(path: str, at: datetime, source_ids_note: str) -> str:
+    """The write instruction the two file-writing actions share.
+
+    One builder rather than two literals, because the frontmatter block is the
+    part a reader of the file depends on and two copies would drift by a key.
+    `source_ids_note` is the only thing that differs: what "the ids you drew
+    on" means is not the same question for a synthesis and for a verdict about
+    a question's wording.
+    """
+    return (
+        f"Write exactly one file, at `{path}`, with `write_file`. Overwrite "
         "it if it is already there. Open it with a frontmatter block fenced "
         "by `---` carrying `topic_id`, `question`, "
-        f"`dispatched_at: '{at.isoformat()}'`, and `source_ids` -- the ids you "
-        "actually drew on, which is not necessarily every id listed above."
+        f"`dispatched_at: '{at.isoformat()}'`, and `source_ids` -- {source_ids_note}"
     )
-    return "\n".join(lines)
 
 
 def understanding_input(
@@ -273,7 +415,71 @@ def understanding_input(
     did before, which is the pre-existing behaviour rather than a degraded
     one.
     """
-    return f"{UNDERSTANDING_PROMPT}\n\n{_briefing(detail, path, at, project_name)}"
+    closing = _file_closing(
+        path,
+        at,
+        "the ids you actually drew on, which is not necessarily every id listed above.",
+    )
+    return f"{UNDERSTANDING_PROMPT}\n\n{_briefing(detail, closing, project_name)}"
+
+
+def research_input(detail: TopicDetail, at: datetime, project_name: str = "") -> str:
+    """A research turn's input. No path, because it writes no file.
+
+    `at` is accepted and unused, so every `*_input` here has one signature the
+    dispatcher can call. The alternative -- a special case at the call site for
+    the one action with no timestamp to state -- puts the knowledge that
+    research writes nothing in two places instead of one.
+    """
+    del at
+    closing = (
+        "Attach what you find with `link_source` and say what it establishes "
+        "with `record_finding`. Write no file: the links and findings on this "
+        "topic are the record of this turn, and a file beside them would be a "
+        "second account of the same work."
+    )
+    return f"{RESEARCH_PROMPT}\n\n{_briefing(detail, closing, project_name)}"
+
+
+def refine_input(detail: TopicDetail, path: str, at: datetime, project_name: str = "") -> str:
+    """A refine turn's input: the verdict rules, then the question to judge."""
+    closing = _file_closing(
+        path,
+        at,
+        "the ids whose content decided the verdict, which may be none if the "
+        "question fails on its own terms.",
+    ) + (
+        "\nAfter the frontmatter, state the verdict on its own line as "
+        "`verdict: fine`, `verdict: narrow`, `verdict: split` or "
+        "`verdict: wrong`, then the proposed wording, then why the material "
+        "supports it. Nothing in this repository parses that line -- it is "
+        "there so a person scanning several refinements can sort them, and "
+        "asserting on it in Python would be the half-a-contract mistake "
+        "CLAUDE.md records paying for four times."
+    )
+    return f"{REFINE_PROMPT}\n\n{_briefing(detail, closing, project_name)}"
+
+
+def dispatch_input(
+    action: DispatchAction,
+    detail: TopicDetail,
+    path: str,
+    at: datetime,
+    project_name: str = "",
+) -> str:
+    """The user input for one dispatch, by action.
+
+    A `match` rather than a dict of callables, because the three builders do
+    not share a signature -- `research_input` has no path to take -- and a dict
+    would have to pretend they do.
+    """
+    match action:
+        case "understanding":
+            return understanding_input(detail, path, at, project_name)
+        case "research":
+            return research_input(detail, at, project_name)
+        case "refine":
+            return refine_input(detail, path, at, project_name)
 
 
 class TopicDispatcher:
@@ -293,7 +499,11 @@ class TopicDispatcher:
         action: DispatchAction = "understanding",
         dispatch_id: UUID | None = None,
     ) -> DispatchRun:
-        """Write our understanding of one topic, in a single turn.
+        """Do one thing to one topic, in a single turn.
+
+        The action decides both the prompt and the path; everything else --
+        resolving the topic, joining, releasing -- is identical across the
+        three, which is the reason they are one method rather than three.
 
         The topic is resolved *before* the project is joined. A refusal that
         had already taken the project would hold it for the duration of a turn
@@ -327,7 +537,7 @@ class TopicDispatcher:
             raise UnknownTopic(project_id, topic_id)
 
         question = detail.view.summary.question
-        path = understanding_path(position, question)
+        path = dispatch_path(action, position, question)
         at = datetime.now(UTC)
         # Read before joining, alongside the topic resolution above and for the
         # same reason: a read that failed after `start_in_project` would hold
@@ -340,7 +550,7 @@ class TopicDispatcher:
         try:
             await self._session.attach_project(project_id)
             outcome = await self._turns.run(
-                session_id, understanding_input(detail, path, at, project_name)
+                session_id, dispatch_input(action, detail, path, at, project_name)
             )
         finally:
             await self._session.release_project(session_id)

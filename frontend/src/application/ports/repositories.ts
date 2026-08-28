@@ -36,7 +36,6 @@ import type {
 } from '@domain/research/document.ts'
 import type { ExtractionQueueBoard } from '@domain/research/extraction-queue.ts'
 import type { IgnoredMedia, MediaProposalGroup } from '@domain/research/media-proposal.ts'
-import type { ResearchRun } from '@domain/research/run.ts'
 import type { Dispatch } from '@domain/research/dispatch.ts'
 import type { TopicDocuments } from '@domain/research/topic-document.ts'
 import type { SeedingRun } from '@domain/research/seeding.ts'
@@ -187,15 +186,6 @@ export interface ProjectRepository {
   /** `takeOver` ends the holding session first. */
   join(id: ProjectId, takeOver: boolean): Promise<{ sessionId: SessionId; warning: string | null }>
   delete(id: ProjectId, releaseHolder: boolean): Promise<void>
-}
-
-export interface ResearchRepository {
-  /** Resolves to `null` when nothing is running, and rejects with
-   *  `ResearchDisabledError` when this instance was not wired for runs at all —
-   *  two different meanings the API expresses with the same status code. */
-  current(id: ProjectId): Promise<ResearchRun | null>
-  start(id: ProjectId, maxRounds: number | null): Promise<ResearchRun>
-  cancel(id: ProjectId): Promise<boolean>
 }
 
 export interface TopicRepository {

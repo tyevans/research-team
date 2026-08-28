@@ -95,7 +95,6 @@ const containerWith = (over: Record<string, unknown> = {}) =>
       join: vi.fn(),
       delete: vi.fn().mockResolvedValue(undefined),
     },
-    research: { current: vi.fn().mockResolvedValue(null) },
     workers: {
       on: vi.fn().mockResolvedValue({
         projectId: ATLAS,

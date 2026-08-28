@@ -221,12 +221,6 @@ def main() -> None:
             # so a change made in one browser session applies to all of them --
             # see `set_autonomy` for why that is the trade taken.
             policy=application.policy,
-            # Withheld unless this instance was configured for it, so the
-            # routes are absent rather than present-and-refusing. See
-            # `config.research_run_over_http`: there is no authentication in
-            # front of this port, and this is the one route that would spend
-            # an hour of model time for whoever calls it.
-            research=application.research if config.research_run_over_http() else None,
             # Unlike every other flag-gated dependency above, this one
             # defaults to on: `config.interaction_log_enabled` argues that
             # "unset means the route is not there" is the stronger promise

@@ -155,6 +155,38 @@ contains questions that no amount of research can close because they were
 never questions. Today those sit in the queue forever, because closing them is
 an admission and refining them is typing.
 
+### 3.2a What `refine` turned out to be, which is not quite what §3.2 asked for
+
+§3.2 says `refine` "rewrites the question". **It cannot, and the implementation
+says so rather than pretending otherwise:** no tool a dispatch turn holds can
+rewrite a topic's question. The HTTP route that edits one exists for a person,
+through the manage pane; there is no agent-facing equivalent.
+
+So `refine` writes `refinement.md` into the topic's directory, opening with a
+verdict on its own line — `fine`, `narrow`, `split` or `wrong` — then the
+proposed wording, then why the material supports it. A person applies it.
+
+Two consequences that bind the interface:
+
+- **The row's control must not claim to rewrite anything.** "Refine this
+  question" over a button that produces a proposal a person then applies is a
+  label that lies about who decided. Whatever the icon's accessible name is, it
+  has to survive a reader pressing it and finding a document.
+- **The proposal has to be reachable, or this is the silent-output failure
+  again.** It is: `refinement.md` lands under `/topics/<nn>-<slug>/`, which
+  `TopicDocuments` already lists. Nothing new is needed, but nothing may break
+  that either.
+
+Also deliberate, and it costs something: the refine prompt forbids
+`record_finding`, so a turn that genuinely learns about the *subject* while
+reading has nowhere to put it. The alternative is worse — findings recorded by
+a turn that never fetched are `UNDERSTANDING_PROMPT`'s failure with a different
+verb.
+
+And the verdict line is **not parsed by anything in Python**, on purpose. It is
+there so a person scanning several refinements can sort them. Asserting on it
+would be the half-a-contract mistake `CLAUDE.md` records paying for four times.
+
 ### 3.3 "Find sources for every topic shown" — the bounded fan-out
 
 This is the ask's own proposal and it is the right one. It enqueues a

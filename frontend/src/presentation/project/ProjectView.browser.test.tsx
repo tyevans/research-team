@@ -89,7 +89,6 @@ const container = () =>
       on: vi.fn().mockResolvedValue({ projectId: ATLAS, workers: [], idleSessionIds: [] }),
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
-    research: { current: vi.fn().mockResolvedValue(null) },
     topics: { list: vi.fn().mockResolvedValue([]) },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
   }) as unknown as Container
@@ -342,50 +341,21 @@ it('leaves exactly one split on the project page', async () => {
   expect(document.querySelector('.lay-split')!.getAttribute('data-split')).toBe('project')
 })
 
-/** Claim 4. The queue header keeps its height, and the queue scrolls past it.
+/** Claim 4 stood here and is deleted with the thing it measured.
  *
- * `QueueHeader`'s docstring makes exactly this claim -- "not a scroller", so
- * that the pane body below it stays the one scroller -- and it is the reason
- * slice 0's four loose panels needed re-parenting at all: parked directly in
- * the pane, the run panel scrolled away with the stage list under it. Which box
- * owns the overflow is not something jsdom holds an opinion about, so this is
- * asserted here or it is asserted nowhere.
+ * It asserted that `[data-region-header="queue"]` was not a scroller and did
+ * not grow -- "the queue header keeps its height, and the queue scrolls past
+ * it". There is no such element. The four stacked bands it was about are gone:
+ * the run panel is deleted, seeding is behind a drawer, and the two ask links
+ * are icons on the queue's own search line, which `TopicQueue` draws inside
+ * the scroller by design. Nothing in the pane is above the scroller any more,
+ * so the claim has no subject rather than a new spelling, and a rewritten
+ * version of it would be a test invented to keep a number in this file.
  *
- * **The obvious assertion does not work, and the failure is worth recording.**
- * This first asserted `header.scrollHeight <= clientHeight` — "nothing is
- * clipped" — and adding `flex-1 overflow-auto` to the header did not fail it.
- * The fixture's one stage and four small panels do not fill 900px, so a header
- * that *is* a scroller has nothing to scroll and measures identically to one
- * that is not. A test that only fires when the data happens to be tall is a
- * test that reports on the fixture.
- *
- * So the claim is asserted as the two declarations that make it true, read back
- * from the browser's own cascade. That is not a restatement of the class list:
- * `overflow-y` and `flex-grow` are computed from Tailwind utilities through
- * `@layer utilities`, and jsdom's `getComputedStyle` returns only what an
- * inline style said — it answers `''` for both, and would pass whatever the
- * header were dressed in.
- *
- * **Proved red**: `flex-1 overflow-auto` on the header fails at
- * `expected "auto" to be "visible"`.
+ * `QueueHeader.tsx` and `docs/design/topic-actions-on-the-row.md` §1 carry the
+ * argument for the removal; `TopicQueue.browser.test.tsx` is where the
+ * toolbar's own geometry is now measured.
  */
-it('keeps the queue header out of the queue pane’s scroller', async () => {
-  await show()
-  const header = document.querySelector<HTMLElement>('[data-region-header="queue"]')!
-  const body = header.closest('.lay-pane-body')!
-
-  expect(header.getBoundingClientRect().height).toBeGreaterThan(0)
-  // In QUEUE and not merely somewhere that happens to render: which pane owns
-  // these controls is the whole of the re-parenting.
-  expect(body.closest('[data-pane]')!.getAttribute('data-pane')).toBe('queue')
-
-  const style = getComputedStyle(header)
-  // Not a scroller: the pane body below keeps the overflow.
-  expect(style.overflowY).toBe('visible')
-  // And it does not take the leftover height, which is the other half of the
-  // same claim — a header that grows leaves the queue nothing to scroll in.
-  expect(style.flexGrow).toBe('0')
-})
 
 /** Claim 7. The holding session survives a trip to another tab: a half-typed
  *  message is still there, and the transcript still has its height.

@@ -665,3 +665,34 @@ it('ignores a dispatch frame for another project', async () => {
   await new Promise((resolve) => setTimeout(resolve, FRAME_DEBOUNCE_MS * 2))
   expect(dispatchStatus).toHaveBeenCalledTimes(1)
 })
+
+/** The toolbar survives both fetch states, because the doors on it are not
+ *  about topics.
+ *
+ * `QueueHeader` carries the only two inbound links to `#/p/<id>/ask` and
+ * `#/p/<id>/dialogue`, and this container returns the loading and error
+ * branches *instead of* the queue that draws them. Threading the toolbar only
+ * into `TopicQueue` therefore removed both doors for the length of every
+ * topic request and permanently on a project whose topic read fails -- the
+ * same one-way door this pane has shipped twice, arriving through a state
+ * rather than through a deletion.
+ *
+ * **Found by `App.test.tsx` rather than predicted**: its container has no
+ * `topics.list` at all, so every test in it renders the error branch, and two
+ * of them assert those links by name. **Proved red** here by returning
+ * `<ErrorBox>` alone: `Unable to find an accessible element with the role
+ * "link" and name "the way out"`.
+ */
+it('keeps the toolbar when the topics cannot be read', async () => {
+  renderWithContainer(
+    <TopicList
+      projectId={PROJECT}
+      toolbar={<a href="#/p/x/ask">the way out</a>}
+      onOpen={() => {}}
+    />,
+    { topics: fakeTopics(vi.fn().mockRejectedValue(new Error('no'))) },
+  )
+
+  expect(await screen.findByText(/Could not read/)).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'the way out' })).toBeInTheDocument()
+})

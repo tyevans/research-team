@@ -54,7 +54,8 @@ export const Chip = ({
   children,
 }: {
   /** A tone whose rule still lives in a stylesheet -- `chip-fork`,
-   *  `chip-done`, `chip-run-bad`. Kept as a `string` and kept working: those
+   *  `chip-done`. (`chip-run-bad` stood here too, and went with the autonomous
+   *  run panel that was its only caller.) Kept as a `string` and kept working: those
    *  rules are unlayered, so they beat the utilities above outright, exactly as
    *  they beat `tree.css`'s `.chip` before it. When a view's stylesheet is
    *  deleted its tones go with it, and this prop goes when the last one does. */

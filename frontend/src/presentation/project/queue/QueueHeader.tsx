@@ -1,148 +1,175 @@
+import { type ReactNode, useState } from 'react'
+
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
+import { Tooltip } from '../../common/Tooltip.tsx'
 import { projectHref } from '../../routing/routes.ts'
-import { RunPanel } from './RunPanel.tsx'
-import { SeedPanel } from '../../research/SeedPanel.tsx'
+import { TopicsDrawer, TOPICS_HEADING } from './TopicsDrawer.tsx'
 
-/** The controls that act on the queue, above the queue.
+const ASK = 'Ask this project'
+const DIALOGUE = 'Be asked about this project'
+
+/** The controls that act on the whole queue, as one line above it.
  *
- * Slice 0 parked four controls loose in the QUEUE pane, in the order the course
- * page happened to have them, under a comment promising this component. The
- * promise was not cosmetic: parked directly in the pane they were four sibling
- * bands with no relationship declared between them and nothing separating them
- * from the list underneath, so a reader scrolling the queue scrolled the run
- * panel away with it and a reader looking for the run panel had to know it was
- * above the stages rather than below them.
+ * It was four stacked bands: two full-width bordered links, a card for the
+ * autonomous run, and a card for seeding. Roughly 320px of header above the
+ * first topic in a 320px rail, which put the rows -- the only thing on this
+ * page a person acts on repeatedly -- below the fold on a short viewport.
+ * `docs/design/topic-actions-on-the-row.md` §1 measures it and §2 draws what
+ * replaced it.
  *
- * **The seed control is here because deleting `ResearchView` orphaned it.**
- * `SeedPanel` had exactly one mount, at the top of the research rail, and the
- * argument recorded there for that position transfers whole -- it is where a
- * reader with an empty queue starts, and the topics it opens land directly
- * below it. That is still true, and the list below it is now the *whole* queue
- * rather than half of one. Without this, the same commit that deletes the
- * research view deletes the only way to seed a project.
+ * The four had nothing in common except that each was, at some point, the
+ * newest thing added to the pane. The docstring this one replaces claimed they
+ * were ordered by "how often does somebody touch this", and that ordering was
+ * false in both directions: the two ask links leave the page and were first,
+ * seeding is touched once per project and was last.
  *
- * **Order, and why it is not the course page's.** What is happening now
- * (roster, and the extraction detail under it), then what starts more of it
- * (the run panel), then what adds to the queue by hand (seeding). That is a
- * descending order of "how often does somebody touch this", which is the
- * ordering a header band earns; the course page's order was the order the
- * features landed in.
+ * **Both ask routes are still reachable, and that is not decoration.** The
+ * previous docstring records this pane losing an inbound link twice -- once
+ * when deleting `CourseView` and `ResearchView` took the last door to `#/p/
+ * <id>/ask`, and again one plan later when `facet: 'dialogue'` shipped with
+ * zero `projectHref` call sites. Both were one-way doors that nothing failed
+ * on, because no test asserted a route was reachable. `App.test.tsx` holds
+ * both links by accessible name, and `QueueHeader.test.tsx` holds the pair
+ * against this component directly.
  *
- * **The autonomy panel is no longer the fourth band**, and it did not move for
- * room. It is reached from the lock in the chrome now (`AutonomyLock`): the
- * policy is instance-wide, so a control over it filed under one project's page
- * said it was local, and this region's stated job is what a reader *acts* on
- * rather than what the run is configured with.
+ * **Every control carries its sentence twice.** A `Tooltip` for the mouse and
+ * an `aria-label` with the same words, so a keyboard and a screen reader both
+ * get it without the tooltip ever opening. An icon with only a tooltip is
+ * S-D2, the unlabelled-icon defect this console already records, and
+ * `AutonomyLock` is the worked example this follows.
  *
- * **Dressed in utilities, which is the standing policy and not a port.** The
- * three `<section>`s that carried `worker-panel`, `run-panel` and
- * `autonomy-panel` were three copies of one card -- the same seven
- * declarations, written once in `course.css` and once in `components.css` --
- * and the wrapper is new markup here rather than moved markup, so it is dressed
- * where new surfaces are dressed. What it costs: the card is now spelled in one
- * place and the two stylesheet copies are dead, so `.run-panel` is deleted from
- * `components.css` and `.worker-panel` and `.autonomy-panel` from `course.css`
- * in this commit. Nothing writes any of the three any more -- the sweep in this
- * slice's report is what establishes that -- and a dead rule left in a file
- * that is itself scheduled to die is a rule somebody has to re-decide later.
- *
- * `course.css` itself does **not** die here, which the plan's §2.1 expected it
- * to. Five component families it dresses are still on screen after this
- * commit; the report enumerates them.
- *
- * **Not a scroller.** The header keeps its height and the list below it scrolls,
- * which is the whole point of separating them -- so this deliberately does not
- * take `flex-1` or `overflow-auto`, and the pane's own body remains the one
- * scroller. A focus ring inside it is therefore not at risk of the clipping
- * §5.2 of the plan describes; the rows in the list below are, and they are
- * unchanged from where they already lived.
- *
- * **The roster is not here, and the card it shared with the extraction pane is
- * gone.** `Shell.tsx` gives chrome the test -- "what is running is not a
- * property of the page you happen to be on" -- and a per-project roster polled
- * every two seconds was this page answering a question the dock already
- * answers for free. What is left in this header is only what a reader *acts*
- * on: ask, be asked, run, seed. That is the region's stated job and
- * this is the first time the header has held only that.
+ * **Rendered inside the queue's own toolbar line, not above it.** It is handed
+ * to `TopicList` as a node and lands beside the search box, which is why this
+ * is a bare flex row with no border and no padding of its own -- the line it
+ * sits on belongs to `TopicQueue`. Putting it back above would restore the
+ * separate band this slice exists to remove.
  */
-export const QueueHeader = ({ projectId }: { projectId: ProjectId }) => (
-  <div
-    className="flex flex-col gap-3 border-0 border-b border-solid border-line pb-3"
-    data-region-header="queue"
-  >
-    {/* The way in to the ask page, and it is here because slice 1 deleted the
-        only two there were.
+export const QueueHeader = ({ projectId }: { projectId: ProjectId }) => {
+  const [open, setOpen] = useState(false)
 
-        `CourseView` and `ResearchView` each carried an "Ask" link in their
-        `view-head-actions`, and the commit that deleted both views deleted the
-        last inbound link to a page that still exists, still routes and still
-        works -- `App.tsx` renders it for `#/p/<id>/ask` today. The page even
-        links *back* here, so the door was one-way for a whole slice. Nothing
-        caught it: no test asserts that a route is reachable, and the two
-        deletions were correct in themselves.
+  return (
+    <>
+      <QueueToolbar
+        askHref={projectHref(projectId, { facet: 'ask', id: null })}
+        dialogueHref={projectHref(projectId, { facet: 'dialogue', id: null })}
+        topicsOpen={open}
+        onOpenTopics={() => setOpen(true)}
+      />
+      {open ? <TopicsDrawer projectId={projectId} onClose={() => setOpen(false)} /> : null}
+    </>
+  )
+}
 
-        In QUEUE because `regionOf` already answers `queue` for `ask`, and the
-        reason there is the reason here -- a question you are putting to the
-        project is a thing you want *done*, which is what this region collects.
-        It is not a card: the four below are panels you read and act inside,
-        this is a link that leaves the page, and dressing it as one of them
-        would be the wrong promise. */}
-    <a
-      className="flex items-center justify-between rounded-md border border-solid border-line px-[12px] py-3 text-sm text-fg-dim no-underline hover:bg-bg-hover hover:text-fg"
-      href={projectHref(projectId, { facet: 'ask', id: null })}
-    >
-      Ask this project
-      {/* Decorative: the sentence already says it goes somewhere, and a screen
-          reader announcing "right arrow" after it adds nothing. */}
-      <span aria-hidden="true">-&gt;</span>
-    </a>
+/** The three controls, from props, so the arrangement has a story.
+ *
+ * Split from `QueueHeader` for the reason `TopicQueue` is split from
+ * `TopicList`: the toolbar's whole content is a width question on a 294px
+ * line, and a component that owns drawer state cannot be put in a workbench
+ * without a container and an overlay host behind it. This one can.
+ */
+export const QueueToolbar = ({
+  askHref,
+  dialogueHref,
+  topicsOpen,
+  onOpenTopics,
+}: {
+  askHref: string
+  dialogueHref: string
+  /** Drives `aria-expanded`, so the button says whether the drawer it opens is
+   *  already open rather than offering to open it twice. */
+  topicsOpen: boolean
+  onOpenTopics: () => void
+}) => (
+  // `flex-none` so the search box beside it takes the slack: three buttons at
+  // `.btn-ghost.btn-sm` are ~28px each, and a toolbar that shrank would clip a
+  // glyph before the field it shares the line with gave up a pixel.
+  <div className="flex flex-none items-center gap-[2px]">
+    <Tooltip asChild explanation={TOPICS_HEADING}>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm"
+        aria-label={TOPICS_HEADING}
+        aria-expanded={topicsOpen}
+        onClick={onOpenTopics}
+      >
+        <SlidersGlyph />
+      </button>
+    </Tooltip>
 
-    {/* The way in to the dialogue page, and it is the ONLY one.
-        `facet: 'dialogue'` had zero `projectHref` call sites where
-        `facet: 'ask'` has three, so a surface that routes, renders and grades
-        was reachable only by typing `#/p/<id>/dialogue` -- the same one-way
-        door the comment above records, shipped again one plan later. A facet
-        with no entrance is not shipped.
+    <Tooltip asChild explanation={DIALOGUE}>
+      <a className="btn btn-ghost btn-sm no-underline" aria-label={DIALOGUE} href={dialogueHref}>
+        <AskGlyph incoming />
+      </a>
+    </Tooltip>
 
-        Beside the ask rather than anywhere else, because it is the same kind
-        of thing: a conversation with the project, and this is where a reader
-        looks for one. The two are deliberately not one link with a mode
-        switch -- the direction is what differs, and a reader choosing between
-        "I have a question" and "ask me questions" is choosing between two
-        activities, not two settings. */}
-    <a
-      className="flex items-center justify-between rounded-md border border-solid border-line px-[12px] py-3 text-sm text-fg-dim no-underline hover:bg-bg-hover hover:text-fg"
-      href={projectHref(projectId, { facet: 'dialogue', id: null })}
-    >
-      Be asked about this project
-      <span aria-hidden="true">-&gt;</span>
-    </a>
-
-    <section className={CARD} aria-label="Autonomous research">
-      <RunPanel projectId={projectId} />
-    </section>
-
-    <section className={CARD} aria-label="Seeding">
-      <SeedPanel projectId={projectId} />
-    </section>
+    <Tooltip asChild explanation={ASK}>
+      <a className="btn btn-ghost btn-sm no-underline" aria-label={ASK} href={askHref}>
+        <AskGlyph />
+      </a>
+    </Tooltip>
   </div>
 )
 
-/** The card the three course-page bands each declared for themselves.
+/** Drawn rather than written, for `AutonomyLock`'s reason: the console has no
+ *  icon set, and a glyph borrowed from one would be the only borrowed glyph in
+ *  it. `currentColor` so all three inherit `.btn-ghost`'s hover and disabled
+ *  colours instead of declaring their own, and `aria-hidden` because the
+ *  control already carries the sentence.
  *
- * `px-[12px]` is arbitrary because 12px is not on the spacing scale
- * (3/6/10/14) and the rules this replaces used the literal; rounding it to
- * `px-3` would move every band's left edge by 2px for tidiness, which is a
- * visual change smuggled into a re-parenting. `gap-[8px]` is the same case, and
- * `AutonomyAllowAll` records the same reasoning for the same two numbers.
+ * A `viewBox` of 16 rendered at 12, unlike the lock's 12-at-12: the question
+ * mark inside the bubble below needs room to be a question mark rather than a
+ * smudge, and stroke widths scale with the box.
  *
- * `border-solid` is not decoration and was missing until now: `border` sets
- * four widths and no style, and with no preflight imported every side's style
- * stays the browser's `none`. All four cards have been drawing no border at all
- * since slice 1 -- the same half-a-rule `BACKLOG.md` B55 records for the band's
- * bottom line, which is fixed in the same commit. Found by writing the link
- * above it and noticing the link had an edge and the cards did not.
+ * Sliders rather than the `⚙` the design sketches. A gear at 12px is six
+ * indistinguishable teeth, and the drawer this opens is not "settings" -- it
+ * holds what *configures* the queue, which two adjustable rows say better than
+ * a cog does.
  */
-const CARD =
-  'flex flex-col gap-[8px] rounded-md border border-solid border-line bg-bg-panel px-[12px] py-3'
+const SlidersGlyph = () => (
+  <Glyph>
+    <path d="M2 5h9M2 11h9" />
+    <circle cx="5" cy="5" r="1.6" />
+    <circle cx="9.5" cy="11" r="1.6" />
+  </Glyph>
+)
+
+/** One bubble, mirrored, and the mirroring is the whole distinction.
+ *
+ * The two ask routes differ in *direction* and in nothing else -- the
+ * component this replaces already argued that, when it refused to fold them
+ * into one link with a mode switch: "the direction is what differs, and a
+ * reader choosing between 'I have a question' and 'ask me questions' is
+ * choosing between two activities, not two settings." Two unrelated glyphs
+ * would have said they were unrelated things.
+ *
+ * Neither reading is left to the picture: both controls carry their sentence
+ * as an `aria-label` and as a tooltip, so a reader who takes the tail to mean
+ * the opposite of what it means loses nothing.
+ */
+const AskGlyph = ({ incoming = false }: { incoming?: boolean }) => (
+  <Glyph>
+    <g transform={incoming ? 'translate(16 0) scale(-1 1)' : undefined}>
+      <rect x="1.5" y="2" width="13" height="8.5" rx="2" />
+      <path d="M4.5 10.5v3l3-3" />
+      <path d="M6.1 5.1a2 2 0 0 1 3.9.6c0 1.3-1.9 1.4-1.9 2.6" />
+      <circle cx="8.1" cy="9.1" r="0.35" fill="currentColor" stroke="none" />
+    </g>
+  </Glyph>
+)
+
+const Glyph = ({ children }: { children: ReactNode }) => (
+  <svg
+    width="12"
+    height="12"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.3"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    {children}
+  </svg>
+)

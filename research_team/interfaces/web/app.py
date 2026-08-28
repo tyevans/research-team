@@ -44,7 +44,6 @@ from research_team.application import (
     ApprovalDecision,
     AutonomyPolicy,
     LiveFeed,
-    ResearchSupervisor,
     RunAlreadyActive,
     SessionService,
     TurnAlreadyRunning,
@@ -124,6 +123,7 @@ from research_team.application.topic_dispatch import (
 )
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
+from research_team.application.topics import MAX_OPEN_TOPICS
 from research_team.domain import (
     Corpus,
     CreateProject,
@@ -141,7 +141,6 @@ from research_team.domain.media_proposals import (
     UnignoreMediaAsset,
     UnignoreMediaHost,
 )
-from research_team.domain.research_run import Budget
 from research_team.domain.topic import (
     AddSubQuestion,
     ResolveSubQuestion,
@@ -219,7 +218,6 @@ from research_team.interfaces.web.presenters import (
     project_detail_view,
     project_view,
     roster_view,
-    run_view,
     seeding_view,
     session_view,
     source_text_view,
@@ -678,78 +676,6 @@ class ChecklistState(BaseModel):
     at: int | None = None
 
 
-class NewRun(BaseModel):
-    """What an autonomous run is allowed to spend.
-
-    Every field is optional and every default is the domain's, so a caller
-    that wants a run says `{}` and gets the budget the aggregate documents
-    rather than one this layer invented. Only the two limits a person
-    actually reaches for are exposed: the others are shapes of the same
-    backstop and would be four numbers nobody tunes.
-    """
-
-    max_rounds: int | None = None
-    quiet_rounds: int | None = None
-
-    fetch_hosts: list[str] = Field(default_factory=list)
-    """Named hosts this run may fetch from, unattended. See `fetch_grant`.
-
-    No wildcards, matched exactly (after lowercasing) against a URL's
-    hostname -- `FetchGrant.covers` in `application/grants.py` is what
-    actually enforces this; this layer only carries what a person typed.
-    """
-
-    fetch_budget: int = 0
-    """How many of those fetches this run may spend, total. See `fetch_grant`."""
-
-    def budget(self) -> Budget | None:
-        """None when nothing was asked for, so the driver applies its own."""
-        asked = {
-            key: value
-            for key, value in (
-                ("max_rounds", self.max_rounds),
-                ("quiet_rounds", self.quiet_rounds),
-            )
-            if value is not None
-        }
-        if not asked:
-            return None
-        # `max_turns` follows `max_rounds` rather than staying at its default:
-        # a run capped at two rounds and fifty turns is capped at fifty turns,
-        # and a caller asking for two rounds means two rounds' worth of work.
-        if "max_rounds" in asked:
-            asked.setdefault("max_turns", asked["max_rounds"] * 2)
-        return Budget(**asked)
-
-    def fetch_grant(self) -> tuple[list[str], int]:
-        """The `(hosts, budget)` pair to start this run with, or a refusal.
-
-        Both fields default to "nothing granted" (`[]`, `0`), which is the
-        common case and needs no validation. Half a grant -- hosts named with
-        no budget, or a budget with no hosts named -- is refused rather than
-        silently coerced into "nothing granted" or "unlimited": whichever
-        half a person supplied is the half that suggests they believed the
-        other one was implied, and coercing either way would grant something
-        nobody asked for or silently grant nothing at all. Raises `ValueError`
-        so the route can turn it into a 422 naming the missing half, the same
-        shape `service.start_in_project`'s `CommandRejectedError` already
-        turns into a 409.
-        """
-        has_hosts = bool(self.fetch_hosts)
-        has_budget = self.fetch_budget > 0
-        if has_hosts and not has_budget:
-            raise ValueError(
-                "fetch_hosts was given without fetch_budget; a grant needs both "
-                "or neither -- how many fetches should these hosts get?"
-            )
-        if has_budget and not has_hosts:
-            raise ValueError(
-                "fetch_budget was given without fetch_hosts; a grant needs both "
-                "or neither -- which hosts should this budget cover?"
-            )
-        return list(self.fetch_hosts), self.fetch_budget
-
-
 INTERACTION_BATCH_LIMIT = 200
 """Most events one POST may carry.
 
@@ -900,15 +826,57 @@ class NewDispatch(BaseModel):
     Plain `str` rather than a `Literal`, so a bad value comes back from the
     route naming the actions that exist -- the same reasoning `AutonomyChoice`
     gives for its two fields. FastAPI's 422 for a `Literal` mismatch is
-    machine-readable and names none of them, and `research` and `lesson` are
-    exactly the values a caller will reasonably try: both are designed, in
-    `docs/design/topic-dispatch.md`, and neither is built.
+    machine-readable and names none of them, and `lesson` is exactly the value
+    a caller will reasonably try: it is designed, in
+    `docs/design/topic-dispatch.md`, and not built.
 
-    Defaults to the one action that exists rather than being required. A
-    client pressing the only button on offer should not have to name it.
+    Defaults to `understanding` rather than being required, which is now a
+    weaker justification than it was: with three actions the default is a
+    choice among them rather than the only one on offer. Kept because changing
+    it would break every existing caller that omits the field, and because
+    `understanding` is the one action that neither fetches nor proposes an
+    edit -- the safest thing to do by omission.
     """
 
     action: str = "understanding"
+
+
+MAX_BULK_DISPATCH = MAX_OPEN_TOPICS
+"""Most topics one bulk dispatch may name.
+
+Tied to `MAX_OPEN_TOPICS` rather than chosen independently, and that is the
+whole argument: fifty is the most live topics a project can hold, so "every
+topic the filter is showing me" always fits. A smaller cap would refuse the
+one request this route exists to serve -- the `All 50` case -- and a larger
+one would be a number that could never be reached.
+
+It is a cap on the *request*, not on the queue. Fifty one-turn dispatches is a
+long afternoon of model time, and the thing that makes that acceptable is not
+this number: it is that the queue renders all fifty, drains one at a time, and
+`Stop` drops the lot. That surface is the budget control; this is only a
+refusal of a request nobody meant to make.
+"""
+
+
+class BulkDispatch(BaseModel):
+    """One action, across a list of topics the client chose.
+
+    **`topic_ids` is required and there is no "all".** The server does not get
+    to decide the scope, and the reason is not caution -- it is that "all" has
+    no server-side definition that stays true. The queue the person is looking
+    at is filtered in the browser (`All 12`, `Needs you 3`), so a route that
+    took "all" would have to re-derive that filter from a client that owns it,
+    and the two definitions would drift the first time a tab was added. Sending
+    the ids makes the count on screen and the count enqueued the same number by
+    construction.
+
+    `action` is a plain `str` for `NewDispatch`'s reason and has no default:
+    the per-topic route backs a single button whose meaning is obvious, and
+    this one backs several.
+    """
+
+    action: str
+    topic_ids: list[UUID] = Field(min_length=1, max_length=MAX_BULK_DISPATCH)
 
 
 class AskRequest(BaseModel):
@@ -1006,7 +974,6 @@ def create_app(
     activity: TurnActivity | None = None,
     corpus: CorpusRunner | None = None,
     blob_store: BlobStorePort | None = None,
-    research: ResearchSupervisor | None = None,
     workers: WorkerRoster | None = None,
     extraction: ExtractionActivity | None = None,
     policy: AutonomyPolicy | None = None,
@@ -2324,7 +2291,7 @@ def create_app(
         routes in declaration order, and `seed` would otherwise be parsed as
         a topic id and 422 on every call.
 
-        202, matching `start_research_run`: the turn has not finished when
+        202, matching `dispatch_topic`: the turn has not finished when
         this answers, and what it hands back is the id of a run that has
         *begun*. The topics it opens arrive over the log like any other
         `open_topic` call -- a client that wants them invalidates its topic
@@ -2333,8 +2300,8 @@ def create_app(
         503 rather than 404 when unwired, matching `_topic_reader` above:
         this build is missing configuration, not the project this id names.
         409 when a seed is already running on this project -- see
-        `seeding.py`'s `SeedingActivity.start` for why it is the same
-        exception `start_research_run` maps the same way.
+        `seeding.py`'s `SeedingActivity.start` for why `RunAlreadyActive` is
+        the right exception for a control that appears once on a page.
         """
         if topic_seeder is None or seeding is None:
             raise HTTPException(status_code=503, detail="topic seeding is not configured")
@@ -2419,11 +2386,11 @@ def create_app(
         gives: FastAPI matches in declaration order.
 
         **202 with `queued`, never 409.** This is the one place this API
-        deliberately differs from `seed_topics` and `start_research_run`, and
-        `dispatch.py`'s module docstring carries the argument: those two back a
-        control that appears once on a page, where refusing a second press is
-        correct. This one backs a control on every topic row, where refusing
-        would be the answer to nearly every second press.
+        deliberately differs from `seed_topics`, and `dispatch.py`'s module
+        docstring carries the argument: that one backs a control that appears
+        once on a page, where refusing a second press is correct. This one
+        backs a control on every topic row, where refusing would be the answer
+        to nearly every second press.
 
         The topic is resolved here rather than left to the queue so a bad id
         comes back as a 404 the caller can see. Enqueued and failed
@@ -2499,6 +2466,90 @@ def create_app(
         if dispatch is None:
             raise HTTPException(status_code=503, detail="topic dispatch is not configured")
         return {"cancelled": dispatch.cancel(project_id)}
+
+    @app.post("/api/projects/{project_id}/dispatch/bulk")
+    async def dispatch_topics(project_id: UUID, body: BulkDispatch):
+        """Enqueue one action across the topics the client named. 202, like the one.
+
+        Registered after `/dispatch/cancel` and before nothing that could
+        shadow it -- `/dispatch/{...}` does not exist, so declaration order
+        carries no risk here, unlike the `/topics/{topic_id}` family above.
+
+        **The scope comes from the client and there is no "all".** A route that
+        took "all" would have to define it against a queue the browser is
+        filtering, and the two definitions would drift; see `BulkDispatch`.
+        The safety property this buys is that the count on screen (`Needs you
+        3`) and the number of turns started are the same number by
+        construction, rather than by two pieces of code agreeing.
+
+        **One `DispatchQueue.start` per topic, and deliberately not a second
+        queue.** The existing queue is already FIFO, already one-in-flight per
+        project, already cancellable in one press, and already renders
+        `1 running, 11 queued`. A bulk queue beside it would be a second
+        drain competing for the one thing `Project.decide` refuses to share.
+        So this route is a loop, and the progress surface for it already
+        exists.
+
+        Unknown topic ids are reported rather than refused. The list a browser
+        sends is what it was showing a moment ago, and a topic deleted in that
+        moment would otherwise cost the other forty-nine their dispatch -- an
+        outcome much worse than the mistake. They come back in `unknown` so a
+        client can say so instead of silently starting fewer than it asked
+        for.
+
+        The list length is capped by `BulkDispatch` rather than here, so an
+        over-long request is refused by FastAPI's own 422 before any topic is
+        resolved -- no half-enqueued queue to unwind.
+        """
+        if dispatcher is None or dispatch is None:
+            raise HTTPException(status_code=503, detail="topic dispatch is not configured")
+        await _require_project(project_id)
+
+        if body.action not in DISPATCH_ACTIONS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"no dispatch action {body.action!r}; this build offers "
+                    f"{', '.join(sorted(DISPATCH_ACTIONS))}"
+                ),
+            )
+
+        reader = _topic_reader(project_id)
+        queued: list[dict[str, Any]] = []
+        unknown: list[str] = []
+        # Sequential rather than gathered: `read_topic` hits the same read
+        # model each time and the list is capped at fifty, so concurrency buys
+        # nothing measurable and costs the deterministic enqueue order the
+        # queue's positions are numbered from. A person who pressed this on a
+        # sorted list expects the first row to run first.
+        for topic_id in body.topic_ids:
+            detail = await reader.read_topic(topic_id)
+            if detail is None:
+                unknown.append(str(topic_id))
+                continue
+            queued.append(
+                dispatch.start(
+                    project_id,
+                    topic_id,
+                    body.action,
+                    # `topic_id=topic_id` binds the loop variable per
+                    # iteration. Without it every closure would close over the
+                    # last one and all fifty dispatches would run the same
+                    # topic -- the classic late-binding defect, and one no
+                    # type checker here would catch.
+                    lambda dispatch_id, topic_id=topic_id: dispatcher.dispatch(
+                        project_id, topic_id, body.action, dispatch_id=dispatch_id
+                    ),
+                    question=detail.view.summary.question,
+                )
+            )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "queued": [dispatch_view(frame) for frame in queued],
+                "unknown": unknown,
+            },
+        )
 
     def _media_proposal_view(row: MediaProposalRow) -> dict[str, Any]:
         return {
@@ -4246,101 +4297,6 @@ def create_app(
             }
         return {"id": str(session_id), "project_id": str(project_id), "warning": None}
 
-    @app.post("/api/projects/{project_id}/auto-research")
-    async def start_research_run(project_id: UUID, body: NewRun | None = None):
-        """Start an autonomous run over this project's topic queue.
-
-        202 rather than 200, and the reason is the whole shape of this route:
-        the work has not been done when it answers. What it returns is the id
-        of a run that has *begun*, which is enough to fold its stream, watch
-        its rounds arrive on `/api/stream`, and stop it.
-
-        Off unless `AGENT_RESEARCH_RUN` says otherwise, and absent rather
-        than refusing when it is off -- 404, not 403, because a route that
-        answers 403 has told an unauthenticated caller that there is an
-        unattended research loop on the other side of this port. See
-        `config.research_run_over_http`.
-
-        A session is required and one is started by default, because a run's
-        rounds are turns and a turn needs a session. Starting one goes through
-        `start_in_project`, so a project already held answers 409 naming its
-        holder -- the same answer joining gives, from the same aggregate.
-        Attaching matters more here than anywhere else: without it the agent
-        has no topic tools, and every round of the run would be a turn that
-        could not record anything, which the driver would correctly read as a
-        project with nothing left to find.
-        """
-        if research is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "autonomous runs are not enabled on this instance; "
-                    "set AGENT_RESEARCH_RUN=1 to enable them"
-                ),
-            )
-        await _require_project(project_id)
-        options = body or NewRun()
-        try:
-            # Checked before anything is created: a half-grant is a mistake
-            # in the request, not a state this instance should ever hold --
-            # no session started, no project held, nothing to unwind.
-            fetch_hosts, fetch_budget = options.fetch_grant()
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        try:
-            # RESEARCH_ROUND rather than CHAT: the purpose is what a later
-            # reader of the log uses to tell an autonomous round's turns from a
-            # person's own, and it is the only thing that records the
-            # difference.
-            session_id = await service.start_in_project(
-                project_id, SessionPurpose.RESEARCH_ROUND
-            )
-        except CommandRejectedError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        try:
-            await service.attach_project(project_id)
-        except Exception as error:
-            raise HTTPException(
-                status_code=503,
-                detail=f"the project's knowledge graph would not open: {error}",
-            ) from error
-        try:
-            run = research.start(
-                project_id,
-                session_id,
-                budget=options.budget(),
-                fetch_hosts=fetch_hosts,
-                fetch_budget=fetch_budget,
-                # This route made the session, so this route puts it away.
-                # Two things go wrong without it, and the second is the worse
-                # one: the project stays held, so the *next* run is refused by
-                # a session nobody is driving -- and releasing is what advances
-                # the project's tip, so it is also the only way the files this
-                # run wrote reach the session that comes after it.
-                after=lambda: service.release_project(session_id),
-            )
-        except RunAlreadyActive as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return JSONResponse(status_code=202, content=run_view(run))
-
-    @app.get("/api/projects/{project_id}/auto-research")
-    async def get_research_run(project_id: UUID):
-        """This project's run in flight, folded. 404 when nothing is running.
-
-        Deliberately only the live one. "Every run this project has ever done"
-        is a projection nobody has built, and answering it here with a stream
-        scan would be the read that quietly gets slower for a year.
-        """
-        if research is None:
-            raise HTTPException(status_code=404, detail="autonomous runs are not enabled")
-        await _require_project(project_id)
-        run = research.active(project_id)
-        if run is None:
-            raise HTTPException(
-                status_code=404, detail=f"no run is active on project {project_id}"
-            )
-        return run_view(run, await research.state(run.run_id))
-
     @app.get("/api/workers")
     async def get_all_workers():
         """Everything in flight anywhere, in one request.
@@ -4372,9 +4328,9 @@ def create_app(
         appeared" -- everything *inside* a worker arrives over the live feed,
         which is where a person's attention actually is.
 
-        404 when no roster is wired, matching how `auto-research` answers for
-        a feature this build does not have. A 200 with an empty list would
-        tell a browser that nothing is running, which is a different claim.
+        404 when no roster is wired, matching `/api/workers` above. A 200
+        with an empty list would tell a browser that nothing is running,
+        which is a different claim from "this build cannot tell you".
         """
         if workers is None:
             raise HTTPException(status_code=404, detail="the worker roster is not enabled")
@@ -4399,23 +4355,6 @@ def create_app(
             "current": extraction.current(project_id),
             "last": extraction.last(project_id),
         }
-
-    @app.post("/api/projects/{project_id}/auto-research/cancel")
-    async def cancel_research_run(project_id: UUID):
-        """Ask this project's run to stop after the round it is in.
-
-        200 with `cancelled: false` when there was nothing running, rather
-        than a 404: the caller wanted no run to be in flight, and that is the
-        state they are in. The run is still finishing its round when this
-        returns -- see `ResearchSupervisor.cancel` for why it is not killed.
-        """
-        if research is None:
-            raise HTTPException(status_code=404, detail="autonomous runs are not enabled")
-        await _require_project(project_id)
-        run = research.cancel(project_id)
-        if run is None:
-            return {"cancelled": False, "run": None}
-        return {"cancelled": True, "run": run_view(run)}
 
     def _ask_frame(note: object) -> str:
         """One SSE `data:` line per note.

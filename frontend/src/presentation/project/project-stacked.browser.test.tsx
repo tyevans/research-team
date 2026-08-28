@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createSessionStore } from '@application/session/session-store.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { Container } from '@app/container.ts'
-import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 import { sessionSelection } from '@presentation/routing/routes.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { Shell } from '@presentation/layout/Shell.tsx'
@@ -38,6 +38,31 @@ import { ProjectView } from './ProjectView.tsx'
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
+
+/** A queue with topics in it, because QUEUE's height has to come from QUEUE's
+ *  content and this file measures where height goes.
+ *
+ * It was `[]`, and every claim in this file passed anyway -- the pane was tall
+ * enough because `QueueHeader` was four stacked bands above an empty list,
+ * roughly 320px of chrome. Deleting the run panel and folding the rest into a
+ * toolbar took that away and three claims here went red at 856/856 with
+ * nothing about the layout changed. The precondition was being met by
+ * scaffolding nobody had chosen as a height source, which is the fixture
+ * hazard CLAUDE.md records in a different key: a test whose setup supplies the
+ * condition under test cannot see the condition go missing.
+ *
+ * Twelve, and long enough to wrap, so the list overflows the cap on its own. */
+const TOPICS = Array.from({ length: 12 }, (_, index) => ({
+  topicId: TopicId(`aaaaaaaa-0000-0000-0000-0000000000${String(index).padStart(2, '0')}`),
+  question: `Which of the 2019 replication attempts reused the original instrument (${String(index)})?`,
+  status: index === 0 ? 'investigating' : 'open',
+  sources: 3,
+  findings: 1,
+  openSubQuestions: 2,
+  triggers: ['contested'],
+  needsAttention: index === 0,
+  isBlocked: false,
+}))
 
 const container = () =>
   ({
@@ -79,8 +104,7 @@ const container = () =>
       activity: vi.fn().mockResolvedValue(null),
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
-    research: { current: vi.fn().mockResolvedValue(null) },
-    topics: { list: vi.fn().mockResolvedValue([]) },
+    topics: { list: vi.fn().mockResolvedValue(TOPICS) },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
   }) as unknown as Container
 
@@ -281,8 +305,23 @@ it('caps the scrolling body at 60vh and leaves what it hides reachable', async (
   // whatever MATERIAL below it is doing.
   await expect.poll(() => body('queue').clientHeight).toBeCloseTo(450, 0)
 
-  // Bounded, and what it cannot show is reachable by scrolling it.
-  expect(body('queue').scrollHeight).toBeGreaterThan(body('queue').clientHeight)
+  // Bounded, and what it cannot show is reachable by scrolling.
+  //
+  // **Measured one box further in than it used to be, and the move is not a
+  // weakening.** This read `body('queue').scrollHeight > clientHeight`, and
+  // that held only because `QueueHeader` put roughly 320px of non-scrolling
+  // bands *inside* the pane body above the list -- height the body itself had
+  // to overflow. With the header folded into the queue's own toolbar line,
+  // everything in this pane is `TopicQueue`, which is `h-full` over an inner
+  // scroller: the body is exactly full and the `<ul>` holds the overflow. The
+  // claim is unchanged -- the cap hides content and the content is reachable
+  // -- and the element that hides it is now the list.
+  //
+  // The body's own `overflow-y: auto` is still asserted, because the cap is a
+  // rule about the body and a body that stopped being a scroller would break
+  // every pane in this file that is not a queue.
+  const scroller = pane('queue').querySelector<HTMLElement>('[data-topic-scroll]')!
+  expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight)
   expect(getComputedStyle(body('queue')).overflowY).toBe('auto')
 })
 

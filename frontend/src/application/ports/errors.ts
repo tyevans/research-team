@@ -48,27 +48,5 @@ export class ContractError extends Error {
   }
 }
 
-/** This instance was not wired for autonomous research at all.
- *
- * Distinct from "nothing is running", which the API expresses with the same
- * 404. Worth saying once and never asking about again — polling a feature that
- * is switched off is noise on somebody's log.
- *
- * Here rather than beside the adapter that raises it, even though only the HTTP
- * repository ever constructs one, because the *other* end of this class is a
- * component: `RunPanel` branches on it to decide between a panel and a notice.
- * `ResearchRepository.current` already promises this rejection in its own
- * docstring, so the port's contract named a class the port did not own — and
- * presentation had to reach into `infrastructure/http` to honour it. Moving the
- * class is what lets both sides depend on the port instead of on each other;
- * the cost is that an error with no transport in it now sits in a file whose
- * other two members are about the wire, which is the smaller wrong. */
-export class ResearchDisabledError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ResearchDisabledError'
-  }
-}
-
 export const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)

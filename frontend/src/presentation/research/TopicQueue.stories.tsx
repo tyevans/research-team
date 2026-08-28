@@ -4,6 +4,7 @@ import type { Dispatch } from '@domain/research/dispatch.ts'
 import { focusCounts, type TopicView } from '@domain/research/topic.ts'
 import { TopicId } from '@domain/shared/identifier.ts'
 
+import { QueueToolbar } from '../project/queue/QueueHeader.tsx'
 import { TopicQueue } from './TopicQueue.tsx'
 
 /** The topic queue in the states it actually reaches.
@@ -105,7 +106,27 @@ const dispatch = (over: Partial<Dispatch> = {}): Dispatch => ({
   ...over,
 })
 
+/** The three project-wide verbs, on the search box's line.
+ *
+ * From `QueueToolbar` rather than `QueueHeader` because the latter owns drawer
+ * state and would need a container and an overlay host behind it -- which is
+ * the split `QueueHeader.tsx` documents. What is worth looking at here is the
+ * arrangement, not the drawer, and this is the arrangement.
+ *
+ * On `base` rather than in a story of its own, so every state below is drawn
+ * with the line the real pane has. A queue story whose toolbar was missing
+ * would be a story about a width nobody gets. */
+const TOOLBAR = (
+  <QueueToolbar
+    askHref="#/p/demo/ask"
+    dialogueHref="#/p/demo/dialogue"
+    topicsOpen={false}
+    onOpenTopics={() => {}}
+  />
+)
+
 const base = {
+  toolbar: TOOLBAR,
   topics: TOPICS,
   counts: focusCounts(TOPICS),
   focus: 'all' as const,

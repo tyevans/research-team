@@ -155,7 +155,7 @@ opening rather than in full.
 
 Setting `AGENT_INTERACTION_LOG=0` removes the dependency entirely, and the
 ingest route then answers 503 rather than silently accepting and discarding —
-the same "unset means the route is not there" pattern `AGENT_RESEARCH_RUN`
+the same "unset means the route is not there" pattern `AGENT_SEARXNG_URL`
 uses. It stops collection, not the file: `interactions.db` is still created
 and its schema applied, so the database existing is not evidence that the
 switch failed. **The remedy for data already collected is deleting that file**
@@ -266,9 +266,12 @@ topic and one turn.
 ```
 
 Ctrl-C stops it after the round it is in, rather than leaving a turn
-half-written. The same is available over HTTP only when `AGENT_RESEARCH_RUN=1`
-is set; without it those routes are absent and answer 404 — not 403, which would
-tell an unauthenticated caller there is a research loop here.
+half-written. **The REPL is now the only caller.** The three HTTP routes that
+exposed a run to the console were deleted with the console's run panel: the
+same work is available there as a bounded fan-out of per-topic dispatches,
+which a person can see the count of, watch, and stop. The loop itself is not
+deleted — see `docs/design/topic-actions-on-the-row.md` §4.1 for why the
+distinction matters.
 
 **A run cannot decide it is finished.** Every stop reason is a fold of its own
 stream or of the queue: `queue_empty`, `max_rounds`, `no_new_findings`,

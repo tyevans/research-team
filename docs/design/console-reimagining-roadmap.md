@@ -42,10 +42,31 @@ failure this repo has already paid for.
 
 ## 3. Light and dark modes
 
-Across the board, not the dark-only build there is today. `tokens.css` is
-where the vocabulary lives; the traps are already documented in `CLAUDE.md`
-(unlayered rules beat utilities; jsdom returns only inline styles, so a theme
-assertion has to be a browser measurement).
+Across the board, not the dark-only build there is today. The traps are
+already documented in `CLAUDE.md` (unlayered rules beat utilities; jsdom
+returns only inline styles, so a theme assertion has to be a browser
+measurement).
+
+**This one has a prerequisite that is easy to miss and expensive to skip.**
+The palette is currently written *twice*: `tokens.css`'s `:root` block, which
+every hand-written stylesheet consumes, and `theme.css`'s `@theme` block,
+which is what Tailwind generates utilities from. `theme.css`'s own comment
+calls this "the exact failure `tokens.css` exists to prevent", accepts it for
+the length of the migration, and names the exit: *"Phase 5 deletes the `:root`
+block and leaves this one."* `theme.test.ts` holds the two in agreement in the
+meantime.
+
+A second palette on top of a palette that is already written twice is four
+places for one colour. So light mode either lands *after* that phase-5
+collapse or lands as part of it — and the same commit is where preflight gets
+taken, which `theme.css` says should happen "in one commit rather than drifted
+into". Expect the diff to be large and almost entirely mechanical, and expect
+the visual review to be the real work.
+
+`color-scheme.browser.test.tsx` already measures the one declaration that
+tells the browser which way round the console is, by rendering a control the
+stylesheet does not paint and reading the UA's own answer. That is the shape
+every theme assertion here has to take, and it is already written down.
 
 ## 4. The project list view (index page), reimagined for zero friction
 

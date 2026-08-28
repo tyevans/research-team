@@ -9,6 +9,8 @@ distinction matters more here than for seeding -- a dispatch's whole output
 dispatcher that never wrote one.
 """
 
+from datetime import UTC, datetime
+from typing import get_args
 from uuid import uuid4
 
 import pytest
@@ -16,9 +18,16 @@ from langchain_core.messages import AIMessage
 
 from research_team.application import TurnSupervisor
 from research_team.application.topic_dispatch import (
+    DISPATCH_ACTIONS,
+    REFINE_PROMPT,
+    RESEARCH_PROMPT,
     UNDERSTANDING_PROMPT,
+    DispatchAction,
     TopicDispatcher,
     UnknownTopic,
+    dispatch_input,
+    dispatch_path,
+    refinement_path,
     understanding_path,
 )
 from research_team.domain import CreateProject
@@ -296,3 +305,155 @@ async def test_a_dispatch_is_told_which_project_the_topic_belongs_to(
         if isinstance(getattr(message, "content", None), str)
     )
     assert "research" in sent
+
+
+# ---------------- the three actions ----------------
+
+
+async def _sent_for(dispatcher, fake_model, project_id, topic_id, action) -> str:
+    """The prose one dispatch actually put in front of the model.
+
+    Captures at `_agenerate` rather than asserting on `dispatch_input`
+    directly, matching `test_the_prompt_names_the_topic_the_path_and_the_rule`
+    above and for its reason: a builder that produced the right string and a
+    dispatcher that called a different builder look identical from the
+    outside, and only one of them is the feature.
+    """
+    seen: list = []
+    original = fake_model._agenerate
+
+    async def capture(messages, *args, **kwargs):
+        seen.append(messages)
+        return await original(messages, *args, **kwargs)
+
+    fake_model._agenerate = capture  # type: ignore[method-assign]
+    fake_model.responses = [AIMessage(content="done", id=f"a-{action}")]
+    await dispatcher.dispatch(project_id, topic_id, action)
+    fake_model._agenerate = original  # type: ignore[method-assign]
+    return "\n".join(
+        message.content
+        for message in seen[0]
+        if isinstance(getattr(message, "content", None), str)
+    )
+
+
+async def test_each_action_briefs_its_turn_with_its_own_rule(
+    dispatcher, service, fake_model, project_id, topic_reader
+):
+    """Three actions must not be one prompt under three names.
+
+    The distinguishing property, chosen so the test cannot pass on a
+    coincidence: each action's prompt says the thing the other two forbid.
+    `research` names the tool it records through, `refine` names the verdict,
+    and `understanding` refuses to search -- so an action wired to the wrong
+    builder fails here rather than quietly doing the other job.
+
+    Fails against the code without this change on its first dispatch:
+    `dispatch` refused any action but `understanding`, because `research` and
+    `refine` were not in `DispatchAction`.
+    """
+    await _seed_topic(service, dispatcher, fake_model, project_id, "How does spacing work?")
+    [view] = await topic_reader.list_topics()
+    topic_id = view.summary.topic_id
+
+    sent = {
+        action: await _sent_for(dispatcher, fake_model, project_id, topic_id, action)
+        for action in ("understanding", "research", "refine")
+    }
+
+    assert len({*sent.values()}) == 3
+    assert RESEARCH_PROMPT in sent["research"]
+    assert REFINE_PROMPT in sent["refine"]
+    assert UNDERSTANDING_PROMPT in sent["understanding"]
+    assert "link_source" in sent["research"]
+    assert "verdict: narrow" in sent["refine"]
+
+
+async def test_a_research_dispatch_names_no_file_to_write(
+    dispatcher, service, fake_model, project_id, topic_reader
+):
+    """What a research turn produces is links and findings on the topic
+    aggregate -- real events -- so it is asked for no document, and
+    `DispatchRun.path` is empty rather than naming a file nobody wrote.
+
+    Two assertions, because either alone is weak: an empty `path` with a write
+    instruction still in the prose would send the model at a path this never
+    reports, which is the exact case `DispatchRun.path`'s docstring says it
+    keeps the field non-optional in order to diagnose.
+    """
+    await _seed_topic(service, dispatcher, fake_model, project_id, "How does spacing work?")
+    [view] = await topic_reader.list_topics()
+
+    sent = await _sent_for(
+        dispatcher, fake_model, project_id, view.summary.topic_id, "research"
+    )
+    fake_model.responses = [AIMessage(content="searched", id="a9")]
+    run = await dispatcher.dispatch(project_id, view.summary.topic_id, "research")
+
+    assert run.path == ""
+    assert "Write exactly one file" not in sent
+    assert "/topics/" not in sent
+
+
+async def test_a_refine_dispatch_writes_beside_the_understanding_it_judges(
+    dispatcher, service, fake_model, project_id, topic_reader
+):
+    """One directory per topic was chosen so a second file could land in it
+    (`TOPICS_DIR`), and this is the first thing to take that up.
+
+    Fails without this change: `refinement_path` did not exist and `refine`
+    was not an action.
+    """
+    await _seed_topic(service, dispatcher, fake_model, project_id, "How does spacing work?")
+    [view] = await topic_reader.list_topics()
+    path = refinement_path(0, "How does spacing work?")
+
+    fake_model.responses = [
+        _writes(path, "---\nverdict: narrow\n---\n", call_id="r1"),
+        AIMessage(content="ok", id="a8"),
+    ]
+    run = await dispatcher.dispatch(project_id, view.summary.topic_id, "refine")
+
+    files = await service.project_files(project_id)
+    understanding = understanding_path(0, "How does spacing work?")
+    assert run.path == path == "/topics/00-how-does-spacing-work/refinement.md"
+    assert path in files
+    assert understanding.rsplit("/", 1)[0] == path.rsplit("/", 1)[0]
+
+
+def test_the_two_spellings_of_the_action_vocabulary_agree():
+    """`DispatchAction` and `DISPATCH_ACTIONS` are one set written twice, and
+    only the second reaches the route.
+
+    Derived from the `Literal` by introspection rather than restated here, so
+    a fourth action added to one and not the other fails at this test. That is
+    the failure `DISPATCH_ACTIONS`' docstring says to expect, and until now
+    only a route test posting a specific unknown name could catch it -- which
+    catches a *missing* action and not a *spurious* one.
+    """
+    assert set(get_args(DispatchAction)) == DISPATCH_ACTIONS
+
+
+async def test_every_action_has_a_path_rule_and_a_prompt_builder(
+    service, fake_model, project_id, topic_reader, dispatcher
+):
+    """Parametrised over the vocabulary rather than over the three names, so a
+    fourth action nobody taught `dispatch_path` or `dispatch_input` about
+    fails here.
+
+    Without it that omission surfaces as a `match` falling through and
+    returning `None`, which reaches the turn as the literal string `None` in
+    the user input -- a dispatch that runs, succeeds, and does nothing anyone
+    asked for.
+    """
+    await _seed_topic(service, dispatcher, fake_model, project_id, "How does spacing work?")
+    [view] = await topic_reader.list_topics()
+    detail = await topic_reader.read_topic(view.summary.topic_id)
+    at = datetime.now(UTC)
+
+    for action in sorted(DISPATCH_ACTIONS):
+        path = dispatch_path(action, 0, "How does spacing work?")
+        assert isinstance(path, str)
+        briefing = dispatch_input(action, detail, path, at)
+        assert briefing.strip()
+        assert "None" not in briefing.splitlines()[0]
