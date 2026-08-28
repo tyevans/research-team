@@ -18,7 +18,6 @@ import type {
   LessonRepository,
   MediaProposalRepository,
   ProjectRepository,
-  ResearchRepository,
   SessionRepository,
   CurriculumRepository,
   ExportRepository,
@@ -46,7 +45,6 @@ import {
   HttpExtractionRepository,
   HttpHealthRepository,
   HttpProjectRepository,
-  HttpResearchRepository,
   HttpWorkerRepository,
 } from '@infrastructure/http/project-repository.ts'
 import { HttpSessionRepository } from '@infrastructure/http/session-repository.ts'
@@ -77,7 +75,6 @@ export interface Container {
   readonly approvals: ApprovalRepository
   readonly autonomy: AutonomyRepository
   readonly projects: ProjectRepository
-  readonly research: ResearchRepository
   readonly topics: TopicRepository
   readonly documents: DocumentRepository
   readonly mediaProposals: MediaProposalRepository
@@ -127,7 +124,6 @@ export const createContainer = (baseUrl = ''): Container => {
     approvals: new HttpApprovalRepository(http),
     autonomy: new HttpAutonomyRepository(http),
     projects: new HttpProjectRepository(http),
-    research: new HttpResearchRepository(http),
     topics: new HttpTopicRepository(http),
     documents: new HttpDocumentRepository(http),
     mediaProposals: new HttpMediaProposalRepository(http),

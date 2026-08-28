@@ -518,11 +518,6 @@ export const ProjectView = ({
         label="Queue"
         meta={openTopics === null ? undefined : `${String(openTopics)} open`}
       >
-        {/* The four panels slice 0 parked loose here, now one band of chrome.
-            That slice's comment named this as the change that would make it
-            true, and `QueueHeader` carries the argument. */}
-        <QueueHeader projectId={projectId} />
-
         {/* Replaced rather than pushed, like every MATERIAL selection below: a topic is a **glance**, not a
             destination. The queue is a list a reader scans — open a question,
             read what it is blocked on, go back to the list, open the next —
@@ -541,6 +536,12 @@ export const ProjectView = ({
             means the same as no selection at all. */}
         <TopicList
           projectId={projectId}
+          // The queue's own verbs, on the queue's own toolbar line rather than
+          // in a band above it. It was `<QueueHeader/>` rendered here as a
+          // sibling, which is what made it a band; `QueueHeader` carries the
+          // measurement of what that cost. Handed down as a node because
+          // `TopicQueue` fetches nothing and must keep not fetching.
+          toolbar={<QueueHeader projectId={projectId} />}
           open={openTopic}
           onOpen={(topicId) => select(topicId === null ? null : { facet: 'topic', id: topicId })}
         />

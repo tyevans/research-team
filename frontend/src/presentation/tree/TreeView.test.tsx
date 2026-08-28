@@ -71,7 +71,6 @@ const containerWith = ({
       join: vi.fn(),
       delete: vi.fn().mockResolvedValue(undefined),
     },
-    research: { current: vi.fn().mockResolvedValue(null) },
     // `everywhere` rather than `on`: the row's liveness chip reads the global
     // roster now. Empty means no chip, which is what every test in this file
     // wants — the chip's own behaviour is `ProjectActivity.test.tsx`'s subject.
@@ -315,7 +314,6 @@ it('does not degrade a row when its liveness read fails', async () => {
     containerWith({
       projects: [project(ATLAS, 'atlas')],
       sessions: [session('a', { projectId: ATLAS })],
-      research: { current: vi.fn().mockRejectedValue(new Error('research is not wired up')) },
       workers: { on: vi.fn().mockRejectedValue(new Error('no roster')) },
     }),
   )

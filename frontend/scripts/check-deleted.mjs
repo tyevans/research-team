@@ -412,6 +412,25 @@ const RULES = [
     where: 'styles',
     forbid: [/^\.topic-/m, /^\.sub-question/m, /^\.graph-/m, /^\.seed-/m],
   },
+  {
+    phase: 'queue-toolbar',
+    what: 'the console could start an unbounded autonomous research run',
+    why: "`RunPanel`, `RunView`, `ResearchDisabledNotice`, `run.ts`'s five-ending `StopReason` vocabulary, the `research` port with its one HTTP adapter, and `components.css`'s twenty-two `run-*` rules -- all deleted, because per-topic dispatch made them redundant: a bounded fan-out over the topics a filter is showing does the same work in a queue a person can watch and stop, and its progress surface (`1 running, 11 queued`) already exists. Two of the three things forbidden here are the ones that would come back *silently*. A `run-*` or `chip-run-*` rule re-entering `styles` is unlayered and would beat any utility that replaced it, which is the trap C3b records; `auto-research` re-entering `infrastructure/http` is a client for three routes the server no longer serves, and a 404 from a deleted route is indistinguishable from the 404 that used to mean \"nothing is running\" -- that ambiguity is the whole reason `ResearchDisabledError` existed. This is a deletion of a *surface*: `domain/research_run.py` and the REPL's `/research [n]` are untouched and remain a real caller, so this rule must never be read as saying the capability is gone.",
+    // The `run-*` half is an alternation rather than the `^\.run-` prefix it
+    // reads as wanting, and that is not fastidiousness: `conversation.css`
+    // has `.run-msgs`, `.run-label` and `.run-names` for a *run of messages*
+    // from one speaker, which has nothing to do with an autonomous run and
+    // predates it. A prefix here fails the build on a file this deletion
+    // never touched, which is the drift the header of this file warns about
+    // arriving on day one.
+    where: '',
+    forbid: [
+      /^\.run-(head|title|spacer|sub|actions|rounds|body|cells?|working|topic|ending|off|note)\b/m,
+      /^\.chip-(run-|readonly)/m,
+      /auto-research/,
+      /ResearchDisabledError/,
+    ],
+  },
 ]
 
 /** Every stylesheet under `src/styles/` that exists today, frozen.

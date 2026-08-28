@@ -1,23 +1,20 @@
 import { z } from 'zod'
 
-import { ApiError, ResearchDisabledError } from '@application/ports/errors.ts'
 import type {
   ExtractionRepository,
   HealthRepository,
   ProjectRepository,
-  ResearchRepository,
   SummaryHealth,
   WorkerRepository,
 } from '@application/ports/repositories.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
 import type { Project, ProjectDetail } from '@domain/project/project.ts'
-import type { ResearchRun } from '@domain/research/run.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toExtractionFrame, toProjectDetail, toRoster, toRun } from './mappers.ts'
+import { toExtractionFrame, toProjectDetail, toRoster } from './mappers.ts'
 
 export class HttpProjectRepository implements ProjectRepository {
   constructor(private readonly http: HttpClient) {}
@@ -60,49 +57,6 @@ export class HttpProjectRepository implements ProjectRepository {
     // was never made.
     const params = releaseHolder ? query({ release_holder: 'true' }) : ''
     await this.http.delete(`/api/projects/${seg(id)}${params}`, dto.okDto)
-  }
-}
-
-/** Matched on "not enabled" rather than on the variable name: the GET says only
- *  that much, and only the POST spells out what to set. */
-const saysDisabled = (message: string): boolean => /not enabled|AGENT_RESEARCH_RUN/.test(message)
-
-export class HttpResearchRepository implements ResearchRepository {
-  constructor(private readonly http: HttpClient) {}
-
-  async current(id: ProjectId): Promise<ResearchRun | null> {
-    try {
-      return toRun(await this.http.get(`/api/projects/${seg(id)}/auto-research`, dto.runDto))
-    } catch (error) {
-      // Two unrelated meanings behind one status code, told apart by the detail
-      // text because that is all the server gives.
-      if (error instanceof ApiError && error.isNotFound) {
-        if (saysDisabled(error.message)) throw new ResearchDisabledError(error.message)
-        return null
-      }
-      throw error
-    }
-  }
-
-  async start(id: ProjectId, maxRounds: number | null): Promise<ResearchRun> {
-    const body = maxRounds === null ? {} : { max_rounds: maxRounds }
-    try {
-      return toRun(await this.http.post(`/api/projects/${seg(id)}/auto-research`, body, dto.runDto))
-    } catch (error) {
-      if (error instanceof ApiError && error.isNotFound && saysDisabled(error.message)) {
-        throw new ResearchDisabledError(error.message)
-      }
-      throw error
-    }
-  }
-
-  async cancel(id: ProjectId): Promise<boolean> {
-    const result = await this.http.post(
-      `/api/projects/${seg(id)}/auto-research/cancel`,
-      {},
-      z.object({ cancelled: z.boolean().default(false) }),
-    )
-    return result.cancelled
   }
 }
 

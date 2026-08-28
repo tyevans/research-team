@@ -33,7 +33,6 @@ from research_team.application.graph_read import (
     GraphRelationship,
     Neighborhood,
 )
-from research_team.application.research_supervisor import ActiveRun
 from research_team.application.timeline_read import Timeline, TimelineBand
 from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.application.usages import Usage
@@ -59,7 +58,6 @@ from research_team.domain.learning_area import (
     LearningPath,
     PrerequisiteEdge,
 )
-from research_team.domain.research_run import ResearchRunState
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
 
@@ -906,52 +904,12 @@ def topic_detail_view(detail: TopicDetail) -> dict[str, Any]:
     }
 
 
-def run_view(run: ActiveRun, state: ResearchRunState | None = None) -> dict[str, Any]:
-    """One autonomous run: what it is, and -- if folded -- how it is going.
-
-    Two arguments because the two halves come from different places and one of
-    them is optional. The ids are process-local knowledge, available the
-    instant a run starts; the counters are a fold of its stream, which the
-    route that starts a run has no reason to pay for and the route that
-    reports on one always does.
-
-    `session_id` is here rather than left for the caller to look up because it
-    is where the run's actual work is visible: the rounds are turns on that
-    session, and a browser given only a run id would have nothing to open.
-    """
-    view: dict[str, Any] = {
-        "run_id": str(run.run_id),
-        "project_id": str(run.project_id),
-        "session_id": str(run.session_id),
-    }
-    if state is None:
-        return view
-    return {
-        **view,
-        "status": state.status,
-        "rounds": state.rounds,
-        "turns": state.turns,
-        "findings": state.findings,
-        "stop_reason": state.stop_reason,
-        # Named for what it is: a topic whose round began and has not ended,
-        # which is the topic being worked right now.
-        "working_on": str(state.in_flight_topic) if state.in_flight_topic else None,
-        "quiet_rounds": state.consecutive_quiet_rounds,
-        "failures": state.consecutive_failures,
-        "budget": {
-            "max_rounds": state.budget.max_rounds,
-            "quiet_rounds": state.budget.quiet_rounds,
-        },
-        "read_only": state.read_only,
-    }
-
-
 def seeding_view(frame: dict[str, Any] | None) -> dict[str, Any] | None:
     """A `SeedingActivity` frame, passed through as-is.
 
-    Unlike `run_view`, there is no folding to do: `SeedingActivity` already
-    keeps its frames in the shape a browser wants, because nothing durable
-    backs them for a presenter to reduce. This function exists anyway, for
+    There is no folding to do: `SeedingActivity` already keeps its frames in
+    the shape a browser wants, because nothing durable backs them for a
+    presenter to reduce. This function exists anyway, for
     the same reason every other route reaches for `presenters.py` rather than
     building a dict inline -- the wire shape is decided in one place, not
     wherever a route happens to need it. `None` passes through unchanged: no

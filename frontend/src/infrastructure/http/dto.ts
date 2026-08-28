@@ -252,24 +252,6 @@ export const projectDetailDto = z.object({
   tip_at_event: z.number().default(0),
 })
 
-export const runDto = z.object({
-  run_id: z.string(),
-  project_id: z.string(),
-  session_id: z.string(),
-  // Everything below is absent on the 202 body: a run that has begun and has
-  // not been folded yet.
-  status: z.string().optional(),
-  rounds: z.number().optional(),
-  turns: z.number().optional(),
-  findings: z.number().optional(),
-  stop_reason: maybe(z.string()).optional(),
-  working_on: maybe(z.string()).optional(),
-  quiet_rounds: z.number().optional(),
-  failures: z.number().optional(),
-  budget: z.object({ max_rounds: maybe(z.number()), quiet_rounds: maybe(z.number()) }).optional(),
-  read_only: z.boolean().optional(),
-})
-
 export const healthDto = z.object({
   summaries: z.object({
     healthy: z.boolean().default(true),

@@ -38,6 +38,7 @@ from research_team.domain.topic import OpenTopic, RecordFinding
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import TurnActivity, create_app
+from research_team.interfaces.web.app import MAX_BULK_DISPATCH
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.seeding import SeedingActivity
@@ -2619,228 +2620,6 @@ async def test_an_attempt_is_graded_against_the_file_as_it_was(client, service):
     assert then.json()["correct"] is False
 
 
-# ---------------- autonomous research ----------------
-
-
-@pytest.fixture
-async def research_client(db_path, fake_model):
-    """A client whose app was wired *with* a research supervisor.
-
-    Separate from `client` because the default app is deliberately built
-    without one: `AGENT_RESEARCH_RUN` gates the wiring in `web.py`, and the
-    unwired case is a behaviour these tests check rather than a setup detail.
-    """
-    application = await _started(model=fake_model, db_path=db_path)
-    api = create_app(
-        application.service,
-        application.feed,
-        application.turns,
-        corpus=application.corpus,
-        blob_store=application.blob_store,
-        research=application.research,
-    )
-    transport = ASGITransport(app=api)
-    async with AsyncClient(transport=transport, base_url="http://test") as http:
-        yield application, http
-    await application.close()
-
-
-async def test_the_run_routes_are_absent_unless_the_instance_was_wired_for_them(client):
-    """404 rather than 403: a refusal announces the loop to whoever asked."""
-    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await client.post(f"/api/projects/{project_id}/auto-research", json={})
-
-    assert response.status_code == 404
-    assert "AGENT_RESEARCH_RUN" in response.json()["detail"]
-
-
-async def test_starting_a_run_answers_with_its_ids_before_it_has_finished(research_client):
-    application, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await http.post(f"/api/projects/{project_id}/auto-research", json={})
-
-    assert response.status_code == 202
-    body = response.json()
-    assert body["project_id"] == project_id
-    # The run works turns on a session, and the caller is told which -- that
-    # is where everything the agent actually said is visible.
-    assert UUID(body["session_id"])
-    await application.research.wait(UUID(project_id))
-
-
-class RecordingBuffer:
-    """A `TurnActivityBuffer` that records the lifecycle driven against it.
-
-    `TurnActivity.current()` answers `[]` both for a buffer that was opened
-    and is still empty and for one that was never opened at all -- which are
-    exactly the two cases this test exists to tell apart.
-    """
-
-    def __init__(self) -> None:
-        self.begun: list[UUID] = []
-
-    def begin(self, session_id: UUID) -> None:
-        self.begun.append(session_id)
-
-    def reporter(self, session_id: UUID):
-        return lambda note: None
-
-    def settle(self, session_id: UUID, *, committed: bool) -> None:
-        pass
-
-
-async def test_a_rounds_turn_opens_an_activity_buffer_like_a_persons_does(db_path, fake_model):
-    """A run started from the course page leaves live output to catch up on.
-
-    The defect this covers: rounds were driven by `turns.run(session_id,
-    prompt)` from `composition.py` while only the HTTP route opened a buffer,
-    so the session view knew a turn was running -- `/turns/current` goes
-    through the supervisor, which every turn does -- and had nothing to show
-    for it. Fails against a build where the lifecycle lives in the route.
-    """
-    buffer = RecordingBuffer()
-    application = await _started(model=fake_model, db_path=db_path, activity=buffer)
-    api = create_app(
-        application.service,
-        application.feed,
-        application.turns,
-        corpus=application.corpus,
-        blob_store=application.blob_store,
-        research=application.research,
-        topics=application.topic_readers,
-        topic_seeder=application.topic_seeder,
-    )
-    transport = ASGITransport(app=api)
-    async with AsyncClient(transport=transport, base_url="http://test") as http:
-        project_id, _ = await _project_with_a_topic(application, http, fake_model)
-        fake_model.responses = [AIMessage(content="done", id="round")]
-        started = await http.post(
-            f"/api/projects/{project_id}/auto-research", json={"max_rounds": 1}
-        )
-        assert started.status_code == 202
-        session_id = UUID(started.json()["session_id"])
-        await application.research.wait(UUID(project_id))
-
-    assert session_id in buffer.begun
-    await application.close()
-
-
-async def test_a_started_run_reports_its_own_fold(research_client):
-    application, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-    started = await http.post(
-        f"/api/projects/{project_id}/auto-research", json={"max_rounds": 2}
-    )
-
-    status = await http.get(f"/api/projects/{project_id}/auto-research")
-
-    # Either the run is still in flight and reports its counters, or it has
-    # already drained an empty queue -- both are folds of the same stream, and
-    # which one this lands on is a race with a run that has nothing to do.
-    if status.status_code == 200:
-        assert status.json()["run_id"] == started.json()["run_id"]
-        assert status.json()["budget"]["max_rounds"] == 2
-    else:
-        assert status.status_code == 404
-    await application.research.wait(UUID(project_id))
-
-
-async def test_asking_about_a_project_with_no_run_is_a_404(research_client):
-    _, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await http.get(f"/api/projects/{project_id}/auto-research")
-
-    assert response.status_code == 404
-
-
-async def test_cancelling_nothing_reports_that_nothing_was_running(research_client):
-    _, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await http.post(f"/api/projects/{project_id}/auto-research/cancel")
-
-    assert response.status_code == 200
-    assert response.json() == {"cancelled": False, "run": None}
-
-
-async def test_a_finished_run_puts_its_session_away(research_client):
-    """Or the second run on a project is refused by a session nobody is driving.
-
-    This route starts the session the run works in, so nothing else will ever
-    release it. Releasing is also what advances the project's tip, which is how
-    anything a run wrote reaches the session that comes after it.
-    """
-    application, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    first = await http.post(f"/api/projects/{project_id}/auto-research", json={})
-    await application.research.wait(UUID(project_id))
-
-    assert first.status_code == 202
-    held = (await application.service.project_state(UUID(project_id))).active_session_id
-    assert held is None
-    second = await http.post(f"/api/projects/{project_id}/auto-research", json={})
-    assert second.status_code == 202
-    await application.research.wait(UUID(project_id))
-
-
-async def test_a_run_on_an_unknown_project_is_a_404(research_client):
-    _, http = research_client
-    response = await http.post(f"/api/projects/{uuid4()}/auto-research", json={})
-    assert response.status_code == 404
-
-
-async def test_hosts_without_a_budget_are_refused_naming_the_missing_half(research_client):
-    """Half a grant is a misunderstanding -- the half that is present suggests
-    a person believed the other one was implied."""
-    application, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await http.post(
-        f"/api/projects/{project_id}/auto-research",
-        json={"fetch_hosts": ["a.example"]},
-    )
-
-    assert response.status_code == 422
-    assert "fetch_budget" in response.json()["detail"]
-    # Refused before anything was created: no session left holding the project.
-    held = (await application.service.project_state(UUID(project_id))).active_session_id
-    assert held is None
-
-
-async def test_a_budget_without_hosts_is_refused_naming_the_missing_half(research_client):
-    _, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await http.post(
-        f"/api/projects/{project_id}/auto-research",
-        json={"fetch_budget": 3},
-    )
-
-    assert response.status_code == 422
-    assert "fetch_hosts" in response.json()["detail"]
-
-
-async def test_a_full_grant_is_accepted_and_reaches_the_run(research_client):
-    application, http = research_client
-    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
-
-    response = await http.post(
-        f"/api/projects/{project_id}/auto-research",
-        json={"fetch_hosts": ["a.example"], "fetch_budget": 3},
-    )
-
-    assert response.status_code == 202
-    run_id = UUID(response.json()["run_id"])
-    await application.research.wait(UUID(project_id))
-    state = await application.research.state(run_id)
-    assert state.fetch_hosts == ["a.example"]
-    assert state.fetch_budget == 3
-
-
 # ---------------- learner progress (B28) ----------------
 #
 # An attempt used to be graded and then forgotten: a reload lost every answer,
@@ -3106,9 +2885,8 @@ async def test_all_workers_is_404_when_the_roster_is_not_wired(client_without_wo
 async def test_workers_is_404_when_the_roster_is_not_wired(client_without_workers):
     """A build with no roster says so, rather than reporting an empty project.
 
-    The same shape `auto-research` uses for a disabled feature: 200 with an
-    empty list would tell a browser that nothing is running, which is a
-    different claim from "this build cannot tell you".
+    200 with an empty list would tell a browser that nothing is running,
+    which is a different claim from "this build cannot tell you".
     """
     project_id = await make_project(client_without_workers)
     response = await client_without_workers.get(f"/api/projects/{project_id}/workers")
@@ -4105,7 +3883,7 @@ async def test_definition_route_503s_when_no_definition_service_is_configured(ap
 async def seeding_client(db_path, fake_model):
     """A client wired with a `TopicSeeder` and its own `SeedingActivity`.
 
-    Separate from `client`, matching `research_client`: the default app is
+    Separate from `client`, matching `dispatch_client`: the default app is
     built without a seeder, and that unwired case is one of the behaviours
     these tests check.
     """
@@ -4195,7 +3973,7 @@ async def test_the_catch_up_route_reports_what_a_finished_seed_did(seeding_clien
 async def test_the_202s_run_id_is_the_id_the_finished_run_reports(seeding_client):
     """A client's only reasonable reading of `run_id` in a 202 is "the run I
     just started" -- that is what the field means everywhere else this API
-    hands one back (`run_view`'s `run_id`, `ActiveRun.run_id`). An id here
+    hands one back (a dispatch's `dispatch_id`, for one). An id here
     that never shows up again would be worse than no id at all: a panel
     correlating "the run I started" with "the run that just finished" has to
     be able to do it by this field."""
@@ -4340,8 +4118,18 @@ async def test_dispatching_an_unknown_topic_is_404(dispatch_client, fake_model):
 
 
 async def test_an_unsupported_action_is_refused_by_name(dispatch_client, fake_model):
-    """`research` and `lesson` are designed and deliberately not built. A 422
-    that named neither would read as a typo; this says which actions exist."""
+    """`lesson` is designed and deliberately not built. A 422 that named
+    nothing would read as a typo; this says which actions exist.
+
+    **This is the test that notices a half-widened vocabulary.**
+    `DISPATCH_ACTIONS` and `DispatchAction` are two spellings of one set, and
+    only the runtime one reaches this route -- so asserting that the refusal
+    names all three is what fails if someone adds a fourth to the `Literal`
+    alone. Proved red on this branch by reverting `DISPATCH_ACTIONS` to
+    `frozenset({"understanding"})` and leaving the `Literal` widened: the
+    refusal came back naming only `understanding` and the two new assertions
+    below failed, while every other dispatch test still passed.
+    """
     application, _queue, http = dispatch_client
     project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
 
@@ -4351,6 +4139,53 @@ async def test_an_unsupported_action_is_refused_by_name(dispatch_client, fake_mo
 
     assert response.status_code == 422
     assert "understanding" in response.text
+    assert "research" in response.text
+    assert "refine" in response.text
+
+
+async def test_a_research_dispatch_asks_for_no_file(dispatch_client, fake_model):
+    """`research`'s output is links and findings on the topic, not a document,
+    so its `done` frame carries an empty path.
+
+    Fails against the code without this change twice over: `research` was not
+    in `DISPATCH_ACTIONS` at all, so the POST answered 422 rather than 202.
+    """
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    fake_model.responses = [AIMessage(content="searched", id="a1")]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "research"},
+    )
+    await queue.wait(UUID(project_id))
+
+    assert response.status_code == 202
+    assert response.json()["action"] == "research"
+    finished = queue.last(UUID(project_id), UUID(topic_id))
+    assert finished["status"] == "done"
+    assert finished["path"] == ""
+
+
+async def test_a_refine_dispatch_writes_beside_the_understanding(dispatch_client, fake_model):
+    """`refine` lands in the same topic directory, which is the case
+    `TOPICS_DIR` chose one-directory-per-topic to allow.
+
+    Fails without this change: `refine` was not an action, and there was no
+    `refinement_path` for it to be asked to write.
+    """
+    application, queue, http = dispatch_client
+    project_id, topic_id = await _project_with_a_topic(application, http, fake_model)
+    fake_model.responses = [AIMessage(content="judged", id="a1")]
+
+    await http.post(
+        f"/api/projects/{project_id}/topics/{topic_id}/dispatch",
+        json={"action": "refine"},
+    )
+    await queue.wait(UUID(project_id))
+
+    finished = queue.last(UUID(project_id), UUID(topic_id))
+    assert finished["path"] == "/topics/00-how-does-spacing-work/refinement.md"
 
 
 async def test_the_catch_up_route_reports_the_finished_dispatch(dispatch_client, fake_model):
@@ -4658,3 +4493,228 @@ async def test_dispatch_frames_ride_the_stream_without_an_id(repository):
     assert all(frame.startswith("data: ") for frame in frames)
     assert all("id:" not in frame for frame in frames)
     assert json.loads(frames[0].removeprefix("data: ").strip())["type"] == "Dispatch"
+
+
+# ---------------- the bulk fan-out ----------------
+
+
+async def _project_with_several_topics(application, http, fake_model, questions):
+    """A project holding one topic per question, opened through a real turn.
+
+    Seeded through `TopicSeeder` rather than by writing rows, so the topic ids
+    these tests fan out over are ids the read model actually issued. A fixture
+    that inserted them directly could not tell a bulk route that skips
+    resolution from one that does it -- the fixture rule CLAUDE.md records.
+    """
+    project_id = (await http.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    fake_model.responses = [
+        AIMessage(
+            content="",
+            id="open",
+            tool_calls=[
+                {
+                    "name": "open_topic",
+                    "args": {"question": question, "rationale": "core"},
+                    "id": f"t{index}",
+                }
+                for index, question in enumerate(questions)
+            ],
+        ),
+        AIMessage(content="opened", id="reply"),
+    ]
+    await application.topic_seeder.seed(
+        UUID(project_id), "spaced repetition", max_topics=len(questions) + 4
+    )
+    topics = (await http.get(f"/api/projects/{project_id}/topics")).json()
+    return project_id, [topic["topic_id"] for topic in topics]
+
+
+async def test_bulk_dispatch_enqueues_one_per_topic_the_client_named(
+    dispatch_client, fake_model
+):
+    """The fan-out's whole point: the count on screen and the number of turns
+    started are the same number.
+
+    Asserted on the queue rather than on the response alone -- a route that
+    answered with three frames and enqueued one would pass a response-only
+    check, and the queue is what actually spends the model time.
+
+    Fails without this change: the route did not exist and the POST was 404.
+    """
+    application, queue, http = dispatch_client
+    project_id, topic_ids = await _project_with_several_topics(
+        application, http, fake_model, ["How does spacing work?", "What is recall?"]
+    )
+    fake_model.responses = [
+        AIMessage(content="one", id="b1"),
+        AIMessage(content="two", id="b2"),
+    ]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/dispatch/bulk",
+        json={"action": "research", "topic_ids": topic_ids},
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert len(body["queued"]) == 2
+    assert body["unknown"] == []
+    assert {frame["topic_id"] for frame in body["queued"]} == set(topic_ids)
+    assert all(frame["action"] == "research" for frame in body["queued"])
+    await queue.wait(UUID(project_id))
+    assert {frame["topic_id"] for frame in queue.finished(UUID(project_id))} == set(topic_ids)
+
+
+async def test_bulk_dispatch_runs_each_topic_rather_than_one_of_them_twice(
+    dispatch_client, fake_model
+):
+    """The late-binding defect, pinned.
+
+    A `lambda` in the enqueue loop that closed over the loop variable rather
+    than binding it would hand every dispatch the *last* topic id, and every
+    other assertion in this file would still pass: two frames go out, two
+    turns run, the queue drains. The only visible difference is which topic
+    each turn was actually briefed about, so that is what this asserts.
+    """
+    application, queue, http = dispatch_client
+    project_id, topic_ids = await _project_with_several_topics(
+        application, http, fake_model, ["How does spacing work?", "What is recall?"]
+    )
+    fake_model.responses = [
+        AIMessage(content="one", id="b1"),
+        AIMessage(content="two", id="b2"),
+    ]
+
+    await http.post(
+        f"/api/projects/{project_id}/dispatch/bulk",
+        json={"action": "understanding", "topic_ids": topic_ids},
+    )
+    await queue.wait(UUID(project_id))
+
+    finished = queue.finished(UUID(project_id))
+    assert {frame["path"] for frame in finished} == {
+        "/topics/00-how-does-spacing-work/understanding.md",
+        "/topics/01-what-is-recall/understanding.md",
+    }
+
+
+async def test_bulk_dispatch_reports_an_unknown_id_rather_than_refusing_the_rest(
+    dispatch_client, fake_model
+):
+    """The list a browser sends is what it was showing a moment ago. A topic
+    deleted in that moment must not cost the others their dispatch -- but it
+    must not vanish silently either, or the client renders fewer chips than
+    rows and nothing says why.
+    """
+    application, queue, http = dispatch_client
+    project_id, topic_ids = await _project_with_several_topics(
+        application, http, fake_model, ["How does spacing work?"]
+    )
+    missing = str(uuid4())
+    fake_model.responses = [AIMessage(content="one", id="b1")]
+
+    response = await http.post(
+        f"/api/projects/{project_id}/dispatch/bulk",
+        json={"action": "research", "topic_ids": [*topic_ids, missing]},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["unknown"] == [missing]
+    assert len(response.json()["queued"]) == 1
+    await queue.wait(UUID(project_id))
+
+
+async def test_bulk_dispatch_refuses_a_list_longer_than_a_project_can_hold(
+    dispatch_client, fake_model
+):
+    """Capped at `MAX_BULK_DISPATCH`, which is `MAX_OPEN_TOPICS`: "every topic
+    the filter is showing me" always fits, and nothing larger is a request
+    anybody meant to make.
+
+    Refused before any topic is resolved, so there is no half-enqueued queue
+    to unwind -- which is why the cap is on the model rather than in the route
+    body.
+    """
+    application, _queue, http = dispatch_client
+    project_id, _topic_ids = await _project_with_several_topics(
+        application, http, fake_model, ["How does spacing work?"]
+    )
+
+    response = await http.post(
+        f"/api/projects/{project_id}/dispatch/bulk",
+        json={
+            "action": "research",
+            "topic_ids": [str(uuid4()) for _ in range(MAX_BULK_DISPATCH + 1)],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+async def test_bulk_dispatch_refuses_an_empty_list(dispatch_client, fake_model):
+    """An empty fan-out is a client bug -- a button pressed with no rows
+    shown -- and answering 202 with nothing queued would hide it behind a
+    success."""
+    application, _queue, http = dispatch_client
+    project_id, _topic_ids = await _project_with_several_topics(
+        application, http, fake_model, ["How does spacing work?"]
+    )
+
+    response = await http.post(
+        f"/api/projects/{project_id}/dispatch/bulk",
+        json={"action": "research", "topic_ids": []},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_bulk_dispatch_refuses_an_unknown_action_by_name(dispatch_client, fake_model):
+    """Same refusal as the per-topic route, checked separately because it is a
+    second copy of the check and a second place to forget it."""
+    application, _queue, http = dispatch_client
+    project_id, topic_ids = await _project_with_several_topics(
+        application, http, fake_model, ["How does spacing work?"]
+    )
+
+    response = await http.post(
+        f"/api/projects/{project_id}/dispatch/bulk",
+        json={"action": "lesson", "topic_ids": topic_ids},
+    )
+
+    assert response.status_code == 422
+    assert "research" in response.text
+
+
+async def test_bulk_dispatch_is_503_unless_the_instance_was_wired(client):
+    """Matching the per-topic route: this build is missing configuration, not
+    the project the id names."""
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+
+    response = await client.post(
+        f"/api/projects/{project_id}/dispatch/bulk",
+        json={"action": "research", "topic_ids": [str(uuid4())]},
+    )
+
+    assert response.status_code == 503
+
+
+async def test_the_autonomous_run_routes_are_gone(dispatch_client, fake_model):
+    """Deleted surface, asserted rather than assumed.
+
+    A 404 here is what a *route that was never wired* also answered, so this
+    is a weak test on its own and is written down as such: what it actually
+    pins is that no later change reintroduces the three routes without a
+    decision. The capability is not deleted -- `application/research_run.py`
+    and its supervisor still drive the REPL's `/research [n]` -- and this test
+    would be the wrong place to notice if it were.
+    """
+    application, _queue, http = dispatch_client
+    project_id, _topic_id = await _project_with_a_topic(application, http, fake_model)
+
+    started = await http.post(f"/api/projects/{project_id}/auto-research", json={})
+    status = await http.get(f"/api/projects/{project_id}/auto-research")
+    cancelled = await http.post(f"/api/projects/{project_id}/auto-research/cancel")
+
+    assert started.status_code == 404
+    assert status.status_code == 404
+    assert cancelled.status_code == 404

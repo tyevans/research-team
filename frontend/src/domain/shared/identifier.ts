@@ -12,7 +12,6 @@ type Branded<T, B extends string> = T & { readonly [brand]: B }
 
 export type SessionId = Branded<string, 'SessionId'>
 export type ProjectId = Branded<string, 'ProjectId'>
-export type RunId = Branded<string, 'RunId'>
 export type ApprovalId = Branded<string, 'ApprovalId'>
 export type SourceId = Branded<string, 'SourceId'>
 export type ComponentId = Branded<string, 'ComponentId'>
@@ -27,7 +26,6 @@ export type InstallId = Branded<string, 'InstallId'>
 
 export const SessionId = (raw: string): SessionId => raw as SessionId
 export const ProjectId = (raw: string): ProjectId => raw as ProjectId
-export const RunId = (raw: string): RunId => raw as RunId
 export const ApprovalId = (raw: string): ApprovalId => raw as ApprovalId
 export const SourceId = (raw: string): SourceId => raw as SourceId
 export const ComponentId = (raw: string): ComponentId => raw as ComponentId

@@ -65,15 +65,17 @@ export const queryKeys = {
    *  refresh one. */
   project: (project: ProjectId) => ['project', project] as const,
 
-  run: (project: ProjectId) => ['run', project] as const,
-  /** Every project's run and worker state at once.
+  /** Every project's worker state at once.
    *
    * The landing page draws one live marker per project row and has no list of
    * which projects to invalidate -- the rows it drew are the virtualizer's
-   * business, not the invalidator's. These are prefixes rather than keys, and
-   * they are here for the reason every other key is: an invalidation that
-   * misspells one silently does nothing. */
-  allRuns: () => ['run'] as const,
+   * business, not the invalidator's. This is a prefix rather than a key, and
+   * it is here for the reason every other key is: an invalidation that
+   * misspells one silently does nothing.
+   *
+   * `run()` and `allRuns()` stood beside this and are gone with the autonomous
+   * run panel: nothing in the console reads a run any more, and a key nobody
+   * writes to is an invalidation that cannot be told from one that works. */
   allWorkers: () => ['workers'] as const,
   /** Everything running anywhere, as one cached answer.
    *

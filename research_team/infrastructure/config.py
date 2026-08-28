@@ -127,7 +127,7 @@ def interaction_log_enabled() -> bool:
     """Whether the console reports what the user did. On unless switched off.
 
     The only default-on boolean in this module, and the inversion is
-    deliberate. `research_run_over_http` is off by default because unset
+    deliberate. Every other switch here is off by default because unset
     meaning "the route is not there" is a stronger promise than a check inside
     a route that exists -- and that reasoning still holds for anything that
     spends model time or reaches the network on a caller's behalf. This route
@@ -281,23 +281,6 @@ def searxng_url() -> str | None:
 def searxng_results() -> int:
     """How many results reach the model. Capped because context is the cost."""
     return int(os.getenv("AGENT_SEARXNG_RESULTS", str(DEFAULT_SEARXNG_RESULTS)))
-
-
-def research_run_over_http() -> bool:
-    """Whether the web UI may start an autonomous run. Off unless asked.
-
-    The one switch in front of the loop, and it is configuration rather than a
-    gate for the reason `AGENT_SEARXNG_URL` is: "unset means the route is not
-    there" is a stronger promise than any check inside a route that exists.
-
-    Off by default because of what the run is and where the port is. There is
-    no authentication on any route (BACKLOG B18), and this is the only one that
-    would spend an hour of model time on behalf of whoever called it -- every
-    other route reads the log or runs one turn somebody is waiting on. The REPL
-    has no equivalent switch and needs none: somebody is at the terminal, which
-    is the property this variable is standing in for.
-    """
-    return os.getenv("AGENT_RESEARCH_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def graph_store() -> str:

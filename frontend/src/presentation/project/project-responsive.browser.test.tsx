@@ -89,7 +89,6 @@ const container = () =>
       on: vi.fn().mockResolvedValue({ projectId: ATLAS, workers: [], idleSessionIds: [] }),
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
-    research: { current: vi.fn().mockResolvedValue(null) },
     topics: { list: vi.fn().mockResolvedValue([]) },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
   }) as unknown as Container

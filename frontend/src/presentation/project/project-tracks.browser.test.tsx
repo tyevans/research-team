@@ -177,7 +177,6 @@ const container = () =>
       on: vi.fn().mockResolvedValue({ projectId: ATLAS, workers: [], idleSessionIds: [] }),
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
-    research: { current: vi.fn().mockResolvedValue(null) },
     topics: { list: vi.fn().mockResolvedValue(TOPICS) },
     documents: { list: vi.fn().mockResolvedValue(DOCUMENTS) },
     graphs: {

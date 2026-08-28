@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { page } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { expect, it } from 'vitest'
@@ -7,6 +8,7 @@ import { focusCounts, type TopicView } from '@domain/research/topic.ts'
 import { TopicId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
+import { QueueToolbar } from '../project/queue/QueueHeader.tsx'
 import { TopicQueue } from './TopicQueue.tsx'
 
 /** What the row reports about its own dispatch, at the width the row gets.
@@ -61,7 +63,13 @@ const RUNNING: Dispatch = {
   detail: null,
 }
 
-const Rail = ({ dispatches }: { dispatches: ReadonlyMap<string, Dispatch> }) => (
+const Rail = ({
+  dispatches,
+  toolbar,
+}: {
+  dispatches: ReadonlyMap<string, Dispatch>
+  toolbar?: ReactNode
+}) => (
   <OverlayHost>
     <div
       style={{
@@ -87,6 +95,7 @@ const Rail = ({ dispatches }: { dispatches: ReadonlyMap<string, Dispatch> }) => 
         onDispatch={() => {}}
         onManage={() => {}}
         onStop={() => {}}
+        toolbar={toolbar}
       />
     </div>
   </OverlayHost>
@@ -137,4 +146,70 @@ it('keeps both verbs on the row while it does', async () => {
     expect(box.width).toBeGreaterThan(0)
     expect(box.right).toBeLessThanOrEqual(metaBox.right + 1)
   }
+})
+
+/** The toolbar line, which is a width fight and therefore not a jsdom question.
+ *
+ * Three icon controls and a search field share the ~294px this rail gives one
+ * line. jsdom lays nothing out, so a glyph painted past the right edge, a
+ * field squeezed to nothing, and a row that fits produce identical markup --
+ * the same blindness the two tests above exist for, one line higher up the
+ * pane.
+ *
+ * Both directions are asserted because both have happened on this pane. The
+ * `CHIP` comment in `TopicQueue.tsx` records a chip drawn 708px wide inside a
+ * 294px line *and* a chip shrunk to 0px, from the same row, and a toolbar is
+ * the same two failures: the icons clipped off the end, or the field they
+ * share the line with reduced to a caret.
+ *
+ * **Proved red** by dropping `flex` from the line's wrapper, which is the
+ * regression that matters: the toolbar falls to a second row and the header is
+ * two stacked bands again, which is the shape this slice removed. Measured at
+ * the first control's left edge of 13 against a field ending at 185. Every
+ * jsdom assertion in `QueueHeader.test.tsx` stays green through that.
+ *
+ * What does **not** break it, measured rather than assumed: giving the field
+ * `w-full` instead of `min-w-0 flex-1`. A flex item shrinks below `width:
+ * 100%` on its own, so that spelling still fits -- `min-w-0 flex-1` is the
+ * honest declaration of what is wanted rather than the thing standing between
+ * this line and a defect, and a comment claiming otherwise would be a
+ * measurement nobody took.
+ */
+it('fits the toolbar and the search box on one line', async () => {
+  await render(
+    <Rail
+      dispatches={new Map()}
+      toolbar={
+        <QueueToolbar
+          askHref="#/p/x/ask"
+          dialogueHref="#/p/x/dialogue"
+          topicsOpen={false}
+          onOpenTopics={() => {}}
+        />
+      }
+    />,
+  )
+
+  const field = page.getByRole('searchbox', { name: 'Filter topics' }).element()
+  const fieldBox = field.getBoundingClientRect()
+  const lineBox = field.parentElement!.getBoundingClientRect()
+
+  const controls = [
+    page.getByRole('button', { name: /seed and manage/i }),
+    page.getByRole('link', { name: 'Ask this project' }),
+    page.getByRole('link', { name: 'Be asked about this project' }),
+  ]
+  for (const control of controls) {
+    const box = control.element().getBoundingClientRect()
+    expect(box.width).toBeGreaterThan(0)
+    expect(box.right).toBeLessThanOrEqual(lineBox.right + 1)
+    // Not merely inside the line: past the field, rather than on top of it.
+    // Two overlapping boxes both satisfy the bound above.
+    expect(box.left).toBeGreaterThanOrEqual(fieldBox.right - 1)
+  }
+
+  // The field gives up the slack and keeps enough of itself to type in. 120px
+  // is not a design token, it is a floor: below it the placeholder is gone and
+  // the box reads as broken rather than as narrow.
+  expect(fieldBox.width).toBeGreaterThan(120)
 })

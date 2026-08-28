@@ -11,7 +11,6 @@ import {
   toNeighborhood,
   toProjectDetail,
   toRoster,
-  toRun,
   toSession,
   toSessionSummary,
   toTurnRange,
@@ -148,46 +147,6 @@ describe('toTurnRange', () => {
   it('is null unless both ends are present — a range with one end is not a range', () => {
     expect(toTurnRange(parse(dto.turnResultDto, { from_index: 4 }))).toBeNull()
     expect(toTurnRange(parse(dto.turnResultDto, {}))).toBeNull()
-  })
-})
-
-describe('toRun', () => {
-  const ids = { run_id: 'r', project_id: 'p', session_id: 's' }
-
-  it('reads the 202 body as a run with no fold yet, not as zeroed counters', () => {
-    // "0 rounds" and "not folded" are different facts.
-    expect(toRun(parse(dto.runDto, ids)).progress).toBeNull()
-  })
-
-  it('reads a folded run', () => {
-    const run = toRun(
-      parse(dto.runDto, {
-        ...ids,
-        status: 'stopped',
-        rounds: 4,
-        turns: 4,
-        findings: 2,
-        stop_reason: 'queue_empty',
-        quiet_rounds: 1,
-        failures: 0,
-        budget: { max_rounds: 10, quiet_rounds: 3 },
-        read_only: true,
-      }),
-    )
-    expect(run.progress).toMatchObject({
-      status: 'stopped',
-      rounds: 4,
-      findings: 2,
-      stopReason: 'queue_empty',
-      quietRounds: 1,
-      readOnly: true,
-      budget: { maxRounds: 10, quietRounds: 3 },
-    })
-  })
-
-  it('reads an uncapped budget as uncapped rather than as zero', () => {
-    const run = toRun(parse(dto.runDto, { ...ids, status: 'running' }))
-    expect(run.progress?.budget.maxRounds).toBeNull()
   })
 })
 
