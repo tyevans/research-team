@@ -8,10 +8,25 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { ExtractionRepository } from '@application/ports/repositories.ts'
+import {
+  emptyExtraction,
+  type Extraction,
+  type ExtractionStage,
+} from '@domain/knowledge/extraction.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { StreamProvider } from '../shell/StreamProvider.tsx'
-import { ExtractionPane } from './ExtractionPane.tsx'
+import { ExtractionPane, ExtractionView } from './ExtractionPane.tsx'
+
+/** An `Extraction` with the stages *reached* set directly, for the two tests
+ *  below that assert on markup rather than on the store's fold -- built over
+ *  `emptyExtraction` so a field this file does not care about keeps its
+ *  default rather than being hand-repeated. */
+const running = (stages: readonly ExtractionStage[], now: ExtractionStage): Extraction => ({
+  ...emptyExtraction('notes'),
+  stage: now,
+  stages: stages.map((stage) => ({ stage, detail: '' })),
+})
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
@@ -159,7 +174,11 @@ it('lists the consolidation pass under its position', async () => {
   push(frame({ stage: 'consolidating', detail: 'otter — merged into Lutra', index: 1, total: 9 }))
   push(frame({ stage: 'consolidating', detail: 'kelp — kept, no match', index: 2, total: 9 }))
 
-  expect(screen.getByText(/2\/9/)).toBeInTheDocument()
+  // The count now shows twice — once on the status line's own count, once on
+  // the consolidating line that names which pass it belongs to (see the
+  // comment beside that line in `ExtractionPane.tsx`) — so this asserts both
+  // are present rather than picking one with a query that would throw on two.
+  expect(screen.getAllByText(/2\/9/)).toHaveLength(2)
   expect(screen.getByText('otter — merged into Lutra')).toBeInTheDocument()
   expect(screen.getByText('kelp — kept, no match')).toBeInTheDocument()
 })
@@ -249,4 +268,37 @@ it('refetches on reconnect, because a dropped frame cannot be replayed', async (
   reconnect()
 
   expect(extractions.on).toHaveBeenCalledTimes(2)
+})
+
+/** The stage in flight is marked by something other than a colour.
+ *
+ * jsdom cannot judge the colour — it applies no stylesheet — so this asserts
+ * the hook a browser test measures against, and the browser suite asserts the
+ * computed value. Both are needed: this one fails fast in CI if the attribute
+ * is dropped, and that one fails if the attribute is present and inert.
+ *
+ * Proved red by rendering every segment with the same class. */
+it('marks the stage in flight, and only that one', () => {
+  render(<ExtractionView current={running(['storing', 'extracting'], 'extracting')} last={null} />)
+
+  const marked = screen
+    .getAllByRole('listitem')
+    .filter((li) => li.getAttribute('aria-current') === 'step')
+  expect(marked).toHaveLength(1)
+  expect(marked[0]).toHaveTextContent('extracting')
+})
+
+/** The status line says the stage, once, without a heading over it.
+ *
+ * The heading was "Reading into the graph" over a pane that is now a float on
+ * the graph itself, where it restated its own container. Proved red by keeping
+ * the `<h3>`. */
+it('names the stage on one status line and renders no heading', () => {
+  // A single stage means the trail also reads "extracting", so the name is
+  // asserted on the status line specifically rather than with a bare
+  // `getByText` that would find both.
+  render(<ExtractionView current={running(['extracting'], 'extracting')} last={null} />)
+
+  expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+  expect(document.querySelector('.extraction-status')).toHaveTextContent('extracting')
 })
