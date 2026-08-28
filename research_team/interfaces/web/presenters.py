@@ -947,13 +947,42 @@ def topic_documents_view(
     resolves it once, so a viewer reuses those three routes unchanged instead
     of a fourth project-scoped copy of each growing beside them.
 
-    `at` is the scrub point that goes with it, and the two must travel
-    together. A project nobody is holding has its files at the *tip*, which is
-    a position in a session that may have run on past it; reading that session
-    at HEAD would show files the project does not have. `None` means HEAD and
-    is correct only while a holder is live, because a holder's own uncommitted
-    work is exactly what the tip does not yet know about -- the same two cases
-    `project_files` resolves, reported rather than applied.
+    **`at` is always `None`, which is HEAD, and that is not an oversight.**
+    It used to be `state.tip_at_event` whenever nobody held the project, on
+    the argument that a released session may have run on past the tip and
+    reading it at HEAD "would show files the project does not have". That
+    argument is wrong, and it made this one response contradict itself: the
+    `documents` list is built from `project_files`, which folds the tip
+    session to HEAD deliberately (see its docstring, and
+    `test_the_project_shows_files_written_after_its_release`), so a file
+    written after a release was listed here and then 404'd by the very reader
+    routes this `at` is sent to feed.
+
+    Measured 2026-08-27, against `~/.research-team/sessions.db` copied through
+    `infrastructure.persistence.local_copy`, and reproduced synthetically
+    because the real data cannot separate the two: every live project in that
+    database had `tip_at_event` exactly equal to its tip session's stream
+    length, because `_catch_up_tip` runs on every join. The one project whose
+    tip session had run on past its release -- a deleted "One Piece",
+    `cd7c1b44`, tip at 4 of 5 -- ran on by a single `TurnFailed`, which
+    touches no file. The synthetic case, one `write_file` after
+    `release_project`: HEAD listed `/topics/00-a/after.md` and
+    `/topics/00-a/before.md`, the offset listed only `/topics/00-a/before.md`,
+    and this view reported both documents alongside `at: 7` -- a scrub point
+    at which the first of them does not exist.
+
+    The criterion that settles it is the domain's, not this layer's:
+    `session_service._catch_up_tip` exists precisely to move a stale tip
+    forward to `len(history)`, and its docstring calls work stranded past a
+    release "unreachable from the project the moment they were written" -- a
+    bug, not a boundary. So the offset below HEAD is never a decision about
+    what the project has; it is a pointer the next join will move. Its real
+    job is as a *fork point* (`ProjectSessionJoined.inherited_at`,
+    `_fork_files_from`), which is a different question.
+
+    The key is kept rather than dropped because the client's DTO already
+    accepts `null` and maps it to HEAD; removing it is a frontend change and
+    buys nothing.
 
     Filtered on `directory + "/"` rather than `directory`: without the
     separator `/topics/0` would match `/topics/01-...` as well as
@@ -967,14 +996,17 @@ def topic_documents_view(
         if path.startswith(prefix)
     ]
     if state.active_session_id is not None:
-        session_id, at = state.active_session_id, None
+        session_id = state.active_session_id
     elif state.tip_session_id is not None and state.tip_at_event >= 1:
-        session_id, at = state.tip_session_id, state.tip_at_event
+        session_id = state.tip_session_id
     else:
         # A project that has never been joined has no stream to read from.
         # Reported as no session rather than an error: it is the same state as
         # "nothing has been dispatched here yet", which is the ordinary case.
-        session_id, at = None, None
+        session_id = None
+    # HEAD in every branch, matching the fold `project_files` did to build
+    # `documents`. See the docstring for the measurement that settled it.
+    at = None
     return {
         "directory": directory,
         "session_id": str(session_id) if session_id else None,

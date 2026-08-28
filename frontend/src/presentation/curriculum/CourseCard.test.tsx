@@ -114,7 +114,76 @@ it('calls onOpen with the slug when clicked', async () => {
     />,
   )
 
-  screen.getByRole('button', { name: /The Roman Succession Crisis/ }).click()
+  // The whole card is the hit area, via an overlay button named after the
+  // candidate -- see `CourseCard`'s docstring on why the card stopped being one
+  // big `<button>` when it gained a control of its own.
+  screen.getByRole('button', { name: 'Open The Roman Succession Crisis' }).click()
 
   expect(onOpen).toHaveBeenCalledWith('roman-succession')
+})
+
+it('offers no curation control on a surface that passed no handlers', () => {
+  // A browsing surface gets no feature toggle at all, rather than a disabled
+  // one: a control that can never be pressed is a control a reader has to work
+  // out the rules of. The overlay button is the only one left.
+  render(<CourseCard candidate={aCandidate()} size="highlight" onOpen={() => {}} />)
+
+  expect(screen.getAllByRole('button')).toHaveLength(1)
+})
+
+it('offers one toggle, not two buttons, when curation is available', async () => {
+  const onFeature = vi.fn()
+  render(
+    <CourseCard
+      candidate={aCandidate({ featuredRank: null })}
+      size="highlight"
+      onOpen={() => {}}
+      onFeature={onFeature}
+      onUnfeature={() => {}}
+    />,
+  )
+
+  const toggle = screen.getByRole('button', { name: 'Feature The Roman Succession Crisis' })
+  // `aria-pressed` is the fact the old `Feature`/`Unfeature` pair never
+  // carried: two buttons swapping places told a screen reader one control
+  // vanished and another appeared, not that one bit changed.
+  expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+  toggle.click()
+  expect(onFeature).toHaveBeenCalledWith(expect.objectContaining({ slug: 'roman-succession' }))
+})
+
+it('reports a featured candidate as pressed, and unfeatures on the same control', () => {
+  const onUnfeature = vi.fn()
+  render(
+    <CourseCard
+      candidate={aCandidate({ featuredRank: 1 })}
+      size="highlight"
+      onOpen={() => {}}
+      onFeature={() => {}}
+      onUnfeature={onUnfeature}
+    />,
+  )
+
+  const toggle = screen.getByRole('button', { name: 'Unfeature The Roman Succession Crisis' })
+  expect(toggle).toHaveAttribute('aria-pressed', 'true')
+
+  toggle.click()
+  expect(onUnfeature).toHaveBeenCalledWith('roman-succession')
+})
+
+it('reports the cluster size in words as well as in the bar', () => {
+  // The bar is `aria-hidden` and is a computed width jsdom cannot see; the
+  // count beside it is what a non-visual reading gets, and it is also the
+  // thing that makes the bar mean something. `prominence` and `size` were on
+  // the wire and rendered nowhere before this.
+  render(<CourseCard candidate={aCandidate({ size: 12 })} size="highlight" onOpen={() => {}} />)
+
+  expect(screen.getByText('12 entities')).toBeInTheDocument()
+})
+
+it('says "entity" rather than "entities" for a cluster of one', () => {
+  render(<CourseCard candidate={aCandidate({ size: 1 })} size="highlight" onOpen={() => {}} />)
+
+  expect(screen.getByText('1 entity')).toBeInTheDocument()
 })
