@@ -43,6 +43,10 @@ const extraction = (over: Partial<Extraction> = {}): Extraction => ({
   ...over,
 })
 
+/** The empty render *is* the story: nothing has run, and this float now sits
+ *  over the graph's own empty state, which already makes that claim. Two
+ *  elements saying it was one too many, so this one draws nothing rather
+ *  than being deleted — a place to see, on demand, that it stays that way. */
 export const NothingYet: Story = {
   render: () => <ExtractionView current={null} last={null} />,
 }
@@ -78,6 +82,52 @@ export const RunningWithoutADomain: Story = {
           { stage: 'extracted', detail: '31 entities' },
           { stage: 'consolidating', detail: '9 of 24 considered' },
         ],
+      })}
+      last={null}
+    />
+  ),
+}
+
+/** The trail with more than two segments touching in a row — the shape the
+ *  pill list this replaces could not show, because a gap between every pill
+ *  read as unrelated tags rather than a connected run. */
+export const RunningWithATrail: Story = {
+  render: () => (
+    <ExtractionView
+      current={extraction({
+        stage: 'consolidating',
+        stages: [
+          { stage: 'storing', detail: 'stored syllabus.pdf' },
+          { stage: 'extracting', detail: '24 of 24' },
+          { stage: 'extracted', detail: '31 entities' },
+          { stage: 'consolidating', detail: '9 of 24 considered' },
+        ],
+      })}
+      last={null}
+    />
+  ),
+}
+
+/** Perception's two stages, on screen somewhere: `ExtractionStage` carries
+ *  `perceiving`/`perceived` alongside extraction's own, and a transcription
+ *  reports through the same frames this pane reads. Nothing else in this file
+ *  exercises them, and the trail is drawn from whatever `stages` holds rather
+ *  than a fixed extraction pipeline, so this is the story that would catch a
+ *  fixed track creeping back in. */
+export const RunningATranscription: Story = {
+  render: () => (
+    <ExtractionView
+      current={extraction({
+        sourceId: 'lecture-02.mp3',
+        stage: 'perceiving',
+        stages: [{ stage: 'perceiving', detail: 'transcribing' }],
+        entities: null,
+        relationships: null,
+        domain: null,
+        domainConfidence: null,
+        index: null,
+        total: null,
+        modelCalls: null,
       })}
       last={null}
     />

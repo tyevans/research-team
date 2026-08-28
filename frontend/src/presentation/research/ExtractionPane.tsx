@@ -109,8 +109,6 @@ export const ExtractionView = ({
 
   return (
     <section className="extraction" aria-label="Knowledge extraction">
-      <h3 className="extraction-title">Reading into the graph</h3>
-
       {current ? <Running extraction={current} /> : null}
       {last ? <Last extraction={last} /> : null}
     </section>
@@ -138,13 +136,32 @@ const Running = ({ extraction }: { extraction: Extraction }) => {
 
   return (
     <div className="extraction-running">
-      <ol className="extraction-stages">
+      <p className="extraction-status">
+        <span className="extraction-dot" aria-hidden="true" />
+        <span className="extraction-stage-name">{extraction.stage ?? 'starting'}</span>
+        {extraction.total !== null ? (
+          <span className="extraction-count">
+            {extraction.index ?? 0}/{extraction.total}
+          </span>
+        ) : null}
+      </p>
+
+      {/* A trail, not a track: `Extraction.stages` is the stages *reached*,
+          appended as frames arrive, and there is no declared pipeline to draw
+          the rest of. `ExtractionStage` carries perception's two alongside
+          extraction's five plus `failed`, which can follow any of them — so a
+          fixed set of segments would draw a transcription as an extraction
+          that had skipped four steps. It grows rather than fills, and it still
+          measures nothing: a bar over stages of unequal length would be a
+          made-up number, which is what the pill list this replaces was already
+          right about. */}
+      <ol className="extraction-trail">
         {extraction.stages.map((entry) => {
           const now = entry.stage === extraction.stage
           return (
             <li
               key={entry.stage}
-              className={now ? 'extraction-stage extraction-now' : 'extraction-stage'}
+              className={now ? 'extraction-seg extraction-seg-now' : 'extraction-seg'}
               aria-current={now ? 'step' : undefined}
             >
               {entry.stage}
@@ -167,6 +184,14 @@ const Running = ({ extraction }: { extraction: Extraction }) => {
 
       {extraction.total !== null ? (
         <div className="extraction-merges">
+          {/* Kept alongside the status line's own count rather than folded
+              into it: `total` is set whenever the server has a denominator at
+              all, not only once `stage` reaches `consolidating` (see the
+              `RunningWithoutADomain` story, which sets it at `extracting`), so
+              the status line's count is the *general* one and this restates
+              it labelled as consolidation specifically -- the two agree when
+              the stages coincide and this is the only place saying which pass
+              the count belongs to when they don't. */}
           <p className="extraction-line">
             consolidating {extraction.index ?? 0}/{extraction.total}
           </p>
