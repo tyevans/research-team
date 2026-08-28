@@ -38,7 +38,6 @@ const anApproval = (
   // The tool gate's real list: `ALLOWED_DECISIONS` in
   // `research_team/infrastructure/agent/approval.py` excludes `respond`.
   allowedDecisions: overrides.allowedDecisions ?? ['approve', 'edit', 'reject'],
-  context: null,
 })
 
 /** A policy with something still asking, so `AutonomyAllowAll` renders an
@@ -337,9 +336,7 @@ it('offers the way to stop being asked, beside the approvals', async () => {
 
   bar.deliver({ kind: 'approvalRequested', approval: anApproval('a-1') })
 
-  expect(
-    await screen.findByRole('button', { name: /allow everything except the review gate/i }),
-  ).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: /^allow everything$/i })).toBeInTheDocument()
   // And it says what it changes, on the control rather than in a tooltip --
   // the policy is instance-wide although it is reached through one session.
   expect(screen.getByText(/every session on this instance/i)).toBeInTheDocument()

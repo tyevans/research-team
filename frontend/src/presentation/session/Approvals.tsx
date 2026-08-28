@@ -5,7 +5,6 @@ import { safeJson } from '@domain/conversation/message.ts'
 import type { ApprovalId } from '@domain/shared/identifier.ts'
 
 import { Button, type ButtonTone } from '../common/primitives.tsx'
-import { GateReview } from './GateReview.tsx'
 
 /** Gated calls, waiting on a person.
  *
@@ -31,7 +30,7 @@ import { GateReview } from './GateReview.tsx'
  * a button that is silently unusable.
  *
  * Styled with Tailwind utilities. The `.approval*` rules in
- * `conversation.css` are deleted rather than left behind — see `GateReview`
+ * `conversation.css` are deleted rather than left behind — see the utilities
  * for what that trade costs.
  */
 export const Approvals = ({
@@ -104,9 +103,9 @@ const ApprovalCard = ({
 }) => {
   const [mode, setMode] = useState<'edit' | 'respond' | null>(null)
   // `ApprovalDecided.expanded_details`'s operational definition, chosen
-  // because there is nothing here to literally expand -- `GateReview`
-  // renders its whole context whenever `approval.context` exists, with no
-  // collapse to open. Opening Edit or Respond is the one interaction on this
+  // because there is nothing here to literally expand -- the card renders
+  // everything it knows about the request at once, with no collapse to open.
+  // Opening Edit or Respond is the one interaction on this
   // card that means "I want to see or change more before deciding", so it
   // stands in for the deliberation half of the click-through/deliberation
   // split. Sticky once true: closing the form again does not undo having
@@ -134,10 +133,6 @@ const ApprovalCard = ({
       <pre className="m-0 max-h-[120px] overflow-auto font-mono text-xs whitespace-pre-wrap text-fg-faint">
         {safeJson(approval.args)}
       </pre>
-
-      {approval.context ? (
-        <GateReview context={approval.context} sessionId={approval.sessionId} />
-      ) : null}
 
       <div className="flex flex-col gap-2">
         {DECISIONS.map(({ decision, label, tone }) => {

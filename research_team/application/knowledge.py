@@ -18,7 +18,7 @@ from enum import StrEnum
 from typing import Literal, Protocol
 from uuid import UUID
 
-from research_team.application.artifacts import slugify
+from research_team.application.text import slugify
 
 #: Tool names, in one place so the autonomy policy and the tools agree.
 REMEMBER_TOOL = "remember"

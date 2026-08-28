@@ -1,10 +1,11 @@
 """Turning one learning area into a unit and its lessons, by Understanding by Design.
 
-`workflows/ubd.py` encodes UbD's three-stage shape and **terminates at a unit
-plan**, deliberately: "UbD has no production or delivery half at all… it
-assumes a teacher who will do the producing." This module is that teacher, and
-going past Stage 3 into materials is a departure from the preset recorded here
-rather than smuggled into it. The preset is untouched; nothing below reads it.
+UbD's own three stages **terminate at a unit plan**: it has no production or
+delivery half at all, because it assumes a teacher who will do the producing.
+This module is that teacher. Phase 4 goes past Stage 3 into materials, which is
+a departure from UbD as written rather than part of it, and it is recorded here
+so that nobody later reads the four phases as three stages plus a rounding
+error.
 
 **Backward design is enforced by sequencing, not by asking for it.** Four
 phases run in order, and each of the first three is given only what the stages

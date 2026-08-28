@@ -9,6 +9,15 @@ its §9 inventory and its §11 rollout. It does not revisit the toolchain
 decision — Radix, Tailwind v4, CVA and `eslint-plugin-jsx-a11y` are settled and
 in flight, and everything below assumes they exist.
 
+> **Historical, 2026-08-27 (B147).** This is a survey taken at a named commit,
+> and the workflow system it surveys has since been removed entirely: presets,
+> stages, stage artifacts, the check library and every surface that drew them.
+> Banner rather than rewrite, deliberately. The body's whole claim is "read out
+> of the code at `b7388db`", every entry is dated to that read, and editing
+> entries out would leave a document asserting a provenance it no longer has --
+> a survey that has been quietly corrected is less useful than one that says
+> when it was taken. **What is invalid:** the `Artifact`, `Stage` and `Finding` entity contracts and every row that names them (§§ on the entity inventory, the unexported-component list and the four positional-state defects), plus `Course` as a read-model join of `Preset` x `ProjectState` and the `stage_progress_view` row in the presenter table. `project_view` now answers `{id, name, active_session_id, tip_at_event}`. The token, layout-primitive and cascade material -- which is most of the document -- is unaffected.
+
 ---
 
 ## 0. What I verified, and what I took from the reports

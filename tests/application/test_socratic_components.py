@@ -1,9 +1,10 @@
 """What a dialogue may author, and the one projection of it.
 
 The tuple is written out rather than derived, for `ASK_COMPONENT_TYPES`'
-reason: a derived list is how `COMPONENTS_FOR[BUILD]` came to advertise five
-widgets that cannot work where its prompt is used -- a registry entry joined a
-prompt by existing. A third type here should be a decision somebody made.
+reason: a derived list is how the old per-artifact component registry came to
+advertise five widgets that cannot work where its prompt was used -- an entry
+joined a prompt by existing, with nobody choosing it. A third type here should
+be a decision somebody made.
 
 **The last two tests still import `socratic_agent` inside the function body.**
 They were written before that module existed and carried `xfail(strict=True)`

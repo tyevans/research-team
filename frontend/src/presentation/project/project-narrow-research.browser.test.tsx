@@ -58,18 +58,6 @@ const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
 const SOURCE = SourceId('9c0e0000-0000-0000-0000-000000000000')
 
-const COURSE = {
-  projectId: ATLAS,
-  projectName: 'atlas',
-  holdingSessionId: HOLDER,
-  preset: { id: 'hybrid.default', name: 'Hybrid', version: '1' },
-  position: 1,
-  stageCount: 1,
-  stages: [],
-  findings: [],
-  unimplementedChecks: [],
-}
-
 /** Enough rows that the list is taller than the pane can show, so the
  *  virtualizer is actually virtualizing rather than rendering a short list into
  *  a box with room to spare. A list that fits proves nothing about a scroller
@@ -93,7 +81,18 @@ const container = () =>
     preferences: new InMemoryPreferenceStore(),
     now: () => new Date('2026-08-10T00:00:00Z'),
     stream: { connect: vi.fn(), disconnect: vi.fn() },
-    projects: { course: vi.fn().mockResolvedValue(COURSE) },
+    projects: {
+      // The page's identity and holder come from here now rather than from the
+      // course. Omitting it does not fail the type -- the container is cast --
+      // it leaves the header with no holding session and the Workspace tab
+      // hidden, which is a layout difference these files measure.
+      project: vi.fn().mockResolvedValue({
+        id: ATLAS,
+        name: 'atlas',
+        activeSessionId: HOLDER,
+        tipAtEvent: 0,
+      }),
+    },
     sessions: {
       read: vi.fn().mockResolvedValue({
         id: HOLDER,
@@ -121,7 +120,7 @@ const container = () =>
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
     research: { current: vi.fn().mockResolvedValue(null) },
-    topics: { queue: vi.fn().mockResolvedValue([]) },
+    topics: { list: vi.fn().mockResolvedValue([]) },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
     documents: {
       list: vi.fn().mockResolvedValue([

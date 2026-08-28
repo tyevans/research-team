@@ -19,8 +19,8 @@ or reporting a successful write as an `error` -- are both worse than reaching
 for the hook langchain provides for exactly this.
 
 **Async, because the sync hook is never called here.** `DeepAgentTurnExecutor`
-streams, so `awrap_tool_call` is the one that runs; `stage_middleware.py`
-carries the same note about `awrap_model_call` and the same reason.
+streams, so `awrap_tool_call` is the one that runs; the sync `wrap_tool_call`
+is dead code here and a hook written into it never fires.
 
 **Best-effort, always.** Every failure path returns the tool's own result
 untouched: a file the aggregate cannot read back, a result that is a `Command`

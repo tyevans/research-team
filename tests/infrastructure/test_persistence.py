@@ -11,7 +11,7 @@ from research_team.application.session_service import NO_SEARCH_CLAUSE, project_
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import SessionPurpose, StartSession, StoreSourceDocument
 from research_team.domain.learner import LearnerChecklistRecorded
-from research_team.domain.project import AdvanceStage, CreateProject, SelectWorkflow
+from research_team.domain.project import CreateProject, JoinProject
 from research_team.domain.topic import OpenTopic
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
 from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT, FETCH_PROMPT
@@ -23,7 +23,6 @@ from research_team.infrastructure.persistence import (
     build_corpus_repository,
 )
 from research_team.infrastructure.persistence.event_store import build_topic_repository
-from research_team.workflows import hybrid_default
 from tests.conftest import start_session
 
 
@@ -343,14 +342,13 @@ async def test_read_since_carries_corpus_events(tmp_path):
 
 
 async def test_read_since_carries_project_events(tmp_path):
-    """The course page's live path, and the fourth instance of one bug.
+    """The project page's live path, and the fourth instance of one bug.
 
-    `advance_stage` appends `ProjectStageAdvanced` to this log and the rail on the
-    course page *is* what that event moved. Until this test the feed admitted
-    `Session`, `Topic`, `Corpus` and redstring's categories and nothing
-    else, so a stage advance reached the browser through nothing at all and the
-    rail only moved on a reload -- the same shape as topics before `c4d81a9`
-    and the graph before #70.
+    A project's own events are appended to this log and the page *is* what they
+    move. Until this test the feed admitted `Session`, `Topic`, `Corpus` and
+    redstring's categories and nothing else, so a change to a project reached
+    the browser through nothing at all and the page only moved on a reload --
+    the same shape as topics before `c4d81a9` and the graph before #70.
 
     Asserting the aggregate type rather than only the count, for the reason
     `test_read_since_carries_topic_events` gives: an entry arriving labelled
@@ -359,25 +357,19 @@ async def test_read_since_carries_project_events(tmp_path):
     *is* the project id and that identity is the whole of how `_sse` addresses
     the frame -- there is no lookup behind it.
 
-    Both events, not just the advance. `ProjectWorkflowSelected` is what turns the
-    course page from a 409 into a rail, so a feed that carried the advance and
-    not the selection would leave the page reading "no course to show" until a
-    reload -- the same defect one event earlier.
+    Two events rather than one. The admission is per aggregate, not per event
+    class, and this is what holds it that way: a feed that carried the join and
+    not the creation would leave a page reading "no such project" until a
+    reload -- the same defect one event earlier. It used to be written with
+    `ProjectWorkflowSelected` and `ProjectStageAdvanced`, which the workflow
+    removal deleted; the lifecycle events make the identical point.
     """
     repository = EventStoreSessionRepository.open(str(tmp_path / "sessions.db"))
     try:
         project_id = uuid4()
         project = repository.projects.create_new(project_id)
         project.execute(CreateProject(project_id=project_id, name="Spacing"))
-        project.execute(SelectWorkflow(preset=hybrid_default))
-        project.execute(
-            AdvanceStage(
-                preset=hybrid_default,
-                to_stage="hybrid.step1.framing",
-                decided_by="human",
-                gate_decision="approve",
-            )
-        )
+        project.execute(JoinProject(session_id=uuid4()))
         await repository.projects.save(project)
 
         entries = await repository.read_since(None)
@@ -385,12 +377,10 @@ async def test_read_since_carries_project_events(tmp_path):
         assert [(entry.aggregate_id, entry.aggregate_type) for entry in entries] == [
             (project_id, "Project"),
             (project_id, "Project"),
-            (project_id, "Project"),
         ]
         assert [type(entry.event).__name__ for entry in entries] == [
             "ProjectCreated",
-            "ProjectWorkflowSelected",
-            "ProjectStageAdvanced",
+            "ProjectSessionJoined",
         ]
     finally:
         await repository.close()

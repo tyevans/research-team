@@ -24,10 +24,6 @@ from research_team.application import (
     RunAlreadyActive,
     SessionService,
 )
-from research_team.application.check_telemetry_read import (
-    CheckTelemetryReadError,
-    CheckTelemetryReadPort,
-)
 from research_team.application.ports import ActivityNote
 from research_team.domain import CreateProject, SessionPurpose
 from research_team.domain.research_run import Budget
@@ -35,7 +31,6 @@ from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
     format_activity,
     format_autonomy,
-    format_checks,
     format_diff,
     format_file_history,
     format_files,
@@ -60,7 +55,6 @@ Event log
   /log [n]         last n events (default 20)
   /state           session id, event count, turn count, file count
   /health          whether the session list is derived from a healthy projection
-  /checks          per-check fire and override rates for this session's project
   /rebuild         rebuild the session list from the log (safe at any time)
 
 Time travel
@@ -161,10 +155,9 @@ class Repl:
 
     None at startup, and that is the whole of the "sessions live in projects"
     rule as the terminal sees it. A session needs a project, choosing a project
-    is a decision only the person at the keyboard can make -- the workflow it
-    runs is permanent -- and inventing one on their behalf would make that
-    choice silently, once, forever. So the REPL opens with no session and says
-    what to type.
+    is a decision only the person at the keyboard can make, and inventing one
+    on their behalf would put a session's whole history under a project nobody
+    chose. So the REPL opens with no session and says what to type.
 
     Every command that needs a session guards on this rather than the type
     system, which is the cost of the choice: `UUID | None` propagates into
@@ -185,37 +178,25 @@ class Repl:
     `/research` says so rather than the constructor demanding something most
     callers do not have."""
 
-    check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort] | None = None
-    """Builds a reader for one project, when a composition root wired one.
-
-    A factory rather than a reader, because the project is not known when the
-    REPL starts -- it is whichever project the current session belongs to, and
-    that changes with `/project use` and `/resume`. Optional for `research`'s
-    reason: `/checks` says what is missing rather than the constructor
-    demanding a projection most tests have no use for."""
-
     @classmethod
     async def start(
         cls,
         service: SessionService,
         policy: AutonomyPolicy | None = None,
         research: ResearchSupervisor | None = None,
-        check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort] | None = None,
     ) -> "Repl":
         """A REPL with no session. `/project new` or `/project use` starts one.
 
         It used to create one here. It cannot now: a session belongs to a
         project, and this classmethod has no way to ask which -- it is called
         before the input loop exists, from `run` and from tests, and a project
-        chosen without being asked for is a permanent workflow choice made by
-        a default.
+        chosen by a default is one nobody was asked about.
         """
         return cls(
             service,
             None,
             policy if policy is not None else AutonomyPolicy(),
             research,
-            check_telemetry_readers,
         )
 
 
@@ -328,29 +309,6 @@ async def _handle_project(repl: "Repl", argument: str) -> str:
         return f"{joined}\n{warning}" if warning else joined
 
     return "usage: /project [new <name>|use <name>]"
-
-
-async def _handle_checks(repl: "Repl") -> str:
-    """`/checks` -- what the check library found here, and what was decided.
-
-    Scoped to the current session's project rather than to the session, because
-    the question is about a check library across a course's whole history and a
-    session is a terminal's slice of it. A session outside a project has no
-    scope to answer for and says so.
-    """
-    if repl.check_telemetry_readers is None:
-        return "check telemetry is not wired into this REPL"
-    session = await repl.service.load(repl.session_id)
-    if session.state.project_id is None:
-        return "this session is not in a project, so no gate has been recorded for it"
-    try:
-        stats = await repl.check_telemetry_readers(session.state.project_id).stats()
-    except CheckTelemetryReadError as error:
-        # Distinguished from an empty table on purpose: "nothing has run yet"
-        # and "the instrument is off" render identically as an empty list, and
-        # only one of them is worth doing something about.
-        return f"check telemetry unavailable: {error}"
-    return format_checks(stats)
 
 
 RESEARCH_POLL_SECONDS = 1.0
@@ -575,8 +533,6 @@ async def handle_command(
             return str(error)
         await service.record_autonomy_change(repl.session_id, tool, level)
         return f"{tool}: {level}"
-    if command == "/checks":
-        return await _handle_checks(repl)
     if command == "/health":
         return format_summary_health(await service.summaries_health())
     if command == "/rebuild":
@@ -607,7 +563,6 @@ async def run(
     service: SessionService,
     policy: AutonomyPolicy | None = None,
     research: ResearchSupervisor | None = None,
-    check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort] | None = None,
 ) -> None:
     """Drive a session until the user leaves. The service is closed on the way out.
 
@@ -617,7 +572,7 @@ async def run(
     """
     repl: Repl | None = None
     try:
-        repl = await Repl.start(service, policy, research, check_telemetry_readers)
+        repl = await Repl.start(service, policy, research)
         stored = await service.list_sessions()
         print(f"database {config.default_db_path()}")
         if stored:

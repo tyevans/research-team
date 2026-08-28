@@ -5,15 +5,14 @@ The rubric is a Markdown file rather than a string literal because the
 edit without touching Python is a rule you will actually iterate on after
 reading a bad lesson. Editing a rule should not be a code change.
 
-It sits here, beside this module, rather than under `prompts/`, because
-`prompts/` is loaded wholesale by `load_prompts` and every file in it must be
-named by some workflow preset -- `test_no_prompt_file_is_orphaned` in
-`tests/application/test_ubd_prompts.py` fails otherwise. This rubric is quoted
-inside two subagents' system prompts; it is never resolved as a stage's prompt,
-so it would have failed that check for a reason that has nothing to do with it
-being broken. Moving it out is what the check is *for*: a real orphan -- a
-renamed stage whose prompt file was left behind -- still fails it, and no longer
-competes with a false positive.
+It sits beside this module rather than in a shared prompt directory, and that
+placement is now the only thing keeping the two apart. There was a `prompts/`
+tree, loaded wholesale, whose every file had to be named by something that
+resolved prompts; a rubric quoted *inside* two subagents' system prompts rather
+than resolved as one would have read there as an orphan. That tree is gone with
+the workflow system, so nothing enforces the separation any more -- the file
+stays here because a rule the critic cites by number belongs next to the code
+that reads it, which was the better half of the reason all along.
 
 **Two readers, two accessors.** The file's tail is the critic's reporting
 contract: judge only these, report nothing else, do not rewrite the lesson. Read

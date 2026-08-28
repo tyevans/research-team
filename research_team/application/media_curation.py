@@ -16,8 +16,8 @@ an item missing a field, by dropping what cannot be trusted and counting it
 rather than raising. This mirrors `_members` in `ontology_discovery.py`.
 
 `SearchResult` lives here rather than in `infrastructure/agent/search.py`,
-where it was first defined, because `MediaCandidate` below carries one as a
-field and the application layer may not import from infrastructure
+where it was first defined, because `MediaSearchPort` below returns it and
+the application layer may not import from infrastructure
 (`tests/test_architecture.py` enforces the direction). The type itself is
 inert data with no framework and no I/O in it, so it moves to the layer that
 needs it as a real type rather than infrastructure keeping it and application
@@ -180,22 +180,6 @@ class Judgement:
 
     need_id: str
     index: int
-    reason: str
-
-
-@dataclass(frozen=True)
-class MediaCandidate:
-    """One surviving proposal: the need it answers, the result, and why.
-
-    The `reason` is the judge's one-line answer to "why does this serve the
-    need" and is what the review pane shows beside the thumbnail -- see the
-    design's "Stage 3" section. Assembling one of these from a `Judgement` and
-    the result pool it indexes is the chain's job, not this module's; nothing
-    here constructs a `MediaCandidate` yet.
-    """
-
-    need_id: str
-    result: SearchResult
     reason: str
 
 

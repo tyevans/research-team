@@ -10,10 +10,9 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
    something that does not. Since `tokens.css` gained its reset a bare button
    renders as unbordered text, so these stories were demonstrating
    primary-against-overflow with two pieces of prose. */
-import { Button } from '../../common/primitives.tsx'
+import { Button, Chip } from '../../common/primitives.tsx'
 import { EntityStatus } from '../EntityStatus.tsx'
 import { ProjectCard } from './ProjectCard.tsx'
-import { WorkflowChip } from './WorkflowChip.tsx'
 
 /** The `Card` density, and the one component in this slice that could not be
  *  extracted — it had to be prised apart.
@@ -44,8 +43,6 @@ const project = (over: Partial<Project> = {}): Project => ({
   name: 'apollo',
   activeSessionId: null,
   tipAtEvent: 128,
-  workflow: null,
-  stage: null,
   ...over,
 })
 
@@ -137,6 +134,11 @@ export const WithActivity: Story = {
  * one that ships, so it is the one to look at when a change to `entity.css`
  * moves something. `badges`, `meta` and `preview` exist for exactly the three
  * things `ProjectRow` had and this card did not.
+ *
+ * `badges` is filled here with a plain chip rather than left null, which is
+ * what the landing page passes today. The one real filler was the workflow
+ * chip, deleted with the workflow system, and a slot demonstrated only by its
+ * own absence is a slot nobody can see is still wired.
  */
 export const AsTheLandingPageDrawsIt: Story = {
   render: () => (
@@ -145,19 +147,10 @@ export const AsTheLandingPageDrawsIt: Story = {
         rollup={rollup({
           project: project({
             activeSessionId: SessionId('7d41e0aa-1111-2222-3333-444444444444'),
-            workflow: { id: 'hybrid', name: 'hybrid', version: 1 },
-            stage: { id: 's4', name: 'design', index: 4, of: 15 },
           }),
         })}
         slots={{
-          badges: (
-            <WorkflowChip
-              project={project({
-                workflow: { id: 'hybrid', name: 'hybrid', version: 1 },
-                stage: { id: 's4', name: 'design', index: 4, of: 15 },
-              })}
-            />
-          ),
+          badges: <Chip>4 areas</Chip>,
           activity: <EntityStatus status="running" detail="synthesising 2 topics" />,
           meta: (
             <>

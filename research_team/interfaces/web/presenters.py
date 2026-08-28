@@ -14,7 +14,6 @@ from eventsource import DomainEvent
 
 from research_team.application import (
     GATED_TOOLS,
-    STAGE_GATE_TOOLS,
     AutonomyPolicy,
     ForkNode,
     Roster,
@@ -23,17 +22,10 @@ from research_team.application import (
 )
 from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.corpus_spans import Span
-from research_team.application.course import (
-    ArtifactSlot,
-    Course,
-    ProvenanceSummary,
-    StageProgress,
-)
 from research_team.application.course_catalog import CachedOutline, Catalog
 from research_team.application.course_realization import CourseDetail, RealizedCourse
 from research_team.application.curriculum import Curriculum
 from research_team.application.entity_definitions import Definition, ServedCitation
-from research_team.application.findings import Finding
 from research_team.application.graph_read import (
     EntityPage,
     Graph,
@@ -51,9 +43,7 @@ from research_team.domain import (
     FileDeleted,
     FileEdited,
     FileWritten,
-    ProjectStageAdvanced,
     ProjectState,
-    ProjectWorkflowSelected,
     Session,
     SessionForkedFrom,
     SessionStarted,
@@ -70,7 +60,6 @@ from research_team.domain.learning_area import (
     PrerequisiteEdge,
 )
 from research_team.domain.research_run import ResearchRunState
-from research_team.domain.workflow import Preset, Stage
 
 FILE_EVENTS = (FileWritten, FileEdited, FileDeleted)
 
@@ -97,14 +86,6 @@ def event_summary(event: DomainEvent) -> str:
             f"first {event.through_index} messages now behind a summary "
             f"({event.strategy}{saved})"
         )
-    if isinstance(event, ProjectWorkflowSelected):
-        return f"{event.preset_id} v{event.preset_version}"
-    if isinstance(event, ProjectStageAdvanced):
-        # Both ends of the move, and the reason. A preset has up to fifteen
-        # stages, so "now at X" does not say what was left; and the rationale
-        # is what a reviewer scrolling the log is actually looking for, since
-        # it is the only record of why the gate was crossed.
-        return f"{event.from_stage} → {event.to_stage}: {event.gate_decision}"
     if isinstance(event, AutonomyChanged):
         # The level alone doesn't say what changed, and the tool alone
         # doesn't say what changed to; a reviewer needs both to know what
@@ -328,194 +309,47 @@ def tree_view(nodes: list[ForkNode]) -> list[dict[str, Any]]:
     ]
 
 
-def preset_label(preset: Preset) -> str:
-    """One line for a `<select>` option: what this preset makes, and where it stops.
-
-    A dropdown of three methodology names is only meaningful to someone who
-    has read three research reports; what a preset produces and which stage it
-    ends on is meaningful to everyone, and it is the fact people are actually
-    choosing between. The two are joined here rather than assembled in the
-    browser so the wording has one home and can carry this reasoning with it.
-    """
-    return f"{preset.name} -- produces {preset.produces}, ending at {preset.stages[-1].name}"
-
-
-def preset_view(preset: Preset) -> dict[str, Any]:
-    """One row of `/api/workflows`, as a choice rather than as a name.
-
-    `terminates_at` is the field that earns this endpoint. A preset stopping
-    below spine position 8 has no production half, so it yields a design and
-    not materials -- and someone who expected materials discovering that at
-    the end of a long run is the exact failure surfacing it up front prevents.
-    `has_value_filter` is reported for the same reason from the other
-    direction: ADDIE never asks whether the thing should be taught at all,
-    which is a defensible assumption and an indefensible surprise.
-    """
-    last = preset.stages[-1]
-    return {
-        "id": preset.id,
-        "name": preset.name,
-        "version": preset.version,
-        "description": preset.description,
-        "produces": preset.produces,
-        "stage_count": len(preset.stages),
-        "terminates_at": {"id": last.id, "name": last.name, "spine": preset.terminal_spine},
-        "has_value_filter": preset.has_value_filter,
-        "label": preset_label(preset),
-    }
-
-
-def stage_view(preset: Preset, stage: Stage) -> dict[str, Any]:
-    """Where a project stands, placed in its preset rather than merely named.
-
-    "4 of 15" is what a chip can show and a person can read; the namespaced id
-    is precise and says nothing about progress. Both are carried because the
-    id is what every other surface keys on.
-    """
-    ids = [each.id for each in preset.stages]
-    return {
-        "id": stage.id,
-        "name": stage.name,
-        "index": ids.index(stage.id) + 1,
-        "of": len(ids),
-    }
-
-
-def provenance_view(provenance: ProvenanceSummary | None) -> dict[str, Any] | None:
-    """What an artifact says it rests on, as the browser needs it.
-
-    `empty` is computed here rather than left to the browser to derive from
-    three other fields, because it is the one shape the artifact contract calls
-    never right and a client rederiving it is a client that can get it wrong.
-    """
-    if provenance is None:
-        return None
-    return {
-        "sources": [
-            {"source_id": span.source_id, "start": span.start, "end": span.end}
-            for span in provenance.sources
-        ],
-        "inferred": provenance.inferred,
-        "unreadable": provenance.unreadable,
-        "empty": provenance.is_empty,
-    }
-
-
-def artifact_slot_view(slot: ArtifactSlot) -> dict[str, Any]:
-    """One declared artifact, present or not.
-
-    The frontmatter is not sent. It is already on the file, the file is one
-    click away through the existing file endpoint, and a listing that inlined
-    every block would grow with the course while being read by a pane that
-    shows a row per artifact. What is sent is what the row itself renders:
-    whether it landed, what it claims, and what its block was missing.
-    """
-    return {
-        "path": slot.path,
-        "artifact_type": slot.artifact_type,
-        "subtype": slot.subtype,
-        "cardinality": slot.cardinality,
-        "stage_id": slot.stage_id,
-        "present": slot.present,
-        "has_frontmatter": slot.frontmatter is not None,
-        "missing_fields": list(slot.missing_fields),
-        "provenance": provenance_view(slot.provenance),
-        "body_chars": slot.body_chars,
-    }
-
-
-def finding_view(finding: Finding) -> dict[str, Any]:
-    return {
-        "check": finding.check,
-        "severity": finding.severity,
-        "message": finding.message,
-        "cites": list(finding.cites),
-        "suggested_edit": finding.suggested_edit,
-    }
-
-
-def stage_progress_view(stage: StageProgress) -> dict[str, Any]:
-    return {
-        "index": stage.index,
-        "id": stage.id,
-        "name": stage.name,
-        "kind": stage.kind,
-        "spine": stage.spine,
-        "scope_level": stage.scope_level,
-        "status": stage.status,
-        "outputs": [artifact_slot_view(slot) for slot in stage.outputs],
-        "gate_decisions": list(stage.gate_decisions),
-        "reviewer_role": stage.reviewer_role,
-        "findings_report": stage.findings_report,
-    }
-
-
-def course_view(
-    course: Course,
-    *,
-    project_name: str = "",
-    holding_session_id: UUID | None = None,
-) -> dict[str, Any]:
-    """A whole run: the rail, the artifacts, and what the current stage's checks say.
-
-    One response rather than three endpoints, because the three are always
-    rendered together and a rail that arrived before its artifacts would show
-    every stage as empty for as long as the second request took -- which reads
-    as a run that has produced nothing.
-
-    `holding_session_id` is carried because an artifact is only readable
-    through a session: the file viewer, its markdown rendering and its history
-    all live there, and a course pane that grew its own reader would be a
-    worse copy of one that already works. `None` says plainly that there is
-    nothing to open the file in until somebody joins the project, which is a
-    better answer than a link that 404s.
-    """
-    return {
-        "project_name": project_name,
-        "holding_session_id": str(holding_session_id) if holding_session_id else None,
-        "preset": {
-            "id": course.preset_id,
-            "name": course.preset_name,
-            "version": course.preset_version,
-        },
-        "position": course.position,
-        "stage_count": course.stage_count,
-        "stages": [stage_progress_view(stage) for stage in course.stages],
-        "live_findings": [finding_view(finding) for finding in course.live_findings],
-        "unimplemented_checks": list(course.unimplemented_checks),
-    }
-
-
-def project_view(
+def project_detail_view(
     project_id: UUID,
     name: str,
     *,
     active_session_id: UUID | None = None,
     tip_at_event: int = 0,
-    workflow: dict[str, Any] | None = None,
-    stage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """One row of `/api/projects`: enough to list, join, and see who holds it.
+    """One project, as `GET /api/projects/{id}` answers it.
 
-    The holder is part of the row because it decides what the row can offer.
-    A list that cannot see it has only one button to show -- join -- and no
-    way to know that pressing it will fail, or that ending the holding
-    session is what the user actually wants.
+    Identity and holder, and nothing else. It exists because the only
+    single-project read this API had was `/course` -- so four surfaces that
+    wanted a project's name were reading a workflow run's progress to get one.
+    That route is gone now; this is what they read instead.
 
-    `workflow` and `stage` are passed in rather than derived, because
-    resolving a stage needs the preset and this module holds no registry --
-    and a project can name a preset this build does not ship, which is the
-    caller's problem to answer rather than a reason to fail a listing. Both
-    are `None` for every project written before workflows existed.
+    `GET /api/projects` answers the same shape. They were two functions while
+    the listing carried a workflow chip the detail did not; with those columns
+    gone the two questions have one answer, so `project_view` is an alias
+    rather than a copy. Kept apart as two *names* rather than collapsed to
+    one, because the day a listing earns a column a detail does not is the day
+    this becomes a function again, and every call site is already labelled
+    with which question it is asking.
     """
     return {
         "id": str(project_id),
         "name": name,
         "active_session_id": str(active_session_id) if active_session_id else None,
         "tip_at_event": tip_at_event,
-        "workflow": workflow,
-        "stage": stage,
     }
+
+
+project_view = project_detail_view
+"""One row of `/api/projects`: enough to list, join, and see who holds it.
+
+The holder is part of the row because it decides what the row can offer. A
+list that cannot see it has only one button to show -- join -- and no way to
+know that pressing it will fail, or that ending the holding session is what
+the user actually wants.
+
+Kept as a name because `list_projects` and `read_project` answer different
+questions and a call site reading `project_view` says which one it is asking.
+"""
 
 
 def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[str, Any]:
@@ -679,39 +513,28 @@ def project_change(project_id: UUID, event: DomainEvent) -> dict[str, Any]:
     lean on.
 
     One frame type for the whole aggregate, and `change` is what tells its
-    events apart. `ProjectStageAdvanced` is what was reported, but `ProjectWorkflowSelected`
-    turns the course page from a 409 into a rail and the lifecycle events move
-    the holding-session link, so a frame per event class would be five frame
-    types where the client wants one invalidation.
+    events apart. The lifecycle events (`ProjectSessionJoined`,
+    `ProjectTipAdvanced`, `ProjectDeleted`) move the holding-session link and
+    the project list, so a frame per event class would be several frame types
+    where the client wants one invalidation.
 
-    Carries no stage. It would be `to_stage` off `ProjectStageAdvanced` and nothing at
-    all off the other four, so a client would need the read anyway and would
-    have two descriptions of the current stage that can disagree -- the same
+    Carries no state beyond the change's name. Anything more would be a second
+    description of the project that can disagree with the read -- the same
     argument `corpus_change` makes about a document. The frame is a nudge;
-    `/api/projects/{id}/course` stays the single answer to where the run is.
+    `GET /api/projects/{id}` stays the single answer to where the project
+    stands.
 
-    **`decision` is the exception, and the distinction is worth being precise
-    about.** It is not a description of current state, so it cannot disagree
-    with the course read the way a stage name could -- it is a fact about the
-    transition that just happened, and the course read does not report it at
-    all. A tab told only that a stage advanced has to ask what happened; one
-    told the reviewer chose `approve_with_edits` has been informed. That is the
-    whole point of the field (#80), which added it because an audit of a driven
-    run could otherwise say fifteen boundaries were crossed and nothing about
-    how.
-
-    Read through `getattr` with a `None` default rather than off the class,
-    because this frame serves all six project events and only `ProjectStageAdvanced`
-    has one. A client reads a null `decision` as "not that kind of change"
-    rather than as a missing verdict. Nothing on the page renders it yet; it is
-    on the frame so the live path does not have to be widened again the first
-    time something wants it.
+    It used to carry `decision`, read off `ProjectStageAdvanced` through
+    `getattr`. That event is gone with the workflow system and no surviving
+    project event has a verdict, so the key could only ever have been null --
+    which is a silent default rather than a field. Removed rather than left to
+    answer null forever; the console's decoder already treats its absence as
+    valid.
     """
     return {
         "type": "Project",
         "project_id": str(project_id),
         "change": type(event).__name__,
-        "decision": getattr(event, "decision", None),
         "occurred_at": event.occurred_at.isoformat(),
     }
 
@@ -1228,23 +1051,26 @@ def roster_view(roster: Roster) -> dict[str, Any]:
 
 
 def autonomy_view(policy: AutonomyPolicy) -> dict[str, Any]:
-    """Every gated tool's level, plus the two tool lists a client would
-    otherwise have to hardcode.
+    """Every gated tool's level, plus the tool list a client would otherwise
+    have to hardcode.
 
-    `gated` and `stage_gates` are sent because they are the only place the
-    browser can learn them without copying `GATED_TOOLS` into JavaScript, and a
-    copy drifts the moment a tool is added -- leaving a UI that offers no switch
-    for a tool the server is gating, which reads to the user as a tool that
-    cannot be relaxed rather than one nobody wired up. `levels` already covers
-    every gated tool, but `gated` says so explicitly and `stage_gates` marks the
-    subset that "allow all" deliberately leaves alone (see
-    `AutonomyPolicy.relax_all`), so the UI can label that rather than look
-    broken.
+    `gated` is sent because it is the only place the browser can learn it
+    without copying `GATED_TOOLS` into JavaScript, and a copy drifts the moment
+    a tool is added -- leaving a UI that offers no switch for a tool the server
+    is gating, which reads to the user as a tool that cannot be relaxed rather
+    than one nobody wired up. `levels` already covers every gated tool, but
+    `gated` says so explicitly.
+
+    `stage_gates` was a third key marking the subset "allow all" left alone.
+    It named exactly one tool, `advance_stage`, which the workflow removal
+    deleted -- so the key had nothing left to name, and the console had
+    stopped reading it. Removed rather than left to answer an empty list,
+    which would read as a subset that happens to be empty rather than one that
+    no longer exists.
     """
     return {
         "levels": policy.levels(),
         "gated": list(GATED_TOOLS),
-        "stage_gates": list(STAGE_GATE_TOOLS),
     }
 
 

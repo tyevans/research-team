@@ -5,7 +5,7 @@ Ports are declared here, next to the code that calls them, and implemented in
 langchain, or deepagents; those are details chosen at composition time.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
@@ -323,20 +323,6 @@ class ApprovalRequest:
     args: dict
     description: str
     allowed_decisions: tuple[str, ...]
-    context: dict | None = None
-    """Whatever the harness found out about this call before posing it.
-
-    Optional, and `None` for every ordinary tool gate -- `web_search` has
-    nothing to say for itself beyond its arguments, and inventing a shape for
-    it would make the common case pay for the rare one. A stage advance does:
-    it carries the findings from the stage's own checks and the path of the
-    artifact they were written to, so the reviewer decides having seen what the
-    machine found rather than discovering it a stage later.
-
-    Deliberately an untyped mapping. This crosses to a browser as JSON, and the
-    field list a gate wants to present is a guess until somebody has reviewed
-    with it; a typed model here would freeze that guess into the port.
-    """
 
 
 @dataclass(frozen=True)
@@ -351,42 +337,6 @@ class ApprovalDecision:
     type: str
     edited_args: dict | None = None
     message: str | None = None
-
-
-@dataclass(frozen=True)
-class GateReview:
-    """What the harness established about a gated call before a human saw it.
-
-    Two fields because there are two outcomes and they are not the same kind of
-    thing. `context` is evidence, and it travels with the request to inform the
-    decision. `refusal` is the harness declining to *pose* the decision at all,
-    and it exists for the two check-library invariants -- a self-reviewing
-    critic and an uncited verdict -- which fail invisibly and therefore give a
-    reviewer nothing to weigh. Asking someone to approve past one of those is
-    asking them to rubber-stamp; converting it into a refusal with a named
-    repair is the honest version.
-    """
-
-    context: dict
-    refusal: str | None = None
-    review_id: UUID | None = None
-    """The review recorded on the session stream, for the decision to name.
-
-    None when there was no review to record, which is every tool that is not
-    an advance. It is on this DTO because the reviewer and the decider are
-    different functions in different layers, and the id has to cross between
-    them; nothing else about the review does.
-    """
-
-
-GateReviewer = Callable[[Session, str, dict], Awaitable[GateReview | None]]
-"""Consulted for each gated call, before the human is.
-
-`None` means the harness has nothing to say about this tool, which is the
-answer for every tool but the stage advance. A reviewer that raises is logged
-and treated as `None`: findings are advice, and a bug in the advice must not
-cost a stage transition the model has already earned.
-"""
 
 
 class ApprovalRefused(Exception):

@@ -32,7 +32,7 @@
    same confirmation a keyboard user gets.
    What was *not* settled here and is written down instead of quietly passed:
    `select.input` below takes the same treatment and has no caret, so a keyboard
-   reader tabbing to the workflow picker has a 1px border shifting `--line` to
+   reader tabbing to a `<select>` gets a 1px border shifting `--line` to
    `--accent-dim` and nothing else. That is a contrast question rather than a
    geometry one, it needs a number this sweep did not measure, and inventing a
    ring for it here would have been a change made on a hunch. */
@@ -57,8 +57,13 @@
      near-black on near-black. */
   color: var(--fg);
 }
-/* A workflow label says what the preset produces and where it stops, which is
-   longer than a project name and must not push the button off the row. */
+/* Sized for a workflow label -- longer than a project name, and it must not
+   push the button off its row. That picker is gone with the workflow system,
+   and the cap is inert rather than wrong: the one surviving `select.input`
+   is `GraphPane`'s entity-type menu, which overrides it inline at 40%.
+   Kept because removing it and that inline override together is a width
+   measurement in a browser, not a comment sweep -- and `GraphPane`'s comment
+   already says the inline style goes when this rule does. */
 select.input {
   max-width: 22rem;
 }

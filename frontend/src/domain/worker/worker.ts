@@ -7,7 +7,7 @@ import type { ProjectId, SessionId } from '../shared/identifier.ts'
  * roster and a failed poll must not render the same — see `Workers.tsx`.
  */
 export interface Worker {
-  readonly kind: 'run' | 'turn' | 'extraction' | 'dispatch' | 'stage'
+  readonly kind: 'run' | 'turn' | 'extraction' | 'dispatch'
   /** Identifies this worker within the roster: a run id, a session id, or a
    *  source id. Text because the three are different kinds of identifier and
    *  `parent` has to compare across them. */

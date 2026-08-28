@@ -26,10 +26,9 @@ def _tool_names(application) -> set[str]:
 async def _middleware_names(application) -> set[str]:
     """The names of this turn's middleware, for a session outside any project.
 
-    `Session(uuid4())` with no `StartSession` executed is enough:
-    `running_workflow` answers `None` for a session with no project, which is
-    the branch every one of these tests exercises, and building further would
-    only test `StageMiddleware`'s wiring, which is covered elsewhere.
+    `Session(uuid4())` with no `StartSession` executed is enough: the provider
+    reads nothing off a project, so a bare session exercises the same branch a
+    fully attached one would.
     """
     session = Session(uuid4())
     middleware = await application.service._executor._middleware_provider(session)

@@ -3,7 +3,7 @@ import type { z } from 'zod'
 import type { ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
 import type { ComponentBlock, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
-import type { Approval, ApprovalDecision, GateContext } from '@domain/approval/approval.ts'
+import type { Approval, ApprovalDecision } from '@domain/approval/approval.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import type { ExtractionFrame, ExtractionStage } from '@domain/knowledge/extraction.ts'
 import type {
@@ -47,15 +47,7 @@ import type {
   ViewDwell,
 } from '@domain/interaction/log.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
-import type {
-  Course,
-  StageProgress,
-  StageStatus,
-  ArtifactSlot,
-  Provenance,
-  Finding,
-} from '@domain/project/course.ts'
-import type { Project, WorkflowPreset } from '@domain/project/project.ts'
+import type { ProjectDetail } from '@domain/project/project.ts'
 import type {
   DocumentText,
   MediaSummary,
@@ -281,24 +273,6 @@ const KNOWN_DECISIONS: readonly ApprovalDecision[] = ['approve', 'edit', 'reject
 const isKnownDecision = (value: string): value is ApprovalDecision =>
   (KNOWN_DECISIONS as readonly string[]).includes(value)
 
-const toGateContext = (raw: Dto<typeof dto.gateContextDto>): GateContext => ({
-  stage: raw.stage,
-  findingsArtifact: raw.findings_artifact,
-  artifactPaths: raw.artifact_paths,
-  blocked: raw.blocked,
-  artifactsReviewed: raw.artifacts_reviewed,
-  linksReviewed: raw.links_reviewed,
-  unimplementedChecks: raw.unimplemented_checks,
-  unreadableArtifacts: raw.unreadable_artifacts,
-  findings: raw.findings.map((finding) => ({
-    check: finding.check,
-    severity: finding.severity,
-    message: finding.message,
-    cites: finding.cites,
-    suggestedEdit: finding.suggested_edit,
-  })),
-})
-
 export const toApproval = (raw: Dto<typeof dto.approvalDto>): Approval => ({
   id: ApprovalId(raw.id),
   sessionId: SessionId(raw.session_id),
@@ -311,104 +285,13 @@ export const toApproval = (raw: Dto<typeof dto.approvalDto>): Approval => ({
   // was never offered, because the gate stays open either way and only the
   // second wastes the reviewer's trust.
   allowedDecisions: raw.allowed_decisions.filter(isKnownDecision),
-  context: raw.context ? toGateContext(raw.context) : null,
 })
 
-export const toProject = (raw: Dto<typeof dto.projectDto>): Project => ({
+export const toProjectDetail = (raw: Dto<typeof dto.projectDetailDto>): ProjectDetail => ({
   id: ProjectId(raw.id),
   name: raw.name,
   activeSessionId: raw.active_session_id ? SessionId(raw.active_session_id) : null,
   tipAtEvent: raw.tip_at_event,
-  workflow: raw.workflow,
-  stage: raw.stage,
-})
-
-export const toPreset = (raw: Dto<typeof dto.presetDto>): WorkflowPreset => ({
-  id: raw.id,
-  name: raw.name,
-  version: raw.version,
-  description: raw.description,
-  produces: raw.produces,
-  stageCount: raw.stage_count,
-  terminatesAt: raw.terminates_at,
-  hasValueFilter: raw.has_value_filter,
-  label: raw.label,
-})
-
-const toProvenance = (raw: Dto<typeof dto.provenanceDto>): Provenance => ({
-  sources: raw.sources.map((span) => ({
-    sourceId: SourceId(span.source_id),
-    start: span.start,
-    end: span.end,
-  })),
-  inferred: raw.inferred,
-  unreadable: raw.unreadable,
-  empty: raw.empty,
-})
-
-const toArtifactSlot = (raw: Dto<typeof dto.artifactSlotDto>): ArtifactSlot => ({
-  path: raw.path,
-  artifactType: raw.artifact_type,
-  subtype: raw.subtype,
-  cardinality: raw.cardinality,
-  stageId: raw.stage_id,
-  present: raw.present,
-  hasFrontmatter: raw.has_frontmatter,
-  missingFields: raw.missing_fields,
-  provenance: raw.provenance ? toProvenance(raw.provenance) : null,
-  bodyChars: raw.body_chars,
-})
-
-const toFinding = (raw: Dto<typeof dto.findingDto>): Finding => ({
-  check: raw.check,
-  severity: raw.severity,
-  message: raw.message,
-  cites: raw.cites,
-  suggestedEdit: raw.suggested_edit,
-})
-
-const STAGE_STATUSES: readonly StageStatus[] = ['done', 'current', 'upcoming', 'unknown']
-
-/** A status this build has not heard of is a stage it cannot place, which is
- *  what `unknown` already means -- `course.py`'s `_status` returns it for
- *  exactly that, a stage whose position cannot be resolved. So the fold reuses
- *  a meaning rather than inventing one, and `.rail-unknown` and `.chip-unknown`
- *  already draw it.
- *
- *  It draws it in `--k-failure` red, and that is the intended register rather
- *  than an accident of reuse: an unrecognised status means this console and the
- *  server disagree about the vocabulary, which is a deployment mismatch and
- *  should look like one. What it costs is the literal string -- a future
- *  `skipped` renders as "unknown" rather than as itself. That is the trade for
- *  a closed union, and the union is what stopped `todo` from being believed for
- *  as long as it was. */
-const toStageStatus = (raw: string): StageStatus =>
-  STAGE_STATUSES.includes(raw as StageStatus) ? (raw as StageStatus) : 'unknown'
-
-const toStageProgress = (raw: Dto<typeof dto.stageProgressDto>): StageProgress => ({
-  index: raw.index,
-  id: raw.id,
-  name: raw.name,
-  kind: raw.kind,
-  spine: raw.spine,
-  scopeLevel: raw.scope_level,
-  status: toStageStatus(raw.status),
-  outputs: raw.outputs.map(toArtifactSlot),
-  gateDecisions: raw.gate_decisions,
-  reviewerRole: raw.reviewer_role,
-  findingsReport: raw.findings_report,
-})
-
-export const toCourse = (raw: Dto<typeof dto.courseDto>, projectId: ProjectId): Course => ({
-  projectId,
-  projectName: raw.project_name,
-  holdingSessionId: raw.holding_session_id ? SessionId(raw.holding_session_id) : null,
-  preset: raw.preset,
-  position: raw.position,
-  stageCount: raw.stage_count,
-  stages: raw.stages.map(toStageProgress),
-  findings: raw.live_findings.map(toFinding),
-  unimplementedChecks: raw.unimplemented_checks,
 })
 
 export const toRun = (raw: Dto<typeof dto.runDto>): ResearchRun => ({
@@ -456,17 +339,14 @@ export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
     // plain row rather than being dropped: a worker this build cannot label
     // is still a worker, and hiding it is the failure mode that matters.
     //
-    // `dispatch` and `stage` are listed explicitly rather than left to the
-    // fallback. The fallback is `turn`, which is not a neutral label but a
-    // different specific kind -- a dispatch arriving from a newer server was
-    // being named a turn on screen, which is a confident wrong answer rather
-    // than a vague one. Anything genuinely unknown still lands on `turn`, and
-    // that remains the weakest part of this mapping.
+    // `dispatch` is listed explicitly rather than left to the fallback. The
+    // fallback is `turn`, which is not a neutral label but a different
+    // specific kind -- a dispatch arriving from a newer server was being named
+    // a turn on screen, which is a confident wrong answer rather than a vague
+    // one. Anything genuinely unknown still lands on `turn`, and that remains
+    // the weakest part of this mapping.
     kind:
-      worker.kind === 'run' ||
-      worker.kind === 'extraction' ||
-      worker.kind === 'dispatch' ||
-      worker.kind === 'stage'
+      worker.kind === 'run' || worker.kind === 'extraction' || worker.kind === 'dispatch'
         ? worker.kind
         : 'turn',
     ref: worker.ref,
@@ -484,7 +364,6 @@ export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
 export const toAutonomy = (raw: Dto<typeof dto.autonomyDto>): AutonomyPolicyView => ({
   levels: new Map(Object.entries(raw.levels)),
   gated: raw.gated,
-  stageGates: raw.stage_gates,
 })
 
 export const toAutonomyChange = (raw: Dto<typeof dto.autonomyChangeDto>): AutonomyChange => ({

@@ -27,17 +27,11 @@ LEVELS: tuple[Level, ...] = ("auto", "ask", "deny")
 SEARCH_TOOL = "web_search"
 FETCH_TOOL = "fetch"
 FETCH_MEDIA_TOOL = "fetch_media"
-ADVANCE_STAGE_TOOL = "advance_stage"
-"""Defined here rather than beside its tool because a workflow application port
-does not exist -- there is nothing above `domain.workflow` for the name to live
-in, and the tool module importing this is the same direction `corpus_read` and
-`knowledge` already point."""
 
 GATED_TOOLS: tuple[str, ...] = (
     SEARCH_TOOL,
     FETCH_TOOL,
     FETCH_MEDIA_TOOL,
-    ADVANCE_STAGE_TOOL,
     "write_file",
     "edit_file",
     "delete_file",
@@ -53,32 +47,14 @@ GATED_TOOLS: tuple[str, ...] = (
 nothing and escape nothing, and gating them would train people to click
 through approvals without reading them."""
 
-STAGE_GATE_TOOLS: tuple[str, ...] = (ADVANCE_STAGE_TOOL,)
-"""The gated tools that are review gates rather than hazards.
-
-Named as a set rather than special-cased inline wherever it matters, because
-"relax everything except the workflow review" is a rule that will be stated in
-more than one place (`relax_all`, the routes over it, whatever UI offers the
-switch) and each restatement is a chance for one of them to forget."""
-
 STRICTNESS: tuple[Level, ...] = ("auto", "ask", "deny")
 """The levels in increasing order, so two of them can be compared."""
 
 TOOL_FLOORS: dict[str, Level] = {
     FETCH_TOOL: "ask",
     FETCH_MEDIA_TOOL: "ask",
-    ADVANCE_STAGE_TOOL: "ask",
 }
 """The least autonomy a tool gets when nobody has said otherwise.
-
-`advance_stage` has one for a different reason than the others: it is not
-dangerous, it *is* the review gate. A stage boundary is where a person is
-supposed to look at what was produced before the run builds on it, and the
-approval path this floor puts in front of the tool -- interrupt, announce,
-prompt, recorded decision -- is exactly that review, already built. Without the
-floor a default-`auto` policy would let a run cross every gate in a workflow
-without anyone seeing it, which is the silent-progress failure the whole
-staging design exists to prevent.
 
 `fetch`'s floor is what lets that tool be registered unconditionally.
 Search is opt-in by configuration -- no SearXNG instance, no
@@ -131,7 +107,7 @@ class AutonomyPolicy:
             raise ValueError(f"not a gated tool: {tool_name!r}")
         self._levels[tool_name] = level
 
-    def relax_all(self, *, include_stage_gates: bool = False) -> dict[str, Level]:
+    def relax_all(self) -> dict[str, Level]:
         """Set gated tools to `auto`, and report only what actually changed.
 
         The answer to "stop asking me about every fetch". Answering it one tool
@@ -159,23 +135,14 @@ class AutonomyPolicy:
         `relax_all` actually grants should not have to discover that
         consequence by tracing `TOOL_FLOORS` to `fetch_media.py` themselves.
 
-        `advance_stage` (see `STAGE_GATE_TOOLS`) is excluded unless asked for
-        by name. Its floor is not about danger -- it *is* the workflow review
-        gate. A stage boundary is where a person is supposed to look at what
-        was produced before the run builds on it, and the approval path is that
-        review, already built. Auto-ing it lets a run cross every gate in a
-        workflow with nobody seeing it, which is the silent-progress failure
-        the staging design exists to prevent. So relaxing it stays a separate,
-        deliberate act rather than a side effect of not wanting to be asked
-        about `fetch`. The alternative -- excluding it outright, with no flag --
-        was rejected because a single-operator run where the operator *is* the
-        review is a real way to work, and the honest shape for that is an
-        option they have to reach for, not a rule they have to route around.
+        Every gated tool, with no exemption and no flag to grant one. There
+        was one -- `advance_stage` was a review gate rather than a hazard, and
+        `relax_all` withheld it unless asked -- and it went with the tool. What
+        remains in `GATED_TOOLS` is hazards only, and "relax everything except
+        the ones that are dangerous" is not a rule anybody wants.
         """
         changed: dict[str, Level] = {}
         for tool in GATED_TOOLS:
-            if tool in STAGE_GATE_TOOLS and not include_stage_gates:
-                continue
             if self.level_for(tool) == "auto":
                 continue
             self.set(tool, "auto")

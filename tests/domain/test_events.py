@@ -14,7 +14,6 @@ from research_team.domain.events import (
     FileWritten,
     SessionForkedFrom,
     SessionStarted,
-    StageChecksEvaluated,
     ToolCallDecided,
     ToolResultRecorded,
     TurnCompleted,
@@ -38,7 +37,6 @@ def test_all_events_exported():
         FileDeleted,
         ToolCallDecided,
         AutonomyChanged,
-        StageChecksEvaluated,
     }
 
 

@@ -30,8 +30,6 @@ const aProject = (over: Partial<Project> = {}): Project => ({
   name: 'apollo',
   activeSessionId: null,
   tipAtEvent: 0,
-  workflow: null,
-  stage: null,
   ...over,
 })
 

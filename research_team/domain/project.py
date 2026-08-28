@@ -17,8 +17,6 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
-from research_team.domain.workflow import Decision, Preset, Stage
-
 
 @register_event
 class ProjectCreated(DomainEvent):
@@ -61,65 +59,6 @@ class ProjectDeleted(DomainEvent):
     aggregate_type: str = "Project"
 
 
-@register_event
-class ProjectWorkflowSelected(DomainEvent):
-    """This project is running an instructional-design preset.
-
-    Records the preset by id and version rather than by value. A preset is
-    hundreds of lines of prompts and checks, and copying it into the log would
-    both bloat every snapshot and freeze a typo forever; the id is the stable
-    thing, and the version is what lets a later reader tell whether the preset
-    they are holding is the one this run was gated by.
-    """
-
-    aggregate_type: str = "Project"
-    preset_id: str
-    preset_version: str
-
-
-@register_event
-class ProjectStageAdvanced(DomainEvent):
-    """A stage was completed and the project moved to the next one.
-
-    `from_stage` is recorded even though it is derivable, because the point of
-    this event is the transition rather than the destination: an audit that has
-    to re-fold the whole stream to learn what a decision was made *about* is
-    not much of an audit.
-    """
-
-    aggregate_type: str = "Project"
-    from_stage: str
-    to_stage: str
-    decided_by: str
-    gate_decision: str
-    """Why the gate was posed, as whoever posed it accounts for it.
-
-    Under the tool this is the model's own `rationale`. Under a stage runner
-    there is no model rationale and what the harness can honestly write is
-    machine prose -- "4 of 4 declared artifacts present; 3 advisory findings;
-    no invariant failures". Both are *evidence*, which is what this field has
-    always held; `decision` is the verdict, and the two were the same thing
-    only while a model was the only thing that could propose a boundary.
-    """
-    decision: Decision = "approve"
-    """What the reviewer decided, as opposed to what they were shown.
-
-    Case 1 of `events.py`'s evolution strategy: every `ProjectStageAdvanced` written
-    before this existed was an advance somebody let through, so `approve` is
-    the only default that does not invent a verdict nobody gave.
-
-    Three of the five `Decision` values are refused by `_advanced` rather than
-    stored -- see there. This field is worth having anyway for the one that is
-    not: `approve_with_edits` is the delta between what the machine produced
-    and what a human had to correct, which `workflow-engine.md` §6 argues is
-    the cheapest real signal about which stages need better prompts. Nothing
-    reads it yet. It is added now rather than later because a runner writing
-    machine prose into `gate_decision` leaves the human's verdict with nowhere
-    to live, and an audit of a driven run would then be able to say fifteen
-    boundaries were crossed and nothing about how.
-    """
-
-
 @dataclass(frozen=True)
 class CreateProject:
     #: Which project to create. The one command whose target cannot be read
@@ -154,36 +93,7 @@ class DeleteProject:
     pass
 
 
-@dataclass(frozen=True)
-class SelectWorkflow:
-    preset: Preset
-
-
-@dataclass(frozen=True)
-class AdvanceStage:
-    """Move to `to_stage`, with the preset the caller believes is running.
-
-    The preset travels on the command because ordering cannot be checked
-    without the stage list, and the domain will not reach for a registry to
-    find one -- that would make `decide` depend on module import order and on
-    whichever presets happen to be shipped. Carrying it makes the disagreement
-    between caller and aggregate visible, which `decide` then rejects.
-    """
-
-    preset: Preset
-    to_stage: str
-    decided_by: str
-    gate_decision: str
-    decision: Decision = "approve"
-    """The reviewer's verdict. Defaulted so every existing caller is unchanged:
-    the tool path has no verdict to supply -- the human's answer to the
-    interrupt is already recorded as `ToolCallDecided` -- and a required field
-    would force it to invent one."""
-
-
-ProjectCommand = (
-    CreateProject | JoinProject | AdvanceTip | DeleteProject | SelectWorkflow | AdvanceStage
-)
+ProjectCommand = CreateProject | JoinProject | AdvanceTip | DeleteProject
 
 
 class ProjectState(BaseModel):
@@ -207,42 +117,9 @@ class ProjectState(BaseModel):
     tip_at_event: int = 0
     """How far into that stream to fold."""
 
-    preset_id: str | None = None
-    """Which workflow this project runs. `None` means none was ever selected,
-    which is what every project written before workflows existed meant."""
-    preset_version: str | None = None
-    """The preset version in force when it was selected. Kept so a later reader
-    can tell whether the preset they hold is the one this run was gated by."""
-    current_stage: str | None = None
-    """The stage last advanced *into*. `None` with a preset selected means the
-    preset's first stage: selecting a workflow puts a project at its start, but
-    no event records entering a stage nobody advanced to, and `evolve` cannot
-    look a preset up to fill it in. `current_stage_of` resolves the two cases
-    into one answer for anyone who has the preset in hand."""
-    stage_history: list[str] = Field(default_factory=list)
-    """Every stage advanced into, in order. Excludes the first stage for the
-    same reason `current_stage` starts `None` -- nothing was decided to get
-    there, so there is no decision to record."""
-
 
 def initial_state() -> ProjectState:
     return ProjectState()
-
-
-def current_stage_of(state: ProjectState, preset: Preset) -> Stage | None:
-    """Where this project stands in that preset, or None if it runs no workflow.
-
-    The seam between a fold that cannot know the preset and callers that do --
-    `StageMiddleware`'s constructor argument comes from here. Deliberately does
-    not check that `preset` is the one the project selected: this answers "where
-    would this project be in this preset", and the caller that fetched the
-    preset by `state.preset_id` already knows. `decide` does check, because
-    there a mismatch would let one preset's ordering gate another's run.
-    """
-    if state.preset_id is None:
-        return None
-    stage_id = state.current_stage or preset.stages[0].id
-    return next((stage for stage in preset.stages if stage.id == stage_id), None)
 
 
 def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
@@ -292,33 +169,6 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
             # Named, not just refused: the next thing anyone asks is "which one".
             raise CommandRejectedError(f"project is held by session {holder}")
 
-        case SelectWorkflow(), ProjectState(preset_id=current) if current is not None:
-            # Named, like `JoinProject`'s refusal: the caller's next question is
-            # "which one, then". There is no re-selection because a run's whole
-            # audit trail is gated by one preset's stage list -- swapping it
-            # midway would leave decisions recorded against rules that no
-            # longer exist. Forking, or a new project, is the way out.
-            raise CommandRejectedError(
-                f"project is running workflow {current} v{state.preset_version}"
-            )
-        case SelectWorkflow(preset=preset), _:
-            return [
-                ProjectWorkflowSelected(
-                    aggregate_id=project_id,
-                    preset_id=preset.id,
-                    preset_version=preset.version,
-                )
-            ]
-
-        case AdvanceStage(), ProjectState(preset_id=None):
-            raise CommandRejectedError("project has no workflow selected")
-        case AdvanceStage(preset=preset), _ if preset.id != state.preset_id:
-            raise CommandRejectedError(
-                f"project runs workflow {state.preset_id}, not {preset.id}"
-            )
-        case AdvanceStage(preset=preset, to_stage=to_stage), _:
-            return [_advanced(state, command, preset, to_stage)]
-
         case AdvanceTip(session_id=session_id, at_event=at), _:
             # Two ways to be allowed to move the tip, and the second one is
             # what stops work from detaching. The holder may move it: that is
@@ -348,70 +198,6 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
     raise CommandRejectedError(f"unhandled command {type(command).__name__}")
 
 
-_NOT_AN_ADVANCE: frozenset[str] = frozenset({"amend_upstream", "send_back", "halt"})
-"""`Decision` values that mean the stage did *not* move.
-
-Refused rather than stored. `ProjectStageAdvanced` is the only stage event there is
-and its whole content is that the project went forward one stage, so a payload
-carrying `send_back` would be a fact contradicting the event it rides on.
-`workflow-engine.md` §3.4 is the record that these three need their own events
-and their own answer to what `current_stage` means while one is outstanding;
-until that exists, refusing keeps "unrepresentable" true instead of letting it
-quietly become "representable and meaningless".
-
-`approve_with_edits` is absent deliberately: it *is* an advance -- the reviewer
-let it through having corrected something -- and it is the one value in the
-enum this field was added to carry.
-"""
-
-
-def _advanced(
-    state: ProjectState, command: "AdvanceStage", preset: Preset, to_stage: str
-) -> ProjectStageAdvanced:
-    """The one legal move from where this project stands, or a refusal.
-
-    Only the immediately next stage is legal. Skipping ahead is the failure the
-    whole workflow engine exists to prevent -- an artifact produced without the
-    stage that was supposed to constrain it looks identical to one produced
-    with it. Going back is refused too, though for a different reason: revision
-    is real and necessary, but it is an amendment emitted *to* an earlier stage
-    rather than a return to it, and conflating the two would let a run quietly
-    re-run a gate it had already passed.
-
-    Lifted out of `decide`'s match rather than written as more `case` arms
-    because these are five refusals over one situation, and as cases they would
-    each have to re-derive the current stage from the preset.
-    """
-    if command.decision in _NOT_AN_ADVANCE:
-        raise CommandRejectedError(
-            f"{command.decision!r} is not an advance: it is a decision to stop, "
-            f"revise, or go back, and this event only records going forward. "
-            f"There is nowhere in this aggregate for it yet -- see "
-            f"workflow-engine.md §3.4 -- and recording it here would put it on "
-            f"the event that says the stage moved."
-        )
-    ids = [stage.id for stage in preset.stages]
-    current = state.current_stage or ids[0]
-    at = ids.index(current)
-    if at == len(ids) - 1:
-        raise CommandRejectedError(f"project is at the final stage of {preset.id}: {current}")
-    if to_stage not in ids:
-        raise CommandRejectedError(f"workflow {preset.id} has no stage {to_stage}")
-    expected = ids[at + 1]
-    if to_stage != expected:
-        raise CommandRejectedError(
-            f"project is at {current}; the next stage is {expected}, not {to_stage}"
-        )
-    return ProjectStageAdvanced(
-        aggregate_id=state.project_id,
-        from_stage=current,
-        to_stage=to_stage,
-        decided_by=command.decided_by,
-        gate_decision=command.gate_decision,
-        decision=command.decision,
-    )
-
-
 def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
     """What each fact does to the state.
 
@@ -430,17 +216,6 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
                 update={
                     "member_session_ids": [*state.member_session_ids, session_id],
                     "active_session_id": session_id,
-                }
-            )
-
-        case ProjectWorkflowSelected(preset_id=preset_id, preset_version=version):
-            return state.model_copy(update={"preset_id": preset_id, "preset_version": version})
-
-        case ProjectStageAdvanced(to_stage=to_stage):
-            return state.model_copy(
-                update={
-                    "current_stage": to_stage,
-                    "stage_history": [*state.stage_history, to_stage],
                 }
             )
 

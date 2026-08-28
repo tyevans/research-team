@@ -262,7 +262,7 @@ async def test_a_joined_session_is_told_what_a_self_contained_question_is(servic
     topic mid-run elides just as readily and never sees `seeding_prompt`.
     `TOPICS_PROMPT` is appended exactly where `build_topic_tools` binds the
     tool, so the rule is present whenever the tool is and absent whenever it
-    is not -- the scoping `component_guidance` argues for.
+    is not: an instruction reaches a prompt when the tool it governs does.
 
     Asserts the failure *example* survives, not just the phrase
     "self-contained": the vague version of this instruction is the one the

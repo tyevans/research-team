@@ -22,8 +22,6 @@ const project = (id: ProjectId, name: string, over: Partial<Project> = {}): Proj
   name,
   activeSessionId: null,
   tipAtEvent: 0,
-  workflow: null,
-  stage: null,
   ...over,
 })
 

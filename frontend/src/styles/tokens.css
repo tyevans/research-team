@@ -320,8 +320,10 @@ select {
    `button` belongs to the same fact and was left out of it. A bare `<button>`
    renders the theme's `rgb(215,222,231)` on the UA's `rgb(239,239,239)`
    buttonface -- about 1.15:1, measured in Chromium at
-   `session/GateReview` BlockedWithFindings -- which is the field bug exactly,
-   one element later. No screen ships an unclassed button today, so this buys
+   `session/GateReview` BlockedWithFindings -- which was the field bug exactly,
+   one element later. That story is deleted with the workflow system and the
+   measurement is kept: it is a fact about a bare `<button>` on this theme, not
+   about that screen. No screen ships an unclassed button today, so this buys
    the workbench and whatever is written next rather than fixing a live
    defect; it is here because the rule above already had to be widened once.
 
@@ -342,9 +344,11 @@ select {
 }
 
 /* Links take the colour around them. The browser's `#0000EE` on `--bg`
-   (#0b0d10) is about 1.3:1, and three of them were live: `GateReview`'s file
-   links and `Artifacts`' basename both render a bare `<a>` with no class in
-   scope. `.crumbs a`, `.ent-ref` and `.ent-topic-question a` had each written
+   (#0b0d10) is about 1.3:1, and three of them were live when this was written:
+   `GateReview`'s file links and `Artifacts`' basename each rendered a bare
+   `<a>` with no class in scope. Both are deleted with the workflow system; the
+   rule stays for the reason it was generalised, which is that the next bare
+   link should not have to rediscover it. `.crumbs a`, `.ent-ref` and `.ent-topic-question a` had each written
    this rule locally; the third copy is what says it belongs here, and the two
    that existed only to say `color: inherit` are gone with it.
 

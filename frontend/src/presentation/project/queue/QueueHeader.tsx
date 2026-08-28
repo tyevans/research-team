@@ -1,10 +1,10 @@
 import type { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import { projectHref } from '../../routing/routes.ts'
-import { AutonomyPanel } from '../../course/AutonomyPanel.tsx'
-import { ExtractionPane } from '../../course/ExtractionPane.tsx'
-import { RunPanel } from '../../course/RunPanel.tsx'
-import { Workers } from '../../course/Workers.tsx'
+import { AutonomyPanel } from './AutonomyPanel.tsx'
+import { ExtractionPane } from './ExtractionPane.tsx'
+import { RunPanel } from './RunPanel.tsx'
+import { Workers } from './Workers.tsx'
 import { SeedPanel } from '../../research/SeedPanel.tsx'
 
 /** The controls that act on the queue, above the queue.

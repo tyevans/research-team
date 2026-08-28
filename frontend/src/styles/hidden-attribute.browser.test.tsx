@@ -28,19 +28,24 @@ import { TabList, TabPanel, Tabs } from '@presentation/common/Tabs.tsx'
  * did not do anything.
  *
  * **Proved red** by removing the rule from `base.css`: the first case fails at
- * `expected 'flex' to be 'none'`, the second at `expected [ <div …(8)></div>,
- * …(2) ] to have a length of 1 but got 3` — three rather than two, because three
- * of the five panels below carry `flex`, and the count is exactly the number of
- * panels a reader would have found stacked in the pane.
+ * `expected 'flex' to be 'none'`, the second at a length mismatch whose count
+ * is exactly the number of `flex` panels below — the number a reader would have
+ * found stacked in the pane. That count was three of five when this was
+ * measured; it is three of four now, because two panels came out with the
+ * workflow system and one was added back to keep the mix.
  */
 
-/** The four panel classNames are `ProjectView.tsx`'s, verbatim and in order.
- *  The mix is the point — two carry `flex` and two do not, which is exactly the
- *  arrangement in which the bug hides half the time. */
+/** The panel classNames are `ProjectView.tsx`'s, verbatim and in order.
+ *
+ * The mix is the point — some carry `flex` and some do not, which is exactly
+ * the arrangement in which the bug hides half the time. `artifact` and
+ * `finding` were the two `overflow-auto` entries here and went with the
+ * workflow system; `media` is the surviving panel with that className, so it
+ * takes their place rather than the list becoming all-`flex` and losing the
+ * mix. */
 const PANELS = [
-  { id: 'artifact', label: 'Artifacts', className: 'min-h-0 flex-1 overflow-auto' },
   { id: 'file', label: 'Workspace', className: 'flex min-h-0 flex-1 flex-col' },
-  { id: 'finding', label: 'Findings', className: 'min-h-0 flex-1 overflow-auto' },
+  { id: 'media', label: 'Media', className: 'min-h-0 flex-1 overflow-auto' },
   { id: 'doc', label: 'Documents', className: 'flex min-h-0 flex-1 flex-col' },
   { id: 'entity', label: 'Graph', className: 'flex min-h-0 flex-1 flex-col' },
 ]

@@ -34,11 +34,11 @@ export class HttpAutonomyRepository implements AutonomyRepository {
     )
   }
 
-  async allowAll(id: SessionId, includeStageGates: boolean): Promise<AutonomyChange> {
+  async allowAll(id: SessionId): Promise<AutonomyChange> {
     return toAutonomyChange(
       await this.http.post(
         `/api/sessions/${seg(id)}/autonomy/allow-all`,
-        { include_stage_gates: includeStageGates },
+        {},
         dto.autonomyChangeDto,
       ),
     )

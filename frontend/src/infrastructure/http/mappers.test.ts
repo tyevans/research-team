@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest'
 import * as dto from './dto.ts'
 import {
   toApproval,
-  toCourse,
   toForkNode,
   toGraphLink,
   toGraphNode,
   toLogEntry,
   toMessage,
   toNeighborhood,
+  toProjectDetail,
   toRoster,
   toRun,
   toSession,
@@ -17,7 +17,6 @@ import {
   toTurnRange,
   toWholeGraph,
 } from './mappers.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
 
 /** The boundary. A mapper bug does not throw — it renders a blank row or the
  *  wrong number — so these go through the real schemas rather than hand-built
@@ -192,77 +191,6 @@ describe('toRun', () => {
   })
 })
 
-describe('toCourse', () => {
-  it('carries the project id the source links are addressed by', () => {
-    const course = toCourse(
-      parse(dto.courseDto, { preset: { id: 'hybrid', name: 'Hybrid' } }),
-      ProjectId('p1'),
-    )
-    expect(course.projectId).toBe('p1')
-  })
-
-  it('renames live_findings to what the view actually calls them', () => {
-    const course = toCourse(
-      parse(dto.courseDto, {
-        preset: { id: 'h', name: 'H' },
-        live_findings: [{ check: 'c', severity: 'blocking', message: 'm' }],
-        unimplemented_checks: ['x'],
-      }),
-      ProjectId('p1'),
-    )
-    expect(course.findings[0]?.check).toBe('c')
-    expect(course.unimplementedChecks).toEqual(['x'])
-  })
-
-  it('keeps an unresolvable position null rather than inventing one', () => {
-    const course = toCourse(
-      parse(dto.courseDto, { preset: { id: 'h', name: 'H' } }),
-      ProjectId('p1'),
-    )
-    expect(course.position).toBeNull()
-  })
-
-  /* Passes with this change reverted, and is here anyway: the old
-     `(string & {})` accepted every one of these too. It is the lock on the
-     fold below -- without it, folding an unheard status onto `unknown` could
-     be made to pass by folding *everything* onto `unknown`. */
-  it('keeps the four statuses the server actually sends', () => {
-    const course = toCourse(
-      parse(dto.courseDto, {
-        preset: { id: 'h', name: 'H' },
-        stages: ['done', 'current', 'upcoming', 'unknown'].map((status, i) => ({
-          index: i,
-          id: `s${i}`,
-          name: `S${i}`,
-          status,
-        })),
-      }),
-      ProjectId('p1'),
-    )
-    expect(course.stages.map((s) => s.status)).toEqual(['done', 'current', 'upcoming', 'unknown'])
-  })
-
-  /* Red before this change for two separate reasons, which is why it is one
-     test rather than two: `upcoming` was not in `StageStatus` at all, and a
-     stage omitting `status` defaulted to `todo` -- a name no stylesheet
-     matches, so it drew an unstyled chip claiming a state that does not
-     exist. Both now land on `unknown`, which is the state the console is
-     actually in when it cannot place a stage. */
-  it('folds a status it has not heard of onto unknown', () => {
-    const course = toCourse(
-      parse(dto.courseDto, {
-        preset: { id: 'h', name: 'H' },
-        stages: [
-          { index: 0, id: 's0', name: 'S0', status: 'skipped' },
-          { index: 1, id: 's1', name: 'S1' },
-        ],
-      }),
-      ProjectId('p1'),
-    )
-    expect(course.stages.map((s) => s.status)).toEqual(['unknown', 'unknown'])
-  })
-})
-
 describe('toRoster', () => {
   it('maps the wire shape, parsing timestamps to epoch milliseconds', () => {
     const roster = toRoster(
@@ -312,19 +240,23 @@ describe('toRoster', () => {
     expect(roster.workers[0]?.sessionId).toBeNull()
   })
 
-  it('keeps a stage runner labelled as a stage rather than folding it into turn', () => {
-    // The trap #79 fixed for dispatch, guarded for the kind added after it:
-    // the fallback is `turn`, which is a different specific kind, so an
-    // unmapped `stage` would render as a confident wrong answer. Fails if the
-    // server grows a kind the mapper is not told about.
+  it('keeps a dispatch labelled as a dispatch rather than folding it into turn', () => {
+    // The trap #79 fixed, on the kind it was found on: the fallback is `turn`,
+    // which is a different specific kind, so an unmapped `dispatch` renders as
+    // a confident wrong answer. Fails if the mapper stops naming a kind the
+    // server still sends.
+    //
+    // This test read `kind: 'stage'` until the workflow system was removed. It
+    // passed the whole time and proved nothing after `WorkerKind` dropped
+    // `"stage"`: the fixture supplied a wire shape no server could produce.
     const roster = toRoster(
       parse(dto.rosterDto, {
         project_id: '11111111-1111-1111-1111-111111111111',
         workers: [
           {
-            kind: 'stage',
-            ref: 'ubd.stage2.evidence',
-            detail: 'ubd.pure · ubd.stage2.evidence · turn 2',
+            kind: 'dispatch',
+            ref: 'topic-3',
+            detail: 'topic 3 · turn 2',
             session_id: '22222222-2222-2222-2222-222222222222',
             parent: null,
             started_at: null,
@@ -334,7 +266,7 @@ describe('toRoster', () => {
       }),
     )
 
-    expect(roster.workers[0]?.kind).toBe('stage')
+    expect(roster.workers[0]?.kind).toBe('dispatch')
   })
 })
 
@@ -430,12 +362,6 @@ describe('toApproval', () => {
     expect(toApproval(parse(dto.approvalDto, legacy)).allowedDecisions).toEqual([])
   })
 
-  it('reads no context into a gate that carries none', () => {
-    // `presenters.py` omits the key rather than nulling it, so absence — not
-    // null — is what this has to survive.
-    expect(toApproval(parse(dto.approvalDto, legacy)).context).toBeNull()
-  })
-
   it('drops a decision this build cannot post', () => {
     const approval = toApproval(
       parse(dto.approvalDto, {
@@ -444,72 +370,6 @@ describe('toApproval', () => {
       }),
     )
     expect(approval.allowedDecisions).toEqual(['approve', 'respond'])
-  })
-
-  it('carries every field of a stage gate across', () => {
-    const approval = toApproval(
-      parse(dto.approvalDto, {
-        ...legacy,
-        tool_name: 'advance_stage',
-        description: 'Leave survey',
-        args: { stage: 'survey' },
-        allowed_decisions: ['approve', 'edit', 'reject', 'respond'],
-        context: {
-          stage: 'survey',
-          findings_artifact: 'findings/survey.md',
-          artifact_paths: ['notes/a.md', 'notes/b.md'],
-          blocked: true,
-          artifacts_reviewed: 2,
-          links_reviewed: 7,
-          unimplemented_checks: ['freshness'],
-          unreadable_artifacts: ['notes/c.md'],
-          findings: [
-            {
-              check: 'citations',
-              severity: 'error',
-              message: 'Two claims cite nothing.',
-              cites: ['notes/a.md#L3'],
-              suggested_edit: 'Cite or cut.',
-            },
-            {
-              check: 'coverage',
-              severity: 'warning',
-              message: 'Thin on prior art.',
-              cites: [],
-              suggested_edit: null,
-            },
-          ],
-        },
-      }),
-    )
-
-    expect(approval.allowedDecisions).toEqual(['approve', 'edit', 'reject', 'respond'])
-    expect(approval.context).toEqual({
-      stage: 'survey',
-      findingsArtifact: 'findings/survey.md',
-      artifactPaths: ['notes/a.md', 'notes/b.md'],
-      blocked: true,
-      artifactsReviewed: 2,
-      linksReviewed: 7,
-      unimplementedChecks: ['freshness'],
-      unreadableArtifacts: ['notes/c.md'],
-      findings: [
-        {
-          check: 'citations',
-          severity: 'error',
-          message: 'Two claims cite nothing.',
-          cites: ['notes/a.md#L3'],
-          suggestedEdit: 'Cite or cut.',
-        },
-        {
-          check: 'coverage',
-          severity: 'warning',
-          message: 'Thin on prior art.',
-          cites: [],
-          suggestedEdit: null,
-        },
-      ],
-    })
   })
 })
 
@@ -535,4 +395,43 @@ it('reads an entity written before the field existed as not inferred', () => {
   )
 
   expect(node.inferred).toBe(false)
+})
+
+describe('toProjectDetail', () => {
+  it('renames every field the server spells differently', () => {
+    const project = toProjectDetail(
+      parse(dto.projectDetailDto, {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'atlas',
+        active_session_id: '22222222-2222-4222-8222-222222222222',
+        tip_at_event: 7,
+      }),
+    )
+
+    expect(project).toEqual({
+      id: '11111111-1111-4111-8111-111111111111',
+      name: 'atlas',
+      activeSessionId: '22222222-2222-4222-8222-222222222222',
+      tipAtEvent: 7,
+    })
+  })
+
+  it('reads an unheld project as a null holder rather than an empty string', () => {
+    // The distinction the page turns on: `null` is "nobody has joined", which
+    // is what hides the transcript and the composer. An empty string would be
+    // truthy through `activeSessionId ?? null` and resolve to a session id of
+    // `''`, which reads as held and 404s on the first request made with it.
+    const project = toProjectDetail(
+      parse(dto.projectDetailDto, {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'atlas',
+        active_session_id: null,
+      }),
+    )
+
+    expect(project.activeSessionId).toBeNull()
+    // Defaulted by the schema, not sent: an older server omits it entirely and
+    // a project with no tip is 0, not `undefined` rendered as a blank.
+    expect(project.tipAtEvent).toBe(0)
+  })
 })

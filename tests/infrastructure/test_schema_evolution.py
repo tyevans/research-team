@@ -30,7 +30,6 @@ from pydantic import ValidationError
 from research_team.domain import (
     ConversationCompacted,
     Project,
-    ProjectStageAdvanced,
     SendUserMessage,
     Session,
     SessionPurpose,
@@ -38,7 +37,6 @@ from research_team.domain import (
     StartSession,
     ToolCallDecided,
     TurnFailed,
-    current_stage_of,
 )
 from research_team.domain.catalog_curation import CourseFeatured
 from research_team.domain.judgements import (
@@ -66,7 +64,6 @@ from research_team.infrastructure.persistence.read_models import (
     CorpusStore,
     SessionSummaryStore,
 )
-from research_team.workflows import hybrid_default
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 
@@ -218,37 +215,6 @@ async def test_a_tool_call_decision_written_before_edited_args_existed_still_loa
     decision = events[-1]
     assert isinstance(decision, ToolCallDecided)
     assert decision.edited_args is None
-
-
-async def test_a_decision_written_before_review_ids_still_loads(repository, started, db_path):
-    """An old `ToolCallDecided` has no `review_id`, and None is what it meant.
-
-    Absence means "this decision answered no stage review", which is true of
-    every decision recorded before the field existed and of every gated call
-    that is not an advance. Reading the field as anything else would invent a
-    join that was never made.
-    """
-    await _write_old_event(
-        db_path,
-        started,
-        version=2,
-        event_type="ToolCallDecided",
-        payload={
-            "aggregate_id": str(started),
-            "aggregate_type": "Session",
-            "aggregate_version": 2,
-            "tool_name": "web_search",
-            "args": {"query": "backward design"},
-            "decision": "approve",
-            "decided_by": "human",
-        },
-    )
-
-    events = await repository.events_for(started)
-
-    decision = events[-1]
-    assert isinstance(decision, ToolCallDecided)
-    assert decision.review_id is None
 
 
 async def test_an_investigation_written_before_outcome_existed_still_loads(store, db_path):
@@ -550,55 +516,25 @@ async def test_a_before_validator_can_reshape_an_old_payload(repository, started
     assert events[-1].error_message == "written by the old shape"
 
 
-async def test_a_project_written_before_workflows_existed_still_loads(
-    repository, started, db_path
-):
-    """`ProjectState` grew four workflow fields; every stored project predates them.
-
-    The events did not change shape here -- the *state* did, which is the case
-    the module docstring's rule 1 covers from the other side. An old project's
-    stream simply has no `ProjectWorkflowSelected` in it, so the defaults have to mean
-    "runs no workflow" rather than crash or, worse, imply a preset.
-
-    Depends on `started` only to guarantee the tables exist; schema init
-    happens on first save and nothing else here calls it.
-    """
-    project_id = uuid4()
-    await _write_old_event(
-        db_path,
-        project_id,
-        version=1,
-        event_type="ProjectCreated",
-        payload={
-            "aggregate_id": str(project_id),
-            "aggregate_type": "Project",
-            "aggregate_version": 1,
-            "name": "atlas",
-        },
-        aggregate_type="Project",
-    )
-
-    project = await repository.projects.load(project_id)
-
-    assert project.state.name == "atlas"
-    assert project.state.preset_id is None
-    assert project.state.preset_version is None
-    assert project.state.current_stage is None
-    assert project.state.stage_history == []
-    assert current_stage_of(project.state, hybrid_default) is None
-
-
-async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
+async def test_a_project_snapshot_written_while_the_workflow_fields_existed_still_loads(
     store, repository, started, db_path
 ):
     """The riskier half: projects are snapshotted, and a snapshot *is* the state.
 
     A stored snapshot is a serialized `ProjectState` from whenever it was
     taken, and unlike an event it is not reconstructed field by field from a
-    stream -- it is handed to the model whole. So a snapshot written before
-    these fields existed is the payload most likely to stop validating, and it
-    is loaded in preference to replaying, which means the failure would be
-    silent until some specific old project was opened.
+    stream -- it is handed to the model whole. So a snapshot written while
+    `ProjectState` still carried `preset_id`, `preset_version`, `current_stage`
+    and `stage_history` is the payload most likely to stop validating now that
+    those four are gone, and it is loaded in preference to replaying, which
+    means the failure would be silent until some specific old project was
+    opened.
+
+    It loads because `ProjectState` is an ordinary `BaseModel` and pydantic
+    ignores unknown keys by default -- the four are read and dropped. That is
+    the opposite of the event refusals below, where `DomainEvent` sets
+    `extra="forbid"`, and the asymmetry is worth knowing: a *state* may quietly
+    shed a field, a stored *fact* may not.
 
     Written at the schema version the library currently reads, deliberately:
     at a *mismatched* version it would be ignored and the aggregate replayed
@@ -645,6 +581,10 @@ async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
                         "active_session_id": None,
                         "tip_session_id": None,
                         "tip_at_event": 0,
+                        "preset_id": "hybrid.default",
+                        "preset_version": "1",
+                        "current_stage": "hybrid.step1.framing",
+                        "stage_history": ["hybrid.step1.framing"],
                     }
                 ),
                 datetime.now(UTC).isoformat(),
@@ -658,91 +598,51 @@ async def test_an_old_project_snapshot_without_workflow_fields_still_loads(
         project = await projects.load(project_id)
 
         assert project.state.name == "atlas-from-snapshot"
-        assert project.state.preset_id is None
-        assert project.state.stage_history == []
+        assert not hasattr(project.state, "preset_id")
+        assert not hasattr(project.state, "stage_history")
     finally:
         await snapshots.close()
 
 
-async def test_a_stage_advance_written_before_decision_existed_reads_as_approved(
-    store, repository, started, db_path
-):
-    """`ProjectStageAdvanced.decision` is a case-1 addition; absence must mean `approve`.
+REMOVING_THE_WORKFLOW_SYSTEM = """The five shapes the workflow removal dropped.
 
-    Every advance stored before the field existed had a human behind it -- the
-    tool floors at `ask` and nothing else could call the command -- so the
-    default reads the old payloads correctly rather than guessing at them.
+The workflow system -- presets, stages, stage artifacts and the check library --
+was removed whole. Five stored shapes went with it, and per the module
+docstring's rule they are pinned below as *refusals* rather than deleted,
+because "old data stops loading" should cost a test to change.
 
-    Written as a raw payload with no `decision` key, which is the only shape
-    that proves the default fills in: constructing the event through today's
-    model would supply it. The assertion on `decision` is the load-bearing one;
-    the rest would pass against any build that could read the stream at all.
-    """
-    project_id = uuid4()
-    payloads = (
-        (1, "ProjectCreated", {"name": "atlas"}),
-        (2, "ProjectWorkflowSelected", {"preset_id": "hybrid.default", "preset_version": "1"}),
-        (
-            3,
-            "ProjectStageAdvanced",
-            {
-                "from_stage": "tyler.step0.intake",
-                "to_stage": "hybrid.step1.framing",
-                "decided_by": "human",
-                "gate_decision": "written before the field existed",
-            },
-        ),
-    )
-    for version, event_type, payload in payloads:
-        await _write_old_event(
-            db_path,
-            project_id,
-            version=version,
-            event_type=event_type,
-            payload={
-                "aggregate_id": str(project_id),
-                "aggregate_type": "Project",
-                "aggregate_version": version,
-                **payload,
-            },
-            aggregate_type="Project",
-        )
+**They guard intent, not data.** Measured on 2026-08-27 against the real
+`~/.research-team/sessions.db`: zero `ProjectWorkflowSelected` rows, zero
+`ProjectStageAdvanced` rows, zero `StageChecksEvaluated` rows, and an empty
+`check_outcomes` table. Nothing of these types was ever written outside a test,
+so removing them could not break a replay of anything real -- there was nothing
+of these types to replay. A later reader who assumes these cases were
+load-bearing will conclude the removal was riskier than it was. It was not
+risky at all; the cases exist so that a *future* payload of one of these shapes
+fails loudly rather than arriving somewhere that shrugs.
 
-    project = await repository.projects.load(project_id)
-    advanced = [
-        envelope.event
-        for envelope in await collect(
-            store.read_stream(StreamId(project_id, Project.aggregate_type))
-        )
-        if isinstance(envelope.event, ProjectStageAdvanced)
-    ]
-
-    assert advanced[-1].decision == "approve"
-    assert advanced[-1].gate_decision == "written before the field existed"
-    assert project.state.current_stage == "hybrid.step1.framing"
-    assert current_stage_of(project.state, hybrid_default).id == "hybrid.step1.framing"
+The five deleted classes carry no docstring saying what no longer loads,
+because there is no class left to carry one. These cases, and the commit that
+wrote them, are that record.
+"""
 
 
-async def test_an_event_renamed_by_the_naming_pass_no_longer_loads(
-    repository, started, db_path
-):
-    """The second deliberate break in this file, and the loud half of it.
+async def test_a_workflow_selection_no_longer_loads(repository, started, db_path):
+    """`ProjectWorkflowSelected` is unregistered, so the registry cannot name it.
 
-    Thirteen events were renamed to make `aggregate_type` inferable from the
-    class name -- `WorkflowSelected` to `ProjectWorkflowSelected`,
-    `SourceDocumentStored` to `CorpusDocumentStored`, and so on. Unlike the
-    field-shape cases above there is nothing to default and nothing to
-    translate: the registry is keyed by class name, and a name it has never
-    heard of is not a shape it can guess at.
+    Loud rather than silent: `eventsource` keys the registry by class name, and
+    a name it has never heard of is not a shape it can guess at, so the read
+    raises `EventTypeNotFoundError` naming the missing type. Written with a
+    valid `ProjectCreated` ahead of it so the failure is provably this event
+    rather than an empty or malformed stream.
 
-    So the read fails with `EventTypeNotFoundError`, naming the missing type
-    and listing what it does know. That is the good outcome, and it is pinned
-    here for the same reason as the `project_id` refusal above -- "old data
-    stops loading" should cost a test to change.
+    This replaces `test_an_event_renamed_by_the_naming_pass_no_longer_loads`,
+    which wrote the pre-rename `WorkflowSelected` payload and asserted the same
+    mechanism over the same aggregate. Both names are now unregistered, so the
+    two had become one test with two spellings; the rename's own record lives
+    in the commit that made it.
 
-    Written with a valid `ProjectCreated` ahead of it so the failure is
-    provably the rename rather than an empty or malformed stream: everything
-    up to version 2 reads, and version 2 is where it stops.
+    See `REMOVING_THE_WORKFLOW_SYSTEM`: this guards intent, not data.
     """
     project_id = uuid4()
     await _write_old_event(
@@ -762,7 +662,7 @@ async def test_an_event_renamed_by_the_naming_pass_no_longer_loads(
         db_path,
         project_id,
         version=2,
-        event_type="WorkflowSelected",
+        event_type="ProjectWorkflowSelected",
         payload={
             "aggregate_id": str(project_id),
             "aggregate_type": "Project",
@@ -773,8 +673,167 @@ async def test_an_event_renamed_by_the_naming_pass_no_longer_loads(
         aggregate_type="Project",
     )
 
-    with pytest.raises(EventTypeNotFoundError, match="WorkflowSelected"):
+    with pytest.raises(EventTypeNotFoundError, match="ProjectWorkflowSelected"):
         await repository.projects.load(project_id)
+
+
+async def test_a_stage_advance_no_longer_loads(repository, started, db_path):
+    """`ProjectStageAdvanced` is unregistered; the same refusal as its sibling.
+
+    Kept as its own case rather than parametrised with the selection above: a
+    stream could hold either without the other, and one case covering both
+    would let one of the two be quietly re-registered without failing.
+
+    See `REMOVING_THE_WORKFLOW_SYSTEM`: this guards intent, not data.
+    """
+    project_id = uuid4()
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=1,
+        event_type="ProjectCreated",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 1,
+            "name": "atlas",
+        },
+        aggregate_type="Project",
+    )
+    await _write_old_event(
+        db_path,
+        project_id,
+        version=2,
+        event_type="ProjectStageAdvanced",
+        payload={
+            "aggregate_id": str(project_id),
+            "aggregate_type": "Project",
+            "aggregate_version": 2,
+            "from_stage": "tyler.step0.intake",
+            "to_stage": "hybrid.step1.framing",
+            "decided_by": "human",
+            "gate_decision": "written while the workflow existed",
+            "decision": "approve",
+        },
+        aggregate_type="Project",
+    )
+
+    with pytest.raises(EventTypeNotFoundError, match="ProjectStageAdvanced"):
+        await repository.projects.load(project_id)
+
+
+async def test_a_stage_check_evaluation_no_longer_loads(repository, started, db_path):
+    """`StageChecksEvaluated` is unregistered, and it was on the *session* stream.
+
+    Worth its own case for exactly that reason: the two above would both pass
+    against a build that had dropped only the project events, and this is the
+    one that would otherwise leave a session unreadable.
+
+    See `REMOVING_THE_WORKFLOW_SYSTEM`: this guards intent, not data.
+    """
+    await _write_old_event(
+        db_path,
+        started,
+        version=2,
+        event_type="StageChecksEvaluated",
+        payload={
+            "aggregate_id": str(started),
+            "aggregate_type": "Session",
+            "aggregate_version": 2,
+            "review_id": str(uuid4()),
+            "project_id": str(uuid4()),
+            "stage": "hybrid.step1.framing",
+            "preset": "hybrid.default",
+            "preset_version": "1",
+            "evaluated": [],
+            "unimplemented": [],
+            "posed_by": "runner",
+        },
+    )
+
+    with pytest.raises(EventTypeNotFoundError, match="StageChecksEvaluated"):
+        await repository.events_for(started)
+
+
+async def test_a_session_started_as_a_workflow_stage_no_longer_loads(
+    repository, started, db_path
+):
+    """The third deliberate break on `SessionStarted.purpose`, in the same shape.
+
+    `SessionPurpose.WORKFLOW_STAGE` named `StageRunner`, which is deleted, so
+    the enum has no member left to validate `"workflow_stage"` against. Unlike
+    the event refusals above this fails as a `ValidationError` rather than an
+    `EventTypeNotFoundError` -- the event type is still registered, it is the
+    field's value that has nowhere to land -- and that distinction is why this
+    is asserted rather than assumed.
+
+    Deliberately not translated to `CHAT`. A session driven by a stage runner
+    was not a person at a keyboard, and defaulting it to one would fold machine
+    turns into the count of human ones, which is precisely the collapse the
+    enum's own docstring argues against.
+
+    See `REMOVING_THE_WORKFLOW_SYSTEM`: this guards intent, not data.
+    """
+    session_id = uuid4()
+    await _write_old_event(
+        db_path,
+        session_id,
+        version=1,
+        event_type="SessionStarted",
+        payload={
+            "aggregate_id": str(session_id),
+            "aggregate_type": "Session",
+            "aggregate_version": 1,
+            "system_prompt": "p",
+            "model_name": "m",
+            "project_id": str(uuid4()),
+            "purpose": "workflow_stage",
+        },
+    )
+
+    with pytest.raises(ValidationError, match="purpose"):
+        await repository.events_for(session_id)
+
+
+async def test_a_tool_decision_carrying_a_review_id_no_longer_loads(
+    repository, started, db_path
+):
+    """`ToolCallDecided.review_id` joined a decision to the stage review it answered.
+
+    Nothing poses a stage review any more, so the field is gone and the join
+    has no second side. A stored payload still carrying the key is refused
+    rather than ignored, and it is `DomainEvent`'s `extra="forbid"` doing that,
+    not a rule this file adds. Refusal is the honest outcome: dropping the key
+    silently would read the event as a decision that answered nothing, which is
+    a different fact from the one that was written down.
+
+    This replaces `test_a_decision_written_before_review_ids_still_loads`,
+    which asserted the field defaulted to `None` on a payload that omitted it.
+    That assertion cannot be made about a field that does not exist, and
+    weakening it to "a payload without the key still loads" would prove only
+    what `..._before_edited_args_existed_still_loads` already proves.
+
+    See `REMOVING_THE_WORKFLOW_SYSTEM`: this guards intent, not data.
+    """
+    await _write_old_event(
+        db_path,
+        started,
+        version=2,
+        event_type="ToolCallDecided",
+        payload={
+            "aggregate_id": str(started),
+            "aggregate_type": "Session",
+            "aggregate_version": 2,
+            "tool_name": "advance_stage",
+            "args": {"to_stage": "hybrid.step1.framing"},
+            "decision": "approve",
+            "decided_by": "human",
+            "review_id": str(uuid4()),
+        },
+    )
+
+    with pytest.raises(ValidationError, match="review_id"):
+        await repository.events_for(started)
 
 
 async def test_a_session_stored_as_codingsession_reads_as_no_session_at_all(

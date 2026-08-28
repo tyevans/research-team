@@ -140,7 +140,6 @@ describe('the facet grammar', () => {
       hash: '#/p/abc/session/s1',
     },
     { facet: 'topic', selection: { facet: 'topic', id: 't1' }, hash: '#/p/abc/topic/t1' },
-    { facet: 'stage', selection: { facet: 'stage', id: 'design' }, hash: '#/p/abc/stage/design' },
     { facet: 'entity', selection: { facet: 'entity', id: 'e1' }, hash: '#/p/abc/entity/e1' },
     {
       facet: 'timeline',
@@ -200,12 +199,6 @@ describe('the facet grammar', () => {
       selection: { facet: 'file', id: FilePath.of('a/b.md') },
       hash: `#/p/abc/file/${encodeURIComponent('a/b.md')}`,
     },
-    {
-      facet: 'artifact',
-      selection: { facet: 'artifact', id: 'findings.md' },
-      hash: '#/p/abc/artifact/findings.md',
-    },
-    { facet: 'finding', selection: { facet: 'finding', id: 'f1' }, hash: '#/p/abc/finding/f1' },
     // The only facet with nothing to select: the ask page is one ephemeral
     // conversation, and there is no id that would name a part of it. Its
     // entry here is `id: null` rather than a stand-in, so the four cases
@@ -279,28 +272,6 @@ describe('the three states this grammar exists to make linkable', () => {
       name: 'project',
       id: PROJECT,
       selection: { facet: 'topic', id: 't1' },
-    })
-  })
-
-  it('addresses an artifact without naming a session', () => {
-    // Was a link into whichever session happened to hold the project, so the
-    // link died when the holder changed. The project is what owns an artifact.
-    const route = parseRoute(projectHref(PROJECT, { facet: 'artifact', id: 'plan.md' }))
-    expect(route).toEqual({
-      name: 'project',
-      id: PROJECT,
-      selection: { facet: 'artifact', id: 'plan.md' },
-    })
-    expect(projectHref(PROJECT, { facet: 'artifact', id: 'plan.md' })).not.toContain('/s/')
-  })
-
-  it('addresses a stage', () => {
-    // Was one string in `CourseView`'s state, which is why a course page
-    // always loaded fully collapsed.
-    expect(parseRoute('#/p/abc/stage/design')).toEqual({
-      name: 'project',
-      id: PROJECT,
-      selection: { facet: 'stage', id: 'design' },
     })
   })
 })

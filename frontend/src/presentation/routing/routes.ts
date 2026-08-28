@@ -83,7 +83,6 @@ export type Facet = (typeof FACETS)[number]
 export const FACETS = [
   'session',
   'topic',
-  'stage',
   'entity',
   // The graph's peer rather than a mode of it: same material, ordered by time
   // instead of wired by relationship. A facet of its own because it is a place
@@ -129,8 +128,6 @@ export const FACETS = [
   // grammar for the reason `timeline` and `tree` are.
   'media',
   'file',
-  'artifact',
-  'finding',
   // Selects nothing -- the ask page is one conversation and has no parts worth
   // a URL. It is a facet anyway because it is a *place on the project*, and
   // giving it a route of its own would be a second grammar for the same idea.

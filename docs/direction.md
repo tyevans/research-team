@@ -170,18 +170,25 @@ also forbids, and those are invisible unless something is asserting them.
 
 ### 2. Generation as a replay
 
-Stage outputs are markdown files written through `FileWritten`, so the file is
-the record. When a stage prompt improves there is no mechanism to say "rebuild
-every project's analysis stage against the new prompt"; regeneration is manual
-if it happens at all.
+A course's units and lessons are markdown files written through `FileWritten`,
+so the file is the record. When an authoring prompt improves there is no
+mechanism to say "rebuild every area's unit against the new prompt";
+re-authoring is manual if it happens at all.
 
-Emitting the generation itself — preset version, prompt reference, model,
-inputs, output — and projecting the course directory from it makes prompt
-improvement a replay rather than a migration, and yields a diff ("this is what
-stage 3 would say now versus what it said") that is exactly the surface a human
-gate wants. Every ingredient is already present: artifact frontmatter carries
-`preset`, `preset_version` and `provenance`, and the viewer already diffs files.
-What is missing is only that the file is the truth instead of the derived value.
+Emitting the generation itself — prompt reference, model, inputs, output — and
+projecting the course directory from it makes prompt improvement a replay
+rather than a migration, and yields a diff ("this is what phase 3 would say now
+versus what it said") that is exactly the surface a reviewer wants. Most
+ingredients are already present: `learning_plan_prompt` asks for frontmatter
+carrying `title`, `area` and `builds_toward`, and the viewer already diffs
+files.
+
+**This item was written when the frontmatter also carried `preset`,
+`preset_version` and `provenance`, and it no longer does** — the workflow
+removal (B147) took the vocabulary that identified *which* generation produced
+a file. The item survives the loss because the missing half is a field on an
+event this project would have to add anyway; what it costs now is defining
+provenance rather than reading it off an artifact.
 
 This is the largest single item here and the one most aligned with how the
 knowledge pipeline already works.
@@ -220,7 +227,18 @@ arguments; there is no safe equivalent for shell, and for file writes the
 obvious path-prefix generalization is the one with a long history of granting
 more than intended. One solved case is not a method.
 
-### 4. Closing the loop on checks — built
+### 4. Closing the loop on checks — built, then removed
+
+> **Historical, 2026-08-27 (B147).** Everything in this section describes a
+> system that no longer exists. `StageChecksEvaluated`, the check library, the
+> telemetry projection and `/checks` were all deleted with the workflow system,
+> and the tables they wrote are orphaned in
+> `~/.research-team/sessions.db` — empty, because the feature was verified
+> against fixtures and never ran. The section is kept rather than deleted
+> because the denominator argument below is the best statement of a general
+> lesson this project will meet again; the four authoring checkpoints in
+> `authoring_checkpoints.py` have exactly the question it answers and no
+> answer to it. See BACKLOG B154.
 
 Kept here rather than deleted, for the reason the defects section keeps its
 closed items: the general form outlived the work.
@@ -351,14 +369,6 @@ folds it back — so the package is either trivial or demands an event-sourcing
 contract from its consumer. The niche is also closing from above as
 context management moves server-side.
 
-**Packaging the workflow engine or the check library.** Two libraries hide in
-there and neither has an audience. The generic half is a few hundred lines of
-real novelty competing with established orchestration and policy tools on their
-own ground. The domain half addresses a niche with no existing library, for the
-structural reason that instructional designers are not Python developers and the
-people building tools for them build products. Splitting the two would put a
-still-changing vocabulary on a package boundary, which is worse than either.
-
 **Packaging the approval gate.** The adapter is thin and correct, and every
 agent framework is absorbing per-tool approval into its own middleware. What is
 left over — floors that configuration cannot lower, grants as bounded
@@ -367,10 +377,17 @@ refusing it — is a vocabulary worth writing down, not a package. Watch for the
 framework growing session-scoped grants and a deny tier; if it does, several
 hundred lines here become deletable.
 
-**More methodology-specific checks.** The namespaced table is three entries
-long, and that shortness is the finding: the generalization was earned by
-observing that three traditions collapse into one core. Adding domain-specific
-machinery back would undo the only research this subsystem encodes.
+**Rebuilding the check library or the methodology presets.** Both are deleted
+(B147) and the argument against their return is stronger than the argument that
+removed them. The namespaced check table was three entries long, and that
+shortness was the finding: the generalization had been earned by observing that
+three traditions collapse into one core, and adding domain-specific machinery
+back would undo the only research the subsystem encoded. What replaced it is
+narrower and runs — `authoring_checkpoints.py` asserts on the files a phase
+actually wrote, with every literal it greps for interpolated into the prompt
+that asks for it. That is a contract the library never had, over a path with
+data. A second methodology is what would justify presets again, and there is
+no second methodology.
 
 **A general promotion interface across all tools.** See §3. The argument
 projection that makes derived authorization safe exists for fetch and does not

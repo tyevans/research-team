@@ -107,8 +107,8 @@ export type FeedFrame =
    * the pane re-reads the listing route, which is the one description of a
    * proposal's status, against a wire payload that could disagree with it. */
   | { readonly kind: 'media'; readonly projectId: string; readonly change: string }
-  /** The project itself moved -- a stage advanced, a workflow was chosen, a
-   * session took or released it.
+  /** The project itself moved -- a session took or released it, its tip
+   * advanced, or it was created or deleted.
    *
    * Project-addressed and durable, like `graph` and `corpus`: a project event
    * is appended to the log, so it carries a feed position and a reconnect
@@ -119,26 +119,16 @@ export type FeedFrame =
    * Not a `log` frame, for `topic`'s reason: a project's aggregate id under
    * `sessionId` would send the session tree after a session that is a project.
    *
-   * One kind for every project event, told apart by `change`. `ProjectStageAdvanced`
-   * is the one that was reported, but `ProjectWorkflowSelected` is what turns the
-   * course page from an error into a rail and the lifecycle events move the
-   * holding-session link -- and all of them want the same invalidation, so
-   * five kinds would be five ways to spell one refetch. */
-  | {
-      readonly kind: 'project'
-      readonly projectId: string
-      readonly change: string
-      /** The reviewer's verdict, and null for the five project events that are
-       *  not a stage advance -- null rather than undefined, so a consumer
-       *  tests one thing rather than telling an older server apart from a
-       *  change that has no verdict to give.
-       *
-       *  The one payload field on this frame, and it is here because unlike a
-       *  stage name it cannot disagree with the course read: it describes the
-       *  transition, which that read does not report at all. Nothing renders
-       *  it yet. */
-      readonly decision: string | null
-    }
+   * One kind for every project event, told apart by `change`. Every one of
+   * them wants the same invalidation, so a kind per event class would be
+   * several ways to spell one refetch.
+   *
+   * Carries no payload beyond the change's name. It had one -- `decision`,
+   * the reviewer's verdict on a stage advance -- and that was defensible only
+   * because a verdict described a transition no read reported. Everything a
+   * project event could otherwise carry is a second description of the
+   * project that can disagree with `GET /api/projects/{id}`. */
+  | { readonly kind: 'project'; readonly projectId: string; readonly change: string }
 
 export type ConnectionState = 'connecting' | 'open' | 'down'
 

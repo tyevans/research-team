@@ -29,7 +29,7 @@ from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.fetch import (
     UNREADABLE,
     build_fetch_tool,
-    format_page,
+    extract_page,
 )
 from research_team.infrastructure.agent.recall import PageMemo, Recall, url_key
 from research_team.infrastructure.agent.search import build_search_tool
@@ -124,21 +124,33 @@ def _corpus_holding(source_id: str, *, text: str, uri: str) -> "_StubCorpus":
     return _StubCorpus([_stored(source_id, uri, text)])
 
 
-# ---- formatting ----
+# ---- extraction ----
+#
+# These six read `format_page` until 2026-08-27, when it was deleted as
+# uncalled. Every assertion below is the same one; only the seam moved, onto
+# `extract_page`, which is what the fetch tool actually calls. The citation
+# header and the truncation marker that `format_page` also produced are
+# asserted on the tool instead -- `test_a_corpus_hit_comes_back_citable`,
+# `test_retained_provenance_matches_the_header_the_model_saw` and
+# `test_the_whole_page_is_retained_though_only_part_is_shown` -- which is the
+# only path that composes them in production.
 
 
 def test_the_page_is_returned_as_markdown_prose():
-    text = format_page(ARTICLE, "https://ex.example/sev", limit=10_000)
+    extracted = extract_page(ARTICLE, "https://ex.example/sev")
+    assert extracted is not None
+    text, _title, _date = extracted
     assert "# Incident severity" in text
     assert "revenue critical path" in text
 
 
-def test_the_url_is_carried_with_the_text():
+async def test_the_url_is_carried_with_the_text():
     """The citation is the point of fetching. A page whose text arrives
     without its address cannot be cited by anything downstream, and the model
     will confabulate a source rather than admit it lost one.
     """
-    text = format_page(ARTICLE, "https://ex.example/sev", limit=10_000)
+    fetch = build_fetch_tool(client=_client(_html_response))
+    text = await _invoke(fetch, {"url": "https://ex.example/sev"})
     assert "https://ex.example/sev" in text
 
 
@@ -147,34 +159,48 @@ def test_boilerplate_is_dropped():
     Keeping them would spend context on chrome and teach the model that
     "Home About Contact" is part of what it read.
     """
-    text = format_page(ARTICLE, "https://ex.example/sev", limit=10_000)
+    extracted = extract_page(ARTICLE, "https://ex.example/sev")
+    assert extracted is not None
+    text, _title, _date = extracted
     assert "Home About Contact" not in text
     assert "(c) 2026 Example" not in text
 
 
-def test_a_long_page_is_capped_and_says_it_was():
+async def test_a_long_page_is_capped_and_says_it_was():
     """Silent truncation is worse than visible truncation: the model would
     reason about a partial page believing it had the whole one.
+
+    On the tool rather than on a formatter, because the tool is where the cap
+    is now applied -- `truncate_page` went with `format_page`, its one caller.
     """
-    text = format_page(ARTICLE, "https://ex.example/sev", limit=200)
+    fetch = build_fetch_tool(max_chars=200, client=_client(_html_response))
+    text = await _invoke(fetch, {"url": "https://ex.example/sev"})
     assert len(text) < 500
     assert "truncated" in text.lower()
 
 
-def test_a_page_with_no_extractable_prose_says_so():
+async def test_a_page_with_no_extractable_prose_says_so():
     """An app shell, a login wall, or a pure-JS page extracts to nothing.
     That is an ordinary thing for the web to be, not an exception.
+
+    Both halves, because they were one call until `format_page` was deleted:
+    extraction answers None, and the tool turns that into `UNREADABLE` rather
+    than an empty string or a raise. Nothing else in this file asserted the
+    second half -- `test_an_unreadable_page_is_not_retained` checks only what
+    the memo did not keep.
     """
-    assert format_page("<html><body></body></html>", "https://ex.example", limit=10) == (
-        UNREADABLE
-    )
+    assert extract_page("<html><body></body></html>", "https://ex.example") is None
+
+    tool = build_fetch_tool(client=_body_client("<html><body></body></html>"))
+    assert await _invoke(tool, {"url": "https://ex.example"}) == UNREADABLE
 
 
 def test_input_that_is_not_html_at_all_is_handled_like_any_other_unreadable_page():
-    """`format_page` is total by construction. A server can send anything at
-    all with a text/html content type, and the caller has no way to know.
+    """`extract_page` is total by construction. A server can send anything at
+    all with a text/html content type, and the caller has no way to know. The
+    tool turns both cases into `UNREADABLE` at `fetch.py`'s one `is None`.
     """
-    assert format_page("not html at all", "https://ex.example", limit=10) == UNREADABLE
+    assert extract_page("not html at all", "https://ex.example") is None
 
 
 # ---- the tool ----

@@ -50,17 +50,21 @@ export const queryKeys = {
   sessions: () => ['sessions'] as const,
   tree: () => ['tree'] as const,
   projects: () => ['projects'] as const,
-  presets: () => ['presets'] as const,
   health: () => ['health'] as const,
 
   /** Deliberately unparameterised. The autonomy policy is one object serving
    *  the whole instance, so keying it by session or project would give the
-   *  drawer and the course panel separate caches over the same state — and
+   *  drawer and the queue's panel separate caches over the same state — and
    *  they would disagree the moment either wrote. One key means one write
    *  corrects both. */
   autonomy: () => ['autonomy'] as const,
 
-  course: (project: ProjectId) => ['course', project] as const,
+  /** One project's identity and holder. Its own key rather than a slice of
+   *  `projects()`: that key is the landing page's whole list as one cache
+   *  entry, and a project page invalidating it would refetch every row to
+   *  refresh one. */
+  project: (project: ProjectId) => ['project', project] as const,
+
   run: (project: ProjectId) => ['run', project] as const,
   workers: (project: ProjectId) => ['workers', project] as const,
   /** Every project's run and worker state at once.
@@ -207,9 +211,9 @@ export const queryKeys = {
   /** One catalog course's detail page, keyed by slug beside `catalog` rather
    *  than under it -- a realize/abandon invalidates this one course, not the
    *  whole front page's cache entry. Named `courseDetail` rather than
-   *  `course`: that name is already `queryKeys.course` above, for the
-   *  workflow course a project holds (`@domain/project/course.ts`) -- an
-   *  unrelated `Course` that predates this catalog feature. */
+   *  `course`: `queryKeys.course` was taken until the workflow system came
+   *  out, by the unrelated `Course` a project's stage rail was folded from.
+   *  The name is free now and the rename is not worth the churn. */
   courseDetail: (project: ProjectId, slug: string) => ['course-detail', project, slug] as const,
 
   /** One course's authored markdown, keyed apart from `courseDetail` on

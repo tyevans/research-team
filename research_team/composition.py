@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 # Imported for its side effect as much as its names: redstring registers its
 # event types at import time, and the session store may hold them -- the
@@ -60,12 +60,9 @@ from research_team.application import (
     TurnSupervisor,
     WorkerRoster,
 )
-from research_team.application.artifacts import stage_artifact_instructions
 from research_team.application.ask import AskService, ConversationRegistry
-from research_team.application.autonomy import ADVANCE_STAGE_TOOL, FETCH_TOOL
+from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.blobs import BlobStorePort
-from research_team.application.check_telemetry_read import CheckTelemetryReadPort
-from research_team.application.components import component_guidance
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.course_authoring import CourseAuthor
 from research_team.application.course_catalog import (
@@ -89,34 +86,18 @@ from research_team.application.ontology_discovery import (
     OntologyDiscoveryService,
 )
 from research_team.application.perception import MediaPerceiver, PerceptionPort
-from research_team.application.ports import GateReview
-from research_team.application.prompts import (
-    DEFAULT_PROMPT_ROOT,
-    DirectoryPromptLibrary,
-    prompting_for,
-)
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
-from research_team.application.stage_exit import (
-    findings_path,
-    gate_context,
-    refusal,
-    render_review,
-    review_stage,
-)
-from research_team.application.stage_runner import StageRunner
 from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
-from research_team.domain import ProjectState, Session, SessionPurpose, current_stage_of
-from research_team.domain.commands import RecordStageReview, WriteFile
+from research_team.domain import Session, SessionPurpose
 from research_team.domain.course import Course
 from research_team.domain.course_authoring_run import CourseAuthoringRun
 from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.research_run import Budget
 from research_team.domain.topic import Topic
-from research_team.domain.workflow import Preset
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import (
     DeepAgentTurnExecutor,
@@ -158,18 +139,9 @@ from research_team.infrastructure.agent.search import (
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 from research_team.infrastructure.agent.socratic_agent import DeepAgentSocraticExecutor
 from research_team.infrastructure.agent.source_mount import mounted_sources
-from research_team.infrastructure.agent.stage_middleware import (
-    StageMiddleware,
-    managed_tools_for,
-)
 from research_team.infrastructure.agent.topic_tools import (
     RepositoryTopics,
     build_topic_tools,
-)
-from research_team.infrastructure.agent.workflow_tools import (
-    WORKFLOW_PROMPT,
-    EndTurnOnStageAdvance,
-    build_workflow_tools,
 )
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.blurb_writer import ModelBlurbWriter
@@ -217,10 +189,6 @@ from research_team.infrastructure.persistence import (
     build_topic_repository,
 )
 from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
-from research_team.infrastructure.persistence.check_telemetry import CheckTelemetryRunner
-from research_team.infrastructure.persistence.check_telemetry_reader import (
-    ProjectCheckTelemetryReader,
-)
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.event_store import (
@@ -229,7 +197,6 @@ from research_team.infrastructure.persistence.event_store import (
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
-from research_team.infrastructure.persistence.project_workflow import ProjectWorkflow
 from research_team.infrastructure.persistence.read_models import (
     ArtRow,
     ArtStore,
@@ -253,21 +220,8 @@ from research_team.infrastructure.persistence.topic_reader import ProjectTopicRe
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep
 from research_team.interfaces.web.blurb_sweep import BlurbSweep
-from research_team.workflows import PRESETS
 
 logger = logging.getLogger(__name__)
-
-WORKFLOW_DRIVEN = frozenset({SessionPurpose.CHAT, SessionPurpose.WORKFLOW_STAGE})
-"""The purposes a workflow attaches to.
-
-An allowlist rather than a denylist of the unattended kinds, so a purpose
-added later gets no workflow until somebody says it should. The failure
-directions are not symmetric: a new unattended kind that wrongly *keeps* the
-workflow is the bug this whole change removes and is invisible -- nothing
-raises, the stage prompt simply argues with the round prompt and the model
-picks one. A new kind that wrongly *loses* it is a missing stage prompt, which
-whoever added the kind sees on the first turn.
-"""
 
 
 class _CatalogFeatureRunner:
@@ -316,7 +270,7 @@ class _CatalogFeatureRunner:
             raise RuntimeError(f"the catalog feature projection failed to start: {failures}")
 
     async def caught_up(self, timeout: float = 10.0) -> None:
-        """A test affordance, matching `definitions_caught_up` and the rest:
+        """A test affordance, matching `interaction_log_caught_up` and the rest:
         waits until the projection has replayed everything appended so far,
         rather than everything that will ever be appended."""
         if self._manager is None:
@@ -747,20 +701,10 @@ class Application:
     agent through the tools attached with a project, and by anything driving an
     autonomous run, which shares nothing else with a session."""
 
-    check_telemetry: CheckTelemetryRunner
-    """Keeps `check_outcomes` following the log. Idle until `start()`.
-
-    A field for the reason `corpus` is one, with the emphasis reversed: nothing
-    *reads* this on the hot path -- `/checks` is a maintainer's occasional
-    question -- but everything writes to it, on every gate, and a projection
-    that is constructed and never started records nothing while looking wired.
-    Exposing it here is what makes `rebuild()` and `failures()` reachable when
-    the numbers turn out to disagree with the log."""
-
     definitions: EntityDefinitionRunner
     """Keeps cached entity definitions marked stale. Idle until `start()`.
 
-    A field for `check_telemetry`'s reason and one more: it is not only a
+    A field for the reason `topics` is one and one more: it is not only a
     projection nobody would otherwise start, it is also the owner of the
     table `definition_readers` reads and writes through, so `rebuild()` and
     `failures()` have to be reachable when a definition disagrees with the
@@ -779,11 +723,12 @@ class Application:
     ontology: OntologyRunner
     """Keeps the discovered-class tables following the log. Idle until `start()`.
 
-    A field for `check_telemetry`'s reason -- a projection nobody would
-    otherwise start -- and because `rebuild()` has to be reachable when the
-    tables disagree with the log. Unlike `definitions`, nothing reads *through*
-    this runner to write: the discovery service appends to the event store and
-    the projection does the writing, so this is the read side only."""
+    A field because a projection that is constructed and never started
+    records nothing while looking wired, and because `rebuild()` has to be
+    reachable when the tables disagree with the log. Unlike `definitions`,
+    nothing reads *through* this runner to write: the discovery service appends
+    to the event store and the projection does the writing, so this is the read
+    side only."""
 
     ontology_discoverers: Callable[[UUID], OntologyDiscoveryService]
     """One project's `OntologyDiscoveryService`, built fresh per call.
@@ -796,9 +741,9 @@ class Application:
     media_proposals: MediaProposalRunner
     """Keeps the proposal tables following the log. Idle until `start()`.
 
-    A field for `check_telemetry`'s reason -- a projection nobody would
-    otherwise start, and `rebuild()`/`failures()` have to be reachable when
-    the tables disagree with the log. Like `ontology`, nothing reads *through*
+    A field for `ontology`'s reason -- a projection nobody would otherwise
+    start, and `rebuild()`/`failures()` have to be reachable when the tables
+    disagree with the log. Like `ontology`, nothing reads *through*
     this runner to write: `MediaCurationService` appends to the event store
     via `media_proposal_repository` below and the projection does the writing."""
 
@@ -825,13 +770,6 @@ class Application:
     `build_curation_ports` needs a SearXNG instance the same way
     `build_search_tool` does, and a build with no instance configured has
     nothing for either to search."""
-
-    check_telemetry_readers: Callable[[UUID], CheckTelemetryReadPort]
-    """One project's `CheckTelemetryReadPort`, built fresh per call.
-
-    A factory for `topic_readers`' reason: the project is bound at construction
-    so no caller can read another project's measurements, and the CLI has no
-    business knowing a reader is a runner plus a project id."""
 
     graphs: ProjectGraphs
     """The single owner of every project's open graph store in this instance.
@@ -917,22 +855,6 @@ class Application:
     threading it through would look harmless and be a second source of a fact
     the front end also reads."""
 
-    stage_runner: StageRunner
-    """Drives a project's stages, asking at every boundary it reaches.
-
-    A field and not a route, deliberately. `workflow-engine.md` §5 and
-    `stage-boundaries.md` open question 1 both say the same thing: the runner
-    should be built *after* a human has prompted a preset through by hand,
-    because the thing that would falsify its design is a prompt, and no preset
-    resolves end to end yet. Exposing it here makes it usable and testable
-    without committing a front end to a button that would spend a budget on
-    stages whose prompts do not exist. `TopicDispatcher` was reachable the
-    same way before `/dispatch` existed.
-
-    Built from the same `service`, `turns`, `approvals` and `policy` the rest
-    of this module holds -- the policy especially, for the reason stated where
-    it is constructed."""
-
     workers: WorkerRoster
     """Everything in flight on a project, for a front end that wants to show it.
 
@@ -977,8 +899,8 @@ class Application:
     """The read side of persisted asks: history for a project, one
     conversation with its turns. Idle until `start()`.
 
-    A field for `check_telemetry`'s reason -- a projection nobody would
-    otherwise start -- and, like `ontology`, read-only: `ask` above appends to
+    A field for `ontology`'s reason -- a projection nobody would otherwise
+    start -- and, like it, read-only: `ask` above appends to
     the log and this follows it. The two must never be collapsed into one
     object; a service that both answered questions and owned the table would
     make "the answer was given" and "the answer was recorded" the same
@@ -1284,7 +1206,7 @@ class Application:
         return self._catalog_runner.features
 
     async def catalog_caught_up(self) -> None:
-        """A test affordance, matching `definitions_caught_up` and the rest:
+        """A test affordance, matching `interaction_log_caught_up` and the rest:
         waits until `catalog_features` has replayed every `CourseFeatured`/
         `CourseUnfeatured` appended so far."""
         await self._catalog_runner.caught_up()
@@ -1333,7 +1255,6 @@ class Application:
         await self.summaries.start()
         await self.corpus.start()
         await self.topics.start()
-        await self.check_telemetry.start()
         await self.definitions.start()
         await self.ontology.start()
         await self._catalog_runner.start()
@@ -1457,17 +1378,6 @@ class Application:
         """
         await self.corpus.caught_up()
 
-    async def check_telemetry_caught_up(self) -> None:
-        """Wait until `check_outcomes` has seen every session event appended.
-
-        A test affordance more than a production one, unlike its three
-        neighbours: nothing in a run reads these numbers back, so nothing races
-        the projection. It exists because a test that drives a gate and then
-        asks `/checks` what happened would otherwise be asserting against
-        whatever the projection had got to.
-        """
-        await self.check_telemetry.caught_up()
-
     async def interaction_log_caught_up(self) -> None:
         """Wait until `interaction_events` has seen every appended event.
 
@@ -1475,18 +1385,6 @@ class Application:
         told when its batch landed, and could not use the answer.
         """
         await self.interaction_log.caught_up()
-
-    async def definitions_caught_up(self) -> None:
-        """Wait until the definition cache has seen every event appended.
-
-        A test affordance, like `check_telemetry_caught_up` and unlike the
-        other two: nothing on the read path waits for staleness to land. The
-        cost of not waiting in production is one extra read of text that was
-        about to be marked stale, which is the same text the reader would
-        have seen a moment earlier anyway.
-        """
-        await self.definitions.caught_up()
-        await self.ontology.caught_up()
 
     async def reconciled(self) -> None:
         """Wait until startup reconciliation has finished, if it was scheduled.
@@ -1541,7 +1439,6 @@ class Application:
         await self.summaries.stop()
         await self.corpus.stop()
         await self.topics.stop()
-        await self.check_telemetry.stop()
         await self.definitions.stop()
         await self.ontology.stop()
         await self._catalog_runner.stop()
@@ -1742,16 +1639,6 @@ def build_application(
     # function accepts is decided in one place.
     resolved_perception = perception if perception is not None else build_perception_adapter()
 
-    # Loaded once here, and allowed to raise: a prompt file that will not parse
-    # is a broken installation, and the useful moment to learn that is startup,
-    # exactly as `problems()` validates presets at import rather than at
-    # selection. What does *not* raise is a ref with no file at all -- that is
-    # the common case today (32 of 38) and `prompting_for` degrades it per
-    # stage. The two are different facts: one says the library is wrong, the
-    # other says the library is incomplete, and only the first is a reason to
-    # refuse to start.
-    prompt_library = DirectoryPromptLibrary.load(DEFAULT_PROMPT_ROOT)
-
     # Opened before the tools below so the knowledge adapter can share this
     # connection's event store and snapshot store rather than opening its own
     # (BACKLOG B5: a second `SQLiteSnapshotStore` leaks a non-daemon thread).
@@ -1867,16 +1754,10 @@ def build_application(
     topics = TopicRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
-    # Unlike its two neighbours nothing closes over this one -- no tool reads
-    # check telemetry -- but it is built here anyway so that all four
-    # projections over this store are constructed in one place and started by
-    # one line in `start()`. A projection wired somewhere else is a projection
-    # somebody forgets to start.
-    check_telemetry = CheckTelemetryRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # The fifth projection over this store, built beside the other four for
-    # the reason stated above them. It matters more here than for its
+    # The fourth projection over this store, built beside the other three so
+    # that all of them are constructed in one place and started by one line in
+    # `start()`: a projection wired somewhere else is a projection somebody
+    # forgets to start. It matters more here than for its
     # neighbours: this runner is *both* the thing that marks a definition
     # stale and the thing the read route caches through (see
     # `definition_reader` below), so a second instance would give the route
@@ -1886,17 +1767,17 @@ def build_application(
     definition_invalidation = EntityDefinitionRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
-    # The sixth, and unlike its neighbour above it is *only* a projection: the
+    # The fifth, and unlike its neighbour above it is *only* a projection: the
     # discovery service writes through the event store, not through this
     # runner, so the read route and the projection share a connection here for
     # the ordinary reason rather than to keep a cache honest.
     ontology = OntologyRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
-    # The seventh, built here for the reason stated above `check_telemetry`:
-    # "all [N] projections over this store are constructed in one place and
-    # started by one line in `start()`. A projection wired somewhere else is a
-    # projection somebody forgets to start." Measured directly on this one --
+    # The sixth, built here for the reason stated above `topics`: all the
+    # projections over this store are constructed in one place and started by
+    # one line in `start()`, and a projection wired somewhere else is a
+    # projection somebody forgets to start. Measured directly on this one --
     # `EntityDefinitionRunner`'s absence once shipped a fully green suite
     # behind an empty read model, and `tests/integration/
     # test_media_proposals_reach_the_read_model.py` exists to catch the same
@@ -1952,94 +1833,6 @@ def build_application(
     )
     interaction_recorder = EventStoreInteractionRecorder(interaction_store, interaction_bus)
 
-    async def running_workflow(
-        session: Session,
-    ) -> tuple[UUID, ProjectState, Preset] | None:
-        """The workflow this session's run is under, or None if there is none.
-
-        None is the answer for a session outside a project and for a project
-        that never selected a workflow -- which is every project written before
-        workflows existed. Those runs get exactly the agent they got before:
-        no gate tool, no middleware, nothing to reason about.
-
-        Folded off the `Project` aggregate on every turn rather than held
-        anywhere, for the reason `_resolved_middleware` sets out at length: the
-        checkpointer is per-turn, so the event log is the only place where
-        "where does this run stand" survives, and it is deliberately the only
-        place. A replay per turn is the price of not having two answers.
-
-        Shared by the two callers below so they cannot disagree. A turn where
-        the gate tool is bound but the stage filter is absent, or the reverse,
-        would be a run gated by half a workflow -- and the failure would look
-        like a model behaving oddly rather than like a wiring fault.
-        """
-        if session.state.purpose not in WORKFLOW_DRIVEN:
-            # An autonomous round, a seeding turn or a dispatch turn. Three
-            # things follow from returning None here, and the third is the one
-            # nobody reported: no `advance_stage` (floored at `ask`, so an
-            # unattended call is an approval nobody answers), no stage prompt
-            # arguing with the round's own instructions, and no stage tool
-            # denylist -- which on any stage declaring no `tools` of its own
-            # was withdrawing `list_sources`, `read_source` and `graph_search`
-            # from a round whose entire job is reading the corpus.
-            return None
-        project_id = session.state.project_id
-        if project_id is None:
-            return None
-        state = (await repository.projects.load(project_id)).state
-        if state.preset_id is None:
-            return None
-        preset = PRESETS.get(state.preset_id)
-        if preset is None:
-            # A preset that was shipped when the run started and has since been
-            # renamed or withdrawn. Gating on a preset we do not have would
-            # mean inventing one; running ungated is at least the behaviour the
-            # project had before it chose, and it is visible in the log.
-            logger.warning(
-                "project %s runs unknown workflow %s; no stage gate applied",
-                project_id,
-                state.preset_id,
-            )
-            return None
-        if state.preset_version != preset.version:
-            # Gated by what is installed, not by what was selected. Editing a
-            # preset is expected -- they are content -- and refusing to run
-            # would strand every project mid-flight on an edit. The event log
-            # keeps `preset_version`, so a later reader can still tell which
-            # revision each stage was actually decided under.
-            logger.info(
-                "project %s selected %s v%s; running under installed v%s",
-                project_id,
-                preset.id,
-                state.preset_version,
-                preset.version,
-            )
-        return project_id, state, preset
-
-    async def workflow_tools(session: Session) -> tuple[BaseTool, ...]:
-        """`advance_stage`, for a run that has a workflow to advance through.
-
-        Registered per turn rather than with the project's other tools, which
-        is the awkward-looking half of this and the load-bearing half. A
-        workflow is selected by `POST /api/projects/{id}/workflow`: it appends
-        an event and returns, with no attachment to hang a tool registration
-        off. Bound at attach time instead, the gate would be missing for the
-        whole of the session that chose the workflow -- which is every session,
-        the first time.
-
-        Bound to one project through `ProjectWorkflow`, so the tool cannot be
-        pointed at another run. The preset comes from the same fold the stage
-        filter uses, so the stage the model is held to and the stage list the
-        tool advances along are always the same list.
-        """
-        running = await running_workflow(session)
-        if running is None:
-            return ()
-        project_id, _, preset = running
-        return build_workflow_tools(
-            ProjectWorkflow(repository.projects, project_id), preset=preset
-        )
-
     async def granted_tools(session: Session) -> tuple[BaseTool, ...]:
         """A grant-bound `fetch`, for a session `resolved_grants` holds one for.
 
@@ -2073,14 +1866,13 @@ def build_application(
         attached, which is a regression `_compose`'s shadowing would otherwise
         hide until someone noticed stale corpus reads.
 
-        **The reader and the keeper follow the *project*, not the workflow.**
-        This used to take the project id out of `running_workflow`'s first
-        tuple slot, which reads as harmless and is not: it silently made both
-        of them conditional on the project having selected a preset, so a run
-        on a preset-less project already fetched with no corpus and saved
-        nothing. Giving a round no workflow turned that latent bug into a live
-        one on *every* round. `turn_sources` keys off `session.state.
-        project_id` for the same reason and states it; this now matches.
+        **The reader and the keeper key off `session.state.project_id` and
+        nothing else.** They once came out of a fold that also required the
+        project to have selected a preset, which reads as harmless and is not:
+        it silently made both conditional on that selection, so a run on a
+        project that had made none fetched with no corpus and saved nothing.
+        `turn_sources` keys off the same field for the same reason and states
+        it; a fetch is a fetch on the strength of the project alone.
         """
         grant = resolved_grants.get(session.aggregate_id)
         if grant is None:
@@ -2191,77 +1983,31 @@ def build_application(
     async def turn_tools(session: Session) -> tuple[BaseTool, ...]:
         """Everything this turn adds on top of the registered set.
 
-        `granted_tools` last, so a grant-bound `fetch` shadows whatever
-        `workflow_tools` returned too, per `_compose`'s by-name rule --
-        though today the two never collide (`advance_stage` vs. `fetch`),
-        naming an explicit order here is cheaper than trusting that stays
-        true.
+        One source today, and still a seam rather than `granted_tools` passed
+        straight to the executor: `_compose`'s by-name shadowing is what
+        decides a collision between two per-turn providers, and the place that
+        rule is applied is the place a second provider gets added.
         """
-        return (*await workflow_tools(session), *await granted_tools(session))
+        return await granted_tools(session)
 
     async def turn_middleware(session: Session) -> tuple[AgentMiddleware, ...]:
-        """This turn's middleware: component feedback always, the stage gate if any.
+        """This turn's middleware.
 
         `ComponentFeedback` is unconditional because a component can appear in
-        any markdown file the agent writes, workflow or no workflow, and a
-        session driving no preset is exactly where nobody is watching the
-        transcript closely enough to notice a malformed widget.
+        any markdown file the agent writes, and a session nobody is watching
+        closely is exactly where a malformed widget goes unnoticed.
 
-        `managed_tools_for` takes the union across *every* stage rather than
-        the current stage's list, because the middleware is a denylist: the
-        executor registers all of them once at agent creation -- `factory.py`
-        rejects a tool that was not -- and the gate withdraws what this stage
-        does not claim. Narrowing this to one stage would leave the next
-        stage's tools permanently visible.
-
-        `advance_stage` is subtracted from that union, which is the deliberate
-        answer to "should the gate tool be available in every stage". It should.
-        A stage is a gate because leaving it *requires a human*, not because
-        the model cannot ask -- `TOOL_FLOORS` floors this tool at `ask`, so
-        every crossing is an interrupt somebody has to answer, in every stage,
-        including the ones whose preset declares no `gate` of its own. Hiding
-        it per stage would buy nothing (the human is already in the way) and
-        cost the run its only way forward: a stage that claims a tool list, as
-        `hybrid.step1.framing` does, would be enterable and not leavable.
-
-        Subtracted here rather than in `StageMiddleware` because the middleware
-        takes `managed_tools` as an argument precisely so this decision belongs
-        to the caller -- the mechanism is "hide what the stage does not claim",
-        and which tools are exempt from that is policy. Doing it here also
-        means the exemption survives a preset that names `advance_stage` in
-        some stage's `tools`, which would otherwise pull it into the managed
-        set and hide it from every stage that did not.
-
-        The instructions open with the stage's *methodology* -- the text its
-        `prompt_ref` names, or a notice saying that ref has no file -- and the
-        rest is mechanical. The artifact block says which files it owes, at
-        which paths, with which frontmatter, derived from the stage's own
-        declared outputs so a preset edit cannot leave the prompt describing
-        files nothing looks for. `WORKFLOW_PROMPT` joins it because a bound
-        tool nobody explained is a tool the model calls at the wrong moment:
-        it says the gate asks a human, and that advancing is for when this
-        stage's outputs exist, not for when the model has run out to say.
-
-        Resolved per turn rather than once at build, for the same reason the
-        middleware itself is: the executor outlives the stage. It also means a
-        prompt edited mid-run lands on the next turn, which is the behaviour
-        `DirectoryPromptLibrary` is explicitly built for -- the run in front of
-        you is how you find out a prompt is wrong.
+        Resolved per turn rather than once at build, because the executor
+        outlives any one turn's answer and a provider consulted once would
+        pin the first turn's middleware onto every turn after it.
         """
         # Reads off the aggregate the tool just wrote through, so an `edit_file`
         # is validated against the document it produced rather than the
         # replacement it was given.
-        base: tuple[AgentMiddleware, ...] = (
+        return (
             ComponentFeedback(
                 read=lambda path: session.state.files.get(path, {}).get("content")
             ),
-            # In `base` rather than beside `StageMiddleware` below, because
-            # `advance_stage` is bound whenever a workflow is running -- which
-            # includes the arm where the stage is not one the preset defines
-            # and no stage gate is applied at all. It is inert without a result
-            # carrying `STAGE_ADVANCED`, so a session with no workflow pays a
-            # scan of the trailing tool messages and nothing else.
-            EndTurnOnStageAdvance(),
             # Only when `search_attempts` is not `None` -- the same switch
             # that decided whether `web_search` was registered at all.
             # Installing this unconditionally would reset a counter that
@@ -2273,160 +2019,6 @@ def build_application(
                 if search_attempts is not None
                 else ()
             ),
-        )
-
-        running = await running_workflow(session)
-        if running is None:
-            return base
-        project_id, state, preset = running
-        stage = current_stage_of(state, preset)
-        if stage is None:
-            logger.warning(
-                "project %s is at stage %s, which %s does not define; no stage gate applied",
-                project_id,
-                state.current_stage,
-                preset.id,
-            )
-            return base
-        prompting = prompting_for(stage, prompt_library)
-        if prompting.missing is not None:
-            # Warned every turn rather than once at build, because which stage
-            # is current is a per-turn fact and a build-time survey would name
-            # refs for stages this run may never reach. Noisy on a long
-            # `hybrid.default` run, and that is the intended weight: twenty
-            # unprompted stages should read as twenty problems.
-            logger.warning(
-                "project %s stage %s has no prompt for %s; running with the "
-                "unprompted-stage notice instead of its methodology",
-                project_id,
-                stage.id,
-                prompting.missing,
-            )
-        return (
-            *base,
-            StageMiddleware(
-                stage,
-                managed_tools=managed_tools_for(preset.stages) - {ADVANCE_STAGE_TOOL},
-                instructions=(
-                    # First, and the ordering is the argument the prompt
-                    # contract rests on: a prompt must not name its paths, its
-                    # frontmatter, the gate or its tools, because the three
-                    # terms below already do. Placed after them it would read as
-                    # a correction to the mechanics; placed before, the mechanics
-                    # read as the means to what it asked for. `prompting_for`
-                    # carries `role_line` with it, which is where `role`,
-                    # `taxonomy_binding` and `over_generate_factor` are finally
-                    # read after being declared and never consulted.
-                    #
-                    # Conditional on the text rather than unconditional, so a
-                    # `FieldStage` -- no generator, no critic, nothing an agent
-                    # executes -- does not open its instructions with a blank
-                    # line where a methodology would be.
-                    (f"{prompting.text}\n\n" if prompting.text else "")
-                    + stage_artifact_instructions(preset, stage)
-                    + WORKFLOW_PROMPT
-                    # Derived from this stage's declared outputs, so a stage
-                    # writing source claims is told nothing about widgets and a
-                    # stage writing assessment items is told which ones an
-                    # assessment is made of. Empty for most stages, by design.
-                    + component_guidance(stage.outputs)
-                ),
-            ),
-        )
-
-    async def gate_review(session: Session, tool_name: str, args: dict) -> GateReview | None:
-        """Run the stage's checks before anyone is asked to let it go.
-
-        Only for `advance_stage`. Every other gated tool is gated because it
-        costs money or leaves the process, and there is nothing about a web
-        search for a human to have found out beforehand; running a course
-        review for one would be work nobody reads.
-
-        The findings artifact is written straight onto the aggregate rather
-        than through the agent's filesystem, because the agent is suspended
-        inside an interrupt at this point and has no turn in which to write
-        anything.
-
-        **It is not visible to the reviewer while they decide, and neither are
-        the artifacts they are deciding about.** `session.execute` appends to
-        `uncommitted_events`; the only thing that writes to the store is
-        `_save_turn`, at the *end* of the turn, and `DeepAgentTurnExecutor`
-        holds no repository with which to do otherwise. `GET
-        /api/sessions/{id}/files` loads the aggregate from the store, so
-        everything this turn has written -- the stage's outputs and this report
-        -- is invisible to that route until the turn finishes. This paragraph
-        replaces a claim that the file was "in the log and in the viewer
-        immediately", which was never true.
-
-        What the reviewer actually gets at the interrupt is `gate_context`,
-        carried inline on the `ApprovalRequest` and delivered over SSE: the
-        findings, the counts, the checks that could not run. That is real
-        evidence and it is why the gate is not blind. What it is missing is the
-        artifacts themselves. Closing that gap is a visibility change (put the
-        stage's files in the context) rather than a durability one, and it is
-        deliberately not made here -- see the PR that added
-        `EndTurnOnStageAdvance`, which records why committing mid-turn was
-        rejected.
-
-        The *model* does not see the report until its next turn rebuilds state
-        from the aggregate. That is the right way round -- the report is for
-        the reviewer, and a model that could read its own report mid-decision
-        would be tempted to argue with it.
-
-        A run whose project has no workflow, or whose stage the preset does
-        not define, gets `None`: there is no stage to check, and inventing one
-        to have something to report would be the gate making things up.
-        """
-        if tool_name != ADVANCE_STAGE_TOOL:
-            return None
-        running = await running_workflow(session)
-        if running is None:
-            return None
-        project_id, state, preset = running
-        stage = current_stage_of(state, preset)
-        if stage is None:
-            return None
-        review = review_stage(preset, stage, session.state.files)
-        path = findings_path(preset, stage)
-        session.execute(
-            WriteFile(path=path, file_data={"content": render_review(review, preset)})
-        )
-        # Recorded here rather than in `review_stage`, for the reason
-        # `_gate_and_advance` states: `course_progress` reviews a stage on
-        # every course view, and counting those would make a fire rate a
-        # measure of how often somebody opened a page.
-        #
-        # Both this and the `RecordToolDecision` that answers it land at
-        # `_save_turn` on this path, milliseconds apart, which is why the event
-        # carries `posed_by="tool"`: a consumer must report no duration rather
-        # than an instant one. See BACKLOG.md B36.
-        review_id = uuid4()
-        session.execute(
-            RecordStageReview(
-                review_id=review_id,
-                project_id=project_id,
-                stage=stage.id,
-                preset=preset.id,
-                preset_version=str(preset.version),
-                evaluated=[
-                    {
-                        "check": entry.check,
-                        "severity": entry.severity,
-                        "findings": entry.findings,
-                    }
-                    for entry in review.evaluated
-                ],
-                unimplemented=[
-                    {"check": entry.check, "severity": entry.severity}
-                    for entry in review.unimplemented_bindings
-                ],
-                posed_by="tool",
-            )
-        )
-        return GateReview(
-            context=gate_context(review, path),
-            refusal=refusal(review),
-            review_id=review_id,
         )
 
     # Shared by the turn executor, the ask executor, `document_extractor`,
@@ -2441,10 +2033,10 @@ def build_application(
     async def turn_sources(session: Session) -> dict[str, Any]:
         """This turn's corpus mount, or nothing for a session outside a project.
 
-        Keyed off `project_id` alone, not off `running_workflow`: a session's
-        sources are searchable whether or not it ever selected a workflow, and
-        hanging the mount off the workflow fold would have made `grep` answer
-        differently for two projects holding the same documents.
+        Keyed off `project_id` alone: a session's sources are searchable on
+        the strength of the project it is attached to and nothing else, so
+        `grep` cannot answer differently for two projects holding the same
+        documents.
         """
         project_id = session.state.project_id
         if project_id is None:
@@ -2470,7 +2062,6 @@ def build_application(
         tools_provider=turn_tools,
         sources_provider=turn_sources,
         subagents_provider=turn_subagents,
-        gate_reviewer=gate_review,
         # The same registry `turn_tools` (via `granted_tools`) and `start_run`
         # (below) consult -- see `resolved_grants`'s own note for why there
         # is exactly one instance and what two would cost.
@@ -3192,15 +2783,6 @@ def build_application(
         outline_cache=outline_cache,
     )
 
-    def check_telemetry_reader(target_project_id: UUID) -> CheckTelemetryReadPort:
-        """This project's `CheckTelemetryReadPort`, over the one runner above.
-
-        Built per call rather than held, mirroring `topic_reader`: two
-        attribute reads and an object, and the project bound at construction is
-        the point of having it at all.
-        """
-        return ProjectCheckTelemetryReader(check_telemetry, target_project_id)
-
     async def start_run(
         run_id: UUID,
         run_project_id: UUID,
@@ -3279,20 +2861,6 @@ def build_application(
     # the number in `/topics/<nn>-<slug>/` and the order the topic list renders
     # in cannot come from two different reads.
     dispatcher = TopicDispatcher(service, turns, topic_reader)
-    # The same `service`, `turns` and `resolved_policy` again. The policy in
-    # particular must be *this* instance's and not a copy: it is what decides
-    # whether the runner asks at a boundary, and a second policy object would
-    # let a run cross gates the operator had not relaxed -- which is the one
-    # property `stage-boundaries.md` §4.4 insists no second mechanism may
-    # decide. `approvals` is the same port the tool gate poses through, so a
-    # reviewer sees one kind of request whichever route proposed the advance.
-    stage_runner = StageRunner(
-        service,
-        turns,
-        lambda target: ProjectWorkflow(repository.projects, target),
-        approvals,
-        resolved_policy,
-    )
     # The same object the tools report through, not a second one: the roster's
     # "an extraction is running" and the pane's frames are two reads of one
     # buffer, and two instances would let them disagree.
@@ -3305,11 +2873,6 @@ def build_application(
         # queue the routes enqueue into and the one the roster reads must be
         # the same object, and only the process that owns both can say so.
         dispatches=dispatches,
-        # The same runner the `stage_runner` field exposes. A second instance
-        # would hold its own in-flight dict and the dock would show nothing
-        # while a stage was being driven -- the exact failure #79 fixed for
-        # extractions by insisting on one buffer.
-        stages=stage_runner,
         # The projection, not the service: `everywhere` needs session -> project
         # for the turns it finds, and asking the service would fold a session
         # per running turn to learn something a read-model column already says.
@@ -3379,8 +2942,6 @@ def build_application(
         corpus=corpus,
         blob_store=blob_store,
         topics=topics,
-        check_telemetry=check_telemetry,
-        check_telemetry_readers=check_telemetry_reader,
         definitions=definition_invalidation,
         definition_readers=definition_reader,
         ontology=ontology,
@@ -3397,7 +2958,6 @@ def build_application(
         course_author=course_author,
         reembed=reembed_project,
         dispatcher=dispatcher,
-        stage_runner=stage_runner,
         workers=worker_roster,
         policy=resolved_policy,
         grants=resolved_grants,

@@ -7,6 +7,7 @@ import { createSessionStore } from '@application/session/session-store.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { Container } from '@app/container.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import { sessionSelection } from '@presentation/routing/routes.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
@@ -38,38 +39,23 @@ import { ProjectView } from './ProjectView.tsx'
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
 
-const COURSE = {
-  projectId: ATLAS,
-  projectName: 'atlas',
-  holdingSessionId: HOLDER,
-  preset: { id: 'hybrid.default', name: 'Hybrid', version: '1' },
-  position: 1,
-  stageCount: 1,
-  stages: [
-    {
-      index: 1,
-      id: 'step0.intake',
-      name: 'Intake',
-      kind: 'author',
-      spine: 0,
-      scopeLevel: 'course',
-      status: 'current',
-      outputs: [],
-      gateDecisions: [],
-      reviewerRole: null,
-      findingsReport: null,
-    },
-  ],
-  findings: [],
-  unimplementedChecks: [],
-}
-
 const container = () =>
   ({
     preferences: new InMemoryPreferenceStore(),
     now: () => new Date('2026-08-10T00:00:00Z'),
     stream: { connect: vi.fn(), disconnect: vi.fn() },
-    projects: { course: vi.fn().mockResolvedValue(COURSE) },
+    projects: {
+      // The page's identity and holder come from here now rather than from the
+      // course. Omitting it does not fail the type -- the container is cast --
+      // it leaves the header with no holding session and the Workspace tab
+      // hidden, which is a layout difference these files measure.
+      project: vi.fn().mockResolvedValue({
+        id: ATLAS,
+        name: 'atlas',
+        activeSessionId: HOLDER,
+        tipAtEvent: 0,
+      }),
+    },
     sessions: {
       read: vi.fn().mockResolvedValue({
         id: HOLDER,
@@ -97,7 +83,7 @@ const container = () =>
     },
     extractions: { on: vi.fn().mockResolvedValue({ current: [], last: [] }) },
     research: { current: vi.fn().mockResolvedValue(null) },
-    topics: { queue: vi.fn().mockResolvedValue([]) },
+    topics: { list: vi.fn().mockResolvedValue([]) },
     autonomy: { read: vi.fn().mockResolvedValue(null) },
   }) as unknown as Container
 
@@ -122,13 +108,23 @@ const show = async () => {
               an 856px shell that had not moved. */}
           <div style={{ height: '100vh' }}>
             <Shell chrome={<span>chrome</span>}>
-              <ProjectView projectId={ATLAS} selection={null} store={store} />
+              <ProjectView projectId={ATLAS} selection={sessionSelection(HOLDER)} store={store} />
             </Shell>
           </div>
         </StreamProvider>
       </QueryClientProvider>
     </ContainerProvider>,
   )
+  // `Event log` is a `<section aria-label>` rather than a `Pane`, and it is the
+  // same role and the same name -- which is the point of labelling them by
+  // hand. It is only drawn when the Holding session tab is the open one, which
+  // is why the render above names a `session` selection rather than passing
+  // `null`. It passed `null` and arrived on this tab for free until #286 moved
+  // `DEFAULT_MATERIAL` to `catalog` without running this suite -- which is
+  // outside CI, so nothing said so, and every claim in this file has been
+  // failing since 2026-08-24. Naming the selection is also the honest fixture:
+  // this file measures how height travels through the transcript's own boxes,
+  // so the transcript has to be what is open.
   await expect.element(page.getByRole('region', { name: 'Event log' })).toBeVisible()
   return { preferences: deps.preferences as InMemoryPreferenceStore }
 }

@@ -229,32 +229,6 @@ export const activityDto = z.object({
   discarded: z.array(activityEntryDto).default([]),
 })
 
-/** One finding from `stage_exit.gate_context()`. */
-export const gateFindingDto = z.object({
-  check: z.string(),
-  severity: z.string(),
-  message: z.string(),
-  cites: z.array(z.string()).default([]),
-  suggested_edit: maybe(z.string()),
-})
-
-/** `stage_exit.gate_context()`, field for field.
- *
- * Written out rather than left `opaque` because the card renders every one of
- * these; the cost is that a server-side rename here breaks parsing rather than
- * silently blanking the panel, which is the failure we would rather have. */
-export const gateContextDto = z.object({
-  stage: z.string(),
-  findings_artifact: z.string(),
-  artifact_paths: z.array(z.string()).default([]),
-  blocked: z.boolean(),
-  artifacts_reviewed: z.number(),
-  links_reviewed: z.number(),
-  unimplemented_checks: z.array(z.string()).default([]),
-  unreadable_artifacts: z.array(z.string()).default([]),
-  findings: z.array(gateFindingDto).default([]),
-})
-
 export const approvalDto = z.object({
   id: z.string(),
   session_id: z.string(),
@@ -265,125 +239,17 @@ export const approvalDto = z.object({
    *  dropped in `toApproval`, and failing the whole parse instead would lose
    *  the three decisions we do understand along with it. */
   allowed_decisions: z.array(z.string()).default([]),
-  /** Present only on a stage gate. `presenters` omits the key rather than
-   *  nulling it, deliberately, so absence is the reliable signal — hence
-   *  `.optional()` and not `maybe()`, which would erase the difference. */
-  context: gateContextDto.optional(),
 })
 
-export const workflowRefDto = z.object({
-  id: z.string(),
-  name: z.string(),
-  version: z
-    .union([z.string(), z.number()])
-    .nullish()
-    .transform((v) => v ?? null),
-})
-
-export const stageRefDto = z.object({
-  id: z.string(),
-  name: z.string(),
-  index: z.number(),
-  of: z.number(),
-})
-
-export const projectDto = z.object({
+/** Both project routes: `/api/projects` answers a list of these and
+ *  `/api/projects/{id}` answers one. There was a `projectDto` extending this
+ *  with `workflow` and `stage`, and the two columns went with the workflow
+ *  system -- so the listing and the detail are one shape again. */
+export const projectDetailDto = z.object({
   id: z.string(),
   name: z.string(),
   active_session_id: maybe(z.string()),
   tip_at_event: z.number().default(0),
-  workflow: workflowRefDto.nullish().transform((v) => v ?? null),
-  stage: stageRefDto.nullish().transform((v) => v ?? null),
-})
-
-export const presetDto = z.object({
-  id: z.string(),
-  name: z.string(),
-  version: z
-    .union([z.string(), z.number()])
-    .nullish()
-    .transform((v) => v ?? null),
-  description: z.string().default(''),
-  produces: z.string().default(''),
-  stage_count: z.number().default(0),
-  terminates_at: z.object({ id: z.string(), name: z.string(), spine: z.number() }),
-  has_value_filter: z.boolean().default(false),
-  label: z.string(),
-})
-
-export const provenanceDto = z.object({
-  sources: z
-    .array(
-      z.object({
-        source_id: z.string(),
-        start: maybe(z.number()),
-        end: maybe(z.number()),
-      }),
-    )
-    .default([]),
-  inferred: z.boolean().default(false),
-  unreadable: z.number().default(0),
-  empty: z.boolean().default(false),
-})
-
-export const artifactSlotDto = z.object({
-  path: z.string(),
-  artifact_type: z.string(),
-  subtype: maybe(z.string()),
-  cardinality: z.string().default(''),
-  stage_id: z.string().default(''),
-  present: z.boolean().default(false),
-  has_frontmatter: z.boolean().default(false),
-  missing_fields: z.array(z.string()).default([]),
-  provenance: provenanceDto.nullish().transform((v) => v ?? null),
-  body_chars: z.number().default(0),
-})
-
-export const findingDto = z.object({
-  check: z.string(),
-  severity: z.string(),
-  message: z.string(),
-  cites: z.array(z.string()).default([]),
-  suggested_edit: maybe(z.string()),
-})
-
-export const stageProgressDto = z.object({
-  index: z.number(),
-  id: z.string(),
-  name: z.string(),
-  kind: z.string().default(''),
-  spine: z.number().default(0),
-  scope_level: z.string().default(''),
-  /* `z.string()` rather than an enum, for the reason `seedingFrameDto.status`
-     gives: a status this build has not heard of should reach the mapper's
-     fallback rather than fail validation. The *default* is the part that was
-     wrong -- `'todo'` is a name the server has never sent and no stylesheet
-     matches, so a payload omitting `status` drew an unstyled chip reading
-     "todo". A payload that does not say where a stage sits is a stage this
-     console cannot place, which is what `unknown` means. */
-  status: z.string().default('unknown'),
-  outputs: z.array(artifactSlotDto).default([]),
-  gate_decisions: z.array(z.string()).default([]),
-  reviewer_role: maybe(z.string()),
-  findings_report: maybe(z.string()),
-})
-
-export const courseDto = z.object({
-  project_name: z.string().default(''),
-  holding_session_id: maybe(z.string()),
-  preset: z.object({
-    id: z.string(),
-    name: z.string(),
-    version: z
-      .union([z.string(), z.number()])
-      .nullish()
-      .transform((v) => v ?? null),
-  }),
-  position: maybe(z.number()),
-  stage_count: z.number().default(0),
-  stages: z.array(stageProgressDto).default([]),
-  live_findings: z.array(findingDto).default([]),
-  unimplemented_checks: z.array(z.string()).default([]),
 })
 
 export const runDto = z.object({
@@ -436,19 +302,6 @@ export const topicFrameDto = z.object({ topic_id: z.string(), change: z.string()
  *  string for the reason `topicFrameDto.change` is -- a server that grew a
  *  new event must move the pane, not fail validation and leave it stale. */
 export const projectChangeFrameDto = z.object({ project_id: z.string(), change: z.string() })
-
-/** A project event on the live feed: the shape above plus the reviewer's
- *  verdict.
- *
- *  `decision` is optional *and* nullable, which is two different absences on
- *  purpose. Null is what the server sends for the five project events that are
- *  not a stage advance -- "this is not that kind of change". Absent is a server
- *  older than the field, which must still move the rail rather than fail
- *  validation and leave the page stale, for the reason `change` is a plain
- *  string rather than an enum. */
-export const projectFrameDto = projectChangeFrameDto.extend({
-  decision: maybe(z.string()).optional(),
-})
 
 export const workerDto = z.object({
   kind: z.string(),
@@ -566,13 +419,12 @@ export const topicDocumentsDto = z.object({
  *
  * `levels` values are `z.string()` rather than an enum on purpose: a server
  * that grows a fourth level must reach the domain's fallback and render as
- * itself, not fail validation and blank the panel. `gated` and `stage_gates`
- * are sent so the frontend never hardcodes a tool list — a list that drifts
- * from `GATED_TOOLS` shows up as a tool silently unmanageable from the web. */
+ * itself, not fail validation and blank the panel. `gated` is sent so the
+ * frontend never hardcodes a tool list — a list that drifts from `GATED_TOOLS`
+ * shows up as a tool silently unmanageable from the web. */
 export const autonomyDto = z.object({
   levels: z.record(z.string(), z.string()).default({}),
   gated: z.array(z.string()).default([]),
-  stage_gates: z.array(z.string()).default([]),
 })
 
 /** Allow-all adds `changed`: only what actually moved, possibly empty. It is

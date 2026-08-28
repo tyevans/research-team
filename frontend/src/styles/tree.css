@@ -141,27 +141,6 @@
   padding: var(--space-4);
   margin-bottom: var(--space-5);
 }
-.new-project-workflow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-.new-project-workflow .input {
-  flex: 1 1 auto;
-}
-.new-project-label {
-  font-size: var(--t-sm);
-  color: var(--fg-dim);
-}
-/* The server's `preset_label`, visible. It exists to say what a preset makes
-   and where it stops; inside an `<option>` that sentence was invisible until
-   the menu opened and gone the moment it closed. */
-.new-project-detail {
-  margin: 0;
-  color: var(--fg-dim);
-  font-size: var(--t-sm);
-  min-height: 1.5em;
-}
 .new-project-actions {
   display: flex;
   justify-content: flex-end;
@@ -382,8 +361,8 @@ ul.tree ul > li:last-child::after {
 
 /* The `.chip` base is gone from here and is `CHIP_SHAPE`/`CHIP_DRESS` in
    `presentation/common/primitives.tsx`. It was the landing view's stylesheet
-   holding the shape of a primitive nineteen files render, one of them
-   (`GateReview`) from the decision bar on every route -- so deleting this file
+   holding the shape of a primitive nineteen files render, one of them from the
+   decision bar on every route -- so deleting this file
    with its screen would have left every chip in the console as unbordered,
    unpadded body text at inherited size, silently. Found by a sweep, not by a
    failure.
