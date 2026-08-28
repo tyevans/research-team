@@ -3,6 +3,15 @@
 Indexed from `origin/main` at `5a5a7cf` ("Move what-is-running into the nav bar", #86).
 Read-only survey; no production code was changed.
 
+> **Historical, 2026-08-27 (B147).** This is a survey taken at a named commit,
+> and the workflow system it surveys has since been removed entirely: presets,
+> stages, stage artifacts, the check library and every surface that drew them.
+> Banner rather than rewrite, deliberately. The body's whole claim is "read out
+> of the code at `5a5a7cf`", every entry is dated to that read, and editing
+> entries out would leave a document asserting a provenance it no longer has --
+> a survey that has been quietly corrected is less useful than one that says
+> when it was taken. **What is invalid:** every entry naming the workflow `<select>` on `NewProjectForm`, the workflow and stage columns on a project row, and the `GET /api/workflows` and `POST /api/projects/{id}/workflow` endpoints. `POST /api/projects` is now a single call rather than two.
+
 Scope: route `home` (`#/`), rendered by `TreeView`, plus the application shell
 that is present on this page (topbar, breadcrumbs, connection and drift badges,
 agent dock, toasts). Every claim below is taken from code. Where a comment and

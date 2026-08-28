@@ -5,6 +5,15 @@ into the nav bar (#86)"). Every claim below was read out of the code, not the
 docs; where an in-tree comment and the code disagree, that is called out
 explicitly under **Comment vs code**.
 
+> **Historical, 2026-08-27 (B147).** This is a survey taken at a named commit,
+> and the workflow system it surveys has since been removed entirely: presets,
+> stages, stage artifacts, the check library and every surface that drew them.
+> Banner rather than rewrite, deliberately. The body's whole claim is "read out
+> of the code at `5a5a7cf`", every entry is dated to that read, and editing
+> entries out would leave a document asserting a provenance it no longer has --
+> a survey that has been quietly corrected is less useful than one that says
+> when it was taken. **What is invalid:** the `Course` button's disabled-when-no-workflow behaviour, and the course page it led to. "Rail + stage" and "floats on the stage" are layout vocabulary and are unaffected.
+
 Vocabulary used throughout:
 
 - **Built** — reachable by a user today.

@@ -3004,56 +3004,166 @@ for. None is a correctness bug on the happy path.
   question is possible; the scroll column is unasserted and would need a
   browser test; and nothing manages focus after send.
 
-## Workflows
+## After the workflow removal
 
-### B147. Remove the workflow system entirely; the curriculum path replaces it
+B147 is closed. What is below is what the removal *found* -- five things worth
+recording, each because it survived its subject rather than because the removal
+left a symmetric hole.
 
-**A direction, not a defect.** The workflow/preset system -- `hybrid.default`,
-`ubd.pure`, `addie.pure`, their stages, stage artifacts, stage exits and the
-review-findings surface hanging off them -- is judged a failure in practice by
-the person who built it (2026-08-23). The future is the
-curriculum -> course-building path: cluster the graph into learning areas,
-offer them as a catalog, and realise a course from a candidate on demand.
+### B147 -- closed 2026-08-27, by removal
 
-**The trigger for filing this** was the Findings tab, which never loaded. The
-root cause was presentational (see the commit that fixed it), but the
-*measurement* taken to find it is the argument for this entry: all three real
-projects -- Star Trek, Skilljar, Intro to Fiction -- report `workflow: null`,
-so `GET /api/projects/{id}/course` answers 409 for every one of them, and every
-surface built on the course/stage model has been dead on real data. The Findings
-tab, the Artifacts tab and the Queue pane are all reading from a model nothing
-in the corpus uses.
+The workflow/preset system is gone: `hybrid.default`, `ubd.pure`, `addie.pure`,
+their stages, stage artifacts, stage exits, the check library, check telemetry,
+and every console surface that drew them. The curriculum -> catalog ->
+realization -> UbD authoring path is what remains. Eight slices; see the branch
+`worktree-remove-workflow-system` and
+`docs/superpowers/plans/2026-08-27-remove-the-workflow-system.md`.
 
-**What makes this hard, and why it is a backlog entry rather than a task.** The
-workflow model is not confined to one module. Reachable from a single sweep:
-`domain/workflow.py`, `workflows/` (the presets), `application/course.py`,
-`application/stage_runner.py`, `application/stage_exit.py`,
-`application/artifacts.py`, `application/findings.py`, `application/checks.py`,
-`application/coverage.py`, `interfaces/web/course_html.py`, the course/stage/
-artifact/finding routes in `interfaces/web/app.py`, the `stage`, `artifact` and
-`finding` facets in the console's routing grammar, and most of
-`frontend/src/presentation/course/`. `SessionStarted` and the session aggregate
-also carry workflow identity, which puts part of this on the event log.
+**Where the reasoning went**, per this file's rule about citing a closed entry.
+The event-log question the entry called "the part to think about first" is
+answered in `tests/infrastructure/test_schema_evolution.py`, whose module
+constant `REMOVING_THE_WORKFLOW_SYSTEM` carries the measurement and whose five
+cases assert the *refusal* of the removed shapes. The denominator argument the
+check telemetry was built on is banner-marked in `docs/direction.md` §4 and
+carried forward as [[B154]]. The coverage matrix's finding is [[B153]]. The one
+harness invariant worth keeping is [[B155]]. The autonomy floor the removal
+discarded is [[B157]].
 
-**The log is the part to think about first.** Existing sessions carry a workflow
-in their events, and events already written are not rewritten. Removing the
-field is a deliberate schema break of the kind `domain/events.py` documents --
-allowed pre-release, but it must be written down in the field's docstring and
-`tests/infrastructure/test_schema_evolution.py` must be changed to assert the
-*refusal* rather than having the case deleted. That is the same treatment
-`SessionStarted.project_id` already had.
+**The entry's own premise held under measurement.** It was filed on
+`workflow: null` across three real projects. Re-measured 2026-08-27 against
+`~/.research-team/sessions.db`: **zero** `ProjectWorkflowSelected` rows, zero
+`ProjectStageAdvanced` rows, zero `StageChecksEvaluated` rows, and an empty
+`check_outcomes` table -- against 64 topics on 6 projects and 7 courses. The
+system was not lightly used; it was never used.
 
-**What must not be lost with it.** `course_authoring.py` drives the UbD three-
-turn authoring run and is the thing the catalog's "make this course real" step
-calls. It reads `workflows/ubd.py` for nothing -- its module docstring says the
-preset is untouched and nothing below it reads the preset -- so it should
-survive the removal intact. Confirm that before deleting, rather than after.
+**One thing it was wrong about, and the correction is the more useful fact.**
+The entry says `course_authoring.py` "reads `workflows/ubd.py` for nothing --
+its module docstring says the preset is untouched". True, and the docstring was
+the only thing tying the two together, which meant the removal's real cost there
+was one paragraph of prose rather than an import. Confirming that before
+deleting was cheap and would have been expensive to discover after.
 
-**Sequencing.** Do not start this while the course-catalog increments are in
-flight; increment 2 is what makes the replacement real, and removing the old
-path before the new one can author a course leaves the product with neither.
-The honest order is: finish the catalog, prove a course can be realised from a
-candidate end to end, then delete.
+**The orphaned tables.** `check_outcomes` is still in
+`~/.research-team/sessions.db`, along with the check-telemetry read models,
+with no projection left to write them and no reader left to query them. Empty,
+which is the whole argument for the removal -- and named here rather than left
+to be found, per CLAUDE.md's Read models section. They cost a few kilobytes and
+one moment of confusion for whoever next opens the schema; dropping them needs
+a migration this project has no mechanism for and would gain nothing.
+
+### B153. The coverage grid converged three times, and the convergence is the finding
+
+`application/coverage.py` is deleted and should stay deleted. What it found
+should not be lost with it: **three unrelated instructional-design traditions
+each independently invented a two-dimensional coverage grid**, and the split it
+drew between them -- `AttributeAxis` (intrinsic: what a thing *is*) versus
+`ArtifactAxis` (relational: what a thing stands in relation to) -- is a real
+distinction, carefully made, that the traditions themselves do not state.
+
+Why the code went anyway: the grid was keyed on `ArtifactType` as one of its
+axes, so it could not outlive it. And the nearest surviving analogue -- *does
+every enduring understanding have a performance task* -- is already
+`check_stage_two`'s ratio, which is a ratio precisely because there are two
+axes with one cell each. **A matrix over one pair is a table.**
+
+**When to reopen this.** If the authoring path ever produces more than one
+artifact type per learning area -- a unit *and* an assessment blueprint, say,
+or units at two grade bands -- the second axis exists again and a grid stops
+being a table with extra machinery. Until then, rebuilding it would be symmetry
+rather than a need. The reasoning is the asset; the code was the liability.
+
+### B154. The four authoring checkpoints have no denominator
+
+`authoring_checkpoints.py` raises or passes. Nothing records that a checkpoint
+*ran*, so **a checkpoint that has never fired and a checkpoint that has never
+been reached arrive as the same observation** -- silence.
+
+This is exactly the lesson `docs/direction.md` §4 draws at length, in the
+history of a feature that no longer exists: a record modelled on the report you
+already have measures only what that report already shows. The check-telemetry
+event was designed to carry every *bound* check, including the ones that ran and
+found nothing, because that is the only way a rate has a denominator. That
+design was right and it was built for a system that never ran; the checkpoints
+are a system that runs and has no such record.
+
+**What would answer it, cheaply.** One event per checkpoint evaluation carrying
+the phase, the area slug and pass/fail -- appended whether or not it failed.
+Four checkpoints and one authoring run per area makes this a small stream. The
+question it makes answerable is whether `check_stage_two`'s performance-task
+ratio, which refused a live run on 2026-08-25 (see CLAUDE.md), refuses often
+enough to be a contract or rarely enough to be a tripwire.
+
+**Not scheduled, and the cost of not doing it is bounded**: the checkpoints
+fail loudly when they fail, so this buys understanding rather than correctness.
+
+### B155. Can `prose-critic` review text a sibling of itself wrote?
+
+The old check library had one harness invariant worth carrying over:
+`self_review_separation` -- the rule that the thing being graded and the thing
+grading it must not be the same agent under the same prompt. The reasoning is
+sound and general and has nothing to do with presets.
+
+The authoring path has a `prose-critic` subagent and a rubric
+(`prose_rubric.md`, whose two accessors already split the writer's view from the
+judge's, for a related reason). **The question nobody has answered: does the
+dispatch table ever put `prose-critic` in front of text that `lesson-drafter`
+wrote under a system prompt quoting the same rules?** If it does, the invariant
+is live in the new vocabulary.
+
+**It belongs as a test over `AUTHORING_SUBAGENT_NAMES` and the dispatch table,
+not as a check with a severity.** A severity implies a finding a reader triages;
+this is a property of the harness that is either true or is a defect, which is
+what a test is for. `tests/infrastructure/test_authoring_subagents.py` already
+parametrises over that table and is where it would go.
+
+### B156. Curriculum's place in the tab strip, and splitting `course` out
+
+The workflow removal took Artifacts and Findings out of the material tab strip,
+which buys back roughly 150px at nine tabs -- the first headroom the strip has
+had since [[B141]] observed that nothing ranks the tabs, so a twelfth has
+nothing to displace.
+
+Two spends are available and **neither was taken in the removal PR, on purpose**:
+the diff was large enough that an information-architecture change inside it
+would have been unreviewable, and an IA change wants to be judged on its own.
+
+- **Promote Curriculum to first.** It is the spine of the product the removal
+  leaves behind, and it currently sits where the historical accretion put it.
+- **Split `course` out of it.** Curriculum and the authored course are two
+  reads with two audiences -- one is "what areas does this graph have", the
+  other is "read this unit" -- sharing one tab because they shared a route.
+
+Do not do both blind. `ProjectView.test.tsx` holds the strip's dwell
+measurements and `visibleMaterialTabs`'s deep-link exemption, which is
+load-bearing and gets re-derived wrong when inlined.
+
+### B157. Nothing reserves any tool from "allow all" any more
+
+**A known consequence, recorded rather than discovered.** `TOOL_FLOORS` had one
+entry that "allow all" would not sweep: `advance_stage`, at `ask`. It was there
+because a stage boundary was a review gate rather than a hazard -- the place a
+person looked at what had been produced before the run built on it. It was the
+only floor `relax_all` respected, and with the tool gone `relax_all` is
+parameterless and `GATED_TOOLS` holds hazards only. **"Allow everything" now
+means everything.**
+
+That is defensible and was chosen deliberately: what remains is dangerous
+rather than reviewable, and "relax everything except the ones that are
+dangerous" is not a rule anybody wants. The console's second button went with
+it, so no surface now offers a partial relax that would need explaining.
+
+**The argument this discards, stated so it is discarded on purpose.** An
+authoring run that goes unattended can produce four phases of confident wrong
+content, and the checkpoints only catch structural *absence* -- see [[B154]].
+The highest-value single interrupt in the pipeline would be a pause after
+phase 1 (desired results), because every later phase is built on it and a wrong
+Stage 1 is not visible in any structural check.
+
+**If a floor is ever wanted again**, the machinery is intact and unused: the
+interrupt/announce/prompt/record path still runs for every gated tool, so
+reinstating one is a `TOOL_FLOORS` entry against whatever tool an authoring run
+poses -- not a rebuild. The case for doing it is speculative until somebody has
+been burned by an authored area, which is why it is here and not in the PR.
 
 ## Waiting on redstring
 

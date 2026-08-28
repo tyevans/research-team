@@ -11,6 +11,15 @@ Everything below was read from code. Where a comment and the code disagree, the
 code wins and the disagreement is called out. Where I am unsure, the entry says
 so.
 
+> **Historical, 2026-08-27 (B147).** This is a survey taken at a named commit,
+> and the workflow system it surveys has since been removed entirely: presets,
+> stages, stage artifacts, the check library and every surface that drew them.
+> Banner rather than rewrite, deliberately. The body's whole claim is "read out
+> of the code at `5a5a7cf`", every entry is dated to that read, and editing
+> entries out would leave a document asserting a provenance it no longer has --
+> a survey that has been quietly corrected is less useful than one that says
+> when it was taken. **What is invalid:** every entry about stage-gate review -- the `gate_context` payload, `stage_exit.py`, `advance_stage` and its autonomy floor, and the `ApprovalRequest.context` object those filled. §13.1 and the future-work items that build on it have no subject left.
+
 ---
 
 ## 0. Method, scope and how to read this
