@@ -29,7 +29,7 @@ const renderHookWithContainer = <Props, Result>(
   const parts: Partial<AppContainer> = {
     workers: { everywhere: options.everywhere, on: vi.fn() } as unknown as WorkerRepository,
     projects: { list: vi.fn().mockResolvedValue([]) } as unknown as AppContainer['projects'],
-    stream: fakeStream() as unknown as AppContainer['stream'],
+    stream: fakeStream(),
   }
   const container = parts as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -64,10 +64,13 @@ it('polls the roster while the dock is open and not while it is closed', async (
   vi.useFakeTimers()
   const everywhere = vi.fn().mockResolvedValue([])
 
-  const { rerender } = renderHookWithContainer(({ open }: { open: boolean }) => useRunningAgents(open), {
-    initialProps: { open: false },
-    everywhere,
-  })
+  const { rerender } = renderHookWithContainer(
+    ({ open }: { open: boolean }) => useRunningAgents(open),
+    {
+      initialProps: { open: false },
+      everywhere,
+    },
+  )
 
   await vi.advanceTimersByTimeAsync(ROSTER_POLL_MS * 3)
   expect(everywhere).toHaveBeenCalledTimes(1)

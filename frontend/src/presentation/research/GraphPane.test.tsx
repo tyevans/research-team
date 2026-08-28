@@ -10,7 +10,12 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import { ApiError } from '@application/ports/errors.ts'
 import type { GraphRepository, UsagesRepository } from '@application/ports/repositories.ts'
-import { emptyGraph, type GraphNode, type GraphView, type Neighborhood } from '@domain/knowledge/graph.ts'
+import {
+  emptyGraph,
+  type GraphNode,
+  type GraphView,
+  type Neighborhood,
+} from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
