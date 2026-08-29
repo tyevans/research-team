@@ -68,6 +68,7 @@ from research_team.domain.interaction import (
     ExtractionQueued,
     InteractionEvent,
     ProjectSwitched,
+    RenderErrorRaised,
     SearchPerformed,
     ViewEntered,
     ViewExited,
@@ -1024,6 +1025,10 @@ class InteractionLogProjection(DeclarativeProjection):
 
     @handles(EmptyResultEncountered)
     async def _on_empty_result_encountered(self, event: EmptyResultEncountered) -> None:
+        await self._record(event)
+
+    @handles(RenderErrorRaised)
+    async def _on_render_error_raised(self, event: RenderErrorRaised) -> None:
         await self._record(event)
 
 

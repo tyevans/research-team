@@ -226,6 +226,16 @@ export const GraphPane = ({
    * who has finished with this one wants it in. */
   const pick = (id: string) => {
     setTerm('')
+    // `select` before `onEntity`, and this is the whole of what closes B110.
+    // The selection reaches the store either way -- the route change lands in
+    // the `[entity]` effect above, which calls `expandNode`, which calls
+    // `select` with the store's own default source. That default is
+    // `'graph'`, and it was being written for *every* path including this
+    // one, so `EntityOpened.source` was a field with one value and four
+    // documented ones. Calling it here first claims the id under `'search'`;
+    // the store's same-as-last guard (`lastOpened`) is what stops the
+    // `expandNode` that follows from recording a second row saying `'graph'`.
+    store.getState().select(id, 'search')
     onEntity(id)
   }
 

@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import { InteractionLogContext } from '@app/interaction-log-provider.tsx'
+import type { Emitter } from '@application/interaction-log/emitter.ts'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { GraphRepository, UsagesRepository } from '@application/ports/repositories.ts'
 import type { EntityGroup } from '@domain/knowledge/entity-tree.ts'
@@ -113,10 +115,24 @@ const fakeStream = () => {
   }
 }
 
+/** A whole `Emitter`, not a `Pick<Emitter, 'record'>`: `InteractionLogContext`
+ *  is typed as the real thing, and the pane hands the same object to
+ *  `createGraphStore`. */
+const fakeLog = (record: Emitter['record'] = vi.fn()): Emitter => ({
+  record,
+  setContext: vi.fn(),
+  start: vi.fn(),
+  flush: vi.fn(async () => {}),
+  flushOnUnload: vi.fn(),
+  stop: vi.fn(),
+  pending: () => 0,
+})
+
 const renderWithContainer = (
   ui: ReactElement,
   parts: Partial<AppContainer>,
   stream: EventStream = fakeStream().stream,
+  log: Emitter = fakeLog(),
 ) => {
   const container = {
     stream,
@@ -128,7 +144,14 @@ const renderWithContainer = (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
         <StreamProvider>
-          <OverlayHost>{children}</OverlayHost>
+          {/* Every other test in this file renders without it and gets the
+              silent default, which is fine for them and useless for the two
+              below: a default that records nothing makes "the pane reports
+              its source" and "the pane was never given a log" the same
+              observation. */}
+          <InteractionLogContext.Provider value={log}>
+            <OverlayHost>{children}</OverlayHost>
+          </InteractionLogContext.Provider>
         </StreamProvider>
       </ContainerProvider>
     </QueryClientProvider>
@@ -149,6 +172,38 @@ describe('EntityTreePane', () => {
     })
 
     expect(await screen.findByRole('button', { name: /person/ })).toBeInTheDocument()
+  })
+
+  it('records EntityOpened from the tree under its own source, not the graph default', async () => {
+    /** B110, the half that was silent: this pane builds its store *with* the
+     *  emitter and never called `select` or `expandNode`, so opening an
+     *  entity from the tree recorded nothing at all -- while `EntityOpened`
+     *  documented four sources and every stored row said `'graph'`.
+     *
+     *  The assertion is on the recorded call, not on the click landing:
+     *  `onEntity` fires either way, so a test that only checked the route
+     *  would pass with the emission removed. */
+    const whole = vi.fn().mockResolvedValue({
+      entities: [{ id: 'p1', name: 'Hinton', entityType: 'person' }],
+      relationships: [],
+      truncated: false,
+    })
+    // The mock held separately from the emitter: asserting on `log.record`
+    // reads a method off an object, which `@typescript-eslint/unbound-method`
+    // refuses on a `Pick`-shaped interface.
+    const record = vi.fn()
+    const user = userEvent.setup()
+
+    renderWithContainer(
+      <EntityTreePane projectId={projectId} entity={null} onEntity={vi.fn()} />,
+      { graphs: fakeGraphs({ whole }) },
+      fakeStream().stream,
+      fakeLog(record),
+    )
+
+    await user.click(await screen.findByText('Hinton'))
+
+    expect(record).toHaveBeenCalledWith('EntityOpened', { entity_id: 'p1', source: 'tree' })
   })
 
   it('opens every group on a small graph, so the tab enumerates something', async () => {

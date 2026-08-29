@@ -46,16 +46,31 @@ stable filenames, and the conflict is over bytes nobody reads or reviews, whose
 only correct resolution is to rebuild. That happened often enough to outweigh
 the toolchain-free run.
 
-**There is a further command, and it is not a gate.**
+**There is a fifth command. It is now a CI job, and it is still not in
+`verify`.**
 
 ```
 cd frontend && npm run test:browser
 ```
 
 Headless Chromium via vitest's browser mode, over `src/**/*.browser.test.tsx`.
-It is deliberately outside `verify` and outside CI, so nothing forces you to
-run it -- **run it when you touch a stylesheet, a layout primitive, or
-anything whose correctness is a computed style or a measurement.**
+**Run it when you touch a stylesheet, a layout primitive, or anything whose
+correctness is a computed style or a measurement.**
+
+This entry used to say it was outside CI as well, and that changed on
+2026-08-29 (CI job `browser`, its own runner, in parallel with the rest). What
+changed the decision is that the cost of leaving it out stopped being a
+prediction: B140 records #249 adding Toasts stories, passing all four gates,
+merging, and leaving `a11y.browser.test.tsx` red for four merged commits with
+every gate green -- found weeks later by the next person who ran the suite by
+hand and had to work out which merge did it.
+
+What did *not* change is why it is outside `verify`: it is a minute against a
+second, and a Chromium download, and neither belongs in the loop you run
+before every commit. The CI job is a net under the practice, not a replacement
+for it -- push a stylesheet change without running it and you find out in two
+minutes rather than in two weeks, which is better and is not the same as
+knowing before you push.
 
 The reason it exists: jsdom lays nothing out and applies no stylesheet, so
 `scrollHeight` is 0 everywhere, `getComputedStyle` returns only what an inline

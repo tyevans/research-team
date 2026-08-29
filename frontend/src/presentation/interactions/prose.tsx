@@ -120,6 +120,14 @@ export const interactionProse = (event: LoggedInteraction): ReactNode => {
         ? nothing
         : `${nothing} for a ${length}-character query`
     }
+    case 'RenderErrorRaised': {
+      // The name and where, not the message: the vocabulary records the
+      // message as a length (`domain/interaction.py` says why), so this row
+      // says which boundary and which error class and leaves the text to the
+      // browser console of whoever hit it.
+      const name = str(payload, 'error_name') ?? 'an error'
+      return `${name} broke the ${str(payload, 'where') ?? 'console'} while drawing ${view}`
+    }
     default: {
       // Exhaustiveness, not a fallback. Nothing reaches this arm: `kind` is
       // narrowed to `never` here, and a kind added to `INTERACTION_KINDS`

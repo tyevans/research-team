@@ -33,11 +33,87 @@
   margin-top: 9px;
 }
 
+/* --- root error boundary ------------------------------------------------ */
+/* A named stylesheet rule rather than Tailwind utilities on the elements,
+   for the reason CLAUDE.md gives about `tokens.css`: this surface renders
+   when the application has already failed once, and a utility that lost a
+   cascade argument to an unlayered element selector would leave the one
+   screen nobody can debug from looking broken. Everything here is a class
+   this file owns. */
+.error-boundary {
+  margin: 40px auto;
+  max-width: 62ch;
+  padding: 20px 22px;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  line-height: 1.7;
+  color: var(--fg-dim);
+  border: 1px solid var(--tint-fail-line);
+  background: var(--tint-fail);
+  border-radius: var(--radius);
+}
+.error-boundary-heading {
+  margin: 0 0 8px;
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--fg);
+}
+.error-boundary-detail {
+  margin: 0 0 10px;
+  color: var(--fg-faint);
+}
+.error-boundary-message {
+  margin: 0 0 14px;
+  color: var(--k-failure);
+  overflow-wrap: anywhere;
+}
+.error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.error-boundary-stack {
+  margin-top: 14px;
+  color: var(--fg-faint);
+}
+.error-boundary-stack pre {
+  margin: 8px 0 0;
+  max-height: 40vh;
+  overflow: auto;
+  font-size: var(--t-xs);
+  white-space: pre-wrap;
+}
+
 /* --- toasts ------------------------------------------------------------ */
 .toasts {
   position: fixed;
   right: 14px;
-  top: calc(var(--topbar-h) + 10px);
+  /* **B144, and it was measured rather than reasoned.** This read
+     `top: calc(var(--topbar-h) + 10px)`, which puts the first toast at y=54.
+     `ProjectView`'s material tab strip spans y=44-66, and `.toast` carries
+     `pointer-events: auto` -- so any toast at all made the project page's
+     primary navigation unclickable, hit-tested with
+     `document.elementFromPoint` at each tab's centre in Chromium at 1265px on
+     2026-08-23. Every toast story in the gallery renders the stack over a
+     *page*, which is why a year of stories never showed it.
+
+     Bottom rather than a larger top offset: an offset would be the tab
+     strip's height written down in a second file, and correct only on the one
+     route that has a strip. The bottom right of a scrolling surface is the
+     one band nothing in this console navigates from.
+
+     `bottom` with `flex-direction: column` (not `column-reverse`): the stack's
+     bottom edge is pinned and it grows upward, so the newest toast stays
+     nearest the corner and the DOM order the store produces is still the
+     reading order. Reversing would have flipped what a screen reader walks
+     through inside the live region for no visual gain.
+
+     What this costs: `AgentWidget`'s old home was a fixed panel at the lower
+     right, and its comment says why that was wrong -- it sat on top of
+     whatever was there with no way past but its own toggle. A toast is not
+     that: it is transient, it has a close button and an F6 route, and the
+     stack is `pointer-events: none` everywhere a toast is not. */
+  bottom: 14px;
   z-index: var(--z-toast);
   display: flex;
   flex-direction: column;

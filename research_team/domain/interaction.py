@@ -310,6 +310,31 @@ class EmptyResultEncountered(InteractionEvent):
     query_length: int = 0
 
 
+@register_event
+class RenderErrorRaised(InteractionEvent):
+    """The console's root error boundary caught a throw during render.
+
+    Structural, like every other kind here: `where` names the boundary that
+    caught it, `error_name` is the constructor's name (`TypeError`,
+    `ApiError`), and the message is recorded as a *length* rather than as
+    text. The message is the one field an analyst would most like to read and
+    the one most likely to carry a project name, a file path or a fragment of
+    a user's query, so it goes in `TEXT_BEARING_FIELDS`' shape rule rather
+    than into the allowlist -- a count of render failures per view is what
+    tells you a page is broken, and the stack is in the browser console of
+    whoever hit it.
+
+    Recovery is not a second kind: pressing "Try again" records
+    `ActionRetried(action_kind="render")`, which is what that kind is for and
+    which lets a consumer see the retry-loop case (an error that recurs on
+    every retry) with no new vocabulary.
+    """
+
+    where: str
+    error_name: str
+    message_length: int = 0
+
+
 INTERACTION_EVENTS: tuple[type[InteractionEvent], ...] = (
     ViewEntered,
     ViewExited,
@@ -326,6 +351,7 @@ INTERACTION_EVENTS: tuple[type[InteractionEvent], ...] = (
     ActionUndone,
     ActionRetried,
     EmptyResultEncountered,
+    RenderErrorRaised,
 )
 """Every kind, in one tuple.
 

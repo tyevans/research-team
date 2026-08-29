@@ -151,7 +151,17 @@ export const EntityTreePane = ({
         partial={partial}
         filtered={term.trim() !== ''}
         onToggle={toggle}
-        onSelect={onEntity}
+        onSelect={(id) => {
+          // The emitter this pane hands its store was unused: selection goes
+          // out through `onEntity` to the route, and nothing here ever called
+          // `select` or `expandNode`, so opening an entity from the tree
+          // recorded no `EntityOpened` at all. It records one now, under its
+          // own source rather than the store's `'graph'` default -- picking a
+          // name out of a list and clicking a node on a canvas are different
+          // gestures and the field exists to tell them apart.
+          store.getState().select(id, 'tree')
+          onEntity(id)
+        }}
         onClose={() => onEntity(null)}
       />
     </div>

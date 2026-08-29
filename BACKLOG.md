@@ -590,6 +590,22 @@ deliberately not closed on the spot, with the reason.
 
 ### B146. The interaction log's browser-to-store seam has no standing test
 
+**Closed 2026-08-29.** The seam is now a committed file neither side writes by
+hand: `frontend/src/infrastructure/http/interaction-wire-format.fixture.json`,
+produced by `interaction-wire-format.test.ts` from the real emitter and the
+real `HttpInteractionSink` through the same `JSON.stringify` and the same
+`Blob` the beacon carries, and read back by
+`tests/interfaces/test_interaction_wire_format.py`, which posts those bytes and
+asserts a stored row per event. Two completeness checks sit either side of it,
+one against `INTERACTION_KINDS` in TypeScript and one against
+`INTERACTION_EVENTS` in Python, so a kind added to one vocabulary and not the
+other fails rather than shipping as a silently rejected event.
+
+The narrow option this entry proposed -- "post a batch with the client's own
+serialiser and assert the row" -- is exactly what was built. The Playwright job
+was not, and is still not obviously worth one: what remains uncovered is HTTP
+itself, which is one `Content-Type` header on the beacon path.
+
 **Verified by hand on 2026-08-23 and working**, which is the reason to file it
 rather than a reason not to: the check cannot currently be made by anything
 that runs.
@@ -643,6 +659,22 @@ would at least pin the wire format the two ends agree on. Neither is obviously
 worth a new job, which is why this is an entry rather than a branch.
 
 ### B140. The tab-strip measurement is a browser test, so CI cannot reach it
+
+**Answered 2026-08-29: the browser suite is in CI**, as job `browser`, on its
+own runner in parallel. The reasoning is in the job's own comment and in
+CLAUDE.md; the short form is that the third of the three costs this entry lists
+(923 jsdom tests competing for the same budget) does not apply to a separate
+runner, and that this entry's own instance -- #249, four merged commits over a
+red suite -- is what stopped it being a prediction.
+
+The path-filtered middle option this entry proposes was the first design and
+was dropped. GitHub's `paths` filter is per workflow rather than per job, so
+scoping one job means a third-party changed-files action in a file that pins
+every action by SHA; and #249 touched neither `src/styles/**` nor
+`presentation/layout/**` -- it added stories -- so a filter drawn around the
+last failure would not have caught the last failure.
+
+The tab-strip measurement itself is unchanged and is now reachable by CI.
 
 `MATERIAL_TABS` in `ProjectView.tsx` carries a measured limit -- "eleven tabs
 is where this strip stops fitting". It is not a preference: `area` and `path`
@@ -731,6 +763,17 @@ entry fails the same assertion -- the inventory cannot rot toward either
 optimism or pessimism.
 
 ### B144. A toast makes the material tabs unclickable
+
+**Fixed 2026-08-29.** `.toasts` moved from `top: calc(var(--topbar-h) + 10px)`
+to `bottom: 14px`. A larger top offset was rejected: it would be the tab
+strip's height written down in a second file and correct only on the one route
+that has a strip.
+
+`frontend/src/presentation/shell/toast-clearance.browser.test.tsx` is the
+standing measurement, and it is a hit test rather than a rect comparison for
+the reason CLAUDE.md gives -- the tabs were the right size, the right colour
+and the right text throughout, and were simply underneath something. Proved red
+by restoring the old `top`.
 
 Measured in Chromium at 1265px on 2026-08-23, by driving the real console
 rather than a story -- which is why it had not been found: every toast story
@@ -4098,6 +4141,22 @@ whichever one is built first should not assume it can get exact interleaving
 across the two stores; it can't, structurally.
 
 ### B110. `select(id, source)` and `EntityTreePane`'s emitter are plumbing with no caller
+
+**Closed 2026-08-29, by wiring rather than by deleting.** Both call sites this
+entry names now pass their own word: `GraphPane.pick` -- a result chosen out of
+the search panel -- calls `select(id, 'search')` before handing the id to the
+route, and `EntityTreePane`'s `onSelect` calls `select(id, 'tree')`, which is
+the first use that pane has ever made of the emitter it was handed.
+
+The tree half was worse than "plumbing": the pane called neither `select` nor
+`expandNode`, so opening an entity from the tree recorded **no `EntityOpened`
+at all**, not merely one with the wrong source. That is not in this entry and
+was found while closing it.
+
+Costs, stated: `'tree'` is a fifth value for a field documented as "graph |
+search | timeline | link", and the timeline pane still records nothing. Rows
+written before today all say `'graph'` regardless of path, so the field is only
+trustworthy from this commit forward.
 
 `GraphState.select` takes a `source` no call site passes, and `EntityTreePane`
 is handed an `emitter` it never uses — it calls neither `select` nor

@@ -222,3 +222,78 @@ jobs:
       - name: npm audit
         run: npm audit --audit-level=high
         working-directory: frontend
+
+  # `npm run test:browser` -- headless Chromium over `src/**/*.browser.test.tsx`.
+  #
+  # CLAUDE.md says this suite is "deliberately outside `verify` and outside
+  # CI", and B140 gives the three costs behind that: a minute per run against a
+  # second, a Chromium download, and 923 jsdom tests competing for the same
+  # budget. This job argues with that reasoning rather than around it.
+  #
+  # The third cost is the one that turns out not to apply here, and it is what
+  # makes this a separate job rather than a step in `console`. Nothing competes
+  # for a budget: this is its own runner, in parallel, so `console` reports in
+  # exactly the time it did before and the pull request's wall clock is
+  # unchanged unless this is the slowest job, which it is not -- `integration`
+  # boots Neo4j and Postgres.
+  #
+  # The first two are real and are paid on every pull request. `--only-shell`
+  # is what keeps the download to the rendering engine rather than a browser,
+  # and `setup-node`'s npm cache covers the rest. A minute of a parallel runner
+  # is the price; B140 records what the alternative costs.
+  #
+  # A narrower job -- run only when `src/styles/**` or `presentation/layout/**`
+  # changed -- was the first design and was dropped. GitHub's `paths` filter is
+  # per *workflow*, not per job, so scoping one job means a third-party
+  # changed-files action, which this file pins by SHA and audits; and B140's
+  # own instance escapes the filter anyway. #249 touched neither directory --
+  # it added Storybook stories -- and it is the merge that left the suite red
+  # for four commits. A filter drawn around the last failure would not have
+  # caught the last failure.
+  #
+  # What is deliberately *not* argued: nothing here forces anyone to run the
+  # suite locally, which is the property CLAUDE.md states. It stays out of
+  # `verify`, and touching a stylesheet is still a reason to run it by hand
+  # before pushing -- this is the net, not the practice.
+  #
+  # And the cost of leaving it out is measured rather than predicted. B140:
+  # #249 added Toasts stories, passed all four gates, merged, and left
+  # `a11y.browser.test.tsx` red with eight contrast violations -- red across
+  # four merged commits with every gate green, found weeks later by the next
+  # person who ran the suite by hand and had to work out which merge did it.
+  # The violations turned out to be phantoms, which is not the point: nothing
+  # could tell anyone that at the time.
+  #
+  # `continue-on-error` is deliberately absent. A job that cannot fail is a
+  # notification, and B140's whole complaint is that a notification nobody
+  # received is what four green merges over a red suite look like.
+  browser:
+    name: vitest --project browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+
+      # `--only-shell` rather than the full browser: these tests need a
+      # rendering engine, not a browser UI, and the headless shell is a
+      # fraction of the download. `--with-deps` because a bare Ubuntu runner
+      # has none of the shared libraries Chromium links against, and the
+      # failure without it is a missing `.so` that names nothing about
+      # Playwright.
+      - name: install chromium
+        run: npx playwright install --with-deps --only-shell chromium
+        working-directory: frontend
+
+      - name: vitest --project browser
+        run: npm run test:browser
+        working-directory: frontend
