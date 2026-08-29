@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 
+import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
+import { MessageId, SessionId } from '@domain/shared/identifier.ts'
 import type { SessionProjection } from '@domain/session/session.ts'
 
 import { Conversation } from './Conversation.tsx'
@@ -46,6 +48,15 @@ const message = (role: MessageRole, content: string): Message => ({
   name: null,
   artifact: null,
   isError: false,
+})
+
+const live = (id: string, over: Partial<ActivityEntry> = {}): ActivityEntry => ({
+  messageId: MessageId(id),
+  sessionId: SessionId('7d41e0aa-1111-4111-8111-444444444444'),
+  kind: 'assistant',
+  text: null,
+  payload: {},
+  ...over,
 })
 
 it('never claims an empty conversation when the read failed', () => {
@@ -159,4 +170,132 @@ it('leaves a reader who has scrolled up where they were', () => {
   // make a live view unusable -- worse than not following at all, because it
   // punishes them for looking.
   expect(scroller.scrollTop).toBe(200)
+})
+
+/* --- the turn in flight ---------------------------------------------------
+ *
+ * These four are the change of 2026-08-28: the live tail used to be a sibling
+ * component with its own scroller, so none of this was this component's
+ * problem and none of it was asserted anywhere.
+ *
+ * **Proved red** by reverting each half: with the empty-state condition back
+ * to `messages.length === 0`, the first fails; with `<LiveTail>` removed, the
+ * first two fail; with `ProvisionalBubble` rendering every body literally the
+ * way the old markup did, the markdown one fails. */
+
+it('does not claim an empty conversation while a turn is streaming into it', () => {
+  render(
+    <Conversation
+      view={projection()}
+      error={null}
+      historicalAt={null}
+      activity={[live('m1', { text: 'reading the config' })]}
+    />,
+  )
+
+  // The defect this is named for, seen in a `WorkerDrawer` on a worker that
+  // had not committed anything yet: "No conversation yet." across the pane,
+  // with prose visibly arriving underneath it. Two surfaces disagreeing about
+  // whether anything is happening.
+  expect(screen.queryByText('No conversation yet.')).not.toBeInTheDocument()
+  expect(screen.getByText('reading the config')).toBeInTheDocument()
+})
+
+it('puts the turn in flight inside the transcript, not beside it', () => {
+  const { container } = render(
+    <Conversation
+      view={projection({ messages: [message('assistant', 'done reading')] })}
+      error={null}
+      historicalAt={null}
+      activity={[live('m1', { text: 'now writing' })]}
+    />,
+  )
+
+  // One list and one scroller. As siblings the two were separate scrolling
+  // regions, which is why the stick-to-bottom ref on `.conv-scroll` governed
+  // the half that was not moving. Fails if the tail is rendered outside
+  // `.conv` again -- including "outside but still inside `.conv-scroll`",
+  // which looks right and puts it beyond the column's gap and padding.
+  const tail = container.querySelector('.conv > .provisional')
+  expect(tail).toBeInTheDocument()
+  expect(tail).toHaveTextContent('now writing')
+})
+
+it('renders streaming prose as markdown, the way the message it becomes will', () => {
+  const { container } = render(
+    <Conversation
+      view={projection()}
+      error={null}
+      historicalAt={null}
+      activity={[live('m1', { text: '## Findings\n\nThe **cap** is 160.' })]}
+    />,
+  )
+
+  // Until this change the live tail was the only model-authored prose in the
+  // console rendered as plain text: a reader watched raw `##` and `**` stream
+  // in, and then the same words silently reflowed into a formatted message the
+  // moment the turn committed.
+  expect(container.querySelector('.provisional h2')).toHaveTextContent('Findings')
+  expect(container.querySelector('.provisional strong')).toHaveTextContent('cap')
+})
+
+it('leaves a tool-call summary literal', () => {
+  const { container } = render(
+    <Conversation
+      view={projection()}
+      error={null}
+      historicalAt={null}
+      activity={[
+        live('m1', {
+          kind: 'tool',
+          payload: { data: { tool_calls: [{ name: 'read_file', args: { path: 'a_b_c.md' } }] } },
+        }),
+      ]}
+    />,
+  )
+
+  // The other half of the same rule. `→ read_file(path=a_b_c.md)` is a label
+  // this code assembled, not a document: through a markdown parser the pair of
+  // underscores turns the middle of a filename italic and the characters
+  // vanish from a string whose whole job is being exact.
+  const body = container.querySelector('.provisional-body')!
+  expect(body).toHaveTextContent('read_file')
+  expect(body.querySelector('em')).toBeNull()
+  expect(body).toHaveClass('mono')
+})
+
+it('follows the stream, and not only the commits', () => {
+  // One projection object across both renders, deliberately. `messages` is
+  // memoised on `view.messages`, and a fresh `projection()` per render hands
+  // it a new array identity every time -- which fires the scroll effect
+  // whatever its dependency list says. With that, the test passes with
+  // `activity` dropped from the deps and proves nothing; it was written that
+  // way first and checked.
+  const stable = projection()
+
+  const { container, rerender } = render(
+    <Conversation view={stable} error={null} historicalAt={null} activity={[]} />,
+  )
+
+  const scroller = container.querySelector<HTMLElement>('.conv-scroll')!
+  Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+  Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+  scroller.scrollTop = 700
+  scroller.dispatchEvent(new Event('scroll'))
+
+  rerender(
+    <Conversation
+      view={stable}
+      error={null}
+      historicalAt={null}
+      activity={[live('m1', { text: 'a long answer arriving' })]}
+    />,
+  )
+
+  // A turn saves atomically, so between "sent" and "committed" the *only*
+  // thing that grows is the tail. While it lived in its own scroller this
+  // effect could not see it, which made stick-to-bottom useless for exactly
+  // the case it was written for. Fails if `activity` is dropped from the
+  // effect's dependency list.
+  expect(scroller.scrollTop).toBe(1000)
 })

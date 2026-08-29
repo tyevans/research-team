@@ -16,9 +16,13 @@ export const RESULT_TEXT_LIMIT = 4000
 
 /** One tool result, drawn from its artifact — or, failing that, from its text.
  *
- * Neither `ActivityFeed` nor `Segments` knows a shape. That is the whole job of
- * this file: seventeen tools reach seven renderings through one call, and a
- * tool nobody has converted reaches the eighth.
+ * Neither of the two callers knows a shape. That is the whole job of this file:
+ * seventeen tools reach seven renderings through one call, and a tool nobody
+ * has converted reaches the eighth. The callers are `Segments`, for a result
+ * the transcript has committed, and `ProvisionalBubble`, for one still
+ * arriving — **the same component with a `phase` prop**, which is what stops a
+ * card visibly changing at the instant its turn commits. Two components that
+ * agree are two components that will stop agreeing.
  *
  * **The fallback is a first-class path, not error handling.** Every message in
  * a real database predates artifacts, so on live history it is the common case,
@@ -26,10 +30,17 @@ export const RESULT_TEXT_LIMIT = 4000
  * to the reader: no artifact, a shape this build does not know, and an artifact
  * that failed to parse. All three render what the model itself read.
  *
- * `fallback` exists so each caller keeps its own current markup byte for byte.
- * `ActivityFeed` renders a `provisional-body` and `Segments` a `msg-body mono`;
- * having the dispatcher pick one would silently restyle the other, and "the
- * text is unchanged" is the property the fallback has to be able to claim. */
+ * `fallback` exists so each caller keeps its own current markup byte for byte —
+ * a `provisional-body` (through `Markdown`, where the form is prose) in the
+ * live tail, a `msg-body mono` in the transcript. Having the dispatcher pick
+ * one would silently restyle the other, and "the text is unchanged" is the
+ * property the fallback has to be able to claim.
+ *
+ * The `.stream` wrapper is applied **here rather than by the callers**, and
+ * only around the shaped path. It carries the stream's font, size and colour,
+ * so a caller wrapping unconditionally would dress its own fallback markup in
+ * them — which is the one thing the fallback promises not to do, and a change
+ * no test looking for the fallback's *text* would notice. */
 export const ToolResult = ({
   message,
   phase,
@@ -57,20 +68,24 @@ export const ToolResult = ({
   // worst of both.
   const tool = message.name
 
-  switch (artifact.shape) {
-    case 'hit_list':
-      return <HitList artifact={artifact} phase={phase} tool={tool} />
-    case 'entity_list':
-      return <EntityList artifact={artifact} phase={phase} tool={tool} />
-    case 'excerpt':
-      return <Excerpt artifact={artifact} phase={phase} tool={tool} />
-    case 'inventory':
-      return <Inventory artifact={artifact} phase={phase} tool={tool} />
-    case 'acknowledgement':
-      return <Acknowledgement artifact={artifact} phase={phase} />
-    case 'file_change':
-      return <FileChange artifact={artifact} phase={phase} tool={tool} />
-    case 'delegation':
-      return <Delegation artifact={artifact} phase={phase} tool={tool} />
+  const shape = () => {
+    switch (artifact.shape) {
+      case 'hit_list':
+        return <HitList artifact={artifact} phase={phase} tool={tool} />
+      case 'entity_list':
+        return <EntityList artifact={artifact} phase={phase} tool={tool} />
+      case 'excerpt':
+        return <Excerpt artifact={artifact} phase={phase} tool={tool} />
+      case 'inventory':
+        return <Inventory artifact={artifact} phase={phase} tool={tool} />
+      case 'acknowledgement':
+        return <Acknowledgement artifact={artifact} phase={phase} />
+      case 'file_change':
+        return <FileChange artifact={artifact} phase={phase} tool={tool} />
+      case 'delegation':
+        return <Delegation artifact={artifact} phase={phase} tool={tool} />
+    }
   }
+
+  return <div className="stream">{shape()}</div>
 }

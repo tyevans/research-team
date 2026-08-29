@@ -15,7 +15,6 @@ import {
   ComposerPanel,
   ConversationPanel,
   conversationMeta,
-  TimelineFeed,
   TimelinePanel,
   timelineMeta,
   WorkspacePanel,
@@ -127,12 +126,10 @@ export const SessionView = ({
         onCollapsedChange={panes.onCollapsedChange}
         onRefuse={panes.onRefuse}
       >
-        <Pane
-          id="timeline"
-          label="Event log"
-          meta={timelineMeta(state.log.length)}
-          footer={<TimelineFeed store={store} />}
-        >
+        {/* No footer any more: the live activity strip that sat here moved to
+            the foot of the transcript, where the messages it previews are.
+            See `panels.tsx`. */}
+        <Pane id="timeline" label="Event log" meta={timelineMeta(state.log.length)}>
           <TimelinePanel screen={screen} />
         </Pane>
 
@@ -165,7 +162,7 @@ export const SessionView = ({
             </>
           }
         >
-          <ConversationPanel screen={screen} />
+          <ConversationPanel screen={screen} store={store} />
         </Pane>
       </Split>
     </section>

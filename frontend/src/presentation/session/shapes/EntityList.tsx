@@ -46,7 +46,7 @@ export const EntityList = ({ artifact, phase, tool }: ShapeProps<EntityListArtif
     .join(' · ')
 
   return (
-    <Row glyph="◇" phase={phase}>
+    <Row shape="entity_list" phase={phase}>
       <Header
         name={tool ?? 'graph_search'}
         arg={`“${artifact.query}”`}

@@ -19,7 +19,7 @@ export const Excerpt = ({ artifact, phase, tool }: ShapeProps<ExcerptArtifact>) 
   const long = text.length > PREVIEW
 
   return (
-    <Row glyph="▤" phase={phase}>
+    <Row shape="excerpt" phase={phase}>
       <Header
         name={tool ?? 'read_source'}
         arg={artifact.label ? `${name} · ${artifact.label}` : name}

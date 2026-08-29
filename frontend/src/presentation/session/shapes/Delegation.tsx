@@ -19,7 +19,7 @@ export const Delegation = ({ artifact, phase, tool }: ShapeProps<DelegationArtif
   )
 
   return (
-    <Row glyph="⑂" phase={phase}>
+    <Row shape="delegation" phase={phase}>
       <Header
         name={tool ?? 'ask_agent'}
         arg={artifact.task}

@@ -22,7 +22,7 @@ export const FileChange = ({ artifact, phase, tool }: ShapeProps<FileChangeArtif
     expanded || text.length <= PREVIEW ? text : `${text.slice(0, PREVIEW)}…`
 
   return (
-    <Row glyph="±" phase={phase}>
+    <Row shape="file_change" phase={phase}>
       <Header
         name={tool ?? 'edit_file'}
         arg={artifact.path}

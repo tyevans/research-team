@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 
+import { SHAPE_GLYPH, type Shape } from '@domain/conversation/artifact.ts'
+
 /** The stream's shared primitives.
  *
  * Seven shape components must not each invent a bar. The reason is the same
@@ -63,14 +65,32 @@ export const compact = (n: number): string => {
  *
  * The spine replaces per-card borders. A border around content already
  * indented behind a rule draws the same boundary twice, and that doubled
- * chrome is most of what makes the current feed feel heavy. */
+ * chrome is most of what makes the current feed feel heavy. Where an enclosing
+ * box already draws a boundary the spine's rule is suppressed rather than the
+ * row restructured — `stream.css` under `.provisional`, and `conversation.css`
+ * for a shaped result inside a run.
+ *
+ * The row takes a **shape**, not a character. `SHAPE_GLYPH` is the registry
+ * and a call carries the same mark its result does; seven components each
+ * writing `'⌕'` into a prop is seven places for that pairing to come apart,
+ * silently and one shape at a time, since nothing renders a call and its
+ * result side by side for a test to compare. */
 export const Row = ({
+  shape,
   glyph,
   phase,
   tone,
   children,
 }: {
-  glyph: string
+  shape: Shape
+  /** A mark the registry cannot hold, because it is a state of the *result*
+   *  rather than of the shape.
+   *
+   * One caller: an `acknowledgement` whose write failed. `SHAPE_GLYPH` is
+   * `Record<Shape, string>` and its test asserts one distinct glyph per shape,
+   * so a second acknowledgement mark cannot live there without making the
+   * registry mean something else. */
+  glyph?: string
   phase: Phase
   tone?: 'ok' | 'fail'
   children: ReactNode
@@ -84,7 +104,7 @@ export const Row = ({
         {...(tone ? { 'data-tone': tone } : {})}
         aria-hidden="true"
       >
-        {glyph}
+        {glyph ?? SHAPE_GLYPH[shape]}
       </span>
     </div>
     <div className="stream-body" data-testid="stream-body">

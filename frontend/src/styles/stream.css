@@ -94,19 +94,46 @@
 }
 
 /* The live edge, and the whole of it. Opacity and colour only — see note 3
-   above. */
+   above.
+
+   `1.6s`, and the keyframes run in the same direction as
+   `provisional-pulse` in `conversation.css`, because on a live tool result the
+   two are on screen together: the bubble's tag carries the console's dot and
+   the row's gutter carries this. Two pulses at 1.4s and 1.6s drift in and out
+   of step and read as two unrelated things blinking; in unison they read as
+   one surface being live, which is what they both mean. Retimed rather than
+   removed — the timeline's discarded fold draws a shaped row with `tag={null}`
+   and therefore no dot at all, so this is the only live marker some rows can
+   have. */
 .stream-glyph[data-phase='live'] {
   color: var(--accent);
-  animation: stream-pulse 1.4s ease-in-out infinite;
+  animation: stream-pulse 1.6s ease-in-out infinite;
 }
 @keyframes stream-pulse {
   0%,
   100% {
-    opacity: 0.3;
-  }
-  50% {
     opacity: 1;
   }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Inside a provisional bubble the spine's rule is suppressed, and only the
+   rule: the gutter keeps its width so the glyph and the body stay where they
+   are, and the row's geometry is unchanged between phases.
+
+   `.provisional` already draws a 2px accent rail down its left edge, 16px to
+   the left of this one. Two vertical rules that close on the same content is
+   the doubled boundary the stream design objects to, and of the two the rail
+   is the one carrying meaning — it says *not recorded yet*, which the spine
+   cannot say. So the rail draws and the spine does not.
+
+   `transparent` rather than `border-left: 0`: the width is what positions the
+   glyph's halo over the line, and a card whose gutter narrowed by a pixel
+   inside a provisional bubble would move when its turn committed. */
+.provisional .stream-gutter {
+  border-left-color: transparent;
 }
 
 .stream-body {
@@ -366,27 +393,25 @@
 
 /* --- live prose --------------------------------------------------------- */
 
-/* A shimmer under prose still arriving. Outside `.stream-row`, so it can never
-   add height to a card and break the phase-identity property above. */
-.stream-shim {
-  height: 7px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, var(--bg-raise) 0%, var(--bg-hover) 50%, var(--bg-raise) 100%);
-  background-size: 200% 100%;
-  animation: stream-shim 1.6s linear infinite;
-}
-@keyframes stream-shim {
-  to {
-    background-position: -200% 0;
-  }
-}
+/* `.stream-shim` was here: a shimmer bar under prose still arriving, rendered
+   by the provisional feed this branch used to own. It is deleted rather than
+   carried across, for two reasons that both point the same way.
+ *
+   It has no caller. The feed that drew it is gone — live entries are the last
+   items in `.conv` now — and a rule matching nothing is the thing that quietly
+   stops being red, which is why `scripts/check-deleted.mjs` exists at all.
+ *
+   And it should not get one. A live bubble already pulses twice: the dot on
+   its tag and the glyph in its gutter. A third animation, on the same bubble,
+   saying the same thing, is the doubled signal in a different medium — and the
+   prose it sat under is exactly the text a reader is most likely to be reading
+   closely while it moves. */
 
 /* Motion here is decorative: it says "still arriving", which the position of
    the row already says. A reader who has asked for less of it loses nothing. */
 @media (prefers-reduced-motion: reduce) {
   .stream-glyph[data-phase='live'],
-  .stream-track i[data-running='true'],
-  .stream-shim {
+  .stream-track i[data-running='true'] {
     animation: none;
   }
 }

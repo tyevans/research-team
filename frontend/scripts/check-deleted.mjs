@@ -39,6 +39,23 @@ const SRC = fileURLToPath(new URL('../src', import.meta.url))
  *  has not migrated. */
 const RULES = [
   {
+    phase: 'live-tail',
+    what: 'the turn in flight was a sibling of the transcript, in its own scrolling tray',
+    why: 'Replaced by `LiveTail` inside `Conversation`. `ActivityFeed` rendered `.activity` below the transcript with `max-height: 50%` and `overflow-y: auto` — a second scroller inside the pane, and an empty-state check that counted only committed messages, so a session streaming its first turn read "No conversation yet." over prose visibly arriving. The bubble markup was also duplicated in `Timeline`, which is how the live tail became the one model-authored surface in the console that did not render markdown.',
+    where: 'presentation',
+    forbid: [/ActivityFeed/, /className="activity"/],
+  },
+  {
+    phase: 'live-tail',
+    what: 'the provisional tray scrolled and dimmed itself',
+    why: "A live entry is drawn on `.msg`'s frame now and marked by an accent rail and a pulsing dot, so it reads as the end of one list rather than as a second surface. `live-tail.browser.test.tsx` measures both halves; the nested scroller is what trapped a long stream off the bottom of a pane that had room.",
+    where: 'styles/conversation.css',
+    // Anchored, because `.discarded .provisional` legitimately keeps an
+    // `opacity` — a turn that was thrown away is genuinely receded, where a
+    // turn still arriving is the thing most likely to be read closely.
+    forbid: [/^\.activity\b/m, /^\.provisional \{[^}]*opacity/m],
+  },
+  {
     phase: 'A',
     what: 'the session view built its own three-pane grid',
     why: 'Replaced by `Split` and `SESSION_TRACKS`. Two declarations of the same three columns disagreed by 20px on two of them, and only the inline one was ever on screen.',

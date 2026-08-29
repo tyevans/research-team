@@ -1,5 +1,6 @@
 import clsx from 'clsx'
 
+import { artifactOf } from '@domain/conversation/artifact.ts'
 import {
   argDetail,
   contentText,
@@ -115,6 +116,21 @@ const MessageBubble = ({
   const calls = message.toolCalls
   const callsKey = `calls:${index}`
 
+  // A shaped tool result draws its own boundary — the spine, a rule down the
+  // gutter with the body indented behind it — so the bubble around it drops
+  // its frame and its head. Keeping both is the doubled chrome the stream
+  // design was adopted to remove: a border around content already indented
+  // behind a rule says the same thing twice, and the head says "TOOL" above a
+  // header that already reads `search_sources · "magic" · 19 in 3 sources`.
+  //
+  // Parsed here as well as inside `ToolResult`, which is the cost. The
+  // alternatives were worse: `:has(> .stream)` puts the condition in a
+  // stylesheet where jsdom cannot see it and a selector matching nothing is
+  // indistinguishable from one that matches, and threading a callback back out
+  // of `ToolResult` makes the dispatcher tell its caller how to draw a box.
+  // `artifactOf` is a `safeParse` over an object already in memory.
+  const shaped = message.role === 'tool' && artifactOf(message) !== null
+
   const callList = (
     <div className="calls">
       {calls.map((call, position) => {
@@ -151,11 +167,21 @@ const MessageBubble = ({
   )
 
   return (
-    <div className={clsx('msg', `msg-${message.role}`, message.isError && 'errored')}>
-      <div className="msg-head">
-        <span>{message.role}</span>
-        {message.isError ? <Chip tone="fail">error</Chip> : null}
-      </div>
+    <div
+      className={clsx('msg', `msg-${message.role}`, message.isError && 'errored', shaped && 'bare')}
+    >
+      {/* The head survives a shaped result only when it has something the
+          shape does not: the error chip. `role` alone is redundant beside a
+          header naming the tool, and an errored result is the one case where
+          the shape's own tone (a glyph, in the gutter) is not enough — a
+          failed write is what a reader scrolling for a problem is looking
+          for. */}
+      {shaped && !message.isError ? null : (
+        <div className="msg-head">
+          <span>{message.role}</span>
+          {message.isError ? <Chip tone="fail">error</Chip> : null}
+        </div>
+      )}
 
       {text ? (
         // The model writes markdown, so assistant turns render as markdown.
@@ -172,13 +198,11 @@ const MessageBubble = ({
           // this exact markup where it does not — which is every message
           // written before artifacts existed, so the fallback is the common
           // case on real history rather than an error path.
-          <div className="stream">
-            <ToolResult
-              message={message}
-              phase="settled"
-              fallback={<div className="msg-body mono">{truncate(text, 4000)}</div>}
-            />
-          </div>
+          <ToolResult
+            message={message}
+            phase="settled"
+            fallback={<div className="msg-body mono">{truncate(text, 4000)}</div>}
+          />
         ) : (
           <div className="msg-body">{text}</div>
         )

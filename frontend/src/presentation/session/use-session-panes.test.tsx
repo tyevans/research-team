@@ -172,7 +172,7 @@ describe('the session panes, composed', () => {
     // Hidden, not unmounted -- the session arm of a split the console answers
     // two ways. `RailPane` unmounts its body so a virtualizer does not measure
     // a zero-height scroller; these panes keep theirs so a scroll position
-    // survives a fold, and `Timeline` and `ActivityFeed` stay subscribed while
+    // survives a fold, and `Timeline` and the live tail stay subscribed while
     // folded, which is the cost. `unmountWhenCollapsed` is the parameter that
     // now names the choice; this asserts the session's default is off.
     expect(screen.getByText('the log')).toBeInTheDocument()

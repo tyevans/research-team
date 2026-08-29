@@ -21,7 +21,7 @@ export const HitList = ({ artifact, phase, tool }: ShapeProps<HitListArtifact>) 
   const snippet = sources.flatMap((source) => source.hits)[0]?.snippet ?? null
 
   return (
-    <Row glyph="⌕" phase={phase}>
+    <Row shape="hit_list" phase={phase}>
       <Header
         name={tool ?? 'search_sources'}
         arg={`/${artifact.pattern}/`}

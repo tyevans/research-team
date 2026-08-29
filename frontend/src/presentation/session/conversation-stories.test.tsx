@@ -33,8 +33,14 @@ import * as stories from './Conversation.stories.tsx'
  * `Conversation.test.tsx` stays green throughout -- which is the split above,
  * demonstrated rather than asserted.
  */
-const { AnExchange, EmptyWithAComposer, EmptyWithoutOne, Failed, AFailedTurn } =
-  composeStories(stories)
+const {
+  AnExchange,
+  EmptyWithAComposer,
+  EmptyWithoutOne,
+  Failed,
+  AFailedTurn,
+  StreamingIntoAnEmptySession,
+} = composeStories(stories)
 
 it('renders a transcript', () => {
   render(<AnExchange />)
@@ -70,4 +76,17 @@ it('distinguishes a failed load from an empty transcript', () => {
 it('shows a failed turn’s message', () => {
   render(<AFailedTurn />)
   expect(screen.getByText(/The model returned no content/)).toBeInTheDocument()
+})
+
+/** The other fixture pair, and the same kind of claim as the empty one.
+ *
+ *  `StreamingIntoAnEmptySession` exists to show the state the sibling
+ *  arrangement got wrong. A story that lost its `activity` would render an
+ *  ordinary empty transcript, look entirely correct, and quietly stop being
+ *  about anything — which is what this catches and the component test cannot,
+ *  since from the component's side an empty `activity` is a valid call. */
+it('keeps the streaming story streaming', () => {
+  render(<StreamingIntoAnEmptySession />)
+  expect(screen.getByText(/Reading the unit files/)).toBeInTheDocument()
+  expect(screen.queryByText(/Nothing has been said in this session yet/)).not.toBeInTheDocument()
 })

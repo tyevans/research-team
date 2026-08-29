@@ -22,7 +22,7 @@ export const Inventory = ({ artifact, phase, tool }: ShapeProps<InventoryArtifac
   const size = (n: number) => (artifact.unit === 'bytes' ? bytes(n) : compact(n))
 
   return (
-    <Row glyph="▦" phase={phase}>
+    <Row shape="inventory" phase={phase}>
       <Header
         name={tool ?? 'list_sources'}
         arg={artifact.kind}

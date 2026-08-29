@@ -6,13 +6,13 @@ import {
   currentView,
   type SessionStore,
 } from '@application/session/session-store.ts'
+import { useLiveActivity } from '@application/session/use-live-activity.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { shortId, type SessionId } from '@domain/shared/identifier.ts'
 
 import { Drawer } from '../../common/Drawer.tsx'
 import { sessionHref } from '../../routing/routes.ts'
-import { ActivityFeed } from '../../session/ActivityFeed.tsx'
 import { Conversation } from '../../session/Conversation.tsx'
 import { useSessionStream } from '../../session/use-session-stream.ts'
 
@@ -83,6 +83,7 @@ export const WorkerDrawer = ({
 
   const state = store()
   const view = currentView(state)
+  const activity = useLiveActivity(store)
 
   return (
     <Drawer
@@ -110,13 +111,18 @@ export const WorkerDrawer = ({
           emptyDetail overrides Conversation's default, which invites the
           reader to send a turn below; the drawer has no composer, so that
           instruction would point at a control that isn't there. */}
+      {/* The turn in flight is a prop rather than the sibling `<ActivityFeed>`
+          it was until 2026-08-28. As a sibling it was a second box below the
+          transcript with its own scroller, so a drawer opened on a worker that
+          had not committed anything yet read "Nothing has been said in this
+          session yet." directly above prose streaming in. */}
       <Conversation
         view={view}
         error={state.snapshotError}
         historicalAt={null}
+        activity={activity}
         emptyDetail="Nothing has been said in this session yet."
       />
-      <ActivityFeed store={store} />
     </Drawer>
   )
 }
