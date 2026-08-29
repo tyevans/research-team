@@ -1376,3 +1376,76 @@ export const settingWriteDto = z.object({
  *  `z.null()` would turn the route's own success into a `ContractError` the
  *  day a proxy puts a body on it. */
 export const noContentDto = z.unknown()
+
+/* --- providers and model profiles (S4a's surface) ----------------------- */
+
+export const capabilityDto = z.enum(['chat', 'embeddings', 'tools', 'vision'])
+export const authKindDto = z.enum(['bearer', 'header_key', 'query_key', 'signed', 'none'])
+export const roleDto = z.enum(['research', 'extraction', 'curation', 'embedding', 'vision'])
+export const probeOutcomeDto = z.enum(['ok', 'unauthorized', 'unreachable', 'unsupported', 'error'])
+
+export const providerDto = z.object({
+  id: z.string(),
+  display_name: z.string(),
+  base_url: z.string().default(''),
+  auth: authKindDto,
+  openai_compatible: z.boolean().default(false),
+  capabilities: z.array(capabilityDto).default([]),
+  credentials: z
+    .array(
+      z.object({
+        name: z.string(),
+        label: z.string(),
+        secret: z.boolean().default(true),
+        required: z.boolean().default(false),
+        setting_key: maybe(z.string()),
+      }),
+    )
+    .default([]),
+  notes: z.string().default(''),
+})
+
+export const providersDto = z.object({ providers: z.array(providerDto).default([]) })
+
+export const probeResultDto = z.object({
+  provider_id: z.string(),
+  outcome: probeOutcomeDto,
+  ok: z.boolean().default(false),
+  detail: z.string().default(''),
+  models: z.array(z.string()).default([]),
+  latency_ms: maybe(z.number()),
+})
+
+export const profileDto = z.object({
+  scope: scopeDto,
+  scope_id: z.string(),
+  name: z.string(),
+  provider_id: z.string(),
+  model: z.string(),
+  credential_key: maybe(z.string()),
+  base_url: maybe(z.string()),
+  /** Open by contract -- provider-specific and unenumerable by a catalogue.
+   *  Carried whole and uninterpreted, which is why the value type is
+   *  `unknown` rather than a shape this build would have to keep in step with
+   *  fifteen providers. */
+  parameters: z.record(z.string(), z.unknown()).default({}),
+})
+
+export const resolvedRoleDto = z.object({
+  role: roleDto,
+  model: z.string().default(''),
+  layer: layerDto,
+  scope_id: maybe(z.string()),
+  setting_key: z.string(),
+  profile: maybe(z.string()),
+  /** A selected profile no scope in the chain defines. Defaults to `false`
+   *  rather than being required: an older build that predates the field is a
+   *  build with no dangling selections, not one whose response cannot be read. */
+  dangling: z.boolean().default(false),
+})
+
+export const profilesDto = z.object({
+  scope_chain: z.array(z.object({ scope: scopeDto, scope_id: z.string() })).default([]),
+  profiles: z.array(profileDto).default([]),
+  roles: z.array(resolvedRoleDto).default([]),
+})

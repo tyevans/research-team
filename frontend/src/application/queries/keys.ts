@@ -288,6 +288,18 @@ export const queryKeys = {
     /** Unparameterised: the schema is static, needs no scope, and is cached
      *  with `staleTime: Infinity`. */
     schema: () => ['settings', 'schema'] as const,
+    /** The catalogue. Unparameterised and cached forever: static, no scope,
+     *  no credentials. */
+    providers: () => ['settings', 'providers'] as const,
+    /** Profiles and role selections over one chain. Under the settings prefix
+     *  so a write to either invalidates both -- selecting a role changes what
+     *  a `Models` setting resolves to, and the two are one page. */
+    profiles: (chain: readonly { scope: string; scopeId: string }[]) =>
+      [
+        'settings',
+        'profiles',
+        [...chain].sort((a, b) => a.scope.localeCompare(b.scope)).map((r) => [r.scope, r.scopeId]),
+      ] as const,
     resolved: (chain: readonly { scope: string; scopeId: string }[]) =>
       [
         'settings',

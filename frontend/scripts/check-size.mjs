@@ -216,7 +216,32 @@ const BUDGET_KB = {
   // rule that survives both is not "deltas compound" or "deltas don't" -- it
   // is that you cannot know which without building the merged tree, so keep
   // the highest and re-measure.
-  app: 124, // our code: every component, store, mapper and stylesheet rule
+  // **132, from 124: the settings page's providers-and-roles block (W-C1 S4).**
+  //
+  // Measured on this tree, both sides, on 2026-08-29 -- not inferred from a
+  // remembered number, which is what the paragraph above spends twenty lines
+  // warning against. `main` at the time of writing: **122.5 kB**, with S1-S3
+  // and S5 already in. With this slice: **126.4 kB**. The delta is +3.9, and
+  // 132 leaves ~5.6 kB of headroom -- deliberately more than a kilobyte,
+  // because the note above records that a limit set just over the measurement
+  // is the limit the next feature trips.
+  //
+  // What the 3.9 kB bought, in rough order of size: fifteen provider
+  // connection cards with per-credential secret fields and parsed
+  // `{placeholder}` inputs; a connection test with five distinct outcomes,
+  // each with its own sentence, because a wrong key and a firewall send a
+  // person to different places; the five role rows, their profile pickers
+  // gated on provider capability, and the warning that `research` and
+  // `extraction` resolve from the same setting so changing one changes both;
+  // and the dangling-selection report, which is the one thing here that
+  // prevents a silent wrong answer rather than merely explaining one.
+  //
+  // The honest accounting: roughly a third of it is *copy*. `TestOutcome`'s
+  // five paragraphs and `RoleRow`'s two warnings are long sentences, and long
+  // sentences gzip well but are not free. That is the trade this page is
+  // supposed to make -- the alternative is a red badge saying "failed", which
+  // is smaller and is the thing this block exists not to be.
+  app: 132, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.

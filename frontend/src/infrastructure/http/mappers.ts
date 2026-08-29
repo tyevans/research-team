@@ -35,6 +35,8 @@ import type {
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
 import type { SettingSpec, SettingsSchema } from '@domain/settings/spec.ts'
 import type { ResolvedSetting, ResolvedSettings } from '@domain/settings/layer.ts'
+import type { Provider, ProbeResult } from '@domain/settings/provider.ts'
+import type { Profile, ResolvedRole } from '@domain/settings/role.ts'
 import type {
   ApprovalSummary,
   BrowserSession,
@@ -1061,4 +1063,55 @@ export const toResolvedSetting = (raw: Dto<typeof dto.resolvedSettingDto>): Reso
 export const toResolvedSettings = (raw: Dto<typeof dto.resolvedSettingsDto>): ResolvedSettings => ({
   scopeChain: raw.scope_chain.map((ref) => ({ scope: ref.scope, scopeId: ref.scope_id })),
   settings: raw.settings.map(toResolvedSetting),
+})
+
+/* --- providers and model profiles ---------------------------------------- */
+
+export const toProvider = (raw: Dto<typeof dto.providerDto>): Provider => ({
+  id: raw.id,
+  displayName: raw.display_name,
+  baseUrl: raw.base_url,
+  auth: raw.auth,
+  openaiCompatible: raw.openai_compatible,
+  // Already sorted server-side, so a `frozenset`'s hash order cannot make two
+  // snapshots of this endpoint disagree. Nothing re-sorts here.
+  capabilities: raw.capabilities,
+  credentials: raw.credentials.map((credential) => ({
+    name: credential.name,
+    label: credential.label,
+    secret: credential.secret,
+    required: credential.required,
+    settingKey: credential.setting_key,
+  })),
+  notes: raw.notes,
+})
+
+export const toProbeResult = (raw: Dto<typeof dto.probeResultDto>): ProbeResult => ({
+  providerId: raw.provider_id,
+  outcome: raw.outcome,
+  ok: raw.ok,
+  detail: raw.detail,
+  models: raw.models,
+  latencyMs: raw.latency_ms,
+})
+
+export const toProfile = (raw: Dto<typeof dto.profileDto>): Profile => ({
+  scope: raw.scope,
+  scopeId: raw.scope_id,
+  name: raw.name,
+  providerId: raw.provider_id,
+  model: raw.model,
+  credentialKey: raw.credential_key,
+  baseUrl: raw.base_url,
+  parameters: raw.parameters,
+})
+
+export const toResolvedRole = (raw: Dto<typeof dto.resolvedRoleDto>): ResolvedRole => ({
+  role: raw.role,
+  model: raw.model,
+  layer: raw.layer,
+  scopeId: raw.scope_id,
+  settingKey: raw.setting_key,
+  profile: raw.profile,
+  dangling: raw.dangling,
 })

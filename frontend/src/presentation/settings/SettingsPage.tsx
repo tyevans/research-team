@@ -1,14 +1,17 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 
 import { useContainer } from '@app/container-context.tsx'
 import { queryKeys } from '@application/queries/keys.ts'
 import { byKey, isOverriddenAt, type ScopeRef } from '@domain/settings/layer.ts'
 import { groupsForScope, specMatches, type Scope } from '@domain/settings/spec.ts'
+import type { Role } from '@domain/settings/role.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { Disclosure, EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
+import { ConnectionsBlock } from './ConnectionsBlock.tsx'
 import { GroupRail } from './GroupRail.tsx'
+import { RolesBlock } from './RolesBlock.tsx'
 import { SettingRow } from './SettingRow.tsx'
 import { SCOPE_COPY } from './scope-copy.ts'
 import { UnsavedSecretsProvider, useUnsavedGuard, useUnsavedSecrets } from './use-unsaved-guard.ts'
@@ -65,7 +68,8 @@ const SettingsBody = ({
   group,
   dirtyCount,
 }: SettingsPageProps & { dirtyCount: number }) => {
-  const { settings } = useContainer()
+  const { settings, providers } = useContainer()
+  const client = useQueryClient()
   const [search, setSearch] = useState('')
   const [onlyOverridden, setOnlyOverridden] = useState(false)
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set(group ? [group] : []))
@@ -105,6 +109,36 @@ const SettingsBody = ({
     queryKey: queryKeys.settings.resolved(below),
     queryFn: () => settings.resolved(below),
     retry: false,
+  })
+
+  /** The catalogue. Static, no scope, no credentials -- cached forever like
+   *  the schema, so the block paints from cache on every visit after the
+   *  first. */
+  const catalogue = useQuery({
+    queryKey: queryKeys.settings.providers(),
+    queryFn: () => providers.catalogue(),
+    staleTime: Infinity,
+    retry: false,
+  })
+
+  const profiles = useQuery({
+    queryKey: queryKeys.settings.profiles(chain),
+    queryFn: () => providers.profiles(chain),
+    retry: false,
+  })
+
+  const selectRole = useMutation({
+    mutationFn: ({ role, profile }: { role: Role; profile: string }) =>
+      providers.selectRole(scope, scopeId, role, profile),
+    // Both keys: a role selection changes what a `Models` setting resolves to,
+    // so invalidating only the profiles would leave the group below this block
+    // showing the model the page arrived with. They are one page and one fact.
+    onSettled: () => void client.invalidateQueries({ queryKey: queryKeys.settings.all() }),
+  })
+
+  const clearRole = useMutation({
+    mutationFn: ({ role }: { role: Role }) => providers.clearRole(scope, scopeId, role),
+    onSettled: () => void client.invalidateQueries({ queryKey: queryKeys.settings.all() }),
   })
 
   const guard = useUnsavedGuard(dirtyCount)
@@ -223,7 +257,45 @@ const SettingsBody = ({
           }
         />
 
-        <div className="pb-8 flex flex-col">
+        <div className="pb-8 flex flex-col gap-5">
+          {/* Above the settings groups, and not a group itself. Most visits are
+              about three settings and all three are here: which providers are
+              reachable, and which model answers which role. A person who had to
+              scroll past twenty-five knobs to reach them would have been given
+              the registry's ordering as if it were a priority. */}
+          {catalogue.data && schema.data && current ? (
+            <ConnectionsBlock
+              providers={catalogue.data}
+              schema={schema.data}
+              resolved={current}
+              scope={scope}
+              scopeId={scopeId}
+              chain={chain}
+              below={below}
+            />
+          ) : null}
+
+          {profiles.data && catalogue.data ? (
+            <RolesBlock
+              roles={profiles.data.roles}
+              profiles={profiles.data.profiles}
+              providers={catalogue.data}
+              busy={selectRole.isPending || clearRole.isPending}
+              onSelect={(role, profile) => selectRole.mutate({ role, profile })}
+              onClear={(role) => clearRole.mutate({ role })}
+            />
+          ) : null}
+
+          {/* A failed profile read is its own sentence rather than the settings
+              error, because the two are different halves of the page: every
+              knob below is still true when this one fails. */}
+          {profiles.isError ? (
+            <p className="m-0 text-sm text-fg-dim" role="status">
+              Model profiles could not be read, so the roles block is missing. The settings below
+              are unaffected.
+            </p>
+          ) : null}
+
           {resolved.isPending ? <Loading what="this scope's values" /> : null}
 
           {visible.length === 0 && !resolved.isPending ? (

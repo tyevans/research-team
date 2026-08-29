@@ -22,6 +22,8 @@ import type {
 import type { OntologyClass } from '@domain/knowledge/ontology.ts'
 import type { Scope, SettingsSchema } from '@domain/settings/spec.ts'
 import type { ResolvedSettings, ScopeRef } from '@domain/settings/layer.ts'
+import type { Provider, ProbeResult } from '@domain/settings/provider.ts'
+import type { Profile, ResolvedRole, Role } from '@domain/settings/role.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Curriculum, LearningArea, LearningPath } from '@domain/knowledge/curriculum.ts'
 import type { Catalog } from '@domain/knowledge/catalog.ts'
@@ -582,6 +584,69 @@ export interface SettingsRepository {
    * rather than thrown, because it is the answer to a question the UI asked
    * and not a failure of the request. Every other status still throws. */
   clear(scope: Scope, scopeId: string, key: string): Promise<boolean>
+}
+
+/** The provider catalogue and the model profiles built over it.
+ *
+ * Its own port rather than more methods on `SettingsRepository`, and the split
+ * is the contract's: settings are a registry resolved over a scope chain, and
+ * profiles are named rows a *role* points at. They share a scope chain and
+ * nothing else, and folding them together would put `test` -- the one call in
+ * this application that reaches an arbitrary URL on the server's network --
+ * beside a plain key/value read.
+ */
+export interface ProvidersRepository {
+  /** The fifteen. Static, no credential of any kind, cacheable forever. */
+  catalogue(): Promise<readonly Provider[]>
+
+  /** Ask a provider whether these credentials reach it.
+   *
+   * **The key travels in the body and is used once.** A caller testing a key
+   * it has already saved sends it again, because a route that read one back
+   * out of the store would be a read path for a secret in all but name. So
+   * this method cannot be called with "whatever is stored" -- there is no such
+   * value to pass -- and the field being empty for a saved key is the
+   * contract, not an oversight.
+   *
+   * The response's `models` is the point rather than `ok`: it is what turns an
+   * empty model picker into a list. */
+  test(providerId: string, credentials: { apiKey?: string; baseUrl?: string }): Promise<ProbeResult>
+
+  /** Every profile visible from this chain, and what each role resolves to.
+   *
+   * One call rather than two, because the interesting question is the pair: a
+   * list of profiles says nothing about which is in use, and a list of roles
+   * with only names in it cannot be rendered without the definitions. */
+  profiles(chain: readonly ScopeRef[]): Promise<{
+    readonly profiles: readonly Profile[]
+    readonly roles: readonly ResolvedRole[]
+  }>
+
+  /** Define or replace one profile at one scope. */
+  saveProfile(
+    scope: Scope,
+    scopeId: string,
+    name: string,
+    definition: {
+      readonly providerId: string
+      readonly model: string
+      readonly credentialKey?: string | null
+      readonly baseUrl?: string | null
+      readonly parameters?: Readonly<Record<string, unknown>>
+    },
+  ): Promise<void>
+
+  /** Remove a profile definition. `false` when there was none -- the same
+   *  deliberate 404 the settings `DELETE` uses, turned into an outcome for the
+   *  same reason: the UI has to tell "removed" from "there was nothing here". */
+  deleteProfile(scope: Scope, scopeId: string, name: string): Promise<boolean>
+
+  /** Point a role at a profile. */
+  selectRole(scope: Scope, scopeId: string, role: Role, profile: string): Promise<void>
+
+  /** Stop pointing a role at a profile at this scope. `false` when nothing was
+   *  selected here. */
+  clearRole(scope: Scope, scopeId: string, role: Role): Promise<boolean>
 }
 
 export interface OntologyRepository {
