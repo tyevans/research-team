@@ -205,6 +205,26 @@
   --color-accent-dim: light-dark(#d8ab63, #7a5a2c);
   --color-accent-fg: light-dark(#fdf8f1, #17120a);
 
+  /* The hover state of the one filled control (`.btn-accent`). It was
+     `#eeb168` written twice in `shell.css`, which is a dark-scheme shade: in
+     light mode the primary button turned *pale amber under near-white ink*
+     the moment a pointer touched it. The dark half here is that literal
+     unchanged, so nothing about dark mode moves.
+
+     Like `--bg-hover`, it steps away from the page rather than in a fixed
+     direction -- lighter in dark, darker in light -- which is what keeps
+     `--accent-fg` readable on it in both. Measured: light #fdf8f1 on #7a4909
+     is 8.6:1; dark #17120a on #eeb168 is 10.7:1. */
+  --color-accent-hover: light-dark(#7a4909, #eeb168);
+
+  /* The backdrop behind a modal layer. It was `rgb(0 0 0 / 55%)` in
+     `layout.css` -- one value for both schemes, which is the one case where a
+     scrim genuinely cannot be. 55% black over a near-black page is a barely
+     visible dimming; over a cream one it is a blackout that hides the context
+     the dialog is about. Lighter in light for that reason, and the dark half
+     is the old literal unchanged. */
+  --color-scrim: light-dark(rgb(0 0 0 / 35%), rgb(0 0 0 / 55%));
+
   /* Text selection, which had been borrowing `--accent-dim` for its background
      and hard-coding `#fff` for its foreground.
 

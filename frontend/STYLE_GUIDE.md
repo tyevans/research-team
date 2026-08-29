@@ -46,7 +46,10 @@ Reject these, always:
 Every colour in the product lives in `theme.css`, in the `@theme` block, as a
 `light-dark(light, dark)` pair. `tokens.css` renames those into the vocabulary
 the stylesheets use. **Write no colour literal anywhere else.** A hex outside
-`theme.css` is a defect, even when it looks correct.
+`theme.css` is a defect, even when it looks correct — as is an `rgb()`, an
+`hsl()`, or an `rgba()` of a token's channels. To tint a token, mix from the
+token: `color-mix(in srgb, var(--accent) 13%, transparent)`.
+`scripts/palette.test.ts` is the gate.
 
 Light and dark are both designed. Light is not an inversion of dark.
 
@@ -79,7 +82,12 @@ different layout instead.
 current selection, the live state, and the primary action. Nothing else. An
 accent that appears four times per screen has stopped meaning anything.
 `--accent-fg` is the ink drawn _on_ the accent. `--accent-dim` is a border, not
-a fill.
+a fill. `--accent-hover` is the filled control under a pointer, and like
+`--bg-hover` it steps away from the page rather than in a fixed direction.
+
+**Scrim.** `--scrim` is the one dimming behind a modal layer. It is darker in
+dark and lighter in light, because a scrim heavy enough to matter over a
+near-black page is a blackout over a cream one.
 
 **Kinds.** Seven event-kind colours (`--k-session`, `--k-message`, `--k-tool`,
 `--k-file`, `--k-turn`, `--k-failure`, `--k-compaction`) carry the only other
@@ -156,6 +164,11 @@ last.
 `--radius-md` is 5px and is the only radius. Rails, panes, and full-bleed
 regions are square.
 
+A pill (`999px`) and a circle (`50%`) are exempt, because they are **shapes
+rather than steps on a scale** — a status dot is the same object at any radius
+token, and clamping it to 5px would square it. Nothing else may name a radius.
+`scripts/palette.test.ts` enforces both halves.
+
 ---
 
 ## 5. Layout
@@ -201,7 +214,9 @@ Motion states a fact. It does not delight.
   looping decorative animation.
 
 Every animation must sit behind `@media (prefers-reduced-motion: reduce)` and
-stop there.
+**stop** there. Collapsing the duration is not stopping: an `infinite`
+animation at `0.001s` keeps cycling, sampled once a frame, which is a flicker
+rather than a rest. The global reset pins `animation-iteration-count` as well.
 
 ---
 

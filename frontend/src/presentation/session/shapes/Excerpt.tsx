@@ -26,7 +26,7 @@ export const Excerpt = ({ artifact, phase, tool }: ShapeProps<ExcerptArtifact>) 
         explanation={artifact.uri ?? artifact.source_id}
         count={
           <>
-            <span className="inline-block h-[5px] w-[56px] overflow-hidden rounded-[2px] bg-bg-raise align-middle [&>i]:block [&>i]:h-full [&>i]:bg-accent">
+            <span className="inline-block h-[5px] w-[56px] overflow-hidden rounded-md bg-bg-raise align-middle [&>i]:block [&>i]:h-full [&>i]:bg-accent">
               <i
                 data-testid="ruler-fill"
                 style={{

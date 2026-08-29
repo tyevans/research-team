@@ -37,9 +37,9 @@ export const Button = ({ tone = 'default', small, className, ...rest }: ButtonPr
  *  route, and seventeen other files render one. Taking `tree.css` with
  *  its screen would have left every chip in the console as unbordered,
  *  unpadded body text at inherited size. `px-2` is `--spacing-2` (6px);
- *  `py-px`, `rounded-[3px]` and the 1px border are arbitrary because 1px and
+ *  `py-px`, `rounded-md` and the 1px border are arbitrary because 1px and
  *  3px are on no scale here and `--radius-md` is 5px. */
-const CHIP_SHAPE = 'font-mono text-xs px-2 py-px rounded-[3px] border whitespace-nowrap'
+const CHIP_SHAPE = 'font-mono text-xs px-2 py-px rounded-md border whitespace-nowrap'
 
 /** The colour trio, separated from the shape and *replaceable* rather than
  *  overridable. Two utilities setting the same property both land in

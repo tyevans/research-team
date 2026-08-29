@@ -169,7 +169,14 @@ const KNOWN_CONTRAST_DEBT: Readonly<Record<'light' | 'dark', readonly string[]>>
    * surfaces in `conversation.css` and `states.css` that no token had ever
    * reached, invisible for as long as the console was dark-only, and they are
    * fixed in this commit rather than recorded here. That is what the light
-   * sweep bought beyond light mode itself. */
+   * sweep bought beyond light mode itself.
+   *
+   * A sixth left this list on 2026-08-29: `#f6b4af on #ffffff` was `.toast.bad`
+   * -- one more hard-coded dark shade of exactly the kind the paragraph above
+   * describes, missed because it sat on `--bg-raise` rather than on the page.
+   * It is now `--del-fg`, which is #b3352c in light and passes. The style-guide
+   * sweep that found it added `scripts/palette.test.ts`, so the class this
+   * entry keeps recording cannot arrive a seventh time. */
   light: [
     '#aac9b8 on #f7f6f3',
     '#acadad on #f7f6f3',
@@ -178,7 +185,6 @@ const KNOWN_CONTRAST_DEBT: Readonly<Record<'light' | 'dark', readonly string[]>>
     '#c1c4c6 on #f7f6f3',
     '#c8bce7 on #f7f6f3',
     '#e4b5b0 on #f7f6f3',
-    '#f6b4af on #ffffff',
   ],
 }
 

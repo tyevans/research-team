@@ -33,7 +33,7 @@ export const Delegation = ({ artifact, phase, tool }: ShapeProps<DelegationArtif
             name={worker.name}
             linked={worker.ok}
             mark={
-              <span className="relative block h-[5px] overflow-hidden rounded-[2px] bg-bg-raise">
+              <span className="relative block h-[5px] overflow-hidden rounded-md bg-bg-raise">
                 <i
                   // `min-w-[2px]` because the newest worker's start *is* the
                   // right-hand edge of the axis, so a bar pinned to both would

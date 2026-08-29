@@ -39,7 +39,7 @@ export const GroupRail = ({
           aria-current={group === active ? 'true' : undefined}
           onClick={() => onSelect(group)}
           className={clsx(
-            'lay-ring-inward cursor-pointer rounded-[3px] bg-transparent px-2 py-1 text-left text-sm',
+            'lay-ring-inward cursor-pointer rounded-md bg-transparent px-2 py-1 text-left text-sm',
             group === active ? 'text-accent' : 'text-fg-dim hover:text-fg',
           )}
         >

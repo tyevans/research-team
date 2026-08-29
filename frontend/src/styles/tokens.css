@@ -143,6 +143,16 @@
   inherits: true;
   initial-value: #ff00ff;
 }
+@property --accent-hover {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --scrim {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
 @property --select-bg {
   syntax: '<color>';
   inherits: true;
@@ -327,6 +337,8 @@
   --accent: var(--color-accent);
   --accent-dim: var(--color-accent-dim);
   --accent-fg: var(--color-accent-fg);
+  --accent-hover: var(--color-accent-hover);
+  --scrim: var(--color-scrim);
   --select-bg: var(--color-select-bg);
   --select-fg: var(--color-select-fg);
   --link: var(--color-link);
