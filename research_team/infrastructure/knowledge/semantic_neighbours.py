@@ -35,10 +35,22 @@ import numpy as np
 
 from research_team.application.area_projection import (
     EMBEDDING_NEIGHBOURS,
-    MIN_EMBEDDING_SCORE,
+    MIN_NEIGHBOUR_STANDOUT,
 )
 
 logger = logging.getLogger(__name__)
+
+#: Below this many embedded entities no semantic edge is drawn at all.
+#:
+#: The cut is a z-score over each entity's similarity to the others, and a row
+#: of two values has no distribution to stand out from -- its standard
+#: deviation is half the gap between the two, so the larger is always exactly
+#: 1.0 above the mean and the pair is admitted by arithmetic rather than by
+#: evidence. Four entities (three others per row) is where the measurement
+#: below was taken and is the smallest row that behaves; a three-entity
+#: project loses the channel, and that is the honest answer rather than a
+#: coin flip with a number on it.
+MIN_STANDOUT_POPULATION = 4
 
 #: Above this many *embedded* entities the semantic channel is skipped.
 #:
@@ -67,7 +79,11 @@ class VectorNeighbours:
         self._tenant_id = tenant_id
 
     async def neighbours(self, entity_ids: Sequence[str]) -> Sequence[tuple[str, str, float]]:
-        """Close pairs among `entity_ids`, as `(left, right, score)`.
+        """Close pairs among `entity_ids`, as `(left, right, standout)`.
+
+        `standout` is the pair's distance above its endpoint's own similarity
+        row in standard deviations, not a cosine; `SemanticPort` states the
+        contract and `MIN_NEIGHBOUR_STANDOUT` states why it is relative.
 
         `left < right` and each pair appears once, which is the port's
         contract: a pair reported twice would be weighted twice by an
@@ -104,7 +120,7 @@ class VectorNeighbours:
                 usable.append(entity_id)
                 rows.append(record.vector)
 
-        if len(usable) < 2:
+        if len(usable) < MIN_STANDOUT_POPULATION:
             return ()
         if len(usable) > MAX_SEMANTIC_ENTITIES:
             logger.info(
@@ -129,34 +145,63 @@ class VectorNeighbours:
 
         similarity = matrix @ matrix.T
         # redstring's scale, stated once in `ports/vector_store.py`: cosine
-        # mapped onto 0..1 by `(1 + cosine) / 2`, so 0.5 is orthogonal. The
-        # port's own `search` returns this scale and `MIN_EMBEDDING_SCORE` is
-        # read on it, so the conversion belongs here rather than at either end.
+        # mapped onto 0..1 by `(1 + cosine) / 2`, so 0.5 is orthogonal. Kept
+        # even though the cut is now relative and a monotone rescale cannot
+        # change a z-score: the pairs are logged and read by people, and the
+        # scale every other similarity in this system is quoted on is that one.
         similarity = (1.0 + similarity) / 2.0
-        # After the rescale, not before: -1 is a valid cosine and would survive
-        # into the top-k of a row whose real neighbours all fell below the
-        # floor. Below the 0..1 scale's floor it cannot.
-        np.fill_diagonal(similarity, -1.0)
+
+        # Each entity's own distribution, computed over the *whole* row rather
+        # than over its top-k. The mean of five near neighbours says nothing
+        # about how unusual they are; the mean over everything is what "this
+        # one stands out" is measured against, and it is the same matrix.
+        off_diagonal = similarity[~np.eye(len(usable), dtype=bool)].reshape(
+            len(usable), len(usable) - 1
+        )
+        means = off_diagonal.mean(axis=1, keepdims=True)
+        deviations = off_diagonal.std(axis=1, keepdims=True)
+        # A row of identical similarities has nothing standing out in it, and
+        # dividing by its zero deviation would put `inf` through the whole row.
+        # Made large rather than zero so the comparison below refuses it: 0
+        # would admit every one of that row's top-k.
+        standout = np.full_like(similarity, -np.inf)
+        # `where=` rather than `np.where(...)`, which evaluates both branches
+        # and raises a divide-by-zero warning on the rows it then discards.
+        np.divide(
+            similarity - means,
+            deviations,
+            out=standout,
+            where=np.broadcast_to(deviations > 0, similarity.shape),
+        )
+
+        # After the standout, not before: `-1` on the diagonal would sit far
+        # below the row mean and rank last anyway, but `argpartition` is asked
+        # for the largest and an entity's similarity to itself is 1.0, which is
+        # every row's own top neighbour.
+        np.fill_diagonal(standout, -np.inf)
 
         k = min(EMBEDDING_NEIGHBOURS, len(usable) - 1)
         # `argpartition` rather than `argsort`: the k nearest are wanted, their
         # order among themselves is not, and partition is linear per row where
         # a full sort is `n log n`.
-        top = np.argpartition(-similarity, k - 1, axis=1)[:, :k]
+        top = np.argpartition(-standout, k - 1, axis=1)[:, :k]
 
         pairs: dict[tuple[str, str], float] = {}
         for row, columns in enumerate(top):
             for column in columns:
-                score = float(similarity[row, column])
-                if score < MIN_EMBEDDING_SCORE:
+                score = float(standout[row, column])
+                if score < MIN_NEIGHBOUR_STANDOUT:
                     continue
                 left, right = usable[row], usable[int(column)]
                 if left == right:
                     continue
                 key = (left, right) if left < right else (right, left)
-                # Both directions compute the same score, so this is a
-                # deduplication rather than a choice between two values.
-                pairs[key] = score
+                # `max`, where the cosine version could simply assign: a
+                # standout is *not* symmetric. `B` may be two deviations above
+                # `A`'s row and half of one above its own, and the union of the
+                # two top-k lists is this port's contract (see `neighbours`),
+                # so the pair is admitted on the endpoint that vouches for it.
+                pairs[key] = max(pairs.get(key, -np.inf), score)
 
         # Sorted so the projection is handed the same sequence on every run.
         # The clustering is order-independent by construction, but a port that

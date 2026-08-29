@@ -4764,6 +4764,18 @@ replacements are not equivalent -- rescale over the admitted set's own range,
 map rank-within-budget, or clamp the CSLS score. `EMBEDDING_NEIGHBOURS` should
 be removed rather than retuned under a budget; it is already nearly inert.
 
+**Half of this landed on 2026-08-29 without CSLS.** `MIN_EMBEDDING_SCORE` is
+gone -- replaced by `MIN_NEIGHBOUR_STANDOUT`, a per-entity z-score over that
+entity's own similarity row -- because the portability argument below turned
+out to be measurable and much worse than stated: over four disjoint domains
+against `qwen3-embedding-0.6b`, 0.83 sat at the median of *related* pairs
+rather than near the unrelated band, and kept 1 of 10 pairs on one
+five-entity domain and 10 of 10 on another. So the paragraph above about the
+weight map being defined against the floor is now history: it is defined
+against `[MIN_NEIGHBOUR_STANDOUT, +STANDOUT_SPAN]` and clipped. What is still
+open is CSLS itself, which is about *hubness* rather than portability, and
+the three reasons not to take it are unaffected.
+
 The separate and stronger argument for doing it eventually: an absolute
 similarity floor is **not portable**. The same 0.83 admits 0.60% of pairs
 corpus-wide, 5.07% within the Roman subset and 6.56% within the biology
