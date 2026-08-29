@@ -3,7 +3,6 @@ import { render } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { expect, it } from 'vitest'
 
-import type { Container } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { SettingsRepository } from '@application/ports/repositories.ts'
 import type { ResolvedSetting } from '@domain/settings/layer.ts'
@@ -11,6 +10,8 @@ import type { SettingSpec } from '@domain/settings/spec.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { SettingRow } from './SettingRow.tsx'
+
+import { buildContainer } from '../../test/container.ts'
 
 /** The credential field's *painted* state, which jsdom cannot see.
  *
@@ -56,7 +57,7 @@ const draw = (element: ReactElement) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <ContainerProvider container={{ settings } as unknown as Container}>
+      <ContainerProvider container={buildContainer({ settings })}>
         <OverlayHost>{element}</OverlayHost>
       </ContainerProvider>
     </QueryClientProvider>,

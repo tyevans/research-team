@@ -3,7 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Container } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import { ApiError } from '@application/ports/errors.ts'
 import type { SettingsRepository } from '@application/ports/repositories.ts'
@@ -12,6 +11,8 @@ import type { SettingsSchema } from '@domain/settings/spec.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { SettingsPage } from './SettingsPage.tsx'
+
+import { buildContainer } from '../../test/container.ts'
 
 const SCHEMA: SettingsSchema = {
   groups: [
@@ -109,7 +110,7 @@ const draw = (settings: SettingsRepository) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <ContainerProvider container={{ settings } as unknown as Container}>
+      <ContainerProvider container={buildContainer({ settings })}>
         <OverlayHost>
           <SettingsPage scope="project" scopeId="p1" group={null} />
         </OverlayHost>

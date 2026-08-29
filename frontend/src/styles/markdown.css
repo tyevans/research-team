@@ -13,101 +13,169 @@
 .md.stale {
   opacity: 0.4;
 }
-.md-h {
-  margin: 16px 0 6px;
-  line-height: 1.3;
-  font-weight: 600;
-  color: var(--fg);
+/* --- what `marked` actually emits -------------------------------------
+ *
+ * **Every rule between here and `.md-link` matched nothing between 2026-08-07
+ * and 2026-08-29.** They were written as `.md-h`, `.md-p`, `.md-list`,
+ * `.md-li`, `.md-task`, `.md-quote`, `.md-hr`, `.md-inline-code` and
+ * `.md-table` for a hand-written block-and-inline renderer that emitted those
+ * classes (`19d20ef`). `57a79e4` (#32) replaced that renderer with `marked` +
+ * `DOMPurify` -- the right call, and `markdown.ts` argues it well -- and
+ * carried this stylesheet across unchanged. `marked` emits bare `<h1>`, `<p>`,
+ * `<ul>`, `<blockquote>`, `<table>` and `<code>` with no classes at all, so the
+ * rules were dead the moment they shipped beside it. `c2c2375` (#300) added 32
+ * more lines to the same dead families two days before anyone noticed.
+ * BACKLOG B158 has the enumeration; the blast radius was every surface that
+ * renders model prose, which is eleven components.
+ *
+ * **Which half moves, and why this one.** There were two fixes and they are not
+ * equivalent:
+ *
+ * - Teach `renderMarkdown` to re-attach the classes, through a `marked`
+ *   renderer override or a second `DOMPurify` hook. Keeps these selectors
+ *   verbatim, and puts a presentation concern in the sanitiser seam -- the one
+ *   function in the application permitted to turn untrusted text into markup,
+ *   whose docstring stakes the security claim on being about nothing else.
+ * - Style the elements, scoped under `.md`. No renderer change, and it dresses
+ *   whatever `marked` grows support for later without anyone remembering to add
+ *   a class for it.
+ *
+ * The second, and the deciding argument is CLAUDE.md's rather than a
+ * preference: **a class family is a decision and bare-element dressing is a
+ * default**, and the ruling there is that a default gets layered while a
+ * decision earns a name. There is nothing to decide here -- no caller wants an
+ * `<h2>` inside `.md` to look unlike every other `<h2>` inside `.md`. What it
+ * costs is exactly the thing nobody was using: a heading can no longer be
+ * styled differently by *origin*, because the origin is no longer in the class
+ * attribute. If that is ever wanted, the wrapper is the place to say so
+ * (`.md-bare` already works that way).
+ *
+ * **So these are in `@layer base`, and that is load-bearing.** Unlayered,
+ * `.md p` at (0,1,1) would beat any Tailwind utility a component writes on a
+ * rendered element, because layer order is consulted before specificity and
+ * Tailwind emits into `@layer utilities` -- the trap CLAUDE.md records four
+ * times over. Layered, a component that wants something else gets it. The
+ * class-based rules below (`.md`, `.md-bare`, `.md-link*`, `.md-ref`) stay
+ * unlayered because they are the decisions: a caller opts into `.md-bare`, and
+ * `markdown.ts` opts an anchor into `md-link` by inspecting its href.
+ *
+ * The values are carried across unchanged, rule for rule. This commit is about
+ * the selectors meeting an element, not about the typography, and mixing the
+ * two would make the diff unreadable and the regression unattributable. */
+@layer base {
+  .md :is(h1, h2, h3, h4, h5, h6) {
+    margin: 16px 0 6px;
+    line-height: 1.3;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .md > :is(h1, h2, h3, h4, h5, h6):first-child {
+    margin-top: 0;
+  }
+  .md h1 {
+    font-size: 1.35em;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 5px;
+  }
+  .md h2 {
+    font-size: 1.18em;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 4px;
+  }
+  .md h3 {
+    font-size: 1.05em;
+  }
+  .md :is(h4, h5, h6) {
+    font-size: 1em;
+    color: var(--fg-dim);
+  }
+  .md p {
+    margin: 0 0 10px;
+  }
+  .md hr {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 16px 0;
+  }
+  .md :is(ul, ol) {
+    margin: 0 0 10px;
+    padding-left: 22px;
+  }
+  .md :is(ul, ol) :is(ul, ol) {
+    margin-bottom: 0;
+  }
+  .md li {
+    margin: 2px 0;
+  }
+  /* GFM's task list. `marked` emits `<li><input type="checkbox" disabled>` and
+   * `markdown.ts`'s allow-list keeps both the input and its `disabled`, saying
+   * why: a checklist in a document should read as one. The old `.md-task`
+   * dressed a marker the hand-written renderer drew as text; there is no such
+   * element now, so this is the checkbox itself -- inert, and not selectable
+   * into a copy of the line. */
+  .md li > input[type='checkbox'] {
+    margin-right: 6px;
+    user-select: none;
+  }
+  .md blockquote {
+    margin: 0 0 10px;
+    padding: 2px 0 2px 12px;
+    border-left: 2px solid var(--line);
+    color: var(--fg-dim);
+  }
+  .md blockquote > p:last-child {
+    margin-bottom: 0;
+  }
+  /* One rule for both, rather than a `.md pre` that repeats these eight
+   * declarations. `.md-code` is hand-applied by `LessonDocument` to a `<pre>`
+   * it builds itself (an unrecognised fence, and a component block that did not
+   * parse), and every one of those is already inside its own `.md` wrapper --
+   * so the element selector alone would in fact cover them. The class is kept
+   * because `components.css`'s `.cmp-broken .md-code` selects on it, and
+   * because a `<pre>` a component built and a `<pre>` a model wrote are worth
+   * being able to tell apart later. */
+  .md pre,
+  .md-code {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    background: var(--bg-raise);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: var(--t-xs);
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  /* Inline code only. `:not(pre) >` keeps this off the `<code>` inside a fenced
+   * block, which `marked` always nests inside a `<pre>` and which the rule
+   * above has already dressed -- without it, every code block would draw a
+   * second background and a second padding inside its own. */
+  .md :not(pre) > code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    background: var(--bg-raise);
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+  .md table {
+    border-collapse: collapse;
+    margin: 0 0 10px;
+    font-size: var(--t-xs);
+    display: block;
+    overflow-x: auto;
+  }
+  .md :is(th, td) {
+    border: 1px solid var(--line);
+    padding: 4px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .md th {
+    color: var(--fg-dim);
+    font-weight: 600;
+  }
 }
-.md > .md-h:first-child {
-  margin-top: 0;
-}
-h1.md-h {
-  font-size: 1.35em;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 5px;
-}
-h2.md-h {
-  font-size: 1.18em;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 4px;
-}
-h3.md-h {
-  font-size: 1.05em;
-}
-h4.md-h,
-h5.md-h,
-h6.md-h {
-  font-size: 1em;
-  color: var(--fg-dim);
-}
-.md-p {
-  margin: 0 0 10px;
-}
-.md-hr {
-  border: 0;
-  border-top: 1px solid var(--line);
-  margin: 16px 0;
-}
-.md-list {
-  margin: 0 0 10px;
-  padding-left: 22px;
-}
-.md-list .md-list {
-  margin-bottom: 0;
-}
-.md-li {
-  margin: 2px 0;
-}
-.md-task {
-  color: var(--fg-dim);
-  user-select: none;
-}
-.md-quote {
-  margin: 0 0 10px;
-  padding: 2px 0 2px 12px;
-  border-left: 2px solid var(--line);
-  color: var(--fg-dim);
-}
-.md-quote .md-p:last-child {
-  margin-bottom: 0;
-}
-.md-code {
-  margin: 0 0 10px;
-  padding: 8px 10px;
-  background: var(--bg-raise);
-  border-radius: var(--radius);
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  line-height: 1.5;
-  white-space: pre;
-  overflow-x: auto;
-}
-.md-inline-code {
-  font-family: var(--mono);
-  font-size: 0.92em;
-  background: var(--bg-raise);
-  border-radius: 3px;
-  padding: 1px 4px;
-}
-.md-table {
-  border-collapse: collapse;
-  margin: 0 0 10px;
-  font-size: var(--t-xs);
-  display: block;
-  overflow-x: auto;
-}
-.md-table th,
-.md-table td {
-  border: 1px solid var(--line);
-  padding: 4px 8px;
-  text-align: left;
-  vertical-align: top;
-}
-.md-table th {
-  color: var(--fg-dim);
-  font-weight: 600;
-}
+
 .md-link {
   color: var(--accent);
   text-decoration: none;
@@ -141,9 +209,15 @@ h6.md-h {
  * from the computed style. `CLAUDE.md` carries the measurement;
  * `mention-snippet.browser.test.tsx` reads 10px with this rule removed.
  *
- * The trailing margin goes off the last block for the same reason: `.md-p`'s
+ * The trailing margin goes off the last block for the same reason: `.md p`'s
  * 10px is paragraph rhythm inside prose, and on the last line of a list row --
- * or above an `<article>`'s own `pb-5` -- it is a gap nobody asked for. */
+ * or above an `<article>`'s own `pb-5` -- it is a gap nobody asked for.
+ *
+ * That second rule was, until 2026-08-29, one of the assertions B158 describes:
+ * `mention-snippet.browser.test.tsx` read `marginBottom === '0px'` off the last
+ * child and would have read the same with the rule deleted, because `.md-p`
+ * matched nothing and the paragraph had no margin to remove. It is a real
+ * measurement now. */
 .md-bare {
   padding: 0;
 }

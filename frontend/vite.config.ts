@@ -271,6 +271,61 @@ export default defineConfig({
            * one machine. */
           name: 'browser',
           include: ['src/**/*.browser.test.tsx'],
+          /** One file at a time, and this is the fix for B160 rather than a
+           *  performance knob.
+           *
+           * Run in parallel, this suite is intermittently and variously wrong:
+           * on 2026-08-29, across a day of runs on one quiet machine, it hung
+           * outright twice (no output, ~1.5% CPU, killed at 20 and 35 minutes),
+           * failed five cases across four files once -- two of them at *import*
+           * -- and failed one case in each of two other runs. The CI `browser`
+           * job hung the same way on a run whose siblings all finished.
+           *
+           * Every one of those failures is a **missing Tailwind utility**, and
+           * that is what identifies the mechanism. `course-card-sizing` read
+           * `aspect-ratio: auto` where `aspect-[3/2]` was in the class
+           * attribute; B160 records `base-layer` reading `border-box` for
+           * `box-content` and `--fg` for `text-accent` -- note the second one:
+           * the *token* resolved, so `tokens.css` had applied and only
+           * `@layer utilities` was missing. A fresh `npm run build` contains
+           * every one of those rules, and `npm run check:tailwind` passes over
+           * all 289 checked-family utilities. So the product is correct and it
+           * is the stylesheet *this suite is served* that is sometimes
+           * incomplete: each test file gets its own iframe, each re-imports
+           * `index.css`, and several of them race the Tailwind plugin's scan
+           * over one dev server.
+           *
+           * Serialised, `setup` drops from 26s to 2.2s -- the contention
+           * showing up in the numbers -- the whole run costs 67s against 46s,
+           * and **the hangs stop**. Four serialised runs, four completions.
+           *
+           * **It does not fix the underlying race, and the honest evidence is
+           * that it does not fix all of it.** One serialised run in four still
+           * failed `course-card-sizing`'s aspect case -- and by then that ratio
+           * was a plain rule in `course.css` rather than a utility, which
+           * refutes the narrower story that only `@layer utilities` is affected.
+           * Together with B160's `--fg` reading (a token resolving while a
+           * utility did not), what the evidence actually supports is that
+           * `index.css` is sometimes applied *partially* in a test's iframe.
+           *
+           * **It is one half of a pair, and neither half works alone.**
+           * `vitest.setup.browser.ts` now blocks until two probe rules resolve
+           * -- one of this repository's own, one of Tailwind's -- which is the
+           * other half. With the probe in place and this line removed, the
+           * suite still failed once in three parallel runs, so the sheet can
+           * regress *after* setup as the dev server re-serves it. With both,
+           * four consecutive green runs at 48 files and 198 tests.
+           *
+           * Taken because a hung CI job blocks every branch and 20 seconds does
+           * not. **It is still mitigation.** With an earlier, wrong probe --
+           * one reading the 19th of 21 imports rather than the last -- two runs
+           * in four were red even serialised, and one of those was `Failed to
+           * fetch dynamically imported module` on a file that passes alone,
+           * which no probe addresses. The probe is right now and the suite is
+           * green three runs consecutively, but the module fetch failing at all
+           * says the dev server under this suite is the thing that needs
+           * fixing. B184 carries the account and the two real fixes. */
+          fileParallelism: false,
           // A different setup file, not this suite's. `vitest.setup.browser.ts`
           // argues why at length; the short version is that the jsdom setup
           // pins `offsetWidth`/`offsetHeight` to constants.

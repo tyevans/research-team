@@ -62,3 +62,79 @@ setProjectAnnotations(preview)
  * global and a leaked value would retheme every file that runs after them.
  */
 document.documentElement.setAttribute('data-theme', 'dark')
+
+/** Wait for the stylesheet to have actually arrived, before any test measures
+ *  anything against it.
+ *
+ * **This is the fix for the class of failure B184 describes, and it is what
+ * lets a suite about computed styles be trusted at all.** Each test file gets
+ * its own iframe and re-imports `index.css`, which is a chain of `@import`s
+ * served by one dev server. Sometimes the first assertion in a file runs
+ * against a sheet that is only partly applied -- and a partly-applied sheet is
+ * indistinguishable, to `getComputedStyle`, from a rule that is wrong.
+ *
+ * Measured on 2026-08-29: `aspect-ratio: auto` where a `course.css` rule
+ * declares `3 / 2`; `opacity: 1` where `opacity-0` is in the class attribute;
+ * `border-box` where `box-content` is; and `--fg` where `text-accent` is -- the
+ * last with the *token* resolving, so that time it was `@layer utilities` alone
+ * that was missing. Every one of those rules is present in `npm run build`.
+ *
+ * **The probe reads the *last* stylesheet in the chain, and that detail is the
+ * whole of it.** The first version waited on `markdown.css`'s `.md`, which is
+ * `index.css`'s 19th `@import` of 21 -- and the suite went on failing on
+ * `course.css`'s `.crs-card-art`, imported six lines later. The probe was
+ * passing on a sheet that was genuinely half-applied, which is a good
+ * demonstration of the defect and a useless guard against it. It now reads
+ * `structure.css`'s `#root { display: contents }`, the last rule of the last
+ * import, so anything earlier in the chain has necessarily arrived.
+ *
+ * Two probes rather than one, because the misses come in two flavours: a rule
+ * from this repository's own stylesheets and a rule from `@layer utilities`
+ * (Tailwind's `opacity-0`), which is generated separately and can be absent
+ * while every hand-written rule is present -- B160's `--fg` reading is that
+ * case. Waiting on one would not see the other.
+ *
+ * It throws rather than continuing past the deadline, deliberately: a timeout
+ * means the sheet genuinely is not being served, and every assertion in the
+ * file that follows would be a confident measurement of an unstyled page. A
+ * named failure at setup is the readable form of that.
+ *
+ * What it does not do is make the seam correct. The sheet still arrives when it
+ * arrives, and a test running long after setup could in principle still meet a
+ * later `@import` mid-flight. B184 carries the two proper fixes -- serve the
+ * built stylesheet, or block on the sheet rather than on a probe of it. This is
+ * the cheap one, and it turns a wrong measurement into a wait.
+ */
+const probe = document.createElement('div')
+// `#root` rather than a class, because the rule being waited on is the last one
+// in the chain and it is written against that id. The application's own root is
+// mounted by a test's `render`, not by this file, so there is no clash.
+probe.id = 'root'
+probe.className = 'opacity-0'
+probe.setAttribute('aria-hidden', 'true')
+document.body.appendChild(probe)
+
+/** `structure.css`'s last rule sets `#root { display: contents }` and
+ *  `opacity-0` sets `opacity: 0`. Neither is a value a bare `<div>` takes from
+ *  anything else in this tree, and the first cannot resolve until every
+ *  `@import` in `index.css` has. */
+const dressed = () => {
+  const style = getComputedStyle(probe)
+  return style.display === 'contents' && style.opacity === '0'
+}
+
+const DEADLINE_MS = 10_000
+const startedAt = performance.now()
+while (!dressed()) {
+  if (performance.now() - startedAt > DEADLINE_MS) {
+    const style = getComputedStyle(probe)
+    throw new Error(
+      `vitest.setup.browser: index.css did not apply within ${DEADLINE_MS}ms ` +
+        `(display ${style.display}, opacity ${style.opacity}). Every ` +
+        `assertion in this file would have measured an unstyled page. See B184.`,
+    )
+  }
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+}
+
+probe.remove()

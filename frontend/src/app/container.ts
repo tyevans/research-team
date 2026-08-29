@@ -106,10 +106,12 @@ export interface Container {
   /** Its own adapter rather than one built on `HttpClient`: it POSTs and reads
    *  a stream, and `HttpClient` reads whole bodies. */
   readonly ask: AskRepository
-  /** Plural, matching `graphs`/`timelines`/`documents`. A singular key
-   *  typechecks through the `as unknown as Container` cast every test harness
-   *  uses and resolves to `undefined` at runtime, so the symptom is a page
-   *  stuck loading forever rather than a type error. */
+  /** Plural, matching `graphs`/`timelines`/`documents`. A singular key used to
+   *  typecheck straight through the `as unknown as Container` cast every test
+   *  harness wrote, and resolve to `undefined` at runtime, so the symptom was a
+   *  page stuck loading forever rather than a type error. `src/test/container.ts`
+   *  is what closed that in 2026-08-29: a fixture names its parts against this
+   *  interface, so `dialogue` is now a compile error at the fixture. */
   readonly dialogues: DialogueRepository
   readonly stream: EventStream
   readonly preferences: PreferenceStore

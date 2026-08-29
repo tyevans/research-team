@@ -7,11 +7,13 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
+import { buildContainer } from '../../test/container.ts'
+
 const projectId = ProjectId('p1')
 const block = { kind: 'component', id: ComponentId('q1') } as ComponentBlock
 
 const harness = (submitAskAttempt: Container['ask']['submitAskAttempt']) => {
-  const container = { ask: { submitAskAttempt } } as unknown as Container
+  const container = buildContainer({ ask: { submitAskAttempt } })
   return ({ children }: { children: React.ReactNode }) => (
     <ContainerProvider container={container}>{children}</ContainerProvider>
   )

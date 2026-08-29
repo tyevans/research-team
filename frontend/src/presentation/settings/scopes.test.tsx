@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Container } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { SettingsRepository } from '@application/ports/repositories.ts'
 import {
@@ -17,6 +16,8 @@ import { SCOPES, type Scope, type SettingsSchema } from '@domain/settings/spec.t
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { SettingsPage } from './SettingsPage.tsx'
 import { SCOPE_COPY } from './scope-copy.ts'
+
+import { buildContainer } from '../../test/container.ts'
 
 /** The same page over three scopes — S5's whole claim.
  *
@@ -100,7 +101,7 @@ const draw = (scope: Scope, scopeId: string, settings: SettingsRepository) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <ContainerProvider container={{ settings } as unknown as Container}>
+      <ContainerProvider container={buildContainer({ settings })}>
         <OverlayHost>
           <SettingsPage scope={scope} scopeId={scopeId} group={null} />
         </OverlayHost>

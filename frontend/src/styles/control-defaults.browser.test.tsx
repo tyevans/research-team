@@ -40,6 +40,76 @@ import { expect, it } from 'vitest'
 
 const computed = (el: Element) => getComputedStyle(el)
 
+/** The four elements the rules in `tokens.css` actually name.
+ *
+ * **This file asserted on `<button>` and nothing else until 2026-08-29**, and
+ * the rules it guards have always read `button, input, textarea, select`
+ * (`tokens.css`, the two `@layer base` blocks). Three of the four were
+ * untested, which is the same shape as the defect: a selector list is one rule
+ * to the cascade and four elements to a reader, and a test that samples one of
+ * them proves the rule fires *somewhere*.
+ *
+ * It is not merely a completeness argument. The three untested elements are the
+ * ones the UA dresses hardest — a `<select>` and an `<input>` each carry a
+ * native appearance a `<button>` does not — so if any of the four were going to
+ * resist a utility for a reason other than the layer, it would be one of these.
+ */
+const CONTROLS = ['button', 'input', 'textarea', 'select'] as const
+
+type Control = (typeof CONTROLS)[number]
+
+/** A bare control of each kind, carrying only the class under test.
+ *
+ * `<select>` gets one `<option>` because a select with no options has no
+ * intrinsic size in some engines, and a zero-height box is a bad thing to be
+ * measuring a font on. Nothing else here is styled. */
+const control = (kind: Control, className?: string) => {
+  const props = className ? { className } : {}
+  switch (kind) {
+    case 'button':
+      return (
+        <button type="button" {...props}>
+          press
+        </button>
+      )
+    case 'input':
+      return <input type="text" readOnly value="typed" {...props} />
+    case 'textarea':
+      return <textarea readOnly value="typed" {...props} />
+    case 'select':
+      return (
+        <select {...props}>
+          <option>one</option>
+        </select>
+      )
+  }
+}
+
+/** Read through the render's own container rather than through a query.
+ *
+ *  Several cases below render twice -- the dressed control and the bare one, so
+ *  the comparison is against a measured default rather than a token -- and both
+ *  are in the document at once. A `data-testid` query is document-wide, so it
+ *  found two and threw; the container is the one node this render owns. */
+/** A font stack as a list of names, with the engine's quoting removed.
+ *
+ *  `getPropertyValue` hands back the token exactly as `theme.css` authored it
+ *  (`'Segoe UI'`, single-quoted) and `getComputedStyle().fontFamily` re-serialises
+ *  the same stack with double quotes. Measured, not guessed: the first draft of
+ *  the case below compared the two strings and failed on that difference alone,
+ *  with both sides naming the identical fonts. What is being asserted is which
+ *  stack the control ended up on, not how Chromium prints one. */
+const families = (stack: string) =>
+  stack
+    .split(',')
+    .map((name) => name.trim().replace(/^['"]|['"]$/g, ''))
+    .filter((name) => name.length > 0)
+
+const drawn = (kind: Control, className?: string) => {
+  const { container } = render(control(kind, className))
+  return computed(container.firstElementChild!)
+}
+
 it('lets a background utility beat the bare-control default', () => {
   const { getByTestId } = render(
     <button type="button" data-testid="control" className="bg-transparent">
@@ -124,3 +194,74 @@ it('still dresses a control that says nothing', () => {
  * it) and this is the second place it is observable. If a future change
  * un-registers the palette, these two assertions go red here first.
  */
+
+/** The same four claims, on all four elements, plus the one leg of the
+ *  shorthand nothing measured.
+ *
+ * **`font-family` is the gap, and it is the one CLAUDE.md's own account points
+ * at.** The entry says `font: inherit` "reaches furthest because it is a
+ * *shorthand*: it sets `font-size`, so the size utilities went silently along
+ * with the colour ones". `font-size` is one leg. `font-family` is another, and
+ * until now nothing in this repository asserted on it -- so a `font-mono` on an
+ * input was in exactly the state `text-xs` on a button was in before #313: in
+ * the class attribute, in the bundle, and never meeting the rule.
+ *
+ * Measured 2026-08-29: with `tokens.css`'s `font: inherit` block unwrapped from
+ * its `@layer base`, the colour, size and family cases below go red on every
+ * one of the four elements, reporting the default's own value -- and with the
+ * background block unwrapped, so does the background case. That is how they
+ * were proved rather than assumed.
+ *
+ * **What would happen if this file stopped running** is not a hypothetical:
+ * `base-layer.browser.test.tsx` did exactly that and asserted nothing for the
+ * life of the fix it was written to guard (BACKLOG B160). A file that dies at
+ * import reads, in a summary line, like a file that passes. There is no
+ * assertion a file can make about its own execution, so the defence is
+ * structural and lives outside it: the `browser` CI job reports a suite that
+ * fails to import as a failed *suite* rather than as zero tests. That job
+ * landed on 2026-08-29 and is what makes this file's silence detectable.
+ */
+it.each(CONTROLS)('lets a background utility beat the default on a <%s>', (kind) => {
+  expect(drawn(kind, 'bg-transparent').backgroundColor).toBe('rgba(0, 0, 0, 0)')
+})
+
+it.each(CONTROLS)('lets a colour utility beat the default on a <%s>', (kind) => {
+  const root = computed(document.documentElement)
+  const accent = root.getPropertyValue('--accent').trim()
+  const fg = root.getPropertyValue('--fg').trim()
+  expect(accent).not.toBe(fg)
+
+  expect(drawn(kind, 'text-accent').color).toBe(accent)
+})
+
+it.each(CONTROLS)('lets a size utility beat `font: inherit` on a <%s>', (kind) => {
+  const small = parseFloat(drawn(kind, 'text-xs').fontSize)
+  const plain = parseFloat(drawn(kind).fontSize)
+  expect(small).toBeLessThan(plain)
+})
+
+it.each(CONTROLS)('lets a family utility beat `font: inherit` on a <%s>', (kind) => {
+  // The leg of the shorthand nothing measured. Compared against the two theme
+  // stacks rather than against a literal: what is asserted is that the control
+  // moved off the page's family onto the one the utility names, not how
+  // Chromium quotes a font list.
+  const root = computed(document.documentElement)
+  const sans = families(root.getPropertyValue('--font-sans'))
+  const mono = families(root.getPropertyValue('--font-mono'))
+  expect(sans).not.toEqual(mono)
+
+  // The default first, so the claim below is against a measured value rather
+  // than against the token the rule was written from.
+  expect(families(drawn(kind).fontFamily)).toEqual(sans)
+  expect(families(drawn(kind, 'font-mono').fontFamily)).toEqual(mono)
+})
+
+it.each(CONTROLS)('still dresses a <%s> that says nothing', (kind) => {
+  // The half that must not regress, on all four rather than on the one. A
+  // layered default has to keep beating *nothing*, or an unclassed control goes
+  // back to the UA's own colours -- about 1.15:1 against this theme's text, the
+  // measurement `tokens.css` records for a bare `<button>`.
+  const root = computed(document.documentElement)
+  expect(drawn(kind).backgroundColor).toBe(root.getPropertyValue('--bg').trim())
+  expect(drawn(kind).color).toBe(root.getPropertyValue('--fg').trim())
+})

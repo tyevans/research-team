@@ -224,7 +224,27 @@ const BUDGET_KB = {
   // 118.6 kB against the 117.3 above, so 1.3 kB. It fits inside the
   // headroom the deck's raise already took, so raising again would be taking
   // headroom over headroom.
-  app: 124, // our code: every component, store, mapper and stylesheet rule
+  // 125, from 124, for B158's markdown unification -- the rules that dress
+  // rendered prose. Measured rather than estimated, both sides on this tree on
+  // 2026-08-29: `main`'s four stylesheets in place read 123.9 kB, and this
+  // branch's read 124.1. So the change is **0.2 kB gzipped** and the raise is
+  // 0.9 kB, of which 0.7 is the slack `main` was already down to.
+  //
+  // What it buys, which is the only reason to take a raise this small rather
+  // than shave: every heading, paragraph, list, quotation, table and code span
+  // on the eleven surfaces that render model prose had been drawing on the
+  // browser's own defaults since 2026-08-07, because `markdown.css` styled nine
+  // class families `marked` does not emit. 0.2 kB is the entire cost of them
+  // being dressed at all.
+  //
+  // Worth knowing before the next raise: `main` had **0.1 kB** of headroom here
+  // when this was measured, which is not a budget doing any work -- it is a
+  // budget that stops whichever branch arrives next, on the merits of nothing.
+  // W-C1's provider slice is raising this line to 132 on its own measurement,
+  // and this edit will conflict with that. That is the intended outcome per
+  // CLAUDE.md's merge-invisible-pair section: two branches rewriting one line
+  // is a conflict a person resolves, rather than two silent raises.
+  app: 125, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.

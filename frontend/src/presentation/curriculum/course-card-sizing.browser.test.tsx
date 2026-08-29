@@ -25,7 +25,16 @@ const aCandidate = (over: Partial<CourseCandidate> = {}): CourseCandidate => ({
   ...over,
 })
 
-const boxOf = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
+/** Scoped to one root rather than to the document.
+ *
+ *  `document.querySelector` was what this read before 2026-08-29, and in a file
+ *  where the first case mounts three cards and the rest mount one, a query that
+ *  can reach a previous case's tree is one cleanup ordering away from measuring
+ *  the wrong card. No failure was ever traced to it; it is removed because the
+ *  cost of keeping it is that a real failure here cannot be trusted to be about
+ *  the card the case rendered. */
+const boxOf = (root: ParentNode, selector: string) =>
+  root.querySelector(selector)!.getBoundingClientRect()
 
 it('draws the hero wider than the highlight, and the highlight wider than the filed card', async () => {
   const screen = await render(
@@ -42,9 +51,9 @@ it('draws the hero wider than the highlight, and the highlight wider than the fi
 
   await expect.element(screen.getByText('The Roman Succession Crisis').first()).toBeVisible()
 
-  const hero = boxOf('.crs-card-hero').width
-  const highlight = boxOf('.crs-card-highlight').width
-  const filed = boxOf('.crs-card-filed').width
+  const hero = boxOf(document, '.crs-card-hero').width
+  const highlight = boxOf(document, '.crs-card-highlight').width
+  const filed = boxOf(document, '.crs-card-filed').width
 
   expect(hero).toBeGreaterThan(highlight)
   expect(highlight).toBeGreaterThan(filed)
@@ -70,7 +79,26 @@ it('gives the art a declared aspect ratio rather than the image its own', async 
   )
   await expect.element(screen.getByText('The Roman Succession Crisis')).toBeVisible()
 
-  const art = boxOf('.crs-card-art')
+  // Two assertions on one fact, and the pair is deliberate. The measured box is
+  // what a reader sees; the computed property is *why*, and it is the half that
+  // tells the two candidate causes apart when this goes red, and it earned its
+  // keep within the hour. B160 reports this case at 10.63:1 on another machine
+  // -- a ratio that wide being a box whose height came from a broken image's
+  // alt text rather than from a rule -- and the property came back `auto` in
+  // CI, which names the cause as "no rule at all" where the box measurement
+  // reports only a number.
+  //
+  // What that turned out to be is in `course.css`: the `aspect-[3/2]` utility
+  // this used to depend on is generated correctly in a production build and was
+  // absent from the stylesheet the browser suite is served, because Tailwind's
+  // dev-time scan had not reached `CourseCard.tsx` when the setup file
+  // requested the CSS. The ratio is a rule now. Three local full-suite runs
+  // before that change: green, green, and one failure of this case, with the
+  // file passing alone every time.
+  const element = document.querySelector('.crs-card-art')!
+  expect(getComputedStyle(element).aspectRatio).toBe('3 / 2')
+
+  const art = element.getBoundingClientRect()
   expect(art.width).toBeGreaterThan(0)
   expect(art.width / art.height).toBeCloseTo(3 / 2, 1)
 })

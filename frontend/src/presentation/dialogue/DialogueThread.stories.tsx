@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
-import type { Container } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+
+import { buildContainer } from '../../test/container.ts'
 
 import { exchange, PROJECT } from './dialogue-fixtures.ts'
 import { DialogueThread } from './DialogueThread.tsx'
@@ -42,13 +43,19 @@ export default meta
 
 type Story = StoryObj
 
-/** The cast is the one `DialoguePage.test.tsx` makes and for its stated
- *  reason: nothing in these stories submits an attempt, so the container only
- *  has to be present, and building a real one would be building the
- *  application to draw a thread. */
-const container = {
-  dialogues: { submitDialogueAttempt: () => Promise.resolve(null) },
-} as unknown as Container
+/** Nothing in these stories submits an attempt, so the container only has to be
+ *  present -- building a real one would be building the application to draw a
+ *  thread. `buildContainer` is what makes "only the parts I need" a checked
+ *  claim rather than `as unknown as Container`, which deleted the check
+ *  (B90). */
+const container = buildContainer({
+  // Never settles, rather than resolving `null`. `null` is not a `Verdict` and
+  // the old cast was accepting it -- the first thing `buildContainer` caught
+  // when it went in. A story that does not submit does not need an answer, and
+  // inventing a plausible verdict here would put a second, undocumented one
+  // beside the fixtures.
+  dialogues: { submitDialogueAttempt: () => new Promise<never>(() => {}) },
+})
 
 const Frame = ({ heading, children }: { heading: string; children: React.ReactNode }) => (
   <ContainerProvider container={container}>
