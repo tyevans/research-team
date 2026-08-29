@@ -3242,11 +3242,20 @@ def _build_application(
 #: before editing this tuple; it is the contract, and this paragraph is only
 #: the reason for it.
 #:
-#: The other direction is *not* covered and cannot cheaply be: a resource added
-#: to `Application.close` and not here is still a silent omission, because
-#: `close()` reads attributes off an instance and this reads names out of a
-#: frame, with no compiler between them. `test_a_partial_build_closes_what_it_
-#: already_opened` would notice only for the names it names.
+#: The other direction is covered too, since B179, and this paragraph used to
+#: say it could not cheaply be. It can: the `Application(...)` call at the end
+#: of `_build_application` already maps each attribute to the local that filled
+#: it, so `test_every_close_step_has_a_partial_build_resource` resolves every
+#: `self.<attr>.<method>` step in `Application.close` back to a `(local,
+#: method)` pair and asserts it is declared here. Two steps deliberately do not
+#: resolve -- `_media_http_client.aclose` and `detach_project` -- and both are
+#: exempted by name with their reason, under an exemption-staleness test.
+#:
+#: That direction is the one that actually fired: a branch adding a resource to
+#: `close()` *conflicts* there, because `close()` is edited often, and does not
+#: conflict here, because it never touched this tuple -- so the merge machinery
+#: is silent about the half that matters. Order is still kept in step with
+#: `close()` deliberately, for the reader; the test is what enforces membership.
 _PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
     ("research_supervisor", "stop_all"),
     ("turns", "cancel_all"),

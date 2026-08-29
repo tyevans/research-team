@@ -6,6 +6,30 @@ with enough detail that picking it up does not require rediscovering it.
 The `B` numbers are stable handles, not a taxonomy. Closed entries are deleted;
 if tracked code cites one by name, say where its reasoning went before deleting.
 
+<!-- next id: 182 -->
+
+**Take your id from that line and increment it in the same commit.** Do not
+grep the file for the largest number in use: that is a read of *your* branch,
+and a branch cannot see the entry another branch filed an hour ago. B161 was
+allocated twice on 2026-08-29 that way -- #325 renumbered an entry into it and
+#328 landed a different one on it three minutes later, in the other half of the
+file. Neither branch conflicted, both were green, and `main` merged red, which
+blocked every open PR until somebody renumbered.
+
+**The line is the allocation, and its whole job is to conflict.** Two branches
+that both file an entry both rewrite that one line to a different value, and
+git cannot merge two different rewrites of one line -- so the second one to
+merge stops with a conflict, in front of a person, *before* `main` is red. That
+friction is the design and not a defect of it: it costs about a minute (take
+the higher number, renumber your own entry, bump the counter past both) and it
+is paid by the branch that is merging rather than by everyone whose PR would
+otherwise be blocked. It also settles the question the uniqueness test cannot
+answer -- which entry moves, and *where to*.
+
+`tests/test_backlog_ids.py` holds both halves: no id is used twice, and the
+counter is above every id in the file, so a branch that files an entry without
+bumping the line is red on its own branch rather than on `main`.
+
 ## Code quality
 
 ### B1. `Project`'s class docstring says little that its module does not
@@ -275,66 +299,33 @@ default in-memory configuration. The fix is a `finally` or a small ordered
 teardown that runs every step regardless — worth doing the next time that
 function is touched, not on its own.
 
-### B179. A resource added to `close()` and not to `_PARTIAL_BUILD_RESOURCES` is a silent leak, and this rebase fell into it
+### B179 -- closed 2026-08-29, by the test it asked for
 
-`research_team/composition.py`. B10 and B100 left two teardown lists that must
-agree and have nothing tying them together: `Application.close`'s
-`_close_every_step(...)` steps, which are bound methods off an instance, and
-`_PARTIAL_BUILD_RESOURCES`, which is a tuple of *string* local names read out of
-the raising frame with `frame.f_locals.get`.
+`Application.close`'s steps and `_PARTIAL_BUILD_RESOURCES` are now compared
+mechanically. `tests/test_composition.py`'s
+`test_every_close_step_has_a_partial_build_resource` resolves each
+`self.<attr>.<method>` step through the `Application(...)` call's keywords --
+which already map every attribute to the local that filled it -- and asserts
+the pair is declared in the tuple.
 
-**One direction is covered.** A rename inside `_build_application` stops a name
-matching, `f_locals.get` returns `None`, and the resource is quietly dropped --
-so `test_every_partial_build_resource_is_a_local_of_the_build` parses the
-function and asserts every name in the tuple is assigned in it. That works:
-proved red on 2026-08-29 by renaming one entry to `("tenant_runner", "stop")`,
-rather than trusted from the comment above the tuple.
+**Where the reasoning went**, per this file's rule about citing a closed entry.
+The rebase that found it (PR #336 onto #328, the `close()` half conflicting and
+the tuple half not) is in that test's docstring, because that is where somebody
+reading a failure will be. The measurement the entry carried held when it was
+built for real, with the counts moved by a week of merges: 63 keywords mapped,
+25 `close()` steps read, **exactly the two documented asymmetries** unresolved
+-- `_media_http_client.aclose`, which a partial build does not own, and
+`detach_project`, which is a method rather than a resource. Both are in
+`_CLOSE_STEPS_WITH_NO_PARTIAL_BUILD_RESOURCE` with the reason written out, and
+`test_every_close_step_exemption_is_still_needed` fails when one stops applying.
 
-**The other direction is not, and the tuple's own comment says so:** "a resource
-added to `Application.close` and not here is still a silent omission, because
-`close()` reads attributes off an instance and this reads names out of a frame,
-with no compiler between them."
+Not covered, and deliberately: the reverse direction, that every tuple entry is
+a `close()` step. `("repository", "close")` is not one -- a full build hands the
+repository to `SessionService`, whose `close()` closes it -- so requiring it
+would be requiring a double close.
 
-**That is not theoretical. It happened on 2026-08-29**, rebasing the W-B B1
-branch (PR #336) onto #328. B1 adds a `TenantRunner` and stops it in `close()`.
-#328 had rewritten `close()` into `_close_every_step`, so the `close()` half
-**conflicted** and was resolved; `_PARTIAL_BUILD_RESOURCES` did not conflict,
-because #328 wrote that list and B1 had never touched it. A partial build
-raising after the runner was constructed would have dropped it from the unwind.
-Caught by reading the diff. No test failed, and the symptom would have been a
-hung interpreter at exit -- B100's original symptom, restored by omission.
-
-It was harmless *this* time, and only by accident: a `TenantRunner` holds nothing
-until `start()`, so `stop()` on a partial build is a no-op. That is a fact about
-this week, not about the design.
-
-**The obvious fix is comparing the two lists mechanically, and it is feasible --
-measured, not estimated.** The link between them exists in the `Application(...)`
-call: its keywords map an attribute name to the local that filled it. So an AST
-pass over `_build_application` and `Application.close` derives
-`self.<attr>.<method>` -> `(<local>, <method>)` with no new bookkeeping.
-Prototyped on 2026-08-29 against the current file: 65 keywords mapped, 24
-`close()` steps read, and **exactly two** steps do not resolve to a declared
-entry.
-
-Both two are the documented deliberate asymmetries, which is the cost:
-
-- `("media http client", resolved_media_http_client.aclose)` -- excluded from the
-  tuple on purpose. `close()` owns the client because an `Application` exists; a
-  partial build has none, and the client may still be the caller's.
-- `("attached project", self.detach_project)` -- a method on `Application`, not a
-  resource with a local at all.
-
-So the fix is a real test plus a **two-entry exclusion set**, which is the same
-species of hand-maintained list this is trying to replace -- except two entries
-with written reasons rather than twenty-two names with none. Per CLAUDE.md's
-`PUBLIC_PATHS` rule, that set then needs its own staleness test: an exemption
-that outlives its reason exempts whatever is written next.
-
-Worth doing the next time `composition.py` is opened for something else. Two
-lists that must agree, one merge-conflicting and the other not, is a trap that
-fires precisely during a rebase -- which is when the person holding it has the
-least attention to spare for a list they did not edit.
+The shape rather than the instance is now in CLAUDE.md, under "Two structures
+that must agree, in two places the merge cannot compare".
 
 ### B11. The web UI's "last join wins" swaps tools under an open tab
 
