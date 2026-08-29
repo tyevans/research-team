@@ -32,6 +32,7 @@ from research_team.domain import MediaRecord, SourceRecord, TextRecord
 #: in `GATED_TOOLS` -- see `autonomy.py` on why read tools stay ungated.
 LIST_SOURCES_TOOL = "list_sources"
 READ_SOURCE_TOOL = "read_source"
+SEARCH_SOURCES_TOOL = "search_sources"
 
 REFERENCE_SYNTAX_PROMPT = (
     "To point at a source, or a moment inside one, write `[[src:<source_id>]]`. "
