@@ -626,6 +626,79 @@ Write a plain ASGI callable and `app.add_middleware(...)` it instead;
 `_InteractionBodyCap` in `interfaces/web/app.py` is the worked example. It
 adds no task group and leaves every other route's execution exactly as it was.
 
+## Two structures that must agree, in two places the merge cannot compare
+
+**A per-branch gate cannot see a disagreement neither branch contains.** When
+two structures must agree and nothing derives one from the other, each branch
+holds one side, each branch is green, and git reports no conflict -- because
+neither branch edited the *other* half. The disagreement is created by the
+merge and is the one thing nothing in the process looks at. Three of these
+landed on 2026-08-29, within one afternoon.
+
+**`Application.close` against `_PARTIAL_BUILD_RESOURCES`** (`composition.py`,
+B179, now closed). #328 rewrote `close()` into a named-step list. Two later
+branches each added a resource to `close()`; neither added it to the
+partial-build list, and neither *conflicted* on that list, having never touched
+it. `close()` is edited often and so conflicts loudly; the tuple is edited
+rarely and so merges silently -- which is exactly the wrong way round, because
+the tuple is the half a rebasing reader is not thinking about. Nothing was red.
+The symptom would have been a hung interpreter at exit (B5, B100), not a test.
+
+**A duplicate `B161` in `BACKLOG.md`.** #325 renumbered an entry into B161;
+#328 landed a different entry on B161 three minutes later, in the other half of
+a 5,000-line file. Neither conflicted, both were green, and `main` merged red --
+blocking every open PR. Then two agents *fixing* it collided again, because the
+uniqueness test says which entry moves and says nothing about where it moves to.
+
+**`Tenant` and the feed's routed/unrouted lists** -- the one a test caught, and
+the reason it caught it is the whole lesson.
+`test_every_aggregate_type_is_routed_or_deliberately_not` does not compare two
+hand-written lists. It **derives the population** from the domain's own
+aggregate types and requires each to appear in one list or the other, so a
+branch that adds an aggregate type is red on its own branch, holding both sides
+by construction. The failure arrives where the author is, before any merge.
+
+**The remedy, in order of preference.**
+
+1. **Derive one side from the other**, so there is only one thing to edit. The
+   link is usually already in the tree and unnoticed: `Application(...)`'s
+   keywords already map each attribute to the local that filled it, which is
+   what `test_every_close_step_has_a_partial_build_resource` reads. This costs
+   nothing at merge time and is the only remedy that removes the class rather
+   than reporting it.
+2. **Derive the population**, when the two sides are a partition rather than a
+   copy -- every aggregate type is routed or deliberately not, every checkpoint
+   marker is named in a prompt (`CHECKPOINT_MARKERS`). New members fail until
+   somebody classifies them.
+3. **Make the branches conflict**, when nothing can be derived. Force the
+   contested value through one line every filing branch must rewrite:
+   `BACKLOG.md`'s `<!-- next id: N -->`. Two branches rewriting one line to
+   different values is a conflict git cannot auto-resolve, so the check runs
+   against the *merge*, in front of a person, before `main` is red. The cost is
+   real and deliberate -- guaranteed friction on every concurrent branch, about
+   a minute each -- and it is paid by the branch that is merging rather than by
+   everybody whose PR the red `main` blocks.
+
+**What does not work, and reads as though it does:** a test that detects the
+collision after both sides exist. `test_no_two_backlog_entries_share_an_id` is
+correct, was green on both branches, and its first sight of the problem was on
+`main`. A gate that can only run where both halves are present runs too late by
+one merge.
+
+**What to look for.** Two lists, sets or registries that must agree, where one
+is in a file people edit constantly and the other is in a file they do not. Ask
+which half a branch adding a feature will touch; if the answer is "one of
+them", the other half is unprotected, and the failure will arrive during a
+rebase -- when the person holding it has the least attention to spare for a
+list they did not edit.
+
+**Exemption sets need their own staleness test.** Every remedy above ends in a
+short hand-written list of deliberate asymmetries (`PUBLIC_PATHS`,
+`_CLOSE_STEPS_WITH_NO_PARTIAL_BUILD_RESOURCE`, `UNROUTED_AGGREGATE_TYPES`,
+`DEFERRED_TO_THE_B2_SWEEP`). Two entries with written reasons beats twenty-four
+names with none -- but only while something fails when an entry stops applying.
+An exemption kept past its reason exempts whatever is written on that name next.
+
 ## Comments and commit messages
 
 The standard here is higher than most repositories and is worth matching.

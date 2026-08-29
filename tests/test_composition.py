@@ -463,10 +463,12 @@ def test_every_partial_build_resource_is_a_local_of_the_build() -> None:
     fooled by which branch a particular build took: a name is checked against
     every assignment in the body, not against the locals of one run.
 
-    What it does not cover, stated because the asymmetry is easy to misread as
-    coverage: a resource added to `Application.close` and *not* to the tuple.
-    That direction has no static handle -- `close()` reads attributes off an
-    instance -- and stays a silent omission.
+    The other direction -- a resource added to `Application.close` and *not* to
+    the tuple -- was uncovered until B179 and is now
+    `test_every_close_step_has_a_partial_build_resource` below. This docstring
+    said it had no static handle, because `close()` reads attributes off an
+    instance; the handle is the `Application(...)` call, which names the
+    attribute and the local together.
     """
     import ast
     import inspect
@@ -486,4 +488,184 @@ def test_every_partial_build_resource_is_a_local_of_the_build() -> None:
         f"_PARTIAL_BUILD_RESOURCES names locals that _build_application does not "
         f"assign: {missing}. Each one is silently dropped from the partial-build "
         "teardown -- the B100 leak, back, with nothing raising."
+    )
+
+
+#: The steps in `Application.close` that deliberately have no
+#: `_PARTIAL_BUILD_RESOURCES` entry, keyed by the expression exactly as
+#: `ast.unparse` writes it, with the reason each is exempt.
+#:
+#: Two entries with written reasons rather than twenty-four names with none:
+#: that is the whole gain of the test below, and it is why this set is not
+#: allowed to grow quietly. Adding a third entry is a claim that a resource
+#: `Application.close` releases must *not* be released when a build raises
+#: half-built -- which is B100's leak by permission. Write the reason here,
+#: or add the entry to the tuple.
+_CLOSE_STEPS_WITH_NO_PARTIAL_BUILD_RESOURCE: dict[str, str] = {
+    "self._media_http_client.aclose": (
+        "Ownership differs between the two paths, and the tuple's own comment "
+        "says so. `close()` closes the client whether or not the caller "
+        "supplied it, because an `Application` exists and owns it for its "
+        "lifetime. A partial build has no `Application`, so a client the "
+        "caller handed in is still the caller's, and closing it would turn "
+        "one leak into a different bug."
+    ),
+    "self.detach_project": (
+        "Not a resource with a local at all -- a method on `Application` that "
+        "releases whatever project happens to be attached. Nothing is "
+        "attached during `_build_application`, so there is no name for the "
+        "tuple to hold."
+    ),
+}
+
+
+def _application_construction_keywords() -> dict[str, str]:
+    """`Application(...)`'s keywords, as attribute name -> the local that filled it.
+
+    This mapping is the link the two teardown lists lack. It is not new
+    bookkeeping: the call already has to name both halves to construct the
+    object, so it is the one place in the file where `self.corpus` and the
+    local `corpus` are written down as the same thing.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from research_team.composition import _build_application
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_build_application)))
+    keywords: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id == "Application"):
+            continue
+        for keyword in node.keywords:
+            # Only keywords filled straight from a local are usable. A keyword
+            # built inline (`feed=LiveFeed(repository)`) names no local, so
+            # nothing could be looked up for it -- and no such keyword is a
+            # `close()` step today.
+            if keyword.arg is not None and isinstance(keyword.value, ast.Name):
+                keywords[keyword.arg] = keyword.value.id
+    assert keywords, (
+        "no Application(...) keywords found -- the parse, not the wiring, is wrong"
+    )
+    return keywords
+
+
+def _close_step_expressions() -> list[str]:
+    """The callable half of every `_close_every_step` argument, unparsed."""
+    import ast
+    import inspect
+    import textwrap
+
+    from research_team.composition import Application
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(Application.close)))
+    steps: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id == "_close_every_step"):
+            continue
+        for argument in node.args:
+            assert isinstance(argument, ast.Tuple) and len(argument.elts) == 2, (
+                "a `_close_every_step` argument is not a (label, callable) pair; "
+                "this test reads that shape and has to be updated with it"
+            )
+            steps.append(ast.unparse(argument.elts[1]))
+    assert steps, "no `_close_every_step` steps found -- the parse, not the wiring, is wrong"
+    return steps
+
+
+def _unresolved_close_steps() -> list[str]:
+    """Close steps with no matching `_PARTIAL_BUILD_RESOURCES` entry, exemptions included.
+
+    Shared by the two tests below on purpose: one asserts the list is exactly
+    the exemptions, the other that no exemption has left it. Deriving both from
+    one function means an exemption cannot be right for one test and stale for
+    the other.
+    """
+    from research_team.composition import _PARTIAL_BUILD_RESOURCES
+
+    keywords = _application_construction_keywords()
+    declared = set(_PARTIAL_BUILD_RESOURCES)
+    unresolved = []
+    for expression in _close_step_expressions():
+        parts = expression.split(".")
+        if len(parts) != 3 or parts[0] != "self":
+            unresolved.append(expression)
+            continue
+        _, attribute, method = parts
+        local = keywords.get(attribute)
+        if local is None or (local, method) not in declared:
+            unresolved.append(expression)
+    return unresolved
+
+
+def test_every_close_step_has_a_partial_build_resource() -> None:
+    """The direction `test_every_partial_build_resource_is_a_local_of_the_build`
+    cannot see: a resource released by `Application.close` and forgotten in
+    `_PARTIAL_BUILD_RESOURCES`.
+
+    B179, and it is not hypothetical. It happened on 2026-08-29 rebasing PR
+    #336 onto #328: `close()` had been rewritten into `_close_every_step`, so
+    the branch's added step *conflicted* and was resolved by hand, while
+    `_PARTIAL_BUILD_RESOURCES` did not conflict at all -- the branch had never
+    touched it. Two lists that must agree, one merge-conflicting and the other
+    not, is a trap that fires during a rebase. Nothing was red. The symptom
+    would have been a hung interpreter at exit (B5, B100), not a failure.
+
+    The link the two lists lack is in the `Application(...)` call, whose
+    keywords already map each attribute to the local that filled it. So
+    `self.corpus.stop` resolves to `("corpus", "stop")` with no new
+    bookkeeping, and a step whose resource is undeclared has nowhere to resolve
+    to.
+
+    Static, over the AST, so it is not a fact about which branch a particular
+    build took. Proved red on 2026-08-29 by deleting `("topics", "stop")` from
+    the tuple: `self.topics.stop` was reported unresolved.
+
+    What it does not assert, because the asymmetry is real rather than an
+    oversight: that every *tuple* entry is a `close()` step. `("repository",
+    "close")` is not one -- a full build hands the repository to
+    `SessionService`, whose `close()` closes it, while a partial build can hold
+    the repository before any service exists. That is the entry B100 is most
+    about, and requiring it in `close()` would be requiring a double close.
+    """
+    unresolved = sorted(_unresolved_close_steps())
+    expected = sorted(_CLOSE_STEPS_WITH_NO_PARTIAL_BUILD_RESOURCE)
+    assert unresolved == expected, (
+        "`Application.close` releases something `_PARTIAL_BUILD_RESOURCES` does "
+        f"not: {sorted(set(unresolved) - set(expected))}. A build that raises "
+        "after that resource is constructed abandons it -- B100's leak, back by "
+        "omission, with a hung interpreter for a symptom and nothing red. Add "
+        "the `(local, method)` pair to the tuple in `close()`'s order, or, if "
+        "the omission is deliberate, add the expression to "
+        "`_CLOSE_STEPS_WITH_NO_PARTIAL_BUILD_RESOURCE` with the reason."
+    )
+
+
+def test_every_close_step_exemption_is_still_needed() -> None:
+    """An exemption that outlives its reason exempts whatever is written next.
+
+    Same rule as `DEFERRED_TO_THE_B2_SWEEP` in `test_tenant_naming_seam.py`,
+    and as `PUBLIC_PATHS` in the tenancy design: the set above is a
+    hand-maintained list of the
+    kind this pair of tests exists to replace, and two entries stay honest only
+    while something fails when one stops applying. Without this, deleting the
+    `media http client` step from `close()` would leave a permanent hole named
+    after it, and the next thing written on that expression would be silently
+    exempt.
+
+    Proved red on 2026-08-29 by adding a third entry naming a step that does
+    resolve.
+    """
+    unresolved = set(_unresolved_close_steps())
+    stale = sorted(set(_CLOSE_STEPS_WITH_NO_PARTIAL_BUILD_RESOURCE) - unresolved)
+    assert not stale, (
+        f"these exemptions no longer apply: {stale}. Each names a step that "
+        "either left `Application.close` or now resolves to a "
+        "`_PARTIAL_BUILD_RESOURCES` entry. Delete it -- an exemption kept past "
+        "its reason exempts whatever is written on that expression next."
     )
