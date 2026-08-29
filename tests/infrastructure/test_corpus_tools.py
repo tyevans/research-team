@@ -521,11 +521,13 @@ async def test_an_invalid_find_explains_itself_instead_of_raising() -> None:
     assert "not a valid regular expression" in text
 
 
-def test_the_prompt_names_the_search_tool_and_its_offsets():
+def test_the_prompt_names_the_search_tool_and_denies_the_file_tools():
     """The trap this change removes is a prompt that sends the model to
-    `grep`, whose line numbers address nothing `read_source` accepts. Fails if
-    a later edit reinstates grep-first without a way to convert."""
+    `grep`, whose line numbers address nothing `read_source` accepts. With the
+    mount gone `grep` no longer sees the corpus at all, and a prompt that did
+    not say so would leave the model searching a filesystem that answers
+    "found nothing" for every stored source."""
     assert SEARCH_SOURCES_TOOL in CORPUS_PROMPT
     assert "find=" in CORPUS_PROMPT
-    assert "line number" in CORPUS_PROMPT
+    assert "never a stored source" in CORPUS_PROMPT
     assert "does not raise an error" in REFERENCE_SYNTAX_PROMPT

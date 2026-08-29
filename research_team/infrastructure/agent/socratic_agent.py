@@ -66,11 +66,15 @@ SOCRATIC_TOOLS_PROMPT = (
     """You can read one research project's gathered material and change none of it.
 
 You have its sources, its knowledge graph, its topics and its files. You have no
-access to the web. The sources are mounted read-only at `/sources/<source_id>`,
-so `grep` searches all of them at once; `ls` and `glob` are how you find out
-what is there before searching it. Open one with `read_source`, not `read_file`:
-only `read_source` returns the `source_id@start-end` span that makes a quote
-checkable.
+access to the web. `list_sources` is how you find out what is there and
+`search_sources` searches all of it at once, answering with
+`source_id@start-end` for every match -- the offsets `read_source` takes. Open
+a source with `read_source`: only it returns the `source_id@start-end` span
+that makes a quote checkable.
+
+`ls`, `glob`, `grep` and `read_file` are for this session's own files. They
+cannot see a stored source, so searching for one with `grep` finds nothing and
+says nothing about why.
 
 If the material does not cover something, say so plainly rather than filling the
 gap from memory. A dialogue that invents its ground is worse than one that stops.
@@ -459,16 +463,11 @@ class DeepAgentSocraticExecutor:
         model: BaseChatModel,
         open_graph: Callable[[UUID], Awaitable[tuple[Any, tuple[BaseTool, ...]]]],
         project_files: Callable[[UUID], Awaitable[dict[str, Any]]],
-        project_sources: Callable[[UUID], Awaitable[dict[str, Any]]],
         system_prompt: str = SOCRATIC_PROMPT,
         framing_prompt: str = SOCRATIC_FRAMING_SYSTEM,
     ) -> None:
         self._model = model
         self._open_graph = open_graph
-        # Required rather than defaulted, matching `DeepAgentAskExecutor`: a
-        # build that forgot to wire it would answer every `grep` over gathered
-        # sources with no matches and no error.
-        self._project_sources = project_sources
         self._project_files = project_files
         self._system_prompt = system_prompt
         self._framing_prompt = framing_prompt
@@ -477,10 +476,7 @@ class DeepAgentSocraticExecutor:
         """One agent, bound to one project. Extracted because `frame` and
         `respond` build the same thing with different instructions."""
         _knowledge, project_tools = await self._open_graph(project_id)
-        backend = ReadOnlyProjectBackend(
-            await self._project_files(project_id),
-            sources=await self._project_sources(project_id),
-        )
+        backend = ReadOnlyProjectBackend(await self._project_files(project_id))
         return create_deep_agent(
             model=self._model,
             tools=list(readable(project_tools)) or None,

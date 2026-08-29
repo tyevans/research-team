@@ -71,16 +71,6 @@ MiddlewareProvider = Callable[[Session], Awaitable[Sequence[AgentMiddleware]]]
 #: two consistent.
 ToolProvider = Callable[[Session], Awaitable[Sequence[BaseTool]]]
 
-#: This turn's corpus mount: `/sources/<source_id>` -> file data.
-#:
-#: Per turn for a reason the two providers above do not have. `_read_files()`
-#: is synchronous and the corpus port is not, so the mount has to be a snapshot
-#: taken while there is still a coroutine to await in -- which is here, and
-#: nowhere inside a file tool. The cost is one turn of staleness: a document
-#: stored mid-turn is not greppable until the next one. `source_mount.py` has
-#: the rest of the reasoning, including why that is affordable.
-SourcesProvider = Callable[[Session], Awaitable[dict[str, Any]]]
-
 SubagentProvider = Callable[[Session], Awaitable[Sequence[dict]]]
 """The subagents this turn may dispatch, chosen from the session.
 
@@ -289,7 +279,6 @@ class DeepAgentTurnExecutor:
         middleware: Sequence[AgentMiddleware] = (),
         middleware_provider: MiddlewareProvider | None = None,
         tools_provider: ToolProvider | None = None,
-        sources_provider: SourcesProvider | None = None,
         subagents_provider: SubagentProvider | None = None,
         grants: GrantRegistry | None = None,
     ) -> None:
@@ -305,14 +294,6 @@ class DeepAgentTurnExecutor:
         self._middleware = list(middleware)
         self._middleware_provider = middleware_provider
         self._tools_provider = tools_provider
-        # Optional on this class's established convention -- an executor wired
-        # without one builds precisely the agent it built before mounting
-        # existed. The cost is real and worth naming: a composition that
-        # forgets it produces a `grep` that finds no gathered source and says
-        # nothing, which is the failure mounting exists to remove. The ask
-        # executor makes the same argument required, because it has one
-        # composition site and no test that constructs it bare.
-        self._sources_provider = sources_provider
         self._subagents_provider = subagents_provider
         # An all-`auto` policy is the default so that wiring a supervisor is
         # opt-in: without one, nothing is gated and the executor behaves
@@ -407,9 +388,7 @@ class DeepAgentTurnExecutor:
         agent = create_deep_agent(
             model=self._model,
             tools=turn_tools or None,
-            backend=EventSourcedBackend(
-                session, sources=await self._resolved_sources(session)
-            ),
+            backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
             interrupt_on=interrupt_config(
                 self._policy, session_id=session.aggregate_id, grants=self._grants
@@ -507,20 +486,6 @@ class DeepAgentTurnExecutor:
         if self._tools_provider is None:
             return ()
         return await self._tools_provider(session)
-
-    async def _resolved_sources(self, session: Session) -> dict[str, Any]:
-        """This turn's corpus mount, or nothing.
-
-        Resolved per pass rather than per turn, alongside the tools and the
-        middleware. That is more work than the staleness contract requires --
-        `SourcesProvider` promises only that a mount is current as of the turn
-        -- and it is what keeps the three resolutions in one place, which is
-        worth more than the saved reads: a pass that rebuilt its tools from a
-        newer fold than its files would be a seam nobody thinks to look at.
-        """
-        if self._sources_provider is None:
-            return {}
-        return await self._sources_provider(session)
 
     async def _turn_subagents(self, session: Session) -> Sequence[dict]:
         if self._subagents_provider is None:
