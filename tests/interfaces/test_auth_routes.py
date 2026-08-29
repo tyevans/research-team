@@ -396,3 +396,94 @@ def test_a_same_origin_next_survives():
     """The other half, without which the test above passes on a function that
     always returns `/`."""
     assert _safe_next("/p/abc?tab=graph") == "/p/abc?tab=graph"
+
+
+def test_a_thin_id_token_is_filled_in_from_userinfo(client, auth, issuer, recorder):
+    """The account menu drew a snowflake id until this existed.
+
+    Found by signing in to a live Zitadel on 2026-08-29, not by a test: the
+    flow completed, the cookie was set and the `users` row was written, with
+    `email`, `display_name` and `tenant_id` all empty. Zitadel does not assert
+    profile claims into an ID token unless the application opts in, and OIDC
+    permits that -- so `Claims` built from the ID token alone was a display
+    surface with nothing on it.
+
+    The ID token here carries `sub` and nothing else, which is the shape that
+    was shipping.
+    """
+    issuer.userinfo = {
+        "sub": "user-7",
+        "email": "ada@example.test",
+        "name": "Ada Lovelace",
+        "urn:zitadel:iam:user:resourceowner:id": "org-42",
+    }
+    _start_flow(client)
+    flow = _flow_values(auth, client)
+    issuer.next_id_token = issuer.sign_id_token(
+        nonce=flow["nonce"], subject="user-7", email="", name="", tenant_id=""
+    )
+
+    response = client.get("/auth/callback", params={"code": "c", "state": flow["state"]})
+
+    assert response.status_code == 302
+    assert recorder.recorded[0].display_name == "Ada Lovelace"
+    assert recorder.recorded[0].email == "ada@example.test"
+    assert recorder.recorded[0].tenant_id == "org-42"
+
+
+def test_userinfo_is_not_asked_when_the_id_token_already_answers(client, auth, issuer):
+    """A well-configured issuer pays nothing.
+
+    The half that stops the fallback becoming an unconditional second round
+    trip on every sign-in. Deleting the `if claims.email or ...` guard leaves
+    every other test in this file green and turns only this one red.
+    """
+    _start_flow(client)
+    flow = _flow_values(auth, client)
+    issuer.next_id_token = issuer.sign_id_token(nonce=flow["nonce"])
+
+    client.get("/auth/callback", params={"code": "c", "state": flow["state"]})
+
+    assert issuer.userinfo_calls == 0
+
+
+def test_a_userinfo_answer_for_another_subject_is_discarded(client, auth, issuer, recorder):
+    """Userinfo is a bearer-token response, not a signed assertion.
+
+    So it may not decide who the person is. A build that merged it blindly
+    would let whatever answered that endpoint rename -- and, once W-B reads
+    `tenant_id`, re-scope -- an authenticated subject. The sign-in still
+    succeeds, under the thin profile the verified token actually carried.
+    """
+    issuer.userinfo = {"sub": "somebody-else", "email": "mallory@example.test"}
+    _start_flow(client)
+    flow = _flow_values(auth, client)
+    issuer.next_id_token = issuer.sign_id_token(
+        nonce=flow["nonce"], subject="user-7", email="", name="", tenant_id=""
+    )
+
+    response = client.get("/auth/callback", params={"code": "c", "state": flow["state"]})
+
+    assert response.status_code == 302
+    assert recorder.recorded[0].subject == "user-7"
+    assert recorder.recorded[0].email == ""
+
+
+def test_a_refused_userinfo_is_not_a_failed_sign_in(client, auth, issuer, recorder):
+    """A cosmetic gap must not become a login outage.
+
+    `issuer.userinfo` is `None`, so the endpoint answers 404. The person is
+    signed in with the thin profile the token carried, which `AccountMenu`'s
+    `NothingButASubject` story is the rendering of.
+    """
+    _start_flow(client)
+    flow = _flow_values(auth, client)
+    issuer.next_id_token = issuer.sign_id_token(
+        nonce=flow["nonce"], subject="user-7", email="", name="", tenant_id=""
+    )
+
+    response = client.get("/auth/callback", params={"code": "c", "state": flow["state"]})
+
+    assert response.status_code == 302
+    assert client.cookies.get(SESSION_COOKIE)
+    assert recorder.recorded[0].subject == "user-7"

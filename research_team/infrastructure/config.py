@@ -1096,6 +1096,23 @@ def oidc_issuer() -> str:
     return os.getenv("AGENT_OIDC_ISSUER", DEFAULT_OIDC_ISSUER).strip().rstrip("/")
 
 
+def oidc_scopes() -> str:
+    """The space-separated scope set to ask for. Replaces the default wholesale.
+
+    The default (`SCOPES` in `infrastructure/identity/oidc.py`) includes
+    `urn:zitadel:iam:user:resourceowner`, without which `tenant_id` is always
+    empty -- measured against a live Zitadel, not reasoned. That scope is
+    issuer-specific, and an issuer that answers `invalid_scope` rather than
+    ignoring it would refuse every sign-in, so this variable exists to make
+    pointing the app at a different provider one line rather than a patch.
+
+    Replaces rather than appends, deliberately: an "extra scopes" variable
+    cannot remove `urn:zitadel:iam:user:resourceowner` from the request, which
+    is the exact thing somebody on Okta needs to do.
+    """
+    return os.getenv("AGENT_OIDC_SCOPES", "").strip()
+
+
 def oidc_client_id() -> str:
     return os.getenv("AGENT_OIDC_CLIENT_ID", "").strip()
 

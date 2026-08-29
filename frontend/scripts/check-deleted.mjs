@@ -256,6 +256,17 @@ const RULES = [
     forbid: [/window\.confirm\(/],
   },
   {
+    phase: 'W-A',
+    what: 'the 401 handler reloaded the page',
+    why: '**Measured, not predicted: 816 page loads and 6295 401s, and the login screen never rendered.** `Authenticated` deliberately renders the console while `/api/auth/status` is in flight, so a signed-out first render fires the console\'s ordinary requests and every one of them 401s *before* the status answers. A reload threw away the in-flight status query and started the same race again, forever. The handler invalidates the two auth queries instead, which has no navigation in it and so has no race to lose. A `location.reload` or a `location.assign` in this file is that loop coming back -- and it comes back looking like a fix, because "just reload and re-ask" is the obvious thing to write.',
+    // Scoped to `main.tsx`, which is where the handler is composed. Not
+    // repo-wide: `AccountMenu` legitimately calls `location.assign` to sign
+    // out, because signing out *is* a round trip through the server, and a
+    // repo-wide rule would forbid the one navigation this feature needs.
+    where: 'main.tsx',
+    forbid: [/location\.reload/, /location\.assign/],
+  },
+  {
     phase: '3',
     what: 'explanations lived in `title` attributes',
     why: 'S-D3. A `title` is announced on hover, after a delay the operating system owns, and on nothing else -- not on focus, not on touch, not to a screen reader reading a `<span>`. Fifty-one of them carried real sentences ("Also autos the workflow review gate, so a run can cross stage boundaries unattended") and every one of them reached a mouse and no other reader. They are `Tooltip`s where they explained something, accessible names where they named an icon, and deleted where they repeated the text beside them. A `title=` here is one of those three arriving as the fourth.',
