@@ -7,6 +7,8 @@ import { expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
+import { InteractionLogContext } from '@app/interaction-log-provider.tsx'
+import type { Emitter } from '@application/interaction-log/emitter.ts'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import { ApiError } from '@application/ports/errors.ts'
 import type { GraphRepository, UsagesRepository } from '@application/ports/repositories.ts'
@@ -143,10 +145,24 @@ const fakeExports = () => ({
   graphUrl: vi.fn(() => '/api/projects/p/export/graph'),
 })
 
+/** A whole `Emitter`, not a `Pick<Emitter, 'record'>`: `InteractionLogContext`
+ *  is typed as the real thing, and the pane hands the same object to
+ *  `createGraphStore`. */
+const fakeLog = (record: Emitter['record'] = vi.fn()): Emitter => ({
+  record,
+  setContext: vi.fn(),
+  start: vi.fn(),
+  flush: vi.fn(async () => {}),
+  flushOnUnload: vi.fn(),
+  stop: vi.fn(),
+  pending: () => 0,
+})
+
 const renderWithContainer = (
   ui: ReactElement,
   parts: Partial<AppContainer>,
   stream: EventStream = fakeStream().stream,
+  log: Emitter = fakeLog(),
 ) => {
   const container = {
     stream,
@@ -164,7 +180,14 @@ const renderWithContainer = (
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>
         <StreamProvider>
-          <OverlayHost>{children}</OverlayHost>
+          {/* Every other test in this file renders without it and gets the
+              silent default, which is fine for them and useless for the two
+              below: a default that records nothing makes "the pane reports
+              its source" and "the pane was never given a log" the same
+              observation. */}
+          <InteractionLogContext.Provider value={log}>
+            <OverlayHost>{children}</OverlayHost>
+          </InteractionLogContext.Provider>
         </StreamProvider>
       </ContainerProvider>
     </QueryClientProvider>
@@ -222,6 +245,31 @@ it('populates results from a search', async () => {
   await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
 
   expect(await screen.findByText(/Ada Lovelace/)).toBeInTheDocument()
+})
+
+it('records a result picked out of the search panel as source "search"', async () => {
+  /** B110's other half. The pick reaches the store anyway -- through the
+   *  route and the `[entity]` effect's `expandNode` -- which is exactly why
+   *  this needs its own assertion: without the explicit `select` the row is
+   *  still written, and still says `'graph'`. A test that asserted
+   *  `EntityOpened` was recorded at all would pass either way. */
+  const ada = node()
+  const graphs = fakeGraphs({
+    search: vi.fn().mockResolvedValue({ entities: [ada], truncated: false }),
+  })
+  // Held separately from the emitter; see `EntityTreePane.test.tsx`.
+  const record = vi.fn()
+  const user = userEvent.setup()
+
+  renderWithContainer(<RoutedGraphPane />, { graphs }, fakeStream().stream, fakeLog(record))
+
+  await user.type(screen.getByRole('searchbox', { name: /search the graph/i }), 'ada')
+  await user.click(await screen.findByText(/Ada Lovelace/))
+
+  expect(record).toHaveBeenCalledWith('EntityOpened', { entity_id: ada.id, source: 'search' })
+  // And exactly once: the store's `lastOpened` guard is what stops the
+  // `expandNode` that follows from writing a second row saying `'graph'`.
+  expect(record.mock.calls.filter(([kind]) => kind === 'EntityOpened')).toHaveLength(1)
 })
 
 it('expands a clicked result into the canvas', async () => {

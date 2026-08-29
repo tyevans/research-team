@@ -588,7 +588,59 @@ Found on 2026-08-23 while writing Storybook coverage for the console's
 highest-traffic components (#245, #248). Each of these is a real gap that was
 deliberately not closed on the spot, with the reason.
 
+### B160. Two browser tests were red on `main`, and the CI job found them in one run
+
+Filed 2026-08-29, from the first run of the new `browser` job (B140). Both
+predate it; neither is caused by it. They are quarantined in
+`frontend/package.json`'s `test:browser:ci` so the job can protect the other 44
+files, and that list should be emptied rather than grown.
+
+**`src/styles/base-layer.browser.test.tsx` never ran at all.** It imports
+`render` from `@testing-library/react`, which in the browser project fails the
+whole file at import with "Vitest failed to find the current suite" -- a
+message that names nothing about the import, and which the reporter counts as a
+failed *suite* rather than a failed test. So the sweep written to prove that
+#313's `@layer base` fix reached the rest of `tokens.css` has been asserting
+nothing since the day it landed.
+
+Worse, and this is the part that wants a person: switching it to
+`vitest-browser-react`'s `render` makes the file run, and **all three
+assertions fail for real**. `box-content` computes `border-box`; `text-accent`
+on a bare `<a>` computes `rgb(215, 222, 231)` (`--fg`) rather than the accent.
+Measured 2026-08-29. That is the same defect CLAUDE.md records three times
+already -- an unlayered rule in `tokens.css` beating a layered utility -- and it
+is either unfixed or regressed. The rewrite is not committed here: guessing at
+which rules should move into `@layer base` is the owner's call, and a wrong
+guess is invisible for the same reason the original was.
+
+**`src/presentation/curriculum/course-card-sizing.browser.test.tsx` fails on
+the aspect ratio**: the art measures 10.63:1 against a declared 3:2, on the
+`highlight` size. Its own docstring says it was proved red at ratio 0 by
+deleting `CARD_ART`'s `highlight` entry, so this is a third state neither the
+test nor its author has seen. The catalog was reworked twice since (`785f296c`,
+`b3f358c0`), and one of those is the likely cause.
+
+Both are exactly what B140 predicted: a red suite, green gates, and nobody
+finding out until somebody ran it by hand. The difference is that this time it
+took one CI run rather than four merges and a fortnight.
+
 ### B146. The interaction log's browser-to-store seam has no standing test
+
+**Closed 2026-08-29.** The seam is now a committed file neither side writes by
+hand: `frontend/src/infrastructure/http/interaction-wire-format.fixture.json`,
+produced by `interaction-wire-format.test.ts` from the real emitter and the
+real `HttpInteractionSink` through the same `JSON.stringify` and the same
+`Blob` the beacon carries, and read back by
+`tests/interfaces/test_interaction_wire_format.py`, which posts those bytes and
+asserts a stored row per event. Two completeness checks sit either side of it,
+one against `INTERACTION_KINDS` in TypeScript and one against
+`INTERACTION_EVENTS` in Python, so a kind added to one vocabulary and not the
+other fails rather than shipping as a silently rejected event.
+
+The narrow option this entry proposed -- "post a batch with the client's own
+serialiser and assert the row" -- is exactly what was built. The Playwright job
+was not, and is still not obviously worth one: what remains uncovered is HTTP
+itself, which is one `Content-Type` header on the beacon path.
 
 **Verified by hand on 2026-08-23 and working**, which is the reason to file it
 rather than a reason not to: the check cannot currently be made by anything
@@ -643,6 +695,22 @@ would at least pin the wire format the two ends agree on. Neither is obviously
 worth a new job, which is why this is an entry rather than a branch.
 
 ### B140. The tab-strip measurement is a browser test, so CI cannot reach it
+
+**Answered 2026-08-29: the browser suite is in CI**, as job `browser`, on its
+own runner in parallel. The reasoning is in the job's own comment and in
+CLAUDE.md; the short form is that the third of the three costs this entry lists
+(923 jsdom tests competing for the same budget) does not apply to a separate
+runner, and that this entry's own instance -- #249, four merged commits over a
+red suite -- is what stopped it being a prediction.
+
+The path-filtered middle option this entry proposes was the first design and
+was dropped. GitHub's `paths` filter is per workflow rather than per job, so
+scoping one job means a third-party changed-files action in a file that pins
+every action by SHA; and #249 touched neither `src/styles/**` nor
+`presentation/layout/**` -- it added stories -- so a filter drawn around the
+last failure would not have caught the last failure.
+
+The tab-strip measurement itself is unchanged and is now reachable by CI.
 
 `MATERIAL_TABS` in `ProjectView.tsx` carries a measured limit -- "eleven tabs
 is where this strip stops fitting". It is not a preference: `area` and `path`
@@ -731,6 +799,17 @@ entry fails the same assertion -- the inventory cannot rot toward either
 optimism or pessimism.
 
 ### B144. A toast makes the material tabs unclickable
+
+**Fixed 2026-08-29.** `.toasts` moved from `top: calc(var(--topbar-h) + 10px)`
+to `bottom: 14px`. A larger top offset was rejected: it would be the tab
+strip's height written down in a second file and correct only on the one route
+that has a strip.
+
+`frontend/src/presentation/shell/toast-clearance.browser.test.tsx` is the
+standing measurement, and it is a hit test rather than a rect comparison for
+the reason CLAUDE.md gives -- the tabs were the right size, the right colour
+and the right text throughout, and were simply underneath something. Proved red
+by restoring the old `top`.
 
 Measured in Chromium at 1265px on 2026-08-23, by driving the real console
 rather than a story -- which is why it had not been found: every toast story
@@ -4098,6 +4177,22 @@ whichever one is built first should not assume it can get exact interleaving
 across the two stores; it can't, structurally.
 
 ### B110. `select(id, source)` and `EntityTreePane`'s emitter are plumbing with no caller
+
+**Closed 2026-08-29, by wiring rather than by deleting.** Both call sites this
+entry names now pass their own word: `GraphPane.pick` -- a result chosen out of
+the search panel -- calls `select(id, 'search')` before handing the id to the
+route, and `EntityTreePane`'s `onSelect` calls `select(id, 'tree')`, which is
+the first use that pane has ever made of the emitter it was handed.
+
+The tree half was worse than "plumbing": the pane called neither `select` nor
+`expandNode`, so opening an entity from the tree recorded **no `EntityOpened`
+at all**, not merely one with the wrong source. That is not in this entry and
+was found while closing it.
+
+Costs, stated: `'tree'` is a fifth value for a field documented as "graph |
+search | timeline | link", and the timeline pane still records nothing. Rows
+written before today all say `'graph'` regardless of path, so the field is only
+trustworthy from this commit forward.
 
 `GraphState.select` takes a `source` no call site passes, and `EntityTreePane`
 is handed an `emitter` it never uses — it calls neither `select` nor

@@ -31,12 +31,29 @@ import { Toasts } from '@presentation/shell/Toasts.tsx'
 import { TreeView } from '@presentation/tree/TreeView.tsx'
 
 import { useContainer } from './container-context.tsx'
+import { ErrorBoundary, LoggedErrorBoundary } from './ErrorBoundary.tsx'
 import { InteractionLogProvider, useInteractionLog } from './interaction-log-provider.tsx'
 
+/** Two boundaries, not one, and the split is the whole design.
+ *
+ * The outer one catches a throw from `StreamProvider` or from
+ * `InteractionLogProvider` itself -- everything above the log. It cannot
+ * report, because there is no emitter above the provider that supplies it;
+ * `useInteractionLog` there would read the silent default and record into
+ * nothing, which is exactly the failure CLAUDE.md's interaction-log section
+ * says is indistinguishable from working. So it does not pretend to.
+ *
+ * The inner one (`LoggedErrorBoundary`, around the shell in `Console`) catches
+ * every throw from the chrome and the routed view, which is nearly all of
+ * them, and does report. It is also the one whose "Try again" is useful: it
+ * remounts only the page, leaving the stream connection and the emitter's
+ * `(browser_session_id, seq)` pair intact. */
 export const App = () => (
-  <StreamProvider>
-    <Console />
-  </StreamProvider>
+  <ErrorBoundary where="root">
+    <StreamProvider>
+      <Console />
+    </StreamProvider>
+  </ErrorBoundary>
 )
 
 /** The view, as the log names it.
@@ -227,18 +244,32 @@ const Console = () => {
         {/* Renders nothing; see its own comment for why this lives here
             rather than in `application/`. */}
         <ProjectSwitchLog projectId={route.name === 'project' ? route.id : null} />
-        {/* Above the route's content and inside the surface, on every page.
+        {/* Around the surface's content and *inside* `Shell`, so the chrome
+            survives a page that fails to draw: the brand link, the log link
+            and the breadcrumb are the recovery affordances a reader already
+            knows, and a boundary wrapped around `Shell` would take all three
+            down with the page. The cost is stated rather than hidden -- a
+            throw from the chrome itself is not caught here, and falls to the
+            unreporting root boundary in `App`, which loses the whole console.
+            That is the rarer case and the one nothing can do better.
+
+            Inside `InteractionLogProvider`, which is what lets it report at
+            all: above the provider `useInteractionLog` reads the silent
+            default and records into nothing. */}
+        <LoggedErrorBoundary where="console">
+          {/* Above the route's content and inside the surface, on every page.
             A gated call blocks an agent until a person answers it, and the
             person is wherever they happen to be — which is why this is one bar
             in the shell rather than the three per-session call sites it
             replaces. It renders nothing when nothing is pending. */}
-        <DecisionBar />
-        <CurrentView
-          route={route}
-          seekSeconds={seekSeconds}
-          store={sessionStore}
-          onProjectName={setProjectName}
-        />
+          <DecisionBar />
+          <CurrentView
+            route={route}
+            seekSeconds={seekSeconds}
+            store={sessionStore}
+            onProjectName={setProjectName}
+          />
+        </LoggedErrorBoundary>
       </Shell>
     </InteractionLogProvider>
   )

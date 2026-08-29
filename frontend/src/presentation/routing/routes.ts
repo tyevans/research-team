@@ -200,6 +200,7 @@ export const INTERACTION_KINDS = [
   'ActionUndone',
   'ActionRetried',
   'EmptyResultEncountered',
+  'RenderErrorRaised',
 ] as const
 
 export type InteractionKind = (typeof INTERACTION_KINDS)[number]

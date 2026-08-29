@@ -138,7 +138,15 @@ const BUDGET_KB = {
   // interactive widgets on the reference course where there had been 19
   // blocks of raw yaml, and 66 cluster members that fold away instead of
   // burying the course under themselves.
-  app: 112, // our code: every component, store, mapper and stylesheet rule
+  // 115, from 112, for the root `ErrorBoundary`: a fallback surface with a
+  // message, a component stack and three recovery controls, plus the
+  // stylesheet rules it needs. The measured cost is 0.9 kB gzipped and the
+  // headroom is the usual half-kilobyte. What it buys is the difference
+  // between a render throw showing a white screen with the error only in
+  // devtools and one showing the error with three ways out -- which is
+  // exactly the trade this budget is meant to be argued in front of, rather
+  // than shaving the fallback down to an apology to stay under a number.
+  app: 115, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.
