@@ -95,7 +95,8 @@ export const buildContainer = (parts: ContainerParts = {}): Container => {
   const container: Record<string, unknown> = { ...PLAIN_DEFAULTS }
   for (const [key, value] of Object.entries(parts) as [string, unknown][]) {
     if (value === undefined) continue
-    container[key] = typeof value === 'object' && value !== null ? withAbsentRest(key, value) : value
+    container[key] =
+      typeof value === 'object' && value !== null ? withAbsentRest(key, value) : value
   }
   return new Proxy(container, {
     get(target, property, receiver) {

@@ -57,8 +57,14 @@
   padding: 0;
   font-size: inherit;
 }
-.msg-body > .md .md-p:last-child,
-.msg-body > .md .md-list:last-child {
+/* Two dead selectors until 2026-08-29 -- `.md-p` and `.md-list` are classes the
+ * hand-written renderer deleted in #32 used to emit, and `marked` emits neither
+ * (BACKLOG B158). Written as the last *block*, whatever it is, rather than as a
+ * new pair of element selectors: what the rule wants is that a bubble does not
+ * end in the paragraph rhythm of prose, and a message ending in a quote or a
+ * table wanted that just as much and never got it. Unlayered, so it beats
+ * `markdown.css`'s layered `.md p` regardless of specificity. */
+.msg-body > .md > :last-child {
   margin-bottom: 0;
 }
 .msg-body:has(> .md) {
