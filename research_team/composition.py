@@ -6,6 +6,8 @@ swapping any of them is an edit here and nowhere else.
 """
 
 import asyncio
+import contextlib
+import functools
 import logging
 import random
 import time
@@ -1450,36 +1452,83 @@ class Application:
         for task in self._sweep:
             task.cancel()
         self._sweep.clear()
-        await self.research.stop_all()
-        await self.turns.cancel_all()
-        await self.summaries.stop()
-        await self.corpus.stop()
-        await self.topics.stop()
-        await self.definitions.stop()
-        await self.ontology.stop()
-        await self._catalog_runner.stop()
-        await self._course_runner.stop()
-        await self._blurb_cache.close()
-        await self._outline_cache.close()
-        await self.art_store.close()
-        await self._candidate_art_store.close()
-        await self.media_proposals.stop()
-        await self.asks.stop()
-        await self.authoring.stop()
-        await self.dialogues.stop()
-        await self.interaction_log.stop()
-        await self._interaction_store.close()
-        await self.service.close()
-        # Unconditional, whether this client was built here or handed in by a
-        # test: whoever built it, `Application` owns it for its lifetime, and
-        # an unclosed `httpx.AsyncClient` leaks its connection pool.
-        await self._media_http_client.aclose()
-        await self.detach_project()
-        # Every project this instance ever opened a graph for, not just the
-        # one that happened to be attached -- `detach_project` above only
-        # releases that one, and a read route can have opened others through
-        # `graphs` directly without ever attaching them.
-        await self.graphs.close_all()
+        # Every step runs, whatever the ones before it did (B10). The list was
+        # a straight run of `await`s, so the first raise skipped everything
+        # under it -- and the two things furthest down are the ones that leak
+        # hardest: `detach_project` releases a Neo4j driver, and `close_all`
+        # releases every graph store this instance ever opened. A shutdown
+        # path that stops at the first problem is a shutdown path that leaks
+        # most when something has already gone wrong, which is exactly when
+        # nobody is reading the traceback.
+        #
+        # Order is unchanged and still load-bearing: stops before cancels
+        # (see above), projections before the store they read through, and the
+        # two graph releases last. Failures are collected rather than dropped
+        # and re-raised together at the end, so `close()` still fails loudly --
+        # swallowing them would turn one leak into a silent one.
+        await _close_every_step(
+            ("research", self.research.stop_all),
+            ("turns", self.turns.cancel_all),
+            ("summaries", self.summaries.stop),
+            ("corpus", self.corpus.stop),
+            ("topics", self.topics.stop),
+            ("definitions", self.definitions.stop),
+            ("ontology", self.ontology.stop),
+            ("catalog", self._catalog_runner.stop),
+            ("course", self._course_runner.stop),
+            ("blurb cache", self._blurb_cache.close),
+            ("outline cache", self._outline_cache.close),
+            ("art store", self.art_store.close),
+            ("candidate art store", self._candidate_art_store.close),
+            ("media proposals", self.media_proposals.stop),
+            ("asks", self.asks.stop),
+            ("authoring", self.authoring.stop),
+            ("dialogues", self.dialogues.stop),
+            ("interaction log", self.interaction_log.stop),
+            ("interaction store", self._interaction_store.close),
+            ("service", self.service.close),
+            # Unconditional, whether this client was built here or handed in
+            # by a test: whoever built it, `Application` owns it for its
+            # lifetime, and an unclosed `httpx.AsyncClient` leaks its
+            # connection pool.
+            ("media http client", self._media_http_client.aclose),
+            ("attached project", self.detach_project),
+            # Every project this instance ever opened a graph for, not just
+            # the one that happened to be attached -- `detach_project` above
+            # only releases that one, and a read route can have opened others
+            # through `graphs` directly without ever attaching them.
+            ("graphs", self.graphs.close_all),
+        )
+
+
+async def _close_every_step(*steps: tuple[str, Callable[[], Awaitable[object]]]) -> None:
+    """Run every teardown step, then raise whatever any of them raised.
+
+    Shared by `Application.close` (B10) and `build_application`'s unwind
+    (B100), which want the same two properties and would otherwise each grow
+    their own `try/finally` ladder: nothing is skipped because something
+    earlier failed, and nothing is swallowed.
+
+    `BaseException` rather than `Exception`, deliberately: a teardown step that
+    is itself cancelled must not take the remaining steps down with it, which
+    is the case `Application.close` meets when a shutdown races a
+    `KeyboardInterrupt`. The cancellation is re-raised in the group at the end,
+    so it is not lost -- it just stops being a reason to leak a Neo4j driver.
+
+    Raises an `ExceptionGroup` even for a single failure. Uniform on purpose:
+    a caller that has to handle two shapes handles one of them wrong, and the
+    old behaviour -- one bare exception, and everything after it silently not
+    run -- is what this exists to end.
+    """
+    failures: list[BaseException] = []
+    for name, step in steps:
+        try:
+            await step()
+        except BaseException as error:  # noqa: BLE001 -- collected, then re-raised below
+            error.add_note(f"raised while closing: {name}")
+            failures.append(error)
+    if failures:
+        raise BaseExceptionGroup("teardown failed", failures)
 
 
 def _context_parts(
@@ -1575,7 +1624,7 @@ def _extraction_model(injected: BaseChatModel | None) -> BaseChatModel:
     return injected if injected is not None else build_extraction_model()
 
 
-def build_application(
+def _build_application(
     *,
     model: BaseChatModel | None = None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
@@ -3017,6 +3066,152 @@ def build_application(
         _media_http_client=resolved_media_http_client,
         _initial_project_id=project_id,
     )
+
+
+#: Every local in `_build_application` that owns something needing releasing,
+#: paired with how to release it, in `Application.close`'s order. A name list
+#: rather than duck-typing over the frame, because half the locals in there are
+#: caller-injected and closing a `media_http_client` a test still owns would
+#: turn one leak into a different bug.
+#:
+#: `resolved_media_http_client` is deliberately absent. `Application.close`
+#: closes it whether or not the caller supplied it -- correct there, because an
+#: `Application` exists and owns it for its lifetime -- but on a partial build
+#: no `Application` exists, and the caller's client is still the caller's.
+#: B98's ordering already means an un-injected one is never constructed before
+#: the return.
+#:
+#: This drifts if a resource is added to `Application.close` and not here, and
+#: nothing catches that automatically -- `close()` reads attributes off an
+#: instance, this reads names out of a frame, and there is no compiler between
+#: them. `test_a_partial_build_closes_what_it_already_opened` is the only thing
+#: that would notice, and only for the names it names.
+_PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
+    ("research_supervisor", "stop_all"),
+    ("turns", "cancel_all"),
+    ("summaries", "stop"),
+    ("corpus", "stop"),
+    ("topics", "stop"),
+    ("definition_invalidation", "stop"),
+    ("ontology", "stop"),
+    ("catalog_runner", "stop"),
+    ("course_runner", "stop"),
+    ("blurb_cache", "close"),
+    ("outline_cache", "close"),
+    ("art_store", "close"),
+    ("candidate_art_store", "close"),
+    ("media_proposals", "stop"),
+    ("asks", "stop"),
+    ("authoring", "stop"),
+    ("dialogues", "stop"),
+    ("interaction_log", "stop"),
+    ("interaction_store", "close"),
+    ("service", "close"),
+    ("graphs", "close_all"),
+    # Last, and the one B100 is really about: `EventStoreSessionRepository`
+    # holds the SQLite event store, whose aiosqlite worker thread is
+    # non-daemon (B5). A partial build that abandons it does not merely leak
+    # memory -- it parks the interpreter in `threading._shutdown` waiting for
+    # a thread that will never finish, so a misconfiguration that should have
+    # raised cleanly hangs the process instead.
+    ("repository", "close"),
+)
+
+
+def _partial_build_teardown(
+    error: BaseException,
+) -> tuple[tuple[str, Callable[[], Awaitable[object]]], ...]:
+    """Everything `_build_application` had opened when it raised.
+
+    Read out of the raising frame's locals rather than from a registry the
+    function appends to as it builds. The registry is the tidier design and
+    was rejected on cost: it is a line at each of two dozen construction sites
+    spread over 1400 lines of a file three other branches are editing, where
+    this is one place. What it buys with that is honesty about its own
+    weakness -- a name that gets renamed silently stops being torn down, which
+    a registry could not do.
+    """
+    frame = None
+    traceback = error.__traceback__
+    while traceback is not None:
+        if traceback.tb_frame.f_code is _build_application.__code__:
+            frame = traceback.tb_frame
+        traceback = traceback.tb_next
+    if frame is None:
+        return ()
+    steps: list[tuple[str, Callable[[], Awaitable[object]]]] = []
+    for name, method in _PARTIAL_BUILD_RESOURCES:
+        resource = frame.f_locals.get(name)
+        if resource is not None and callable(getattr(resource, method, None)):
+            steps.append((name, getattr(resource, method)))
+    return tuple(steps)
+
+
+@functools.wraps(_build_application)
+def build_application(*args, **kwargs) -> Application:
+    """`_build_application`, with a partial build unwound rather than leaked.
+
+    B100. A raise anywhere in the body used to abandon the event store, the
+    blob store and every projection runner built above it, and B5 makes that
+    worse than a leak: the event store's aiosqlite worker thread is non-daemon,
+    so the process hangs on exit instead of reporting the misconfiguration that
+    caused the raise.
+
+    **The teardown is scheduled, not awaited, when a loop is already running**,
+    and that is the compromise this wrapper is. `build_application` is
+    synchronous -- `build_perception_adapter`'s docstring says why it stays
+    that way -- so there is no `await` available on the raise path. With a
+    running loop the cleanup goes on it as a task and completes once control
+    returns there, which is after the exception has already reached the
+    caller; with no running loop it is run to completion under `asyncio.run`.
+    So a caller that catches the error and immediately inspects the filesystem
+    can observe the store still open. Stated rather than hidden: what this
+    guarantees is that the resources are closed, not when.
+
+    `functools.wraps` over `*args, **kwargs` rather than restating two dozen
+    keyword parameters: the duplicate signature is the thing that would drift.
+    `inspect.signature` still resolves through `__wrapped__`, so callers and
+    tooling see the real parameters.
+    """
+    try:
+        return _build_application(*args, **kwargs)
+    except BaseException as error:
+        steps = _partial_build_teardown(error)
+        if steps:
+            _run_detached(_close_every_step(*steps))
+        raise
+
+
+#: Strong references to in-flight detached teardowns; see `_run_detached`.
+_DETACHED_TEARDOWNS: set[asyncio.Task] = set()
+
+
+def _run_detached(work: Awaitable[None]) -> None:
+    """Run a teardown coroutine from synchronous code, loop or no loop.
+
+    Exceptions are swallowed here and nowhere else in this module: this runs
+    while another exception is already propagating, and a failure to close
+    something must not replace the misconfiguration the caller actually needs
+    to read. `_close_every_step` names each failed step in the group it
+    raises, so the detail is not gone -- it is just not this path's to report.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_swallowing(work))
+        return
+    # Held in a module-level set until it finishes. `create_task` keeps only a
+    # weak reference, so a teardown task with no other owner can be collected
+    # mid-close -- which is the leak this function exists to prevent, arriving
+    # by a different door.
+    task = loop.create_task(_swallowing(work))
+    _DETACHED_TEARDOWNS.add(task)
+    task.add_done_callback(_DETACHED_TEARDOWNS.discard)
+
+
+async def _swallowing(work: Awaitable[None]) -> None:
+    with contextlib.suppress(BaseException):
+        await work
 
 
 def build_service(
