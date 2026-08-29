@@ -214,6 +214,34 @@ def unit_text(files: Mapping[str, Any], area_slug: str) -> str:
     return _content(files, unit_path(area_slug))
 
 
+def stage_one_text(files: Mapping[str, Any], area_slug: str) -> str:
+    """The unit file as Stage 1 left it: everything above the Stage 2 section.
+
+    **Phases 2 and 3 used to be handed phase 1's model *reply* instead**, and
+    that is the half of the crash this fixes. Measured on the owner's database
+    on 2026-08-29: in the three `mid-2000s` runs the parent finished phase 1
+    with `content: ""` -- eighteen model calls, thirty tool calls, no file --
+    so "Stage 1 produced this" would have introduced an empty block had the run
+    got that far. The reply is also the wrong artifact on the runs that *do*
+    work: what the later phases must stay faithful to is the document, and a
+    model that wrote the file and then summarised it differently in prose had
+    two Stage 1s with nothing choosing between them.
+
+    Sliced at `EVIDENCE_HEADING` rather than returned whole because phase 2
+    appends Stage 2 to this same file: handing the whole file to phase 3 as
+    "Stage 1" would show it the evidence section twice, once mislabelled, and
+    `learning_plan_prompt` already tells it to read Stage 2 off disk.
+
+    Returns `""` when the file was never written, which is the same thing
+    `unit_text` returns and is what `check_stage_one` will already have
+    refused -- this is never reached with an unwritten unit except by a caller
+    that skipped the checkpoint.
+    """
+    text = unit_text(files, area_slug)
+    cut = text.find(EVIDENCE_HEADING)
+    return text if cut == -1 else text[:cut]
+
+
 def _section(text: str, heading: str) -> str:
     """Everything from `heading` to the next heading of the same level."""
     start = text.find(heading)

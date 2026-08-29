@@ -27,6 +27,7 @@ components it writes resolve against the same project.
 """
 
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -39,6 +40,7 @@ from research_team.application.authoring_checkpoints import (
     EVIDENCE_HEADING,
     PERFORMANCE_TASK_MARKER,
     UNDERSTANDINGS_HEADING,
+    CheckpointFailed,
     check_assessment,
     check_lessons,
     check_stage_one,
@@ -46,6 +48,7 @@ from research_team.application.authoring_checkpoints import (
     component_counts,
     lesson_paths,
     review_path,
+    stage_one_text,
     unit_path,
 )
 from research_team.application.authoring_dispatch import AUTHORING_DISPATCH_PROMPT
@@ -543,6 +546,36 @@ def path_overview_prompt(path: LearningPath, areas: dict[str, LearningArea]) -> 
     )
 
 
+#: What a retried phase is told, above the phase's own prompt repeated whole.
+#:
+#: The complaint is interpolated from `CheckpointFailed.reason` rather than
+#: paraphrased, so the sentence the model reads is the string the check will
+#: compute again -- the same rule as CLAUDE.md's marker constants, applied to
+#: the failure rather than to the shape.
+#:
+#: The original prompt is repeated in full rather than referred to. It is
+#: already in the conversation, so this is redundant on the happy path; it is
+#: not redundant in the case this exists for, where the phase spent its whole
+#: turn on tool calls and the instructions are twenty tool results back behind
+#: an `elide` placeholder.
+RETRY_PREFACE = (
+    "That phase did not leave behind what the next one needs. The check over "
+    "your files reported:\n\n    {reason}\n\n"
+    "Everything you read last turn is still above this message, and the files "
+    "you did write are still in the workspace -- this is not a fresh start and "
+    "you do not need to research the area again. Fix exactly what the line "
+    "above names. If you cannot ground a section as well as you would like, "
+    "write it thinly and say so in the prose: a unit with a weak section is "
+    "kept, and a phase that ends with nothing written is discarded whole "
+    "along with the phases before it.\n\n"
+    "The phase's instructions again, unchanged:\n\n---\n{prompt}\n---"
+)
+
+
+def _retry_prompt(prompt: str, failure: CheckpointFailed) -> str:
+    return RETRY_PREFACE.format(reason=failure.reason, prompt=prompt)
+
+
 class CourseAuthor:
     """Runs an area's four authoring phases, joining and releasing around them.
 
@@ -577,11 +610,19 @@ class CourseAuthor:
         produces a complete-looking unit and the same settled event. Between
         phases there is somewhere for Python to look.
 
-        The parent's lesson plan is not persisted, and that is a real cost: a
-        phase 3 that dies re-plans from scratch, possibly differently. Writing
-        it to a file would buy resumability and reintroduce the shared-pool
-        problem for anything later that reads it. A phase 3 that dies has
-        usually left a half-written unit worth discarding anyway.
+        **Every phase gets a second attempt in the same session**, which is
+        where this method's recovery story now lives -- see `_phase`. The
+        paragraph this replaces said a phase 3 that dies "has usually left a
+        half-written unit worth discarding anyway", and the log disagrees: of
+        22 authoring sessions in the owner's database on 2026-08-29, four
+        reached all four phases and eighteen did not, and the ones that stopped
+        at phase 2 or 3 were discarding two working phases apiece.
+
+        The parent's lesson plan is still not persisted, and that is still a
+        real cost: a phase 3 whose *second* attempt fails re-plans from scratch
+        if anyone runs the area again. Writing it to a file would buy that back
+        and reintroduce the shared-pool problem for anything later that reads
+        it. The retry narrows how often it matters without settling it.
         """
         run_id = run_id or uuid4()
         session_id = await self._session.start_in_project(
@@ -591,31 +632,50 @@ class CourseAuthor:
         try:
             await self._session.attach_project(project_id)
 
-            first = await self._turns.run(session_id, desired_results_prompt(area, subject))
-            replies.append(first.reply)
-            check_stage_one(await self._files(session_id), area.slug)
-
-            second = await self._turns.run(session_id, evidence_prompt(area, first.reply))
-            replies.append(second.reply)
-            check_stage_two(await self._files(session_id), area.slug)
-
-            third = await self._turns.run(
-                session_id, learning_plan_prompt(area, first.reply, lesson_count)
+            replies.append(
+                await self._phase(
+                    session_id,
+                    desired_results_prompt(area, subject),
+                    lambda files: check_stage_one(files, area.slug),
+                )
             )
-            replies.append(third.reply)
-            after_lessons = await self._files(session_id)
-            check_lessons(after_lessons, area.slug, lesson_count)
+
+            # Stage 1 comes off the file, not off the reply above. See
+            # `stage_one_text`: the reply was empty on every run this change
+            # was written from, and on the runs that worked it was a second,
+            # unreconciled account of a document that already exists.
+            stage_one = stage_one_text(await self._files(session_id), area.slug)
+
+            replies.append(
+                await self._phase(
+                    session_id,
+                    evidence_prompt(area, stage_one),
+                    lambda files: check_stage_two(files, area.slug),
+                )
+            )
+
+            replies.append(
+                await self._phase(
+                    session_id,
+                    learning_plan_prompt(area, stage_one, lesson_count),
+                    lambda files: check_lessons(files, area.slug, lesson_count),
+                )
+            )
             # Read before phase 4 runs, because phase 4's checkpoint has no
             # other way to tell its own contribution from phase 3's: every
             # lesson already carries components by then, so an unconditional
             # "carries a component" check passes a run in which every
             # `quiz-writer` did nothing.
-            before = component_counts(after_lessons, area.slug, lesson_count)
+            before = component_counts(await self._files(session_id), area.slug, lesson_count)
 
-            fourth = await self._turns.run(session_id, assessment_prompt(area, lesson_count))
-            replies.append(fourth.reply)
-            check_assessment(
-                await self._files(session_id), area.slug, lesson_count, before=before
+            replies.append(
+                await self._phase(
+                    session_id,
+                    assessment_prompt(area, lesson_count),
+                    lambda files: check_assessment(
+                        files, area.slug, lesson_count, before=before
+                    ),
+                )
             )
         finally:
             await self._session.release_project(session_id)
@@ -627,6 +687,57 @@ class CourseAuthor:
             run_id=run_id,
             replies=tuple(replies),
         )
+
+    async def _phase(
+        self,
+        session_id: UUID,
+        prompt: str,
+        check: Callable[[dict[str, Any]], None],
+    ) -> str:
+        """One phase: run the turn, check the files, and on a refusal try once
+        more from where it stopped rather than losing the area.
+
+        **The retry is the resumption.** Restarting the area from phase 1 was
+        the only recovery this had, and it is the expensive one: the phases
+        share a session precisely because each reads what the earlier ones
+        wrote, so a phase 3 that failed had two working phases behind it that a
+        fresh run would pay for again. Re-issuing the same phase into the same
+        session keeps the workspace, keeps the conversation, and costs one turn.
+
+        **What makes the second attempt different from the first is not the
+        prose.** The retry prompt adds the checkpoint's own complaint, which is
+        the specific thing that was missing -- but the load-bearing difference
+        is that the failing turn's tool results are now *in* the conversation
+        and its research budget has reset (`ResearchBudget` is built per turn),
+        so the attempt that spiralled through eighteen rounds of graph queries
+        starts the second turn holding all of them. The failure this was
+        written for is a parent that researched and never wrote; the second
+        turn is one where the research is already done.
+
+        **Once, not until it passes.** A phase that fails twice is failing for
+        a reason another turn will not fix -- most often a corpus too thin to
+        carry two enduring understandings -- and a loop there spends a local
+        model's evening rediscovering that. What propagates is the *second*
+        `CheckpointFailed`, chained from the first: both name the same phase,
+        which is what `CourseAuthoringFailed` records, and the second one
+        describes the state the files are actually in when the caller reads
+        them. Chained rather than replaced so a traceback still shows that a
+        retry happened; the run would otherwise report a single failure and
+        two turns' worth of elapsed time with nothing joining them.
+        """
+        outcome = await self._turns.run(session_id, prompt)
+        try:
+            check(await self._files(session_id))
+        except CheckpointFailed as first:
+            retry = await self._turns.run(session_id, _retry_prompt(prompt, first))
+            try:
+                check(await self._files(session_id))
+            except CheckpointFailed as second:
+                raise second from first
+            # The retry's reply, not the first turn's: it is the turn that
+            # produced the files every later phase reads.
+            return retry.reply
+        return outcome.reply
 
     async def _files(self, session_id: UUID) -> dict[str, Any]:
         """This session's workspace, re-read after every phase.
