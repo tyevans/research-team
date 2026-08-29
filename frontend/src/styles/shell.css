@@ -245,9 +245,13 @@
 .btn-danger {
   color: var(--k-failure);
 }
+/* Same defect as `.btn-quiet` below, found beside it: two dark-scheme hexes
+   written literally, so light mode filled this button near-black on hover. They
+   are `--tint-fail` and `--tint-fail-line` spelled out -- byte-identical, so the
+   dark rendering does not move and light stops being wrong. */
 .btn-danger:hover:not(:disabled, [aria-disabled='true']) {
-  background: #241417;
-  border-color: #45272a;
+  background: var(--tint-fail);
+  border-color: var(--tint-fail-line);
 }
 /* Cancel: available, but never louder than the primary action.
  *
@@ -270,20 +274,28 @@
  * It has to sit after `.btn`, which is the reason it is at this line and not at
  * the top of the file: both selectors are 0-1-0 and the later one wins.
  *
- * The doubled `background` is `composer.css`'s own and is kept verbatim -- the
- * first declaration is `#241517` at zero alpha, which every browser that
- * understands 8-digit hex overrides with the second. It is a leftover, not a
- * fallback; it is preserved here because this commit is a filing fix and
- * deleting it would be a pixel change nobody asked for in the same diff. */
+ * The doubled `background` that used to be here is gone with the hexes. It was
+ * `composer.css`'s own -- `#241517` at zero alpha, overridden by the same colour
+ * opaque -- and was kept verbatim through the move because that commit was a
+ * filing fix. A leftover survives a relocation; it does not survive a rewrite.
+ *
+ * **The tone was dark-only until 2026-08-28, and the three hexes are why.**
+ * `#3a2b2c`, `#241517` and `#543336` are dark-scheme colours written literally,
+ * so in light mode "Abandon this course" drew a near-black border and filled
+ * near-black on hover, under `--del-fg`'s dark red: unreadable, and the one
+ * control on the page that did not follow the scheme. The dark column of
+ * `--quiet-line`/`--quiet-line-hover` is those two borders unchanged, so only
+ * light gained anything. `--del-bg` for the fill rather than a third new token,
+ * because the hover fill *is* the deletion tint -- its dark `#2a1315` is nearer
+ * the old `#241517` than either border is to the other. */
 .btn-quiet {
   background: transparent;
-  border-color: #3a2b2c;
+  border-color: var(--quiet-line);
   color: var(--del-fg);
 }
 .btn-quiet:hover:not(:disabled, [aria-disabled='true']) {
-  background: #24151700;
-  background: #241517;
-  border-color: #543336;
+  background: var(--del-bg);
+  border-color: var(--quiet-line-hover);
 }
 
 .btn-ghost {

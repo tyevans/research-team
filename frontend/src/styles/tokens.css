@@ -263,6 +263,16 @@
   inherits: true;
   initial-value: #ff00ff;
 }
+@property --quiet-line {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --quiet-line-hover {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
 
 /* Which way round the console is, from the reader's choice and nothing else.
 
@@ -341,6 +351,8 @@
   --add-bg: var(--color-add-bg);
   --del-fg: var(--color-del-fg);
   --del-bg: var(--color-del-bg);
+  --quiet-line: var(--color-quiet-line);
+  --quiet-line-hover: var(--color-quiet-line-hover);
 
   --mono: var(--font-mono);
   --sans: var(--font-sans);
