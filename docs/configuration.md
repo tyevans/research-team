@@ -4,6 +4,27 @@ Every setting is an environment variable. The README carries the handful a
 first run needs; this file is all of them, plus the reasoning behind the ones
 where the obvious choice is wrong.
 
+**The environment is now the lowest configured layer rather than the only
+one.** Most of the variables below are also *settings*, declared in
+`research_team/domain/settings.py` and overridable per project, per user and
+per tenant through the HTTP surface in
+[`docs/reference/settings-api.md`](reference/settings-api.md). Resolution walks
+project → user → tenant → environment → built-in default, so everything written
+here still holds for a deployment that sets no overrides — which is every
+deployment today, and the reason a headless run needs no settings database.
+
+Seven variables stay environment-only, because a scope cannot answer for them:
+`AGENT_DB`, `AGENT_INTERACTION_DB`, `AGENT_BLOB_ROOT`, `AGENT_PERCEPTION_ROOT`,
+`AGENT_WEB_HOST`, `AGENT_WEB_PORT` and `AGENT_SETTINGS_KEY`. The first four are
+paths resolved before any store opens (and `AGENT_DB` names the database the
+settings table itself lives in), the next two are bound before the first
+request arrives, and the last is the key stored secrets are encrypted with —
+keeping it beside the ciphertext would make the encryption decorative.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_SETTINGS_KEY` | *(unset)* | key for encrypting stored credentials at rest, e.g. `openssl rand -base64 32`. Unset is supported: reads still resolve through the environment, and writing a *secret* setting is refused rather than stored in the clear |
+
 The model is an OpenAI-compatible endpoint, configured entirely by environment
 variable:
 

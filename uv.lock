@@ -2023,6 +2023,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiofiles" },
+    { name = "cryptography" },
     { name = "deepagents" },
     { name = "eventsource-py", extra = ["sqlite"] },
     { name = "fastapi" },
@@ -2055,6 +2056,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1" },
+    { name = "cryptography", specifier = ">=44,<51" },
     { name = "deepagents", specifier = ">=0.7.6,<0.8" },
     { name = "eventsource-py", extras = ["sqlite"], specifier = ">=0.14.0,<0.15" },
     { name = "eventsource-py", extras = ["telemetry"], marker = "extra == 'tracing'", specifier = ">=0.14.0,<0.15" },

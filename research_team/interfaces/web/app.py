@@ -233,6 +233,7 @@ from research_team.interfaces.web.presenters import (
     usages_view,
 )
 from research_team.interfaces.web.seeding import SeedingActivity
+from research_team.interfaces.web.settings import SettingsDeps, settings_router
 
 logger = logging.getLogger(__name__)
 
@@ -1030,6 +1031,7 @@ def create_app(
     art_reroll: ArtReroll | None = None,
     art_generator: ArtGeneratorPort | None = None,
     art_matcher: LibraryArtProvider | None = None,
+    settings: SettingsDeps | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -5796,6 +5798,14 @@ def create_app(
             )
         )
     )
+
+    # The settings and provider routes. Registered unconditionally, with an
+    # empty `SettingsDeps` when composition supplied none: the schema and the
+    # provider catalogue are static data and answer either way, and a 404 for
+    # the whole surface because one collaborator is unwired is the shape of
+    # failure CLAUDE.md's "silent defaults" note is about -- it makes "never
+    # wired" and "no such feature" identical to a caller.
+    app.include_router(settings_router(settings or SettingsDeps()))
 
     if STATIC_DIR.is_dir():
         app.mount("/static", _RevalidatedStatics(directory=STATIC_DIR), name="static")

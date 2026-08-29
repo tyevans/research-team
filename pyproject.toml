@@ -102,6 +102,21 @@ dependencies = [
     # The blob store streams to disk with async file handles rather than
     # blocking the event loop on ordinary `open()` -- see `blob_store.py`.
     "aiofiles>=24.1",
+    # AES-256-GCM for settings secrets at rest
+    # (`infrastructure/settings/secrets.py`). Already present transitively --
+    # every install resolves it today through the HTTP stack -- and named here
+    # for `pyyaml`'s reason on the line above: an undeclared dependency works
+    # right up until the day the package that happened to pull it drops it,
+    # and the symptom here would be an ImportError at startup rather than
+    # anything subtle.
+    #
+    # Floored rather than capped tightly: this uses `AESGCM` and `InvalidTag`
+    # from `hazmat`, two of the most stable names the library has, and the
+    # project's own no-shim caps (eventsource, redstring) exist because those
+    # are pre-1.0 libraries that rename on a minor. `cryptography` is not one.
+    # Capped below the next major all the same, which is where its removals do
+    # land.
+    "cryptography>=44,<51",
     # Perception over stored media: renders a video, audio file or image to
     # text plus a locator map from character offsets to time spans and
     # regions. Capped below the next minor for the reason eventsource-py and
