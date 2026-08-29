@@ -107,6 +107,27 @@ class ExtractionSettings:
     knowledge_domain: str
 
 
+@dataclass(frozen=True)
+class ResearchSettings:
+    """What one project's *agent* talks to.
+
+    Three fields against `ExtractionSettings`' eight, and the difference is not
+    an oversight: extraction is a pipeline with its own concurrency, chunking
+    and domain, where a turn is one conversation with an endpoint. Everything
+    else a turn is shaped by -- its tools, its subagents, its context strategy
+    -- is chosen per turn already and by something other than a setting.
+
+    A bundle rather than three awaits at the call site, for
+    `ExtractionSettings`' reason: the three move together. A model name taken
+    from one resolve and an endpoint from another can straddle a write and send
+    a local model's name to a hosted endpoint.
+    """
+
+    model: str
+    base_url: str
+    api_key: str
+
+
 class EffectiveSettings:
     """Resolved bundles, per project, cached until something is written.
 
@@ -133,6 +154,7 @@ class EffectiveSettings:
         self._profiles = profiles
         self._revision = revision if revision is not None else SettingsRevision()
         self._extraction: dict[UUID | None, tuple[int, ExtractionSettings]] = {}
+        self._research: dict[UUID | None, tuple[int, ResearchSettings]] = {}
 
     def _chain(self, project_id: UUID | None) -> list[ScopeRef]:
         """The scope chain for a project.
@@ -166,6 +188,60 @@ class EffectiveSettings:
         self._extraction[project_id] = (self._revision.value, resolved)
         return resolved
 
+    async def research(self, project_id: UUID | None) -> ResearchSettings:
+        """This project's agent configuration.
+
+        Cached on `(project_id, revision)`, exactly as `extraction` is, and for
+        the same reason: a turn resolves this on the way in, and a per-turn
+        round trip to SQLite for three values that change once a month is a
+        cost paid on every message.
+
+        The bundle this method returns is the whole of what made the settings
+        page's `Models` group real for the agent. Before it, `AGENT_MODEL`,
+        `AGENT_BASE_URL` and `AGENT_API_KEY` were stored, resolved correctly
+        through `/api/settings/resolved`, and read by nothing on the turn path
+        -- `build_model()` answers for the process and is called once, so a
+        person could set a model, watch it save, watch it resolve, and watch
+        every turn go to the endpoint it always had. Which is exactly what this
+        module's own docstring says the store is without a bundle to feed.
+        """
+        cached = self._research.get(project_id)
+        if cached is not None and cached[0] == self._revision.value:
+            return cached[1]
+        resolved = await self._resolve_research(project_id)
+        self._research[project_id] = (self._revision.value, resolved)
+        return resolved
+
+    async def _resolve_research(self, project_id: UUID | None) -> ResearchSettings:
+        chain = self._chain(project_id)
+        resolver = self._resolver()
+        keys = ("model", "base_url")
+        answers = {
+            answer.key: answer.value for answer in await resolver.resolve_all(keys, chain)
+        }
+        model = str(answers["model"])
+        base_url = str(answers["base_url"])
+        api_key = await resolver.secret("api_key", chain)
+
+        # A selected profile wins, and carries all three together -- see
+        # `_resolve_extraction`'s note for what taking them from two places
+        # would send where.
+        profile = await self._profile_for(ModelRole.RESEARCH, chain, resolver)
+        if profile is not None:
+            model = profile.model
+            if profile.base_url:
+                base_url = profile.base_url
+            if profile.credential_key is not None:
+                credential = await resolver.secret(profile.credential_key, chain)
+                if credential is not None:
+                    api_key = credential
+
+        return ResearchSettings(
+            model=model,
+            base_url=base_url,
+            api_key=str(api_key) if api_key is not None else "",
+        )
+
     async def _resolve_extraction(self, project_id: UUID | None) -> ExtractionSettings:
         chain = self._chain(project_id)
         resolver = self._resolver()
@@ -196,7 +272,7 @@ class EffectiveSettings:
         # all three move together; taking the model name from a profile and
         # the key from the setting beside it would send an Anthropic model name
         # to a local vLLM with a key neither accepts.
-        profile = await self._extraction_profile(chain, resolver)
+        profile = await self._profile_for(ModelRole.EXTRACTION, chain, resolver)
         if profile is not None:
             model = profile.model
             if profile.base_url:
@@ -217,10 +293,14 @@ class EffectiveSettings:
             knowledge_domain=str(answers["knowledge_domain"]),
         )
 
-    async def _extraction_profile(
-        self, chain: Iterable[ScopeRef], resolver: SettingsResolver
+    async def _profile_for(
+        self, role: ModelRole, chain: Iterable[ScopeRef], resolver: SettingsResolver
     ) -> ModelProfile | None:
-        """The profile selected for the extraction role, or None.
+        """The profile selected for `role`, or None.
+
+        Parametrised by role rather than one method per role: the two callers
+        want the identical walk over the identical selection list, and a second
+        copy differing only in an enum member is the shape that drifts.
 
         `None` covers three cases a caller does not need to tell apart: no
         profile store wired, no selection made, and a selection pointing at a
@@ -232,7 +312,7 @@ class EffectiveSettings:
         if self._profiles is None:
             return None
         roles = await ModelProfileService(self._profiles, resolver).roles(chain)
-        for role in roles:
-            if role.role is ModelRole.EXTRACTION:
-                return role.profile
+        for selected in roles:
+            if selected.role is role:
+                return selected.profile
         return None

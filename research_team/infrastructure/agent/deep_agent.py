@@ -25,7 +25,7 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
-from research_team.application.effective import ExtractionSettings
+from research_team.application.effective import ExtractionSettings, ResearchSettings
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge_attachment import _compose
 from research_team.application.ports import (
@@ -73,6 +73,16 @@ MiddlewareProvider = Callable[[Session], Awaitable[Sequence[AgentMiddleware]]]
 ToolProvider = Callable[[Session], Awaitable[Sequence[BaseTool]]]
 
 SubagentProvider = Callable[[Session], Awaitable[Sequence[dict]]]
+
+#: The fourth of the per-turn seams, and the one that decides *who answers*
+#: rather than what they are given. It exists because the model is the one
+#: thing about a turn that a person configures per project and that the
+#: executor was holding for the life of the process.
+#:
+#: `None` from a provider means "the executor's own model", which is what a
+#: session belonging to no project resolves to -- not an error, and not a
+#: reason to refuse the turn.
+ModelProvider = Callable[[Session], Awaitable[BaseChatModel | None]]
 """The subagents this turn may dispatch, chosen from the session.
 
 The fourth of the executor's per-turn seams, and it exists for a reason the
@@ -87,8 +97,29 @@ agent it built before this existed.
 """
 
 
-def build_model() -> BaseChatModel:
-    """The local OpenAI-compatible endpoint, fully env-overridable."""
+def build_model(settings: ResearchSettings | None = None) -> BaseChatModel:
+    """The OpenAI-compatible endpoint the agent talks to.
+
+    `settings` is one project's resolved answer, from
+    `application/effective.ResearchSettings`. `None` is the process answer --
+    the environment, then the built-in default, through `config` exactly as
+    this function always did -- which is what a CLI run, the REPL and every
+    test that never names a project still get.
+
+    The parameter is the whole of what makes the settings page's `Models`
+    group reach a turn. Without it this function answers for the *process*,
+    is called once in `_build_application`, and bakes its answer into an
+    executor that outlives every project: a model saved against a project
+    resolved correctly through the API and was read by nothing. See
+    `EffectiveSettings.research`.
+    """
+    if settings is not None:
+        return ChatOpenAI(
+            model=settings.model,
+            base_url=settings.base_url,
+            api_key=settings.api_key,
+            temperature=0,
+        )
     return ChatOpenAI(
         model=config.model_name(),
         base_url=config.base_url(),
@@ -301,6 +332,7 @@ class DeepAgentTurnExecutor:
         middleware_provider: MiddlewareProvider | None = None,
         tools_provider: ToolProvider | None = None,
         subagents_provider: SubagentProvider | None = None,
+        model_provider: ModelProvider | None = None,
         grants: GrantRegistry | None = None,
     ) -> None:
         self._model = model
@@ -316,6 +348,7 @@ class DeepAgentTurnExecutor:
         self._middleware_provider = middleware_provider
         self._tools_provider = tools_provider
         self._subagents_provider = subagents_provider
+        self._model_provider = model_provider
         # An all-`auto` policy is the default so that wiring a supervisor is
         # opt-in: without one, nothing is gated and the executor behaves
         # exactly as it did before interrupts existed.
@@ -326,6 +359,19 @@ class DeepAgentTurnExecutor:
         # registry, `interrupt_config` below has no grant it could ever find,
         # which is `_gate_for`'s own documented behaviour for this case.
         self._grants = grants
+
+    async def _turn_model(self, session: Session) -> BaseChatModel:
+        """Which model answers this turn.
+
+        Falls back to the model this executor was constructed with, which is
+        both the headless answer and the answer for a session belonging to no
+        project. That fallback is why adding this seam changed no existing
+        caller: an executor wired without a provider builds precisely the agent
+        it built before.
+        """
+        if self._model_provider is None:
+            return self._model
+        return await self._model_provider(session) or self._model
 
     @property
     def model_name(self) -> str:
@@ -407,7 +453,7 @@ class DeepAgentTurnExecutor:
         # cannot silently drift into different shadowing rules.
         turn_tools = _compose(self._tools, await self._resolved_tools(session))
         agent = create_deep_agent(
-            model=self._model,
+            model=await self._turn_model(session),
             tools=turn_tools or None,
             backend=EventSourcedBackend(session),
             system_prompt=system_prompt,
