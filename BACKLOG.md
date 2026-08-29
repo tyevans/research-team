@@ -5672,7 +5672,7 @@ scope when something reads it through a *scope chain*; it is not when its only
 reader is `config.<key>()`. Every remaining project-scoped setting was in the
 second position when this was written, and the count is deliberately not
 recorded here, because it is a moving number rather than a fact about the
-system: W-C2's #340 was in flight the same day and wires the extraction family
+system: W-C2's #340 merged the same day and wires the extraction family
 -- `extraction_model` and its `model` fallback, `base_url`, `api_key`,
 `extraction_thinking`, `extraction_concurrency`, `extraction_chunk_size`,
 `consolidation_batch`, `knowledge_domain` -- to resolve per project through a
@@ -5684,9 +5684,15 @@ The test for any one key is one grep: find its reader. If the reader is a
 module-level function in `research_team/infrastructure/config.py` reading
 `os.environ`, the project-scope declaration is decoration. The keys still in
 that position after #340 are the model-and-endpoint remainder (`curation_model`,
-`vision_model`, `embedding_base_url`, `embedding_api_key`), the transcriber and
-perception pair, the whole `context` family, `authoring_rounds`,
+`vision_model`, `embedding_base_url`, `embedding_api_key`), the transcriber pair,
+`perception_max_chars`, the whole `context` family, `authoring_rounds`,
 `catalog_sweep_concurrency`, and the two `searxng` keys.
+
+Confirmed by running on 2026-08-29, when the documentation caught up with #340:
+a project that overrode `base_url` to a dead port failed *extraction* with a
+connection error and reached the *environment's* endpoint for an ask on the same
+project. One key, one project, two roles, two answers -- which is the sharpest
+demonstration available that the property is per reader rather than per setting.
 
 None of those are the same defect as the embedding pair, and none should be
 narrowed. A per-project chat model, context window or knowledge domain is

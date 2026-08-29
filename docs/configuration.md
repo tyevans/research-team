@@ -41,36 +41,75 @@ The three scoped layers cost a database read per request and give you that
 disagreement. They also have **no authorization on them yet** — see the
 warning below.
 
-## What the layers do not yet reach
+## What a scoped override reaches
 
-> **STATUS, 2026-08-29 — delete this whole section when the resolver is wired.**
-> W-C2 is doing that now. This section states what is *connected*, not how the
-> system is meant to work, so it expires rather than needing a rewrite. When
-> `config.py` reads through `SettingsResolver`, delete from this banner to the
-> end of the section, and delete the matching block in
-> [`docs/how-to/bringing-your-own-model.md`](how-to/bringing-your-own-model.md).
-> Nothing else in either file depends on it.
+A write to the project, user or tenant layer always succeeds, and the resolved
+view always reports the correct layer. That tells you the value is *stored*. It
+does not tell you that anything *reads* it. The two are separate questions, and
+this section answers the second.
 
-**An override written at project, user or tenant scope does not change what
-the running agent does.** This is the most important thing to know before you
-use the settings API, and it is easy to miss, because a write succeeds, the
-value reads back correctly, and the resolved view reports the right layer.
+**The rule.** A setting is consumed at project scope when something reads it
+through a scope chain. It is not consumed at project scope when its only reader
+is `config.<key>()`. `research_team/infrastructure/config.py` reads the
+environment and then the built-in default, and nothing else — a process has no
+project and no user, so a `config.model()` call has no scope to answer for. To
+find out about one key, find its reader. If the reader is a module-level
+function in `config.py`, the scoped override is stored and unused.
 
-`research_team/infrastructure/config.py` is what the agent, the extractor, the
-curator and the embedder actually read. Its own docstring says what it
-resolves: "the environment, then the built-in default, and nothing else. It
-has no scope to resolve for -- a process has no project and no user." Verified
-on 2026-08-29 by grep: `SettingsResolver` has no caller outside the settings
-modules themselves.
+**What reads through a scope chain today.** One bundle:
+`research_team/application/effective.py` resolves everything a knowledge
+extraction is configured by, keyed on the project id. `open_graph` asks for it,
+so the bundle covers every ingest, every re-extraction and every catalog sweep.
+These nine settings take effect per project:
 
-So today the settings store is a working, tested surface with no consumer
-below it. Model profiles are the same: `PUT /api/profiles/.../roles/extraction`
-stores the selection and `GET /api/profiles` reports it, but no client is
-built from it. What ships is the registry, the catalogue, the encrypted store
-and the contract. The wiring is the next slice.
+| Setting | What a project override changes |
+|---|---|
+| `extraction_model` | the model the extraction client sends |
+| `model` | the model extraction uses when `extraction_model` is unset |
+| `base_url` | the endpoint the extraction client is built against |
+| `api_key` | the credential that client sends |
+| `extraction_thinking` | whether the extraction model may reason first |
+| `extraction_concurrency` | how many chunks are in flight |
+| `extraction_chunk_size` | the chunk width |
+| `consolidation_batch` | how many entities are decided together |
+| `knowledge_domain` | the schema extraction is prompted against |
 
-**To change what this process does, set the environment variable.** Every
-setting has one, including every provider credential.
+A model profile selected for the **extraction** role wins over `extraction_model`,
+`base_url` and `api_key` together. The three move as one, because a profile's
+model name sent to another profile's endpoint is a call neither accepts. The
+credential comes from the setting the profile's `credential_key` names, so a
+`provider_key.*` secret set at project scope is also consumed at project scope
+through this path.
+
+The bundle is resolved again after each write. A setting saved through the API
+reaches the next run, not the next restart.
+
+**What is still process-wide.** Every other setting in the tables below. The
+research agent, the media curator, the embedder, the vision describer, the
+transcriber, the context strategy, course authoring, the catalog sweeps and the
+network search tool all read `config.<key>()`. A project override of
+`searxng_url`, `context_trigger`, `curation_model`, `vision_model` or
+`authoring_rounds` is recorded and has no effect. Each was settled by the rule
+above — one grep for the reader. `searxng_url` is the clearest: `build_application`
+reads it once, before any project exists, and the answer decides whether the
+agent gets a search tool at all. Set the environment variable for these.
+
+`model`, `base_url` and `api_key` are in both positions, and that is the one
+result here worth stating twice: they are per project for extraction, and
+process-wide for the research agent. `BACKLOG.md` B183 names the seam each
+remaining role needs; `BACKLOG.md` B182 is the general property.
+
+**Measured on 2026-08-29, on a live server, not reasoned.** A project with
+`base_url` overridden to a dead port failed its extraction with a connection
+error, while a project with no override reached the configured endpoint and got
+an answer from it. Setting `extraction_model` on the second project made the
+endpoint report that exact name; selecting a profile for the extraction role
+then made it report the profile's model instead. On the *first* project — the
+one whose `base_url` names a dead port — the research agent still reached the
+environment's endpoint, which is the process-wide half of the same result.
+
+[`docs/reference/settings-api.md`](reference/settings-api.md) holds the same
+list beside the HTTP contract.
 
 ## The seven environment-only settings
 
@@ -136,10 +175,17 @@ The **Scope** column says which of the three scoped layers may set a value:
 
 | Variable | Default | Scope | Meaning |
 |---|---|---|---|
-| `AGENT_EMBEDDING_MODEL` | `nomic-embed-text` | any | Turns text into vectors. **Not** `AGENT_MODEL`, which names a chat model |
-| `AGENT_EMBEDDING_DIMENSION` | `768` | any | That model's vector width. A property of the model, not a preference |
+| `AGENT_EMBEDDING_MODEL` | `nomic-embed-text` | tenant | Turns text into vectors. **Not** `AGENT_MODEL`, which names a chat model |
+| `AGENT_EMBEDDING_DIMENSION` | `768` | tenant | That model's vector width. A property of the model, not a preference |
 | `AGENT_EMBEDDING_BASE_URL` | *(the chat endpoint)* | any | Where embedding requests go. llama.cpp serves one model per process, so this is usually a second port |
 | `AGENT_EMBEDDING_API_KEY` | *(the chat key)* | any | Credential for the embedding endpoint. **Secret** |
+
+**The first two are tenant-scoped, and that is a decision rather than an
+oversight.** `AGENT_EMBEDDING_DIMENSION` is baked into a vector store that every
+project in the process shares. Two projects that disagree about the width raise
+`DimensionMismatchError` on the first write, and that write is an event the
+ingest cannot retry past. A per-project answer here is incoherent, not merely
+unread, so the two keys refuse a project override with a 422.
 
 ### Perception
 

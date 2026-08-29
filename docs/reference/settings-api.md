@@ -417,6 +417,13 @@ and a `config.extraction_model()` call has no project to answer for.
 themselves -- so a setting saved through `PUT` reaches the next run rather than
 the next restart.
 
+**The rule, which outlives any list below.** A setting is consumed at project
+scope when something reads it through a *scope chain*. It is not when its only
+reader is `config.<key>()`. To settle one key, find its reader: a module-level
+function in `research_team/infrastructure/config.py` means the project-scope
+declaration is decoration. `BACKLOG.md` B182 is why this is a rule rather than a
+test.
+
 **Per project today.** Everything one knowledge extraction is configured by,
 resolved at `open_graph` and therefore covering every ingest, re-extraction and
 catalog sweep -- all of which run detached from any request:
@@ -435,10 +442,25 @@ catalog sweep -- all of which run detached from any request:
 A model profile selected for `ModelRole.EXTRACTION` wins over all of the model
 fields at once -- its model, its `base_url` and the secret its `credential_key`
 names move together, because a profile's model name sent to another profile's
-endpoint is a call neither accepts.
+endpoint is a call neither accepts. A `provider_key.*` secret is therefore also
+consumed at project scope, through that one path and no other. `base_url` is
+replaced only when the profile carries one; the field is optional.
+
+**Verified by running, on 2026-08-29.** Two projects on one live server. The
+first overrode `base_url` to a dead port and failed extraction with a connection
+error; the second, with no override, reached the configured endpoint and got an
+HTTP 400 naming the model. Writing `extraction_model` on the second project made
+the next run report that name, which is the cache invalidation as well as the
+resolution. Selecting a profile for the extraction role then made the run report
+the profile's model instead. On the first project, `POST /api/projects/{id}/ask`
+still reached the *environment's* endpoint -- the same `base_url` key, ignored by
+the research role while the extraction role obeyed it.
 
 **Still process-wide, and why.** The research, curation, embedding and vision
-roles resolve through `config` as they always did. Embedding is the one with a
+roles resolve through `config` as they always did. So do the transcriber pair,
+the whole `context` family, `authoring_rounds`, `catalog_sweep_concurrency`,
+`perception_max_chars` and the two `searxng` keys: a project override of any of
+them is stored, resolves correctly, and reaches nothing. Embedding is the one with a
 structural reason rather than a scheduling one: `embedding_dimension` is baked
 into a vector store two projects share, so a per-project width is
 `DimensionMismatchError` on the first write -- which is why `embedding_model`
