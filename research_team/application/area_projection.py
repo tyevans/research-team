@@ -18,8 +18,12 @@ because it is a string. See `infrastructure/knowledge/entity_embeddings.py`.
 
 What survives of the original argument, and why the graph still leads: a
 semantic edge is a hypothesis nobody stated, so it is weighted below an
-asserted relationship and admitted only above a similarity floor. The graph
-decides the shape; embeddings close the gaps in it.
+asserted relationship and admitted only when it stands out from the entity's
+own neighbourhood. The graph decides the shape; embeddings close the gaps in
+it. That admission test was an absolute cosine floor until 2026-08-29 and is
+now relative; `MIN_NEIGHBOUR_STANDOUT` carries the measurement that changed
+it, and the short version is that a cosine floor is a per-model constant and
+the embedding model is a setting.
 
 Everything in this module is pure. It takes a graph and a co-mention map and
 returns areas; it opens nothing, calls no model, and has no clock. That is
@@ -113,16 +117,63 @@ EMBEDDING_WEIGHT = 0.6
 #: method depends on.
 EMBEDDING_NEIGHBOURS = 5
 
-#: The similarity below which a semantic edge is not drawn at all.
+#: How far above an entity's *own* neighbour distribution a pair has to stand
+#: before it is drawn, in standard deviations.
 #:
-#: On redstring's scale, which is `(1 + cosine) / 2` -- so 0.5 is orthogonal
-#: and this is a cosine of about 0.66, not of 0.83. Set where two entity cards
-#: have to genuinely be about the same subject rather than merely both being
-#: prose in the same language, because an embedding's *nearest* neighbour
-#: exists whether or not it is related to anything. Without a floor, the
-#: sparsest corner of a graph gets the same five edges per node as the densest,
-#: which is where a k-nearest-neighbour graph invents structure.
-MIN_EMBEDDING_SCORE = 0.83
+#: **This replaced an absolute cosine floor (`MIN_EMBEDDING_SCORE = 0.83`) on
+#: 2026-08-29, and the reason is a measurement rather than a preference.** The
+#: floor's docstring claimed it was set "where two entity cards have to
+#: genuinely be about the same subject". Against `qwen3-embedding-0.6b` over
+#: real `card_text` cards it was not: 20 entities across four disjoint domains
+#: (computing, marine biology, monetary policy, baroque music), all 190 pairs
+#: scored on redstring's `(1 + cosine) / 2` scale --
+#:
+#:     unrelated (cross-domain, n=150)  median 0.6783  p95 0.7543  max 0.7808
+#:     related   (within-domain, n=40)  median 0.8274  p95 0.9294  max 0.9550
+#:
+#: -- so 0.83 sat at the *median of genuinely related pairs*, not near the
+#: unrelated band. It discarded 21 of 40 true pairs, including five entities'
+#: own correct nearest neighbour (London -> Ada Lovelace at 0.8039, Harpsichord
+#: -> Brandenburg Concertos at 0.8157, Counterpoint at 0.8205, Leipzig at
+#: 0.8237, Ada Lovelace -> Charles Babbage at 0.8276). Precision 1.00, recall
+#: 0.475.
+#:
+#: The worse half is what an absolute floor does to a *single-domain* corpus,
+#: which is what a real project graph is. Every one of those four domains is
+#: five entities and ten possible pairs, and 0.83 kept:
+#:
+#:     baroque music     1/10        marine biology  5/10
+#:     computing         3/10        monetary policy 10/10  (a complete graph)
+#:
+#: The floor is not measuring structure, it is measuring how high in the scale
+#: that corpus's vocabulary happens to sit -- and on the finance corpus it
+#: admitted every pair, which is precisely the k-nearest-neighbour-invents-
+#: structure failure it was written to prevent. A relative cut at z=1.0 kept
+#: 3, 4, 3 and 4 across the same four, and on the multi-domain corpus scored
+#: precision 0.974 at recall 0.925 against 0.83's 1.000 at 0.475 -- it
+#: dominates the absolute floor over the whole trade-off frontier (absolute
+#: 0.80 gets 1.000/0.675; relative z=1.25 gets 1.000/0.800).
+#:
+#: **And an absolute cosine is a per-model constant wearing a universal one's
+#: clothes.** The embedding model is a setting (`embedding_model` in
+#: `domain/settings.py`, `AGENT_EMBEDDING_MODEL`), so a user pointing at a
+#: different provider silently changes what 0.83 means -- every model has its
+#: own band, and nothing here would have said so. A z-score is computed from
+#: whatever the configured model returns for *this project's* entities, so it
+#: survives a model swap; a cosine does not.
+#:
+#: 1.0 rather than 1.25 or 0.75: 1.25 buys the last 2.6% of precision for 12.5%
+#: of recall, and 0.75 admits a cross-domain pair per 9 drawn. Neither is a
+#: cliff, which is the point -- the instrument is not fragile at its setting
+#: the way 0.83 was, where every live pair sat within 0.07 of the constant.
+MIN_NEIGHBOUR_STANDOUT = 1.0
+
+#: The standout above `MIN_NEIGHBOUR_STANDOUT` at which a semantic edge earns
+#: `EMBEDDING_WEIGHT` in full. Pairs above it are clipped rather than scaled
+#: further: the top of a z distribution is set by how tight the *rest* of the
+#: row is, so an entity with one near-duplicate and eighteen strangers can
+#: reach z=4 without that pair being any better evidence than one at z=2.
+STANDOUT_SPAN = 1.0
 
 
 class CoMentionPort(Protocol):
@@ -162,13 +213,24 @@ class SemanticPort(Protocol):
     """
 
     async def neighbours(self, entity_ids: Sequence[str]) -> Sequence[tuple[str, str, float]]:
-        """Close pairs among `entity_ids`, as `(left, right, score)`.
+        """Close pairs among `entity_ids`, as `(left, right, standout)`.
 
-        `score` is on redstring's `(1 + cosine) / 2` scale. Pairs are
-        unordered and each is expected at most once with `left < right`; an
-        adapter that yields both directions doubles that pair's weight, which
-        is why the ordering is the port's contract and not the caller's
-        cleanup.
+        **`standout` is not a similarity.** It is how far above its own
+        endpoint's neighbour distribution the pair sits, in standard
+        deviations -- so 0 is "as close as this entity is to everything" and
+        `MIN_NEIGHBOUR_STANDOUT` is the cut. It used to be a cosine on
+        redstring's `(1 + cosine) / 2` scale, and the constant that read it
+        was per-model without saying so; see `MIN_NEIGHBOUR_STANDOUT` for the
+        measurement that changed it.
+
+        A relative measure also puts the decision where the adapter has the
+        information: this module sees pairs, and only the adapter sees the
+        distribution a pair has to stand out from.
+
+        Pairs are unordered and each is expected at most once with
+        `left < right`; an adapter that yields both directions doubles that
+        pair's weight, which is why the ordering is the port's contract and
+        not the caller's cleanup.
         """
         ...
 
@@ -223,32 +285,31 @@ def _semantic_edges(
 ) -> dict[tuple[str, str], float]:
     """Weighted pair contributions from embedding similarity.
 
-    The score is rescaled from `[MIN_EMBEDDING_SCORE, 1.0]` onto
-    `[0, EMBEDDING_WEIGHT]` rather than used as a multiplier directly, and the
-    difference is not cosmetic. Cosine similarities among real entity cards
-    live in a narrow band near the top of the scale -- two unrelated documents
-    of English prose score well above 0.5 -- so `EMBEDDING_WEIGHT * score`
-    gives a pair that barely cleared the floor about four fifths the weight of
-    a pair that is a perfect match, which is not a distinction, it is noise
-    with a number on it. Rescaling makes the floor mean zero, so an edge admitted
-    by a hair contributes by a hair.
+    The port's third element is a *standout* -- how many standard deviations
+    the pair sits above that entity's own similarity row -- not a cosine, and
+    it is rescaled from `[MIN_NEIGHBOUR_STANDOUT, +STANDOUT_SPAN]` onto
+    `[0, EMBEDDING_WEIGHT]` rather than used as a multiplier directly. The
+    rescale is the same idea the absolute floor's version had and is not
+    cosmetic: an edge admitted by a hair has to contribute by a hair, or the
+    threshold becomes the only decision the channel makes.
 
-    Pairs below the floor are dropped here as well as in the adapter. The
-    adapter has the store and the cheaper filter; this is a pure function and
-    is where the constant's meaning is testable.
+    Clipped at the top, which the cosine version did not need. A z has no
+    ceiling, and `EMBEDDING_WEIGHT * z` would let one entity with a
+    near-duplicate and a tight row outweigh an asserted relationship.
+
+    Pairs below the cut are dropped here as well as in the adapter. The
+    adapter has the store and computes the standout; this is a pure function
+    and is where the constant's meaning is testable.
     """
-    span = 1.0 - MIN_EMBEDDING_SCORE
     edges: dict[tuple[str, str], float] = {}
-    for left, right, score in pairs:
+    for left, right, standout in pairs:
         if left == right or left not in known or right not in known:
             continue
-        if score < MIN_EMBEDDING_SCORE:
+        if standout < MIN_NEIGHBOUR_STANDOUT:
             continue
         key = (left, right) if left < right else (right, left)
-        weight = (
-            EMBEDDING_WEIGHT * (score - MIN_EMBEDDING_SCORE) / span
-            if span
-            else EMBEDDING_WEIGHT
+        weight = EMBEDDING_WEIGHT * min(
+            1.0, (standout - MIN_NEIGHBOUR_STANDOUT) / STANDOUT_SPAN
         )
         # `max`, not `+`: an adapter yielding a pair twice (both directions,
         # or once per endpoint's neighbour list) must not make that pair twice

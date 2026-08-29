@@ -27,14 +27,30 @@ is alive. A real ingest of a five-entity document, embedded by the real
     Charles Babbage -- Ada Lovelace        0.8745
     Difference Eng. -- Analytical Engine   0.8951
 
-Every score sits just above `MIN_EMBEDDING_SCORE` (0.83), which is the part
-worth keeping in view: the channel is alive, and it is alive by two hundredths.
+Every score sat just above the then-current `MIN_EMBEDDING_SCORE` (0.83),
+which is the part that mattered: the channel was alive, and alive by two
+hundredths. **That measurement is why the constant is gone.** Characterising
+the band it sat in -- 20 entities across four disjoint domains, all 190 pairs,
+same model, same real `card_text` cards -- found 0.83 sitting at the *median
+of genuinely related pairs* rather than near the unrelated band:
+
+    unrelated (cross-domain, n=150)  median 0.6783  p95 0.7543  max 0.7808
+    related   (within-domain, n=40)  median 0.8274  p95 0.9294  max 0.9550
+
+and, worse, answering completely differently corpus to corpus on the
+single-domain graphs a real project actually is (1/10 pairs kept on baroque
+music, 10/10 on monetary policy -- a complete graph). `MIN_NEIGHBOUR_STANDOUT`
+in `application/area_projection.py` carries the full table and the reasoning;
+the port now reports a per-entity z-score and the pairs below are quoted on
+the old scale for the record.
+
 `test_the_live_endpoint_draws_semantic_edges_over_a_real_ingest` is that
 measurement, kept runnable with `-m live`.
 
 **Why the CI arm does not use `FakeEmbeddingProvider`.** Its vectors come from
 a hash and carry no semantics by its own docstring, so every pair scores near
-0.5 -- below the floor -- and a "live" arm built on it would assert zero and
+0.5 -- with no structure for a relative cut to find either -- and a "live" arm
+built on it would assert zero and
 prove nothing. Measured here first: with `FakeEmbeddingProvider` the whole loop
 runs, the card store is filled, every id resolves, and `semantic_count` is
 still 0. That is a fixture artefact and would have read as the defect.
@@ -57,6 +73,7 @@ from research_team.application.curriculum import CurriculumService
 from research_team.application.knowledge import SourceRef
 from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
+from research_team.infrastructure.knowledge.entity_cards import Neighbour, card_text
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.semantic_neighbours import VectorNeighbours
 from tests.conftest import fake_provider
@@ -122,8 +139,8 @@ class CardWordEmbeddings:
     Bag of words, hashed into `DIMENSION` slots and normalised. Two entity
     cards that share vocabulary land close together; two that share none land
     orthogonal. That is not a model, and nothing here claims it ranks as well
-    as one -- it is the minimum property `MIN_EMBEDDING_SCORE` needs in order
-    to be a threshold rather than a wall.
+    as one -- it is the minimum property `MIN_NEIGHBOUR_STANDOUT` needs in
+    order to be a threshold rather than a wall.
 
     Deterministic per text, like `FakeEmbeddingProvider`, so nothing here
     depends on a seed or on the order cards are assembled in.
@@ -300,7 +317,7 @@ async def test_the_live_endpoint_draws_semantic_edges_over_a_real_ingest(
 
     Deselected by default, so this is not a gate. It exists because the CI arm
     above uses a bag-of-words provider, which proves the wiring and says
-    nothing about whether real card embeddings clear `MIN_EMBEDDING_SCORE` --
+    nothing about whether real card embeddings clear `MIN_NEIGHBOUR_STANDOUT` --
     and that is the question the co-mention incident was really about. The
     answer on 2026-08-29 was five pairs, every one within 0.07 of the floor.
 
@@ -336,6 +353,173 @@ async def test_the_live_endpoint_draws_semantic_edges_over_a_real_ingest(
     )
     assert curriculum.projection.semantic_count > 0, (
         "real card embeddings over a real ingest drew nothing above "
-        "MIN_EMBEDDING_SCORE; the channel is configured and contributes "
+        "MIN_NEIGHBOUR_STANDOUT; the channel is configured and contributes "
         "nothing, which is the co-mention defect with a different cause"
+    )
+
+
+#: Two disjoint domains, five entities each, written as the cards a real
+#: extraction would produce. Small enough to hand-check and structured enough
+#: that "drew nothing" and "drew everything" are both visibly wrong.
+TWO_DOMAINS = {
+    "computing": [
+        ("Ada Lovelace", "Person", [("WORKED_WITH", "Charles Babbage")]),
+        ("Charles Babbage", "Person", [("DESIGNED", "Analytical Engine")]),
+        ("Analytical Engine", "Machine", [("DESIGNED_BY", "Charles Babbage")]),
+        ("Difference Engine", "Machine", [("DESIGNED_BY", "Charles Babbage")]),
+        ("Mechanical Computer", "Machine", [("EXAMPLE", "Analytical Engine")]),
+    ],
+    "marine biology": [
+        ("Humpback Whale", "Species", [("FEEDS_ON", "Krill")]),
+        ("Krill", "Species", [("EATEN_BY", "Humpback Whale")]),
+        ("Baleen", "Anatomy", [("PART_OF", "Humpback Whale")]),
+        ("Plankton Bloom", "Event", [("FEEDS", "Krill")]),
+        ("Gulf of Maine", "Place", [("HOSTS", "Humpback Whale")]),
+    ],
+}
+
+
+async def _cards_in_a_store(embeddings, dimension):
+    """Real `card_text` cards through a real provider into a real store."""
+    tenant_id = uuid4()
+    store = InMemoryVectorStore(dimension=dimension)
+    domain_of: dict[str, str] = {}
+    order: list[UUID] = []
+    texts: list[str] = []
+    for domain, rows in TWO_DOMAINS.items():
+        for name, entity_type, edges in rows:
+            entity_id = uuid4()
+            domain_of[str(entity_id)] = domain
+            order.append(entity_id)
+            texts.append(
+                card_text(
+                    name=name,
+                    entity_type=entity_type,
+                    aliases=(),
+                    properties={},
+                    neighbours=[
+                        Neighbour(relationship_type=t, name=n, outgoing=True) for t, n in edges
+                    ],
+                )
+            )
+    for entity_id, vector in zip(order, await embeddings.embed(texts), strict=True):
+        await store.upsert(entity_id, vector, tenant_id)
+    return tenant_id, store, order, domain_of
+
+
+@pytest.mark.asyncio
+async def test_the_instrument_separates_two_domains_and_still_draws_inside_each():
+    """**The test a wrong retune has to fail**, in both directions at once.
+
+    This file's first two tests assert the channel is *wired*. Neither can see
+    the channel being tuned into silence: a projection with every pair below
+    the cut still has a card store, still resolves every id, and still returns
+    a curriculum -- with `semantic_count` at 0, which is the co-mention defect
+    with a different cause. That risk was live and measured. On 2026-08-29
+    every pair the live endpoint drew sat within 0.07 of the absolute
+    `MIN_EMBEDDING_SCORE` this repository then had, so a retune of two
+    hundredths would have switched most of the channel off and nothing here
+    would have said so.
+
+    Two assertions, because either alone is trivially satisfiable by a
+    degenerate instrument:
+
+    * **no cross-domain pair** -- a cut lowered until the channel joins
+      whales to computers passes any "it drew something" test;
+    * **at least one pair inside each domain** -- a cut raised until the
+      channel draws nothing passes any precision test perfectly.
+
+    Run over `CardWordEmbeddings`, not `FakeEmbeddingProvider`, for the reason
+    this file's docstring gives: hash vectors have no semantics, so both
+    assertions would hold vacuously.
+
+    **Proved red on 2026-08-29** by moving the constant rather than the code,
+    which is the failure it exists to catch. Swept over this corpus, the cut
+    holds both assertions from below 0 up to 2.1; at **2.2** computing goes
+    silent and the second assertion fails, and at 2.5 the channel draws
+    nothing at all. Below **0** ten cross-domain pairs appear and the first
+    assertion fails -- that is not a hypothetical setting, it is what "just
+    take each entity's top five" means written as a number.
+
+    **The honest limit of the first assertion**, stated rather than left for
+    someone to discover: `CardWordEmbeddings` puts these two domains at right
+    angles, so between 0 and 2.1 the crossing count is 0 at every cut and the
+    assertion has no teeth in that range. It has them at the boundary and it
+    costs nothing; the arm that tests precision against similarities a real
+    model actually produces is
+    `test_the_live_endpoint_keeps_four_domains_apart` below, where the
+    unrelated band tops out at 0.7808 and the related band starts below it.
+    """
+    tenant_id, store, order, domain_of = await _cards_in_a_store(
+        CardWordEmbeddings(), DIMENSION
+    )
+
+    pairs = await VectorNeighbours(store, tenant_id=tenant_id).neighbours(
+        [str(entity_id) for entity_id in order]
+    )
+
+    crossings = [
+        (left, right) for left, right, _ in pairs if domain_of[left] != domain_of[right]
+    ]
+    assert not crossings, (
+        f"{len(crossings)} of {len(pairs)} pairs joined two disjoint domains; "
+        "the cut has been lowered past the point where it separates anything"
+    )
+    drawn = {domain_of[left] for left, _, _ in pairs} | {
+        domain_of[right] for _, right, _ in pairs
+    }
+    assert drawn == set(TWO_DOMAINS), (
+        f"only {sorted(drawn)} drew a semantic edge; a cut raised until a "
+        "domain of five related entities has no neighbours has switched the "
+        "channel off, which is exactly what nothing caught before"
+    )
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_the_live_endpoint_keeps_four_domains_apart():
+    """The distribution that retired the absolute floor, kept re-runnable.
+
+    Deselected by default. It is the arm the CI one cannot be: bag-of-words
+    puts two domains at right angles, where the real model puts every pair of
+    English entity cards in a narrow band near the top of the scale, and the
+    whole question is where inside that band a cut belongs.
+
+    Measured on 2026-08-29 against `qwen3-embedding-0.6b`, 20 entities over
+    four disjoint domains, on redstring's `(1 + cosine) / 2` scale:
+
+        unrelated (n=150)  p05 0.6051  median 0.6783  p95 0.7543  max 0.7808
+        related   (n=40)   p05 0.7356  median 0.8274  p95 0.9294  max 0.9550
+
+    The bands overlap, which is the finding: there is no cosine that keeps
+    every related pair and drops every unrelated one. The old 0.83 bought
+    precision 1.000 at recall 0.475. `MIN_NEIGHBOUR_STANDOUT = 1.0` measured
+    precision 0.974 at recall 0.925 over the same pairs, and every absolute
+    floor is dominated somewhere on that frontier.
+
+    Prints the whole distribution rather than only asserting, because a single
+    pass/fail over a threshold question is how the previous constant survived.
+    """
+    from research_team.infrastructure.agent.deep_agent import build_embedding_provider
+
+    os.environ["AGENT_EMBEDDING_BASE_URL"] = LIVE_BASE_URL
+    os.environ["AGENT_EMBEDDING_MODEL"] = LIVE_MODEL
+    os.environ["AGENT_EMBEDDING_DIMENSION"] = str(LIVE_DIMENSION)
+    os.environ.setdefault("AGENT_EMBEDDING_API_KEY", "not-checked-locally")
+
+    tenant_id, store, order, domain_of = await _cards_in_a_store(
+        build_embedding_provider(), LIVE_DIMENSION
+    )
+    pairs = await VectorNeighbours(store, tenant_id=tenant_id).neighbours(
+        [str(entity_id) for entity_id in order]
+    )
+    for left, right, standout in sorted(pairs, key=lambda pair: -pair[2]):
+        same = "same " if domain_of[left] == domain_of[right] else "CROSS"
+        print(f"{same}  {standout:.2f}")
+
+    crossings = sum(1 for left, right, _ in pairs if domain_of[left] != domain_of[right])
+    assert pairs, "the live endpoint drew nothing over two five-entity domains"
+    assert crossings <= 1, (
+        f"{crossings} of {len(pairs)} pairs joined whales to computers; the "
+        "measured rate at this cut was 1 in 38"
     )

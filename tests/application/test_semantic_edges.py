@@ -16,7 +16,8 @@ import pytest
 
 from research_team.application.area_projection import (
     EMBEDDING_WEIGHT,
-    MIN_EMBEDDING_SCORE,
+    MIN_NEIGHBOUR_STANDOUT,
+    STANDOUT_SPAN,
     _adjacency,
     _semantic_edges,
     project_areas,
@@ -24,6 +25,11 @@ from research_team.application.area_projection import (
 from research_team.application.graph_read import Graph, GraphEntity, GraphRelationship
 
 KNOWN = frozenset({"a", "b", "c"})
+
+#: The standout at which a pair earns `EMBEDDING_WEIGHT` in full. Named rather
+#: than written as a number, because the number is two constants added and a
+#: test that hard-coded it would pass a retune of either one.
+FULL = MIN_NEIGHBOUR_STANDOUT + STANDOUT_SPAN
 
 
 def entity(entity_id: str) -> GraphEntity:
@@ -42,23 +48,25 @@ def test_a_pair_at_the_floor_contributes_almost_nothing():
     **This is the test that separates the two candidate formulas**, and the
     naive one is genuinely tempting: `weight = EMBEDDING_WEIGHT * score` reads
     as "more similar, more weight" and is monotonic in exactly the right
-    direction. It is also nearly flat over the range that matters. Cosine
-    similarities among real entity cards sit near the top of the scale, so on
-    redstring's `(1 + cosine) / 2` mapping a pair that scrapes past the floor
-    at 0.83 would get 83% of the weight of a perfect match -- which is not a
-    distinction, it is noise wearing a number.
+    direction. It was also nearly flat over the range that mattered when the
+    port spoke cosines: those sit near the top of redstring's
+    `(1 + cosine) / 2` scale, so a pair scraping past the old 0.83 floor got
+    83% of a perfect match's weight -- not a distinction, noise wearing a
+    number.
 
-    Under the shipped formula the floor means zero. Under the rejected one it
-    means `0.83 * EMBEDDING_WEIGHT`, which is more than a whole passage's
-    co-mention budget.
+    The port now reports a *standout* rather than a cosine and the rejected
+    formula is worse, not better, for it: a z-score has no ceiling, so
+    `EMBEDDING_WEIGHT * standout` lets one entity with a near-duplicate and an
+    otherwise tight row outweigh an asserted relationship. Under the shipped
+    formula the cut means zero and `+STANDOUT_SPAN` above it means everything.
     """
-    edges = _semantic_edges([("a", "b", MIN_EMBEDDING_SCORE)], KNOWN)
+    edges = _semantic_edges([("a", "b", MIN_NEIGHBOUR_STANDOUT)], KNOWN)
 
     assert edges[("a", "b")] == pytest.approx(0.0, abs=1e-9)
 
 
 def test_a_perfect_match_contributes_the_whole_weight():
-    edges = _semantic_edges([("a", "b", 1.0)], KNOWN)
+    edges = _semantic_edges([("a", "b", FULL)], KNOWN)
 
     assert edges[("a", "b")] == pytest.approx(EMBEDDING_WEIGHT)
 
@@ -70,7 +78,7 @@ def test_a_pair_below_the_floor_draws_no_edge_at_all():
     however unrelated, so without a floor the sparsest corner of a graph gets
     the same five edges as the densest and the method invents structure there.
     """
-    edges = _semantic_edges([("a", "b", MIN_EMBEDDING_SCORE - 0.01)], KNOWN)
+    edges = _semantic_edges([("a", "b", MIN_NEIGHBOUR_STANDOUT - 0.01)], KNOWN)
 
     assert edges == {}
 
@@ -84,8 +92,8 @@ def test_a_pair_reported_twice_is_not_weighted_twice():
     pairs twice as attractive as one-sided ones, which is a silent
     thumb on the scale rather than an error anything would catch.
     """
-    once = _semantic_edges([("a", "b", 1.0)], KNOWN)
-    twice = _semantic_edges([("a", "b", 1.0), ("b", "a", 1.0)], KNOWN)
+    once = _semantic_edges([("a", "b", FULL)], KNOWN)
+    twice = _semantic_edges([("a", "b", FULL), ("b", "a", FULL)], KNOWN)
 
     assert twice == once
 
@@ -133,7 +141,7 @@ def test_an_entity_the_graph_cannot_place_is_placed_by_meaning():
     )
 
     without = project_areas(graph, [])
-    with_meaning = project_areas(graph, [], [("c", "d", 1.0)])
+    with_meaning = project_areas(graph, [], [("c", "d", FULL)])
 
     placed = {member.entity_id for area in without.areas for member in area.members}
     assert "d" not in placed, "an unconnected entity has no place on the graph alone"
@@ -156,7 +164,7 @@ def test_a_semantic_edge_does_not_overrule_an_asserted_relationship():
         [entity("a"), entity("b"), entity("c")],
         [relationship("a", "b")],
         [],
-        [("a", "c", 1.0)],
+        [("a", "c", FULL)],
     )
 
     assert adjacency["a"]["b"] > adjacency["a"]["c"]
@@ -176,7 +184,7 @@ def test_a_run_that_drew_no_semantic_edges_does_not_claim_it_used_embeddings():
         truncated=False,
     )
 
-    offered = project_areas(graph, [], [("a", "c", MIN_EMBEDDING_SCORE - 0.2)])
+    offered = project_areas(graph, [], [("a", "c", MIN_NEIGHBOUR_STANDOUT - 0.2)])
 
     assert offered.semantic_count == 0
     assert offered.used_embeddings is False
@@ -189,7 +197,7 @@ def test_a_run_that_drew_them_says_so():
         truncated=False,
     )
 
-    used = project_areas(graph, [], [("a", "c", 1.0)])
+    used = project_areas(graph, [], [("a", "c", FULL)])
 
     assert used.semantic_count == 1
     assert used.used_embeddings is True

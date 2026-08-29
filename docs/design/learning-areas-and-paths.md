@@ -214,12 +214,15 @@ modularity runs over relationships, co-mentions and those together.
 |---|---|---|
 | `EMBEDDING_WEIGHT` | 0.6 | Below `RELATION_WEIGHT` (1.0), above one passage's whole `CO_MENTION_BUDGET` (0.5). A model asserted a relationship; a passage put two names near each other; an embedding says two things look like one subject and no document ever said so. |
 | `EMBEDDING_NEIGHBOURS` | 5 | Similarity is dense — every entity has a nearest neighbour. Unbounded, 500 entities is 125,000 non-zero edges and modularity over a near-complete graph has no communities to find. Sparsity is the condition the method depends on. |
-| `MIN_EMBEDDING_SCORE` | 0.83 | On redstring's `(1 + cosine) / 2` scale, so a cosine of about 0.66. Without a floor the sparsest corner of a graph gets the same five edges as the densest, which is where k-nearest-neighbour invents structure. |
+| `MIN_NEIGHBOUR_STANDOUT` | 1.0 | Standard deviations above the entity's *own* similarity row, not an absolute cosine. Replaced `MIN_EMBEDDING_SCORE = 0.83` on 2026-08-29 after measuring the band it sat in against `qwen3-embedding-0.6b`: unrelated cross-domain pairs topped out at 0.7808 and related pairs had a median of 0.8274, so 0.83 was cutting the related band in half (recall 0.475) and answering completely differently corpus to corpus — 1 of 10 pairs kept on one five-entity domain, 10 of 10 on another. A cosine floor is also a *per-model* constant, and the embedding model is a setting. |
+| `STANDOUT_SPAN` | 1.0 | How far above the cut a pair earns `EMBEDDING_WEIGHT` in full. Clipped above, which a cosine did not need: a z-score has no ceiling and one near-duplicate in an otherwise tight row would outweigh an asserted relationship. |
 
 **The weight is rescaled, not multiplied.** `EMBEDDING_WEIGHT * score` is the
 tempting form and it is nearly flat over the range that occurs: real card
 similarities sit near the top of the scale, so a pair that scraped past the
-floor would get about four fifths the weight of a perfect match. The floor is
+old absolute floor would get about four fifths the weight of a perfect match.
+(The port now reports a standout rather than a cosine; the argument survives
+the change unaltered, and gains a ceiling.) The cut is
 mapped to zero instead, so an edge admitted by a hair contributes by a hair.
 `test_a_pair_at_the_floor_contributes_almost_nothing` is what separates the
 two.
