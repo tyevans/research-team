@@ -79,10 +79,20 @@ document.documentElement.setAttribute('data-theme', 'dark')
  * last with the *token* resolving, so that time it was `@layer utilities` alone
  * that was missing. Every one of those rules is present in `npm run build`.
  *
- * Two probes rather than one, because the failures come in both flavours: a
- * rule from this repository's own stylesheets (`markdown.css`'s `.md`) and a
- * rule from `@layer utilities` (Tailwind's `opacity-0`). Either can be the one
- * that has not landed, and waiting on one would not see the other.
+ * **The probe reads the *last* stylesheet in the chain, and that detail is the
+ * whole of it.** The first version waited on `markdown.css`'s `.md`, which is
+ * `index.css`'s 19th `@import` of 21 -- and the suite went on failing on
+ * `course.css`'s `.crs-card-art`, imported six lines later. The probe was
+ * passing on a sheet that was genuinely half-applied, which is a good
+ * demonstration of the defect and a useless guard against it. It now reads
+ * `structure.css`'s `#root { display: contents }`, the last rule of the last
+ * import, so anything earlier in the chain has necessarily arrived.
+ *
+ * Two probes rather than one, because the misses come in two flavours: a rule
+ * from this repository's own stylesheets and a rule from `@layer utilities`
+ * (Tailwind's `opacity-0`), which is generated separately and can be absent
+ * while every hand-written rule is present -- B160's `--fg` reading is that
+ * case. Waiting on one would not see the other.
  *
  * It throws rather than continuing past the deadline, deliberately: a timeout
  * means the sheet genuinely is not being served, and every assertion in the
@@ -96,16 +106,21 @@ document.documentElement.setAttribute('data-theme', 'dark')
  * the cheap one, and it turns a wrong measurement into a wait.
  */
 const probe = document.createElement('div')
-probe.className = 'md opacity-0'
+// `#root` rather than a class, because the rule being waited on is the last one
+// in the chain and it is written against that id. The application's own root is
+// mounted by a test's `render`, not by this file, so there is no clash.
+probe.id = 'root'
+probe.className = 'opacity-0'
 probe.setAttribute('aria-hidden', 'true')
-probe.style.position = 'fixed'
 document.body.appendChild(probe)
 
-/** `.md` sets `padding: 10px 14px 40px` and `opacity-0` sets `opacity: 0`.
- *  Neither is a value a bare `<div>` takes from anything else in this tree. */
+/** `structure.css`'s last rule sets `#root { display: contents }` and
+ *  `opacity-0` sets `opacity: 0`. Neither is a value a bare `<div>` takes from
+ *  anything else in this tree, and the first cannot resolve until every
+ *  `@import` in `index.css` has. */
 const dressed = () => {
   const style = getComputedStyle(probe)
-  return style.paddingTop === '10px' && style.opacity === '0'
+  return style.display === 'contents' && style.opacity === '0'
 }
 
 const DEADLINE_MS = 10_000
@@ -115,7 +130,7 @@ while (!dressed()) {
     const style = getComputedStyle(probe)
     throw new Error(
       `vitest.setup.browser: index.css did not apply within ${DEADLINE_MS}ms ` +
-        `(padding-top ${style.paddingTop}, opacity ${style.opacity}). Every ` +
+        `(display ${style.display}, opacity ${style.opacity}). Every ` +
         `assertion in this file would have measured an unstyled page. See B184.`,
     )
   }

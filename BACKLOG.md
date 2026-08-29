@@ -782,8 +782,9 @@ assertion ran.
 **Neither works alone, measured both ways.** With the probe and parallelism
 still on: one failure in three runs, so the sheet can regress *after* setup as
 the dev server re-serves it. Serialised without the probe: one failure in four.
-With both: four consecutive green runs at 48 files and 198 tests, and the hangs
-stop. Serialising costs 67s against 46s and drops `setup` from 26s to 2.2s,
+With both, but a probe reading the wrong stylesheet: two failures in four. With
+both and the probe corrected: three consecutive green runs at 48 files and 198
+tests, and the hangs stop. Serialising costs 67s against 46s and drops `setup` from 26s to 2.2s,
 which is the contention showing in the numbers.
 
 **The second failure mode, found after the mitigation landed:**

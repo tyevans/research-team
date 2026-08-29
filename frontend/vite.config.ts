@@ -317,13 +317,14 @@ export default defineConfig({
            * four consecutive green runs at 48 files and 198 tests.
            *
            * Taken because a hung CI job blocks every branch and 20 seconds does
-           * not. **It is mitigation and the suite is still not reliable**: on
-           * the 48-file suite this landed against, serialised and probed, two
-           * runs in four were red -- one on a partly-applied sheet after setup,
-           * one on `Failed to fetch dynamically imported module` for a test
-           * file that passes alone. Both are the dev server under this suite,
-           * not the assertions. B184 carries the account, the numbers and the
-           * two real fixes, and is the work this needs next. */
+           * not. **It is still mitigation.** With an earlier, wrong probe --
+           * one reading the 19th of 21 imports rather than the last -- two runs
+           * in four were red even serialised, and one of those was `Failed to
+           * fetch dynamically imported module` on a file that passes alone,
+           * which no probe addresses. The probe is right now and the suite is
+           * green three runs consecutively, but the module fetch failing at all
+           * says the dev server under this suite is the thing that needs
+           * fixing. B184 carries the account and the two real fixes. */
           fileParallelism: false,
           // A different setup file, not this suite's. `vitest.setup.browser.ts`
           // argues why at length; the short version is that the jsdom setup
