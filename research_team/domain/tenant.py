@@ -100,6 +100,19 @@ ProjectRole = Literal["owner", "editor", "runner", "viewer"]
 """A person's standing on one project, independent of their tenant role."""
 
 
+TENANT_AGGREGATE_TYPE = "Tenant"
+"""The stream these events are appended to, named rather than spelled twice.
+
+Every other aggregate type here is reachable as `SomeAggregate.aggregate_type`.
+There is no `Tenant` aggregate class to ask -- membership is projected from
+events the sharing routes append directly, with no invariant a decider would
+protect -- so the constant stands in for the class attribute, exactly as
+`ONTOLOGY_AGGREGATE_TYPE` does and for the same reason: the feed-coverage guard
+in `persistence/event_store.py` needs something to name that cannot drift from
+the events' own default.
+"""
+
+
 def tenant_aggregate_id(tenant_id: str) -> UUID:
     """The stream a tenant's events live on, derived from its org id.
 
@@ -123,7 +136,7 @@ class TenantCreated(DomainEvent):
     stream is findable from its org id without a lookup table.
     """
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     name: str
     kind: TenantKind = "shared"
@@ -140,7 +153,7 @@ class MemberAdded(DomainEvent):
     second spelling of one fact.
     """
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     subject: str
     role: TenantRole
@@ -152,7 +165,7 @@ class MemberRoleChanged(DomainEvent):
     """An existing member's role was changed. Carries the old role so the log
     answers "what were they before" without a fold."""
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     subject: str
     role: TenantRole
@@ -170,7 +183,7 @@ class MemberRemoved(DomainEvent):
     nothing the moment this row is gone.
     """
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     subject: str
     removed_by: str = LOCAL_SUBJECT
@@ -184,7 +197,7 @@ class OwnershipTransferred(DomainEvent):
     without folding every role change. The projection writes two rows from it.
     """
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     from_subject: str
     to_subject: str
@@ -199,7 +212,7 @@ class ProjectGrantAdded(DomainEvent):
     a project at all.
     """
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     project_id: UUID
     subject: str
@@ -211,7 +224,7 @@ class ProjectGrantAdded(DomainEvent):
 class ProjectGrantRevoked(DomainEvent):
     """A subject's role on one project was withdrawn."""
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     project_id: UUID
     subject: str
@@ -229,7 +242,7 @@ class InvitationCreated(DomainEvent):
     claiming an address they do not control can accept an invitation sent to it.
     """
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     email: str
     role: TenantRole
@@ -243,7 +256,7 @@ class InvitationAccepted(DomainEvent):
     """An invitation was claimed. Carries the subject that claimed it, which is
     the first moment the invitee has an identity to record."""
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     invitation_id: UUID
     subject: str
@@ -253,7 +266,7 @@ class InvitationAccepted(DomainEvent):
 class InvitationRevoked(DomainEvent):
     """An open invitation was withdrawn before it was claimed."""
 
-    aggregate_type: str = "Tenant"
+    aggregate_type: str = TENANT_AGGREGATE_TYPE
     tenant_id: str
     invitation_id: UUID
     revoked_by: str = LOCAL_SUBJECT

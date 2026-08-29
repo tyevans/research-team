@@ -33,6 +33,7 @@ from research_team.domain.media_proposals import MediaProposals
 from research_team.domain.ontology import ONTOLOGY_AGGREGATE_TYPE
 from research_team.domain.research_run import ResearchRun
 from research_team.domain.socratic_dialogue import SocraticDialogue
+from research_team.domain.tenant import TENANT_AGGREGATE_TYPE
 from research_team.domain.topic import Topic
 
 SNAPSHOT_THRESHOLD = 50
@@ -100,6 +101,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         BROWSER_SESSION_AGGREGATE_TYPE,
         COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
         CATALOG_AGGREGATE_TYPE,
+        TENANT_AGGREGATE_TYPE,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -189,6 +191,48 @@ progress line and a status disagreeing with nothing in either signature to
 catch it. Revisit if that in-memory channel is ever retired in favour of the
 log, which is the change that would make this the only signal rather than a
 second one.
+
+`Tenant` is off, and this is the entry most likely to be read as the wrong
+call, so the reasoning is written out rather than compressed. The surface these
+events will move is a **member list** -- somebody joins, somebody's role
+changes, somebody is removed -- and that is a second person looking at a view
+while a first person acts on it, which is the case this feed exists for. On the
+question alone, it should be routed.
+
+It is off because *routing it now would not produce that*, which was measured
+rather than assumed. There is no `_sse` branch for it and no `tenant_change`
+presenter, so a tenant event falls to the generic `feed_event`, which addresses
+the frame `session_id: <the tenant's uuid5>` -- a session that does not exist --
+and carries `summary: ""`, because `event_summary` has no case for these and
+`event_row` reads a fixed set of fields, none of which a tenant event has. The
+browser then decodes it as an ordinary log frame and files a blank row against a
+session id nothing can place. That is a live path that carries nothing, dressed
+as a live path that works, which is the exact defect `FEED_AGGREGATE_TYPES` and
+this set were created to stop happening a fifth time.
+
+Routing it properly is three edits this slice must not make: a presenter, an
+`_sse` branch in `app.py` -- which W-B's B1 holds at *zero lines* on purpose,
+because that file is the contended one and B3 is the slice that opens it -- and
+a `decodeFrame` case plus a store in the console, which is B5.
+
+**B5 owns the revisit, and it is not optional there.** Once this type is named
+here the coverage guard goes quiet about it forever, which is the standing cost
+of every entry in this set; the difference is that the others are waiting on a
+pane nobody has scheduled and this one is waiting on a pane that is already
+planned. The condition is precise: when the members page lands, this entry moves
+to `FEED_AGGREGATE_TYPES` and gets its own frame type, or the page updates only
+on reload -- and it will be a second person's browser that is wrong, which is
+the reload nobody thinks to press.
+
+Note also what is *not* the reason. An earlier draft of this entry rejected
+routing on the grounds that the feed is unfiltered until B6, so an
+`InvitationCreated` frame would broadcast an invitation's single-use token to
+every connected client. That was checked and is false today: `event_row` dumps
+no arbitrary fields, so neither the token nor the email reaches the wire. It
+becomes true the moment somebody writes the `tenant_change` presenter, so
+whoever does that in B5 must put the payload behind B6's per-connection filter
+in the same change -- a frame carrying a credential is a different question from
+a frame carrying a repaint, and only one of them is safe to ship early.
 
 None of the others is a *correctness* argument, and if any grows a pane the
 answer is to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch --
