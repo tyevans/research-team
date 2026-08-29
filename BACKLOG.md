@@ -738,7 +738,46 @@ Found on 2026-08-23 while writing Storybook coverage for the console's
 highest-traffic components (#245, #248). Each of these is a real gap that was
 deliberately not closed on the spot, with the reason.
 
-### B160. Two browser tests were red on `main`, and the CI job found them in one run
+### B160. Neither file reproduces, the quarantine is empty, and one of the two is a race
+
+**Quarantine emptied 2026-08-29.** `frontend/package.json`'s `test:browser:ci`
+is now the same command as `test:browser`; the key is kept so a future
+quarantine is a reviewable one-line diff rather than an argument appended to a
+CI run step.
+
+What was measured before emptying it, on `origin/main` rebased, one vitest
+process at a time:
+
+- **`base-layer.browser.test.tsx` runs and passes.** Three tests, green alone
+  and green in three consecutive full-suite runs. The `render` import from
+  `@testing-library/react` this entry blames is still there and is not fatal:
+  `control-defaults.browser.test.tsx` has always imported the same thing from
+  the same package and has always run. So "Vitest failed to find the current
+  suite" was not caused by the import, and the rewrite this entry declined to
+  commit is not needed. The `@layer base` sweep is asserting.
+- **`course-card-sizing.browser.test.tsx` failed once in three full-suite runs
+  and never alone.** That is the profile CLAUDE.md describes for a failure that
+  only appears in company, not a wrong ratio -- and 10.63:1 is a box whose
+  height came from a broken image's alt text rather than from a rule, which is
+  what a missing `aspect-[3/2]` utility looks like rather than a card that was
+  reworked.
+
+So the honest state is that this entry's *first* claim is refuted and its
+second is real but intermittent and undiagnosed. What went in with the
+quarantine's removal is instrumentation rather than a fix: the aspect case now
+asserts `getComputedStyle(...).aspectRatio === '3 / 2'` beside the box
+measurement, so a recurrence says which of the two causes it is instead of
+reporting a number; and `boxOf` is scoped to a root rather than to the
+document, which nothing was traced to and which made a failure here impossible
+to attribute.
+
+**If this goes red in CI, it is not a mystery and it should not be
+re-quarantined without reading the `aspectRatio` line in the failure.**
+
+The original entry follows, because its account of what a red suite costs is
+right and is why the CI job exists.
+
+### B160 (original). Two browser tests were red on `main`, and the CI job found them in one run
 
 Filed 2026-08-29, from the first run of the new `browser` job (B140). Both
 predate it; neither is caused by it. They are quarantined in
@@ -3487,7 +3526,45 @@ been burned by an authored area, which is why it is here and not in the PR.
 
 ## Rendering
 
-### B158. Rendered markdown is unstyled everywhere, and has been since 2026-08-07
+### B158. Closed 2026-08-29 -- the elements are styled and the nine dead families are gone
+
+The unification this entry asked for, taking the first of the two options it
+laid out: element selectors scoped under `.md`, in `@layer base`, and no
+renderer change. The deciding argument is CLAUDE.md's rather than a preference
+between the two -- a class family is a *decision* and bare-element dressing is a
+*default*, and a default gets layered while a decision earns a name. The second
+option was rejected on where it puts the code as much as on that: re-attaching
+classes in `renderMarkdown` means a presentation concern inside the sanitiser
+seam, which is the one function permitted to turn untrusted text into markup and
+whose docstring stakes its security claim on being about nothing else.
+
+The five hand-applied families are now explained by the same rule rather than
+left as a second mechanism: `.md`, `.md-bare`, `.md-link*`, `.md-ref` and
+`.md-code` are the ones a caller or `markdown.ts` opts into, and they stay
+unlayered for that reason. `.md-code` shares its declarations with `.md pre`
+rather than repeating them.
+
+`markdown-dressing.browser.test.tsx` is the proof, and it drives `<Markdown>`
+over a source string rather than hand-writing the markup -- the defect was a gap
+between what a stylesheet selected and what a renderer produced, and a fixture
+that writes the markup supplies exactly the agreement under test. Red-proved:
+revert the selectors to their dead form and 9 of 11 cases fail.
+
+Two things this entry did not know:
+
+- `conversation.css` held two more dead selectors of the same family
+  (`.msg-body > .md .md-p:last-child` and `.md-list:last-child`). They are now
+  `> :last-child`, which is what the rule wanted -- a message ending in a
+  quotation or a table wanted it too and never got it.
+- `.md-task` has no successor element. The task list's dressing is on the
+  checkbox `marked` emits, and it is the one rule here whose result is not the
+  pixels that were there before, because there were none.
+
+The vacuous assertion this entry names -- `mention-snippet.browser.test.tsx`
+reading `marginBottom === '0px'` on a `.md-bare` last child -- is a real
+measurement now.
+
+### B158 (original). Rendered markdown is unstyled everywhere, and has been since 2026-08-07
 
 **A live defect, not a cleanup.** `frontend/src/styles/markdown.css` dresses
 nine class families that **nothing emits**: `.md-h` (8 rules), `.md-p`,
@@ -4156,7 +4233,35 @@ neutral — seek behaviour, scaler defaults and decoder fixes change the pixels
 handed to the VLM — so "same model, same video, different description" is
 possible today and would be unattributable.
 
-### B90. Six browser-test fixtures cast their container to `Container`, and the cast is what breaks them
+### B90. Closed 2026-08-29 -- eleven casts, one builder, and two live type errors under them
+
+`src/test/container.ts` is the typed fixture helper this entry asked for.
+`buildContainer(parts)` takes `ContainerParts` -- `Container` with every port
+made partial -- so a fixture still names only what it reaches for, and a key the
+interface does not declare is now a compile error at the fixture. One cast
+survives, inside the builder, where its cost is stated.
+
+Three corrections to this entry, from doing it:
+
+- **Eleven, not six.** Ten matched `as unknown as Container`; the eleventh was
+  spelled `as unknown as AppContainer` in `GraphPane.test.tsx` and matched no
+  grep anyone had run.
+- **The remedy this entry proposed does not quite work.** "A real `Container`
+  with defaults" means thirty fakes nobody wants. What is there instead is a
+  proxy that throws on the first *call* to an unsupplied port, naming it. So
+  completeness is enforced at run time rather than by the compiler, and the
+  gain over the cast is the error message and the key checking, not a proof.
+- **The predicted failure was not the one that was there.** This entry expected
+  the next missing field to crash a render. What the compiler found the moment
+  the casts came off was two fields *present and wrong*: `now: () => new Date()`
+  against `Container['now']: () => number` in two session fixtures, and
+  `submitDialogueAttempt` resolving `null` against `Promise<Verdict>` in a
+  story.
+
+The stories were converted with the fixtures even though this entry named only
+fixtures, so that a grep for the cast is a usable check at zero.
+
+### B90 (original). Six browser-test fixtures cast their container to `Container`, and the cast is what breaks them
 
 `project-narrow-research`, `project-responsive`, `project-tracks`,
 `session-responsive`, `ProjectView` and `project-stacked` (all
@@ -4416,7 +4521,26 @@ of the seven peer projection runners in this codebase (`CorpusRunner` and
 trigger to revisit is the same shape as B44's: someone who is not reading the
 database by hand wanting these numbers.
 
-### B108. Two pre-existing browser-test failures are invisible because nothing runs `test:browser` in CI
+### B108. Closed 2026-08-29 -- both files were deleted, and the gate they exposed is now a CI job
+
+**Closed together with B124, which is the same defect filed twice.** Neither
+failure was fixed and neither needed to be: `project-stacked.browser.test.tsx`
+and `project-tracks.browser.test.tsx` were both deleted by `c14ddbc8` ("The
+queue was a rail on every project page"), which removed the rail those two
+measured. Verified on 2026-08-29 against `origin/main`: neither file exists,
+and `npm run test:browser` is 47 files and 185 tests green.
+
+That is a clean outcome for the *failures* and not for the complaint, which was
+never really about them: "a suite nobody is made to run is a suite nobody is
+made to notice going red". The answer to that landed separately as the `browser`
+CI job (#329, B140), and B160 is what it caught on its first run.
+
+Kept as a stub rather than deleted because three commit messages disclaim these
+two by name.
+
+The original entry follows.
+
+### B108 (original). Two pre-existing browser-test failures are invisible because nothing runs `test:browser` in CI
 
 `frontend/src/presentation/project/project-stacked.browser.test.tsx` ("clips
 nothing down to 596" — expects an array of length 0, gets 2, at 640px) and
@@ -4547,7 +4671,14 @@ both boxes measure non-zero (which is what `GraphWidget.browser.test.tsx` and
 belong together" is not a number. Recorded so the question is not lost with the
 branch that raised it.
 
-### B124. Two `project-*` browser tests fail on `main`'s CSS and are unrelated to any widget work
+### B124. Closed 2026-08-29 with B108 -- see there
+
+Same two failures, same disposition: the files were deleted by `c14ddbc8`. This
+entry's instruction to "start by reproducing on `main` with nothing else checked
+out" was followed and is what found that -- the reproduction attempt could not
+find the files.
+
+### B124 (original). Two `project-*` browser tests fail on `main`'s CSS and are unrelated to any widget work
 
 Same two failures as B108 above, which arrived on `main` independently and
 frames them as a CI-coverage gap rather than a CSS one. Both are true; close
