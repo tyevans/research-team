@@ -102,6 +102,7 @@ from research_team.application.perception import (
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.project_summaries import ProjectSummaries
 from research_team.application.socratic import (
     DialogueConcluded,
     DialogueInFlight,
@@ -1032,6 +1033,7 @@ def create_app(
     art_generator: ArtGeneratorPort | None = None,
     art_matcher: LibraryArtProvider | None = None,
     settings: SettingsDeps | None = None,
+    project_summaries: ProjectSummaries | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1067,7 +1069,24 @@ def create_app(
 
     @app.get("/api/projects")
     async def list_projects():
+        """Every project, with the pipeline position the index draws it from.
+
+        The summaries are read **once for the whole list**, outside the loop,
+        which is the only thing worth knowing about this handler. The loop
+        below already folds one aggregate per project to find the holder, and
+        `domain/project/landing.ts` defers a feature by name on that cost —
+        so a summary fetched inside the loop would have doubled the one thing
+        this route was already too expensive at, in order to improve the page
+        it serves.
+
+        A build with no summaries wired answers zeros rather than 503, which
+        is the opposite of what `_reader` and `_topic_reader` do and is
+        deliberate: those guard routes that cannot mean anything without their
+        collaborator, and this one is the index. A console that cannot count
+        a project's sources should still list the project.
+        """
         projects = await service.list_projects()
+        summaries = await project_summaries.all() if project_summaries else {}
         rows = []
         for project_id, name in projects:
             state = await service.project_state(project_id)
@@ -1077,6 +1096,7 @@ def create_app(
                     name,
                     active_session_id=state.active_session_id,
                     tip_at_event=state.tip_at_event,
+                    summary=summaries.get(project_id),
                 )
             )
         return rows

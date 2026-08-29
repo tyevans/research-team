@@ -27,7 +27,7 @@ import type { CourseDetail, CourseText } from '@domain/knowledge/course.ts'
 import type { Timeline } from '@domain/knowledge/timeline.ts'
 import type { ComponentAudience, DocumentBlock, LessonDocument } from '@domain/lesson/document.ts'
 import type { AttemptResponse, ItemProgress, Verdict } from '@domain/lesson/attempt.ts'
-import type { Project, ProjectDetail } from '@domain/project/project.ts'
+import type { ProjectDetail, ProjectListing } from '@domain/project/project.ts'
 import type {
   DocumentText,
   MediaSummary,
@@ -176,7 +176,13 @@ export interface AutonomyRepository {
 }
 
 export interface ProjectRepository {
-  list(): Promise<readonly Project[]>
+  /** Every project, each with the pipeline counts the index draws.
+   *
+   * `ProjectListing` rather than `Project`: the summary is the whole reason
+   * the index can tell one project from another, and typing this as `Project`
+   * would let a build that dropped the field typecheck and render six
+   * identical rows -- which is the state this replaced. */
+  list(): Promise<readonly ProjectListing[]>
   /** One project, for a page that was reached by URL rather than from the
    *  list. Separate from `list()` rather than a lookup in its result: a
    *  reload, a bookmark or a shared link arrives with no listing fetched, and

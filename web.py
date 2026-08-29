@@ -173,6 +173,14 @@ def main() -> None:
             # `test_web_entrypoint.py` exists for that and is what went red
             # when this parameter was added.
             socratic=application.socratic,
+            # The index's counts. Wired here for the reason the comment three
+            # parameters up gives -- a route added to `create_app` and not to
+            # this call has shipped degraded three times -- and this one
+            # degrades *quietly*, because `list_projects` answers zeros rather
+            # than 503 when it is absent. Every project would draw as empty
+            # and nothing would say why.
+            # `test_web_entrypoint.py` is what fails if it is dropped.
+            project_summaries=application.project_summaries,
             extractor=application.document_extractor,
             extract_queue=extract_queue,
             # The write side beside the read side above: without it every

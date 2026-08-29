@@ -8,20 +8,20 @@ import type {
   WorkerRepository,
 } from '@application/ports/repositories.ts'
 import type { ExtractionFrame } from '@domain/knowledge/extraction.ts'
-import type { Project, ProjectDetail } from '@domain/project/project.ts'
+import type { ProjectDetail, ProjectListing } from '@domain/project/project.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toExtractionFrame, toProject, toProjectDetail, toRoster } from './mappers.ts'
+import { toExtractionFrame, toProjectDetail, toProjectListing, toRoster } from './mappers.ts'
 
 export class HttpProjectRepository implements ProjectRepository {
   constructor(private readonly http: HttpClient) {}
 
-  async list(): Promise<readonly Project[]> {
-    const rows = await this.http.get('/api/projects', z.array(dto.projectDto))
-    return rows.map(toProject)
+  async list(): Promise<readonly ProjectListing[]> {
+    const rows = await this.http.get('/api/projects', z.array(dto.projectRowDto))
+    return rows.map(toProjectListing)
   }
 
   async project(id: ProjectId): Promise<ProjectDetail> {

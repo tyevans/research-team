@@ -47,7 +47,7 @@ import type {
   ViewDwell,
 } from '@domain/interaction/log.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
-import type { Project, ProjectDetail } from '@domain/project/project.ts'
+import type { Project, ProjectDetail, ProjectListing } from '@domain/project/project.ts'
 import type {
   DocumentText,
   MediaSummary,
@@ -294,6 +294,27 @@ export const toProject = (raw: Dto<typeof dto.projectDto>): Project => ({
   name: raw.name,
   activeSessionId: raw.active_session_id ? SessionId(raw.active_session_id) : null,
   tipAtEvent: raw.tip_at_event,
+})
+
+/** The row, plus the pipeline counts only the listing answers. */
+export const toProjectListing = (raw: Dto<typeof dto.projectRowDto>): ProjectListing => ({
+  ...toProject(raw),
+  summary: {
+    topics: raw.summary.topics,
+    topicsOpen: raw.summary.topics_open,
+    sources: raw.summary.sources,
+    // Clamped to `sources`, because every drawing of this pair treats the gap
+    // between them as work outstanding and a negative gap would render as a
+    // bar longer than its track. The server cannot produce one — `extracted`
+    // counts a subset of the same rows — so this is guarding a projection
+    // that has fallen behind rather than arithmetic: `extracted_at` is
+    // written on a different stream from the corpus row, so a rebuild caught
+    // mid-flight can briefly show more extracted than the corpus lists.
+    extracted: Math.min(raw.summary.extracted, raw.summary.sources),
+    courses: raw.summary.courses,
+    sessions: raw.summary.sessions,
+    lastActivity: raw.summary.last_activity,
+  },
 })
 
 /** The row, plus the one field only the detail route answers.

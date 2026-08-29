@@ -260,6 +260,51 @@ export const projectDto = z.object({
   tip_at_event: z.number().default(0),
 })
 
+/** A project's pipeline position, as `/api/projects` carries it.
+ *
+ * Every field defaults, and that is not defensive padding: the server sends
+ * all seven unconditionally (`project_summary_view` fills zeros rather than
+ * omitting the object), so a default here fires only against a build older
+ * than this one. Choosing zero for that case is the same judgement the server
+ * makes and keeps the console readable against an older backend instead of
+ * failing validation on the index.
+ */
+export const projectSummaryDto = z.object({
+  topics: z.number().default(0),
+  topics_open: z.number().default(0),
+  sources: z.number().default(0),
+  extracted: z.number().default(0),
+  courses: z.number().default(0),
+  sessions: z.number().default(0),
+  last_activity: maybe(z.string()),
+})
+
+/** A listing row: the shared shape plus the summary only the listing carries.
+ *
+ * Extended from `projectDto` rather than added to it, because
+ * `projectDetailDto` extends the same base and the detail route sends no
+ * summary — folding it into the base would make every project *page* fail
+ * validation on a field the server never sends there.
+ *
+ * The default is written out rather than passed as `{}`: zod's `.default`
+ * takes the schema's *output* type, so an empty object does not typecheck even
+ * though every field inside would have supplied its own default. Spelling the
+ * seven zeros here is the cost of that, and it is worth paying — a response
+ * predating the field parses to "nothing yet" rather than throwing, so an
+ * older backend degrades the index to empty tracks instead of a blank page.
+ */
+export const projectRowDto = projectDto.extend({
+  summary: projectSummaryDto.default({
+    topics: 0,
+    topics_open: 0,
+    sources: 0,
+    extracted: 0,
+    courses: 0,
+    sessions: 0,
+    last_activity: null,
+  }),
+})
+
 /** `GET /api/projects/{id}`, which carries one field the listing does not.
  *
  * `reading_head_session_id` is the session a project's files fold out of —
