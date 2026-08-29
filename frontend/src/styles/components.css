@@ -44,7 +44,7 @@
   font-size: var(--t-xs);
   color: var(--accent);
   border: 1px solid var(--accent-dim);
-  border-radius: 3px;
+  border-radius: var(--radius);
   padding: 0 5px;
   cursor: help;
 }
@@ -186,18 +186,18 @@
   flex: 1;
 }
 .mcq-mark {
-  font-weight: 700;
+  font-weight: 600;
   flex: none;
 }
 .mcq-option.right {
-  border-color: #2f5a41;
+  border-color: var(--tint-ok-line);
   background: var(--add-bg);
 }
 .mcq-option.right .mcq-mark {
   color: var(--add-fg);
 }
 .mcq-option.wrong {
-  border-color: #5a2f31;
+  border-color: var(--tint-fail-line);
   background: var(--del-bg);
 }
 .mcq-option.wrong .mcq-mark {
@@ -225,7 +225,7 @@
   padding: 2px 6px;
   border: 1px solid var(--line);
   border-bottom: 2px solid var(--accent-dim);
-  border-radius: 3px 3px 0 0;
+  border-radius: var(--radius) var(--radius) 0 0;
   background: var(--bg-raise);
   color: var(--fg);
 }
@@ -252,7 +252,7 @@
   font-size: var(--t-xs);
   color: var(--add-fg);
   background: var(--add-bg);
-  border-radius: 3px;
+  border-radius: var(--radius);
   padding: 1px 5px;
 }
 
@@ -295,7 +295,7 @@
   font-size: var(--t-xs);
   color: var(--accent);
   border: 1px solid var(--accent-dim);
-  border-radius: 3px;
+  border-radius: var(--radius);
   padding: 0 4px;
   flex: none;
 }
@@ -354,7 +354,7 @@
   gap: 8px;
 }
 .verdict-mark {
-  font-weight: 700;
+  font-weight: 600;
 }
 .cmp-verdict.right .verdict-mark,
 .cmp-verdict.right .verdict-word {
@@ -396,7 +396,7 @@
    told "options: required field missing" and not shown the block has to go
    find it. The document around it renders normally. */
 .cmp-broken {
-  border-color: #45272a;
+  border-color: var(--tint-fail-line);
 }
 .cmp-broken .cmp-kind {
   background: var(--del-bg);
@@ -424,7 +424,7 @@
   margin-top: 10px;
   padding: 8px 10px;
   border-radius: var(--radius);
-  border: 1px solid #45272a;
+  border: 1px solid var(--tint-fail-line);
   background: var(--del-bg);
   color: var(--del-fg);
   font-size: var(--t-sm);
@@ -582,7 +582,7 @@ a.cmp-ref-name:hover {
    so a rule naming it sets no colour and looks exactly like one that worked. */
 .cmp-passage figcaption {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--t-sm);
   color: var(--fg-dim);
 }
 
@@ -604,7 +604,7 @@ a.cmp-ref-name:hover {
   min-height: 15rem;
   overflow: hidden;
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--radius);
   /* `--bg-raise`, not `--bg-raised`: the latter is not a token this build
      defines, so a rule naming it sets no background and looks exactly like one
      that worked -- the same trap `.cmp-passage figcaption` records for
@@ -640,7 +640,7 @@ a.cmp-ref-name:hover {
   min-height: 12rem;
   overflow: hidden;
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--radius);
   background: var(--bg-raise);
 }
 
@@ -848,9 +848,17 @@ a.cmp-ref-name:hover {
   color: var(--fg-dim);
 }
 
+/* `animation-iteration-count` as well as the duration, and that is the half
+   this block was missing. Collapsing an *infinite* animation to 0.001s does
+   not stop it -- `.conn-dot`, `.spinner` and `.extraction-dot` all pulse
+   `infinite`, and at that duration they keep cycling, sampled once a frame,
+   which is a flicker rather than a rest. Pinning the count to 1 is what makes
+   the declared rule ("`prefers-reduced-motion` stops every animation") true of
+   the loops as well as the one-shots. */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
     transition: none !important;
   }
 }

@@ -138,7 +138,7 @@ select.input {
 .turn-range:hover {
   color: var(--accent);
   border-color: var(--accent-dim);
-  background: #221a10;
+  background: var(--tint-held);
 }
 
 .spinner {

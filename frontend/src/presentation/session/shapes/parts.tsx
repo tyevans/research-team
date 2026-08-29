@@ -259,7 +259,7 @@ export const Item = ({
  * entity — one class constant, two call sites, and no way for the empty one to
  * drift. */
 export const BAR_CLASS =
-  'block h-[5px] overflow-hidden rounded-[2px] bg-bg-raise [&>i]:block [&>i]:h-full [&>i]:bg-accent [&>i]:opacity-80'
+  'block h-[5px] overflow-hidden rounded-md bg-bg-raise [&>i]:block [&>i]:h-full [&>i]:bg-accent [&>i]:opacity-80'
 
 export const Bar = ({ value, max }: { value: number; max: number }) => (
   <span className={BAR_CLASS} data-testid="bar">

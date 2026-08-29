@@ -144,7 +144,7 @@
   width: 7px;
   height: 7px;
   flex: 0 0 auto;
-  border-radius: 2px;
+  border-radius: var(--radius);
   background: var(--k-compaction);
   transform: translateY(-1px);
 }
@@ -165,7 +165,7 @@
   padding: 6px 8px;
   border-left: 2px solid var(--k-compaction);
   background: var(--bg-panel);
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 .compaction-msgs {
   display: flex;
@@ -243,7 +243,7 @@
 .run > .disc-head {
   padding: 3px 10px;
   border-left: 2px solid var(--k-tool);
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--bg-raise);
 }
 .run > .disc-head .disc-caret {
@@ -288,7 +288,7 @@
   background: var(--bg-raise);
   border-left: 2px solid var(--k-tool);
   padding: 2px 8px;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

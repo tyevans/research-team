@@ -160,7 +160,7 @@
   padding: 2px 4px;
   margin: -2px -4px 0 0;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--radius);
 }
 .toast-close:hover {
   color: var(--fg);
@@ -175,7 +175,7 @@
 }
 .toast.bad {
   border-left-color: var(--k-failure);
-  color: #f6b4af;
+  color: var(--del-fg);
 }
 .toast.good {
   border-left-color: var(--k-file);

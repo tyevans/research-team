@@ -36,7 +36,7 @@ export const LoginScreen = ({
 }) => (
   <div className="lay-shell" data-scroll="page">
     <main className="lay-surface" data-region="surface">
-      <div className="max-w-md mx-auto flex min-h-[70vh] flex-col justify-center gap-6 px-6">
+      <div className="mx-auto flex min-h-[70vh] max-w-[28rem] flex-col justify-center gap-6 px-6">
         <div className="flex items-center gap-2">
           <span className="brand-mark" />
           <span className="brand-name">research&#8209;team</span>

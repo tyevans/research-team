@@ -69,7 +69,7 @@
 .ev:focus-visible .ev-cursor {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-  border-radius: 2px;
+  border-radius: var(--radius);
 }
 /* The action cell is `position: absolute` and shrink-wrapped around its
    button, so an outline on it reads as a ring around "fork here" -- which is
@@ -137,7 +137,7 @@
 }
 @keyframes flash {
   from {
-    background: #2a2210;
+    background: var(--tint-held);
   }
   to {
     background: transparent;

@@ -154,7 +154,7 @@ const Track = ({
       // a fractional step generates nothing at all — which `check-tailwind.mjs`
       // caught here, and which would otherwise have left the bar at its
       // content height of zero.
-      className="h-2 overflow-hidden rounded-[3px] bg-line-soft"
+      className="h-2 overflow-hidden rounded-md bg-line-soft"
       role="img"
       aria-label={note ? `${value} ${label}, ${note}` : `${value} ${label}`}
       data-pipe-bar
@@ -183,13 +183,13 @@ const Track = ({
           draft, which is a near-white background wash (`#faf1de`), so the
           shortfall was indistinguishable from the empty track behind it. */}
       <div
-        className={clsx('h-full rounded-[3px]', tone === 'behind' ? 'bg-k-tool' : 'bg-fg-dim')}
+        className={clsx('h-full rounded-md', tone === 'behind' ? 'bg-k-tool' : 'bg-fg-dim')}
         style={{ width: pct(fill) }}
         data-pipe-fill={tone ?? 'plain'}
       >
         {inner === undefined ? null : (
           <div
-            className="h-full rounded-[3px] bg-fg-dim"
+            className="h-full rounded-md bg-fg-dim"
             style={{ width: pct(inner) }}
             data-pipe-done
           />

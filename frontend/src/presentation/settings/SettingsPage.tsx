@@ -182,7 +182,7 @@ const SettingsBody = ({
           <label className="flex items-center gap-2 text-sm text-fg-dim">
             Search
             <input
-              className="input w-64"
+              className="input w-[16rem]"
               type="search"
               value={search}
               placeholder="label, key, or AGENT_… variable"
@@ -243,7 +243,7 @@ const SettingsBody = ({
           }
         />
 
-        <div className="pb-8 flex flex-col">
+        <div className="flex flex-col pb-6">
           {resolved.isPending ? <Loading what="this scope's values" /> : null}
 
           {visible.length === 0 && !resolved.isPending ? (

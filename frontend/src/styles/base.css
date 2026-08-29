@@ -3,18 +3,18 @@
 /* scrollbars ------------------------------------------------------------ */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2b333d transparent;
+  scrollbar-color: var(--line-strong) transparent;
 }
 *::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #2b333d;
-  border-radius: 5px;
+  background: var(--line-strong);
+  border-radius: var(--radius);
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #39434f;
+  background: var(--fg-faint);
 }
 *::-webkit-scrollbar-track {
   background: transparent;

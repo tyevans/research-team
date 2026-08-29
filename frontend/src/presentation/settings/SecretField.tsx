@@ -106,7 +106,7 @@ export const SecretField = ({
     <div className="flex flex-wrap items-center gap-2">
       <input
         id={id}
-        className="input min-w-56 flex-1"
+        className="input min-w-[14rem] flex-1"
         type="password"
         // Empty string, always, on both the unset and the replacing paths. The
         // one thing this must never do is seed from the resolution -- which

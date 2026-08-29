@@ -151,7 +151,7 @@
   font-size: var(--t-xs);
   background: var(--bg-panel-2);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--radius);
   padding: 1px var(--space-1);
 }
 /* --- virtualized row lists ---------------------------------------------- */

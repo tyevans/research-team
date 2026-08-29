@@ -205,7 +205,7 @@ it('gives a chip its shape from the primitive rather than from the landing view'
   const style = getComputedStyle(container.firstElementChild!)
 
   expect(style.fontSize).toBe('10.5px')
-  expect(style.borderRadius).toBe('3px')
+  expect(style.borderRadius).toBe('5px')
   expect(style.borderTopWidth).toBe('1px')
   expect(style.whiteSpace).toBe('nowrap')
   // 1px block, `--space-2` inline. The asymmetry is the chip's proportion and
@@ -227,7 +227,7 @@ it('lets a view tone still in a stylesheet override the primitive base', () => {
   expect(style.color).toBe('rgb(167, 139, 250)') // --k-session, not --fg-dim
   expect(style.backgroundColor).toBe('rgb(26, 22, 48)') // --tint-session
   // …while everything the tone does not mention still comes from the base.
-  expect(style.borderRadius).toBe('3px')
+  expect(style.borderRadius).toBe('5px')
   expect(style.fontSize).toBe('10.5px')
 })
 
@@ -263,7 +263,7 @@ it('survives the route merge: the dressing holds with the view stylesheets delet
     // The shape holds for all three…
     for (const label of ['plain', 'invariant', 'blocking']) {
       const style = getComputedStyle(chip(label))
-      expect(style.borderRadius, label).toBe('3px')
+      expect(style.borderRadius, label).toBe('5px')
       expect(style.padding, label).toBe('1px 6px')
       expect(style.fontSize, label).toBe('10.5px')
     }

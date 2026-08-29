@@ -148,12 +148,12 @@ export const CourseCard = ({
           {featured && (
             // Text, not colour alone -- a border tint says nothing to a screen
             // reader, and `featuredRank` is the fact this line reports.
-            <span className="crs-card-featured tracking-wide rounded-[3px] bg-accent px-2 py-px text-xs font-semibold text-accent-fg uppercase">
+            <span className="crs-card-featured tracking-wide rounded-md bg-accent px-2 py-px text-xs font-semibold text-accent-fg uppercase">
               Featured
             </span>
           )}
           {stale && (
-            <span className="crs-card-stale rounded-[3px] border border-solid border-line bg-bg-raise px-2 py-px text-xs text-fg-dim">
+            <span className="crs-card-stale rounded-md border border-solid border-line bg-bg-raise px-2 py-px text-xs text-fg-dim">
               out of date
             </span>
           )}
@@ -227,7 +227,7 @@ const ProminenceMeter = ({ candidate }: { candidate: CourseCandidate }) => {
     <div className="crs-card-meter mt-1 flex items-center gap-2">
       <div
         aria-hidden="true"
-        className="h-[3px] min-w-0 flex-1 overflow-hidden rounded-[3px] bg-bg-raise"
+        className="h-[3px] min-w-0 flex-1 overflow-hidden rounded-md bg-bg-raise"
       >
         <div className="h-full bg-accent-dim" style={{ width: `${pct}%` }} />
       </div>

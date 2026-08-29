@@ -45,7 +45,7 @@ export const LayerChip = ({
       open={open}
       onOpenChange={setOpen}
       label={`Where ${label} comes from`}
-      className="shadow-lg rounded-[5px] border border-line bg-bg-raise p-3 text-sm"
+      className="rounded-md border border-solid border-line bg-bg-raise p-3 text-sm shadow-1"
       trigger={
         <button
           type="button"
@@ -55,7 +55,7 @@ export const LayerChip = ({
           // utility would be present in the attribute, present in the bundle,
           // and inert. That is the failure this class exists to make
           // impossible to reintroduce.
-          className="lay-ring-inward cursor-pointer rounded-[3px] border border-line px-2 py-px font-mono text-xs whitespace-nowrap text-fg-dim hover:text-fg"
+          className="lay-ring-inward cursor-pointer rounded-md border border-line px-2 py-px font-mono text-xs whitespace-nowrap text-fg-dim hover:text-fg"
           aria-label={`${label}: resolved from ${resolved.layer}. Show the whole chain.`}
         >
           {resolved.layer}

@@ -181,7 +181,7 @@ export const SettingRow = ({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-56 flex-1">
+        <div className="min-w-[14rem] flex-1">
           {spec.secret ? (
             <SecretField
               spec={spec}
