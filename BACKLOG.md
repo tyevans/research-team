@@ -4969,6 +4969,33 @@ would make `LearningArea` -- a pure derivation of the graph -- depend on
 authoring output, and would mean `project_areas` could no longer be driven with
 a literal in a test, which is what `test_projection_is_deterministic` rests on.
 
+### B160. An authoring phase that fails twice still restarts the area from phase 1
+
+`CourseAuthor._phase` retries a refused phase once, in the same session, which
+is where the resumption story stops. A phase whose second attempt also fails
+raises out of `author_area`, `AuthoringActivity._drive` records
+`CourseAuthoringFailed` with the phase name, and the two or three phases that
+*did* work are on the log and unreachable as a starting point -- the only way
+back is to author the area again from phase 1.
+
+Two things are missing and they are separable. The parent's lesson plan is
+still not persisted, so a phase 3 re-run re-plans from scratch and possibly
+differently; writing it to a file buys that back and reintroduces the
+shared-pool problem for anything later that reads it, which is the trade
+`author_area`'s docstring has always named. And `RecordAuthoringFailure`
+carries a `detail` string rather than the failed session id, so nothing
+downstream can name the session to resume into -- widening that event is the
+smaller half and is what a resume route would need first.
+
+Deferred rather than built on the branch that added the retry because the
+retry closes the common case measured on 2026-08-29 (eighteen of twenty-two
+sessions never finished, most of them stopping on the first refusal), and a
+durable cross-process resume is a different feature with its own surface: a
+person has to be able to ask for it, which means a route, a button and a
+decision about what happens when the area's graph has moved underneath the
+files since.
+
+
 ### B148. A course's session link is scanned, not indexed, and loses quietly
 
 `AuthoringRunStore.authored_session_for` finds which session holds a target's
