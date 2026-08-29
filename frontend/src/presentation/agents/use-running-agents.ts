@@ -50,14 +50,31 @@ export interface RunningAgent {
  * `tests/integration/test_turn_visibility.py::test_a_turns_events_all_become_visible_at_once`,
  * run rather than reasoned from.
  *
- * Gated on the panel being open, which is the whole difference from what this
- * replaced. The collapsed dock draws a count and keeps its frame-only refresh:
- * a run or a dispatch appearing does produce a frame, and only a turn does not.
- * What this costs is one request every two seconds while somebody is looking;
- * what it replaced cost that on every open project page whether anyone was
- * looking or not.
+ * Two seconds only while the panel is open, which is the whole difference from
+ * what this replaced: it costs one request every two seconds while somebody is
+ * looking, where what it replaced cost that on every open project page whether
+ * anyone was looking or not. A closed dock still polls, far more slowly -- see
+ * `IDLE_ROSTER_POLL_MS` for why frames alone were not enough.
  */
 export const ROSTER_POLL_MS = 2_000
+
+/** How often a *closed* dock re-asks who is running.
+ *
+ * The dock used to do no polling at all when closed and re-read only on a
+ * frame, which made "an agent launched" invisible until something else moved
+ * the log: a turn appends its events atomically at commit, so starting one
+ * produces no frame, and a reader who launched an agent saw an empty topbar
+ * until they reloaded the page. Reported from use on 2026-08-28 -- launch an
+ * agent, then wait: the badge appeared only on refresh.
+ *
+ * Fifteen seconds rather than two, because a closed dock draws a count and
+ * nothing finer, and because the cost is paid on every open tab of an idle
+ * console. `everywhere` folds nothing when nothing is running (see
+ * `WorkerRoster.everywhere`), so the idle request is a set union over three
+ * process-local dicts. What it buys is an upper bound on how long a launched
+ * agent stays invisible; what it costs is four requests a minute per tab.
+ */
+export const IDLE_ROSTER_POLL_MS = 15_000
 
 export const useRunningAgents = (
   /** Whether the widget is open. Almost everything here is gated on it -- see
@@ -82,12 +99,21 @@ export const useRunningAgents = (
     // Per observer, not per key: `ProjectActivity` reads the same cache entry
     // under `queryKeys.runningAgents()` and sets no interval, so the landing
     // page keeps costing nothing.
-    refetchInterval: expanded ? ROSTER_POLL_MS : false,
+    refetchInterval: expanded ? ROSTER_POLL_MS : IDLE_ROSTER_POLL_MS,
   })
 
   useFrameRefresh(
     true,
-    (frame) => frame.kind === 'log' || frame.kind === 'dispatch',
+    // Four kinds, because four kinds of worker appear in a roster and each
+    // announces itself differently. `log` covers a turn once it commits,
+    // `dispatch` and `seeding` are announced when the work *starts*, and
+    // `extraction` was missing entirely -- an extraction is a `Worker`
+    // (`WorkerRoster.on`) whose start moved nothing here.
+    (frame) =>
+      frame.kind === 'log' ||
+      frame.kind === 'dispatch' ||
+      frame.kind === 'seeding' ||
+      frame.kind === 'extraction',
     () => void queryClient.invalidateQueries({ queryKey: queryKeys.runningAgents() }),
   )
 
