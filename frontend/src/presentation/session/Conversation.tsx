@@ -1,13 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import type { ActivityEntry } from '@domain/activity/activity.ts'
 import { segmentTranscript } from '@domain/conversation/transcript.ts'
 import { compactedThrough, type SessionProjection } from '@domain/session/session.ts'
 
 import { EmptyState, ErrorBox } from '../common/primitives.tsx'
 import { Compaction } from './Compaction.tsx'
+import { LiveTail } from './Provisional.tsx'
 import { Segments } from './Segments.tsx'
 
 /** Everything said, in order, with the machinery folded.
+ *
+ * **Including what is being said right now.** The turn in flight used to be a
+ * sibling of this component — its own box, with its own scroller and its own
+ * `max-height: 50%`, pinned below the transcript. That split the pane into
+ * "what has been said" and "what is being said" as two *regions*, and the
+ * reader paid for it twice: a session with nothing recorded yet showed "No
+ * conversation yet" over a tray that was visibly streaming, and the
+ * stick-to-bottom ref below governed the half that was not moving. Live
+ * entries are now the last items in this list, and they say they are live by
+ * how they are drawn rather than by where they sit.
  *
  * The pane sticks to the bottom only when it was already near it: a reader who
  * has scrolled up to follow something is reading, and yanking them back down
@@ -16,11 +28,17 @@ export const Conversation = ({
   view,
   error,
   historicalAt,
+  activity = [],
   emptyDetail = 'Send the first turn below.',
 }: {
   view: SessionProjection | null
   error: string | null
   historicalAt: number | null
+  /** The turn in flight, already gated on whether one is running.
+   *
+   * Empty when nothing is streaming, which is also what a caller with no live
+   * channel at all passes — a story, or a historical fold. */
+  activity?: readonly ActivityEntry[]
   /** What an empty transcript means, worded for whoever is looking at it.
    *
    * Defaults to the session route's wording, which assumes a composer sits
@@ -37,9 +55,12 @@ export const Conversation = ({
 
   const messages = useMemo(() => view?.messages ?? [], [view?.messages])
 
+  // `activity` as well as `messages`: streaming frames are the case this
+  // scroll behaviour exists for, and while the live tail was a separate
+  // scroller they were the one thing that never triggered it.
   useEffect(() => {
     if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight
-  }, [messages])
+  }, [messages, activity])
 
   const onScroll = () => {
     const element = box.current
@@ -68,7 +89,7 @@ export const Conversation = ({
     <div className="conv-scroll" ref={box} onScroll={onScroll}>
       {error ? (
         <ErrorBox heading="Unavailable" message={error} />
-      ) : messages.length === 0 ? (
+      ) : messages.length === 0 && activity.length === 0 ? (
         <EmptyState
           heading="No conversation yet."
           detail={
@@ -91,6 +112,7 @@ export const Conversation = ({
             open={open}
             onToggle={toggle}
           />
+          <LiveTail entries={activity} />
         </div>
       )}
     </div>

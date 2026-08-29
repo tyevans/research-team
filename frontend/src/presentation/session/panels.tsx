@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 
 import { queryKeys } from '@application/queries/keys.ts'
 import type { SessionStore } from '@application/session/session-store.ts'
+import { useLiveActivity } from '@application/session/use-live-activity.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { findFile } from '@domain/workspace/workspace-file.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
@@ -9,7 +10,6 @@ import type { FilePath } from '@domain/shared/file-path.ts'
 
 import { ErrorBox } from '../common/primitives.tsx'
 import { plural } from '../formatting/format.ts'
-import { ActivityFeed } from './ActivityFeed.tsx'
 import { Composer } from './Composer.tsx'
 import { Conversation } from './Conversation.tsx'
 import { FileList } from './FileList.tsx'
@@ -72,11 +72,18 @@ export const TimelinePanel = ({ screen }: { screen: SessionScreen }) => (
   />
 )
 
-/** The live activity strip under the timeline. A separate export rather than
- *  part of `TimelinePanel` because it is pinned *outside* the log's scroller in
- *  both arrangements — `Pane`'s `footer` slot on `#/s/`, and the bottom of the
- *  timeline section in HOLDER — and inside it, it scrolls away. */
-export const TimelineFeed = ({ store }: { store: SessionStore }) => <ActivityFeed store={store} />
+/* `TimelineFeed` was here: the live activity strip, pinned in the timeline
+ * pane's footer. It is gone, and the timeline is the committed event log and
+ * nothing else. Provisional entries are provisional *messages* — they preview
+ * rows the conversation is about to hold, not events the log is about to hold —
+ * so they now render at the foot of the transcript, where the thing they turn
+ * into lives. Keeping both would have been the same frames drawn twice on one
+ * screen, in two different shapes.
+ *
+ * The timeline still shows provisional content in one case, and it is the case
+ * that belongs to it: `Timeline`'s own `Discarded` fold, under the `TurnFailed`
+ * event of a turn that streamed and then threw the lot away. That is a
+ * property of an event, and it is anchored to the event's row. */
 
 /** The file list over the file viewer.
  *
@@ -138,13 +145,24 @@ export const WorkspacePanel = ({
   )
 }
 
-export const ConversationPanel = ({ screen }: { screen: SessionScreen }) => (
-  <Conversation
-    view={screen.view}
-    error={screen.state.snapshotError}
-    historicalAt={screen.historicalAt}
-  />
-)
+export const ConversationPanel = ({
+  screen,
+  store,
+}: {
+  screen: SessionScreen
+  store: SessionStore
+}) => {
+  const activity = useLiveActivity(store)
+
+  return (
+    <Conversation
+      view={screen.view}
+      error={screen.state.snapshotError}
+      historicalAt={screen.historicalAt}
+      activity={activity}
+    />
+  )
+}
 
 /** The composer, wired. Pinned below the transcript in both arrangements and
  *  therefore never a child of `ConversationPanel`: `Pane`'s `footer` and

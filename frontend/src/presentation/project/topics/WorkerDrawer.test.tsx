@@ -10,8 +10,8 @@ import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
 import type { AutonomyRepository } from '@application/ports/repositories.ts'
-import { emptyActivity } from '@domain/activity/activity.ts'
-import { SessionId } from '@domain/shared/identifier.ts'
+import { emptyActivity, putActivity } from '@domain/activity/activity.ts'
+import { MessageId, SessionId } from '@domain/shared/identifier.ts'
 import { TurnState } from '@domain/session/turn.ts'
 
 import { OverlayHost } from '../../layout/OverlayHost.tsx'
@@ -50,13 +50,15 @@ const fakeStream = (): EventStream => ({
 })
 
 /** A zustand-shaped fake: callable as the hook itself (with or without a
- *  selector, the way `Conversation`'s and `ActivityFeed`'s real props are
+ *  selector, the way `Conversation`'s and `useLiveActivity`'s real props are
  *  read), plus `getState()` for the imperative calls `open`/`close` go
  *  through. Nothing here needs to be reactive — no test in this file asserts
  *  a re-render off a state change the fake itself produces. */
 const fakeStore = (overrides: {
   open?: SessionStore['getState'] extends never ? never : (...args: never[]) => Promise<void>
   close?: () => void
+  /** A turn in flight, for the one test that needs the drawer to be live. */
+  streaming?: string
 }): SessionStore => {
   const state = {
     sessionId: SESSION,
@@ -67,9 +69,19 @@ const fakeStore = (overrides: {
     loadingSnapshot: false,
     snapshotError: null,
     error: null,
-    turn: TurnState.idle(),
+    turn: overrides.streaming
+      ? TurnState.watching({ turnIndex: 1, startedAt: null, elapsedSeconds: 1, from: null })
+      : TurnState.idle(),
     note: null,
-    activity: emptyActivity(),
+    activity: overrides.streaming
+      ? putActivity(emptyActivity(), {
+          messageId: MessageId('m1'),
+          sessionId: SESSION,
+          kind: 'assistant',
+          text: overrides.streaming,
+          payload: {},
+        })
+      : emptyActivity(),
     discarded: new Map(),
     fresh: new Map(),
     open: overrides.open ?? vi.fn().mockResolvedValue(undefined),
@@ -107,6 +119,7 @@ const renderDrawer = (
   parts: {
     open?: (...args: never[]) => Promise<void>
     close?: () => void
+    streaming?: string
   } = {},
 ) => {
   const store = fakeStore(parts)
@@ -161,6 +174,25 @@ it('does not tell an empty session to send a turn it has no composer for', () =>
 
   expect(screen.getByText('Nothing has been said in this session yet.')).toBeInTheDocument()
   expect(screen.queryByText(/send the first turn below/i)).toBeNull()
+})
+
+it('shows the turn in flight inside the transcript, not below it', () => {
+  const { container } = renderDrawer(<WorkerDrawer sessionId={SESSION} onClose={() => {}} />, {
+    streaming: 'Reading the unit files',
+  })
+
+  // The screenshot this change came from: a drawer over a worker that had not
+  // committed anything yet said "Nothing has been said in this session yet."
+  // across the pane, with a second box streaming prose underneath it. The
+  // transcript and the stream were two sibling components, so neither knew
+  // the other had anything in it.
+  //
+  // **Proved red** on the sibling arrangement, where both halves fail: the
+  // empty state is present and the live bubble is outside `.conv`.
+  expect(screen.queryByText('Nothing has been said in this session yet.')).toBeNull()
+  expect(container.querySelector('.conv > .provisional')).toHaveTextContent(
+    'Reading the unit files',
+  )
 })
 
 it('still offers a link to open the full session', () => {

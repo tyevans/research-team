@@ -302,48 +302,90 @@
  * rather than a set of claims to re-verify. */
 
 /* --- provisional turn activity -------------------------------------------
- * Streamed content for a turn that has not committed yet -- reduced opacity
- * and a left border mark it as not-yet-real, so it can never be mistaken for
- * a log entry. (The left border used to be described here as "the approval
- * card's own language for not-settled"; the approval card is Tailwind-styled
- * in the shell now, so this is the only place that language survives.) */
-/* Capped and scrollable: a long-running turn can stream more provisional
- * content than fits, and an uncapped block would both swallow the committed
- * log above it and trap its own overflow off the bottom of the pane. */
-.activity {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 4px 10px 8px;
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 50%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
+ * Streamed content for a turn that has not committed yet.
+ *
+ * **It is drawn as a message, not as a region.** Until 2026-08-28 the live
+ * tail was a separate box below the transcript -- its own scroller, a 50% cap,
+ * and 0.7 opacity -- and the split read as two unrelated surfaces stacked on
+ * one pane rather than as one conversation with a live end. It is now the last
+ * item in `.conv`, and it carries the same border, radius and background as
+ * `.msg` so the column has one rhythm.
+ *
+ * What says "live" instead: an accent left rail and a pulsing dot on the tag.
+ * That is a property of the item, which is what being provisional is -- the
+ * old tray made it a property of a place, so a reader had to know where the
+ * boundary was to know what they were reading. The dimming is gone with the
+ * tray: it existed to push a walled-off block back, and dimmed streaming prose
+ * is exactly the text most likely to be read closely.
+ *
+ * `.activity` was deleted with the tray rather than kept as a plain wrapper:
+ * nothing renders the class any more. `.conv` and `.discarded` are the two
+ * columns that stack these now, and both already own their gap. The rule that
+ * mattered most in it was `overflow-y: auto` -- a scroller inside
+ * `.conv-scroll`, which trapped a long stream's overflow off the bottom of a
+ * pane that had room for it. */
 .provisional {
-  border-left: 2px solid var(--fg-faint);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
   border-radius: var(--radius);
-  background: var(--bg-raise);
+  background: var(--bg-panel);
   padding: 6px 9px;
-  opacity: 0.7;
 }
 .provisional-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--mono);
   font-size: var(--t-xs);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   color: var(--fg-faint);
   text-transform: uppercase;
   margin-bottom: 3px;
 }
+/* The dot is the only thing on the page that moves, which is the point: it
+ * says "still arriving" without a word, and a tag alone cannot distinguish a
+ * turn that is streaming from one that stalled a minute ago. Honoured
+ * `prefers-reduced-motion` below -- the colour still carries the meaning, so
+ * removing the animation removes nothing a reader needs. */
+.provisional-tag::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: provisional-pulse 1.6s ease-in-out infinite;
+}
+@keyframes provisional-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .provisional-tag::before {
+    animation: none;
+  }
+}
 .provisional-body {
   font-size: var(--t-sm);
-  white-space: pre-wrap;
   word-break: break-word;
 }
-.provisional-tool .provisional-tag,
+/* Only the literal form wraps on its own newlines. Markdown prose is elements
+ * now, and `pre-wrap` over rendered markup doubles every blank line between
+ * paragraphs into a visible gap. */
+.provisional-body.mono {
+  font-family: var(--mono);
+  white-space: pre-wrap;
+}
 .provisional-tool {
-  border-color: var(--k-tool);
+  border-left-color: var(--k-tool);
+}
+.provisional-tool .provisional-tag::before {
+  background: var(--k-tool);
 }
 
 /* A discarded turn: everything the failed attempt streamed, kept behind a
@@ -369,7 +411,12 @@
 .discarded > .disc-head[aria-expanded='true'] {
   text-decoration: none;
 }
+/* Nothing here is arriving: this turn is over and was thrown away. The rail
+ * drops to the faint tone the live one no longer uses, and the whole tag is
+ * absent -- `Timeline` passes `tag={null}`, since the fold above already says
+ * "discarded — not recorded" and the tag is what carries the pulsing dot. */
 .discarded .provisional {
   margin-top: 6px;
-  opacity: 0.55;
+  border-left-color: var(--fg-faint);
+  opacity: 0.7;
 }

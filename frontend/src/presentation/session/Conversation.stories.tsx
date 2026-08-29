@@ -1,8 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
+import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { Message } from '@domain/conversation/message.ts'
 import type { SessionProjection } from '@domain/session/session.ts'
-import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import { MessageId, ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import { Conversation } from './Conversation.tsx'
 
@@ -20,9 +21,17 @@ import { Conversation } from './Conversation.tsx'
  * are the only place the difference is visible — a component rendered in one
  * caller looks correct in both.
  *
- * The other three are states a reader meets and cannot easily reproduce: a
- * failed turn, a tool call, and the historical mode where the transcript is
- * folded to a past event.
+ * The other states are ones a reader meets and cannot easily reproduce: a
+ * failed turn, a tool call, the historical mode where the transcript is folded
+ * to a past event, and — the two added on 2026-08-28 — a turn in flight, both
+ * over an existing transcript and over an empty one.
+ *
+ * **The streaming pair is the reason this page earns its keep now.** Live
+ * entries are the last items in the same list as recorded ones, differing only
+ * in how they are drawn: an accent rail and a pulsing dot rather than a
+ * separate boxed-off region below the pane. Whether that reads as "still
+ * arriving" without reading as "a different kind of thing" is a judgement only
+ * an eye can make, and these are where it is made.
  */
 const meta: Meta = {
   title: 'session/Conversation',
@@ -56,6 +65,18 @@ const view = (messages: readonly Message[]): SessionProjection => ({
   at: null,
   files: [],
   messages,
+})
+
+const streaming = (
+  id: string,
+  over: Partial<Omit<ActivityEntry, 'messageId'>> = {},
+): ActivityEntry => ({
+  messageId: MessageId(id),
+  sessionId: SessionId('7d41e0aa-1111-4111-8111-444444444444'),
+  kind: 'assistant',
+  text: null,
+  payload: {},
+  ...over,
 })
 
 const Frame = ({ heading, children }: { heading: string; children: React.ReactNode }) => (
@@ -188,6 +209,60 @@ export const Failed: Story = {
   render: () => (
     <Frame heading="could not load">
       <Conversation view={null} error="the server answered 503" historicalAt={null} />
+    </Frame>
+  ),
+}
+
+/** A turn arriving, under a transcript that already has some.
+ *
+ *  What to check: the live bubble sits in the same column with the same gap,
+ *  border and background as the messages above it — one conversation with a
+ *  live end, not two surfaces stacked. The rail and the dot are the only
+ *  things that say it has not been recorded.
+ *
+ *  Both forms are here because they are styled differently on purpose: the
+ *  prose renders as markdown, the tool-call line stays literal and monospaced.
+ *  A summary this code assembled is not a document, and through a parser the
+ *  underscores in a filename turn its middle italic. */
+export const ATurnInFlight: Story = {
+  render: () => (
+    <Frame heading="a turn in flight">
+      <Conversation
+        view={view(EXCHANGE.slice(0, 2))}
+        error={null}
+        historicalAt={null}
+        activity={[
+          streaming('a1', {
+            kind: 'tool',
+            payload: {
+              data: { tool_calls: [{ name: 'read_file', args: { path: 'notes/tetrarchy.md' } }] },
+            },
+          }),
+          streaming('a2', {
+            text: '## What the sources say\n\nLactantius is **hostile** and the two later\nepitomes both depend on him, so the agreement is not independent',
+          }),
+        ]}
+      />
+    </Frame>
+  ),
+}
+
+/** A turn arriving into a session that has said nothing yet.
+ *
+ *  The state the change of 2026-08-28 came from. Before it, this rendered "No
+ *  conversation yet." across the pane with a second box streaming prose
+ *  underneath — the empty check counted only committed messages, and the
+ *  stream was a sibling it could not see. What to check: no empty state. */
+export const StreamingIntoAnEmptySession: Story = {
+  render: () => (
+    <Frame heading="streaming, nothing recorded yet">
+      <Conversation
+        view={view([])}
+        error={null}
+        historicalAt={null}
+        emptyDetail="Nothing has been said in this session yet."
+        activity={[streaming('a1', { text: 'Reading the unit files…' })]}
+      />
     </Frame>
   ),
 }

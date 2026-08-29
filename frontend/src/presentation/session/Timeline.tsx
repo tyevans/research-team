@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { activityBody, type ActivityEntry } from '@domain/activity/activity.ts'
+import type { ActivityEntry } from '@domain/activity/activity.ts'
 import { humaniseEventType } from '@domain/session/event-kind.ts'
 import { EventIndex } from '@domain/session/event-index.ts'
 import { isCancellation, kindOf, type LogEntry } from '@domain/session/log-entry.ts'
@@ -9,6 +9,7 @@ import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { truncate } from '@domain/conversation/message.ts'
 
 import { Disclosure, EmptyState } from '../common/primitives.tsx'
+import { ProvisionalBubble } from './Provisional.tsx'
 import { clockTime } from '../formatting/format.ts'
 
 /** Which column of a row holds the tab stop: the event itself, or its fork
@@ -378,11 +379,14 @@ const Discarded = ({ entries }: { entries: readonly ActivityEntry[] }) => {
         setOpen((was) => !was)
       }}
     >
+      {/* The same bubble the live tail draws, so a discarded turn reads the
+          way it read while it was still running — including its markdown,
+          which this copy of the markup did not render. No tag: the fold above
+          already says "discarded — not recorded", and the tag carries the
+          pulsing dot, which would claim a turn is arriving that failed before
+          the reader opened this. */}
       {entries.map((entry) => (
-        <div key={entry.messageId} className={`provisional provisional-${entry.kind}`}>
-          <div className="provisional-tag">in progress — not yet recorded</div>
-          <div className="provisional-body">{activityBody(entry)}</div>
-        </div>
+        <ProvisionalBubble key={entry.messageId} entry={entry} tag={null} />
       ))}
     </Disclosure>
   )
