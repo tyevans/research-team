@@ -31,19 +31,27 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from research_team.domain.providers import ProbeResult, Provider
+from research_team.domain.providers import (
+    ProbeResult,
+    Provider,
+    UnknownProvider,
+    provider_for,
+)
 from research_team.domain.settings import (
     DEFAULT_LAYER,
     ENVIRONMENT_LAYER,
     RESOLUTION_ORDER,
+    ROLE_MODEL_KEYS,
     MaskedSecret,
+    ModelProfile,
+    ModelRole,
     Override,
     Scope,
     ScopeRef,
     SettingError,
     SettingSpec,
     mask,
-    spec_for,
+    resolve_spec,
 )
 
 
@@ -185,7 +193,7 @@ class SettingsResolver:
 
         answers: list[Resolved] = []
         for key in keys:
-            spec = spec_for(key)
+            spec = resolve_spec(key)
             answers.append(self._resolve_one(spec, ordered, stored))
         return answers
 
@@ -265,7 +273,7 @@ class SettingsResolver:
         out of a read endpoint" structural rather than a convention every new
         route has to remember.
         """
-        spec = spec_for(key)
+        spec = resolve_spec(key)
         if not spec.secret:
             raise SettingError(f"{key} is not a secret setting")
         refs = list(chain)
@@ -296,7 +304,7 @@ class SettingsResolver:
         is sealed before it reaches the store, so nothing below this line ever
         holds a plaintext credential.
         """
-        spec = spec_for(key)
+        spec = resolve_spec(key)
         if ref.scope not in spec.scopes:
             raise SettingError(
                 f"{key} cannot be set at {ref.scope.value} scope "
@@ -305,17 +313,260 @@ class SettingsResolver:
         if self._store is None:
             raise SettingError("no settings store is wired")
         value = spec.parse(raw)
+        # `spec.key`, never the `key` the caller passed. They differ for a
+        # provider credential written in its short form -- `provider_key.groq`
+        # normalises to `provider_key.groq.api_key` -- and the key is hashed
+        # into the storage row id, so writing under the raw string and reading
+        # under the normalised one puts a credential somewhere nothing can see
+        # or remove. Measured, not reasoned: writing through the short form and
+        # clearing through the long one answered 404, and the resolved read
+        # never saw the row.
         if spec.secret:
             if self._secrets is None:
                 raise SettingError(
                     "AGENT_SETTINGS_KEY is not set, so secrets cannot be stored"
                 )
-            await self._store.put(ref, key, self._secrets.seal(str(value)))
+            await self._store.put(ref, spec.key, self._secrets.seal(str(value)))
             return
-        await self._store.put(ref, key, spec.serialise(value))
+        await self._store.put(ref, spec.key, spec.serialise(value))
 
     async def clear(self, ref: ScopeRef, key: str) -> bool:
-        spec = spec_for(key)
+        spec = resolve_spec(key)
         if self._store is None:
             raise SettingError("no settings store is wired")
         return await self._store.clear(ref, spec.key)
+
+
+@dataclass(frozen=True)
+class StoredProfile:
+    """A profile and the scope that defined it."""
+
+    scope: Scope
+    scope_id: str
+    profile: ModelProfile
+
+
+@dataclass(frozen=True)
+class RoleSelection:
+    """A scope's choice of profile for one role."""
+
+    scope: Scope
+    scope_id: str
+    role: ModelRole
+    profile_name: str
+
+
+class ModelProfileStorePort(Protocol):
+    """Where profiles and role selections live.
+
+    Dumb in the same way `SettingsStorePort` is: it knows scopes, names and
+    strings, and has no opinion about which scope wins. `ModelProfileService`
+    owns the walk, so the two stores cannot disagree about resolution order.
+    """
+
+    async def profiles(self, refs: Iterable[ScopeRef]) -> list[StoredProfile]: ...
+
+    async def put_profile(self, ref: ScopeRef, profile: ModelProfile) -> None: ...
+
+    async def delete_profile(self, ref: ScopeRef, name: str) -> bool: ...
+
+    async def selections(self, refs: Iterable[ScopeRef]) -> list[RoleSelection]: ...
+
+    async def select(self, ref: ScopeRef, role: ModelRole, profile_name: str) -> None: ...
+
+    async def clear_selection(self, ref: ScopeRef, role: ModelRole) -> bool: ...
+
+
+@dataclass(frozen=True)
+class ResolvedRole:
+    """What a role resolves to, and how it got there.
+
+    `model` is always populated -- a role always has a model, because the
+    settings layer underneath always answers -- so a caller that only wants to
+    make a call reads this one field and ignores the rest. The others are for
+    the person looking at the form.
+    """
+
+    role: ModelRole
+    model: str
+    layer: str
+    """Where the answer came from: a scope's name when a profile was selected
+    there, otherwise the layer the role's *setting* resolved from."""
+
+    profile: ModelProfile | None = None
+    scope_id: str | None = None
+    setting_key: str = ""
+    """The setting the model name falls back to. Reported even when a profile
+    answered, because it is what the form offers as the way back."""
+
+    dangling: str | None = None
+    """The name of a selected profile that no scope in the chain defines.
+
+    Reported rather than silently ignored. A selection pointing at a deleted
+    profile is exactly the "silently repointed at something else" failure this
+    whole feature exists to prevent -- falling back without saying so would
+    send the role to the default model and look like it worked.
+    """
+
+
+def _ordered(chain: Iterable[ScopeRef]) -> list[ScopeRef]:
+    """The chain in resolution order, dropping scopes not named.
+
+    Shared by both services so there is one statement of the walk. A caller
+    that listed user before project would otherwise silently invert the whole
+    feature, and the failure looks like "my project override does not apply".
+    """
+    by_scope = {ref.scope: ref for ref in chain}
+    return [by_scope[scope] for scope in RESOLUTION_ORDER if scope in by_scope]
+
+
+class ModelProfileService:
+    """Named (provider, model, credentials, parameters) triples, per role, per scope.
+
+    The five roles were separate environment variables that all defaulted to
+    one endpoint, so "my Anthropic key for authoring and my local vLLM for
+    extraction" was not expressible: the api key was one variable. A profile is
+    the unit that makes it expressible, and this is where a role becomes a
+    model name.
+
+    **Profiles shadow by name; selections resolve by role**, and the two walks
+    are separate on purpose: a project may select a profile a *tenant* defined,
+    which is the ordinary case for a shared team credential. Folding them
+    together would force a project to redefine a profile in order to use it.
+
+    Scope ids are explicit and nothing here authorizes them -- W-B, as
+    everywhere else on this surface.
+    """
+
+    def __init__(
+        self, store: ModelProfileStorePort | None, settings: SettingsResolver
+    ) -> None:
+        self._store = store
+        self._settings = settings
+
+    async def profiles(self, chain: Iterable[ScopeRef]) -> list[StoredProfile]:
+        """Every profile visible from this chain, most specific definition first.
+
+        A name defined at two scopes appears once: the more specific one, which
+        is what a lookup finds. Returning both would make the list disagree with
+        the resolution it is supposed to describe.
+        """
+        if self._store is None:
+            return []
+        ordered = _ordered(chain)
+        rank = {ref.scope: index for index, ref in enumerate(ordered)}
+        seen: dict[str, StoredProfile] = {}
+        for stored in sorted(await self._store.profiles(ordered), key=lambda s: rank[s.scope]):
+            seen.setdefault(stored.profile.name, stored)
+        return sorted(seen.values(), key=lambda s: (rank[s.scope], s.profile.name))
+
+    async def put(self, ref: ScopeRef, profile: ModelProfile) -> None:
+        """Store a profile, validating the provider and the credential first.
+
+        Both checks are here rather than at the route so every writer gets the
+        same refusal, and both concern a string that ends up somewhere it cannot
+        be taken back from: `provider_id` selects an adapter, and
+        `credential_key` names the secret a call will be made with.
+        """
+        if self._store is None:
+            raise SettingError("no model profile store is wired")
+        if not profile.name.strip():
+            raise SettingError("a profile needs a name")
+        try:
+            provider_for(profile.provider_id)
+        except UnknownProvider as error:
+            raise SettingError(str(error)) from error
+        if not profile.model.strip():
+            raise SettingError("a profile needs a model")
+        if profile.credential_key is not None:
+            spec = resolve_spec(profile.credential_key)
+            if not spec.secret:
+                # A profile's credential is what a call is authenticated with.
+                # Pointing it at an ordinary setting would put a non-secret
+                # value on the credential path and -- worse -- render a
+                # secret-shaped field in the UI that is not one.
+                raise SettingError(
+                    f"{profile.credential_key} is not a secret setting, so it "
+                    f"cannot be a profile's credential"
+                )
+        await self._store.put_profile(ref, profile)
+
+    async def delete(self, ref: ScopeRef, name: str) -> bool:
+        if self._store is None:
+            raise SettingError("no model profile store is wired")
+        return await self._store.delete_profile(ref, name)
+
+    async def select(self, ref: ScopeRef, role: ModelRole, profile_name: str) -> None:
+        """Point a role at a profile.
+
+        The profile need not exist yet, deliberately: a selection is resolved
+        against the chain at *read* time, and a tenant may legitimately select a
+        name a project will define. What is not silent is the other direction --
+        a selection resolving to nothing is reported as `dangling`.
+        """
+        if self._store is None:
+            raise SettingError("no model profile store is wired")
+        if not profile_name.strip():
+            raise SettingError("a role selection needs a profile name")
+        await self._store.select(ref, role, profile_name)
+
+    async def clear(self, ref: ScopeRef, role: ModelRole) -> bool:
+        if self._store is None:
+            raise SettingError("no model profile store is wired")
+        return await self._store.clear_selection(ref, role)
+
+    async def roles(self, chain: Iterable[ScopeRef]) -> list[ResolvedRole]:
+        """Every role, resolved. One read of each store.
+
+        The batch form is what the settings page uses: five roles are two
+        queries rather than ten.
+        """
+        ordered = _ordered(chain)
+        visible = {stored.profile.name: stored for stored in await self.profiles(ordered)}
+        chosen: dict[ModelRole, RoleSelection] = {}
+        if self._store is not None:
+            rank = {ref.scope: index for index, ref in enumerate(ordered)}
+            for selection in sorted(
+                await self._store.selections(ordered), key=lambda s: rank[s.scope]
+            ):
+                chosen.setdefault(selection.role, selection)
+
+        keys = [ROLE_MODEL_KEYS[role] for role in ModelRole]
+        resolved = await self._settings.resolve_all(keys, ordered)
+        fallbacks = dict(zip(ModelRole, resolved, strict=True))
+        chat = str((await self._settings.resolve("model", ordered)).value)
+
+        answers: list[ResolvedRole] = []
+        for role in ModelRole:
+            fallback = fallbacks[role]
+            key = ROLE_MODEL_KEYS[role]
+            selection = chosen.get(role)
+            stored = visible.get(selection.profile_name) if selection else None
+            if selection is not None and stored is not None:
+                answers.append(
+                    ResolvedRole(
+                        role=role,
+                        model=stored.profile.model,
+                        layer=selection.scope.value,
+                        profile=stored.profile,
+                        scope_id=selection.scope_id,
+                        setting_key=key,
+                    )
+                )
+                continue
+            answers.append(
+                ResolvedRole(
+                    role=role,
+                    # `curation_model`, `extraction_model` and `vision_model`
+                    # have no default of their own. Curation and extraction fall
+                    # back to the chat model, which is what their readers do, so
+                    # the form shows the name a call would actually use rather
+                    # than an empty field.
+                    model=str(fallback.value) if fallback.value else chat,
+                    layer=fallback.layer if fallback.value else "fallback",
+                    scope_id=fallback.scope_id if fallback.value else None,
+                    setting_key=key,
+                    dangling=selection.profile_name if selection is not None else None,
+                )
+            )
+        return answers

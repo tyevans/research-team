@@ -287,3 +287,38 @@ def test_anything_else_leaves_the_interaction_log_collecting(monkeypatch, value)
     monkeypatch.setenv("AGENT_INTERACTION_LOG", value)
 
     assert config.interaction_log_enabled() is True
+
+
+def test_extraction_model_defaults_to_the_chat_model(monkeypatch):
+    """Unset, the two are one name -- both jobs run against the same endpoint
+    on a default install, and a required variable for a role nobody has
+    customised is a new way for a fresh clone not to start."""
+    monkeypatch.delenv("AGENT_EXTRACTION_MODEL", raising=False)
+    monkeypatch.setenv("AGENT_MODEL", "qwen-chat")
+
+    assert config.extraction_model() == "qwen-chat"
+
+
+def test_setting_the_extraction_model_does_not_move_the_chat_model(monkeypatch):
+    """The defect this closes, and the second assertion is the whole test.
+
+    Extraction had no variable of its own, so an install that wanted extraction
+    on something cheap repointed the research agent too -- `ModelRole` named
+    five roles while two of them resolved from one string. Reverting
+    `extraction_model()` to `model_name()` leaves the first assertion green and
+    turns this one red.
+    """
+    monkeypatch.setenv("AGENT_MODEL", "qwen-chat")
+    monkeypatch.setenv("AGENT_EXTRACTION_MODEL", "small-and-cheap")
+
+    assert config.extraction_model() == "small-and-cheap"
+    assert config.model_name() == "qwen-chat"
+
+
+def test_a_blank_extraction_model_reads_as_unset(monkeypatch):
+    """Matching `curation_model`: an empty value in a `.env` file is a person
+    clearing a setting, not asking for the empty string."""
+    monkeypatch.setenv("AGENT_MODEL", "qwen-chat")
+    monkeypatch.setenv("AGENT_EXTRACTION_MODEL", "   ")
+
+    assert config.extraction_model() == "qwen-chat"

@@ -710,6 +710,29 @@ def curation_model() -> str:
     return _optional("curation_model") or model_name()
 
 
+def extraction_model() -> str:
+    """Which model runs knowledge extraction.
+
+    **Not `AGENT_MODEL`, and that is the change.** Extraction shared the chat
+    model's name until now -- not by a default, but by having no variable of
+    its own -- so an install that wanted extraction on something cheap had to
+    repoint the research agent at it too. `ModelRole` named five roles while
+    two of them resolved from one string, which made the enum a description of
+    an intention rather than of the system.
+
+    Falls back to `model_name()` when unset, exactly as `curation_model` does:
+    both jobs run against the same endpoint on a default install, and a
+    required variable for a role nobody has customised is a new way for a fresh
+    clone not to start. What the fallback does *not* do any more is make the
+    two move together when one is set.
+
+    Only the model *name* was shared. Extraction has had its own client since
+    `build_extraction_model` -- different `extra_body`, thinking off -- so this
+    changes which name that client sends, and nothing about how it sends it.
+    """
+    return _optional("extraction_model") or model_name()
+
+
 def embeddings_enabled() -> bool:
     """Whether anything should embed. A convenience over `vector_store`, not a knob."""
     return vector_store() != "none"
