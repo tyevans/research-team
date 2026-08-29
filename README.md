@@ -10,11 +10,11 @@ any point; a **total audit trail** of what the agent did and in what order; a
 sessions**, because the log is SQLite and outlives the process.
 
 The agent's filesystem is virtual and it has no shell, so nothing it writes
-escapes the process. Two tools reach the network and both are off or gated by
-default: `web_search` is not registered at all without `AGENT_SEARXNG_URL`, and
-`fetch` defaults to `ask`, so it cannot reach anything until a person approves
-that call. `tests/integration/test_no_network.py` and `test_no_shell.py` pin
-both claims. Results are recorded as ordinary events, so a session refolded
+escapes the process. Three tools reach the network and all three are off or
+gated by default: `web_search` is not registered at all without
+`AGENT_SEARXNG_URL`, and `fetch` and `fetch_media` both floor at `ask`, so
+neither can reach anything until a person approves that call.
+`tests/integration/test_no_network.py` and `test_no_shell.py` pin both claims. Results are recorded as ordinary events, so a session refolded
 years later reproduces exactly — even if the search instance is long gone.
 
 ## Quickstart
@@ -35,17 +35,25 @@ browser over SSE.
 A project's third page asks it about what it gathered. The answer comes from
 that project's own material — its knowledge graph and the sources behind it —
 and the agent cites the documents it opened rather than the ones it found by
-searching. The page starts no session and appends no events: the conversation
-is held in server memory, is dropped when you leave, and the tools it can reach
-are an allowlist of four readers with no write and no network among them.
+searching. The page starts no session, and the tools it can reach are an
+allowlist of four readers with no write and no network among them.
+
+**The conversation itself is recorded.** It has its own aggregate and its own
+stream — `AskConversationStarted` and `AskTurnRecorded`, each turn carrying its
+question, its answer and what the answer cited — so a conversation outlives the
+process it was asked in. The live conversation is still served from a bounded
+cache of 64 entries that expire after an hour idle; the stream is what survives
+that. The id is minted by the server rather than chosen by the browser, for the
+same reason this codebase does not let a model choose an id: it becomes an
+aggregate id, a row key and a URL segment.
 
 The agent answering that page may write an mcq, cloze, or flashcard component
 into its reply instead of just prose, and the block renders and grades live in
-the chat turn — a reader can attempt it right there. **Nothing about the
-attempt is recorded**: there is no conversation state to hold it in, so a
-refresh blanks the widget back to its unanswered form. The withholding is
-weaker here than on a course file, because the answer key travels in the same
-response as the block rather than behind a second request — see B105.
+the chat turn — a reader can attempt it right there. **The attempt is not
+recorded**, only the turn is, so a refresh blanks the widget back to its
+unanswered form. The withholding is weaker here than on a course file, because
+the answer key travels in the same response as the block rather than behind a
+second request — see B105.
 
 A project's fourth page asks a different question: **what is there to learn
 here?** It folds the knowledge graph into *learning areas* — clusters of
@@ -57,7 +65,12 @@ numbered lesson files, in markdown, into the project's own workspace.
 relationship is the strongest evidence there is that two entities belong
 together; two names in one passage is weaker; and an entity's nearest
 neighbour in embedding space is a hypothesis no document ever made, so it is
-weighted below both and drawn only above a similarity floor. What that last
+weighted below both and drawn only when it **stands out from that entity's own
+neighbourhood**. That admission test was an absolute cosine floor until
+2026-08-29. It is now relative, and the reason is worth stating: a cosine floor
+is a per-model constant, and the embedding model is a setting — so a fixed
+floor is a number tuned for one model and applied to whichever one you
+configured. What that last
 channel buys is the case the graph cannot see at all: an entity nothing links
 and nothing co-mentions is simply dropped from a graph-only projection, and a
 semantic edge places it. Measured on a five-article corpus, the co-mention
@@ -83,12 +96,29 @@ never asked of a model: each step carries the evidence that placed it, and
 where two areas genuinely depend on each other the path says so instead of
 quietly picking one.
 
-Writing the courses is the one part that costs model turns — three per area,
-run in sequence so that backward design is enforced by the arrangement rather
-than requested in a prompt. The lessons they write can carry the same
-interactive components the ask page uses, including the six that resolve
-against this project's own graph, so a lesson quotes and links the material it
-came from.
+Writing the courses is the one part that costs model turns — four phases per
+area, run in sequence so that backward design is enforced by the arrangement
+rather than requested in a prompt. Each phase ends in a Python check over the
+files it left behind, so a phase that stopped early is told apart from one that
+worked. The lessons they write can carry the same interactive components the
+ask page uses, including the six that resolve against this project's own graph,
+so a lesson quotes and links the material it came from.
+
+**Authoring is bounded, because without a bound it did not finish.** A parent
+turn may make `AGENT_AUTHORING_ROUNDS` model calls — 6 by default — before its
+graph, corpus and web tools are withdrawn. The turn continues; it just cannot
+research any more, so the next thing it can do is write. Before the bound
+existed, **18 of 22 authoring runs never reached the write**. A refused phase
+is retried once.
+
+**Every authored lesson also has a deck.** The same document, paced: press
+**Present this lesson** on any lesson file. Slides are *derived* from the
+prose, never authored, so every lesson this system has ever written gained one
+the day it shipped and there is one source of truth for what a lesson says.
+What that costs is that pacing is a mechanical consequence of the prose's
+shape — a lesson written as one unbroken argument presents as a few dense
+slides. `frontend/src/domain/lesson/slides.ts` holds the segmentation rule and
+`docs/design/lesson-slideshow.md` argues it.
 
 Point at your model server if it is not on the default
 `http://localhost:8080/v1/`:
@@ -122,9 +152,68 @@ existed only to manage that, and both are gone with it.
 `frontend/README.md` has the layering and the three files carrying most of the
 subtlety.
 
+## Bring your own model
+
+The agent talks to an OpenAI-compatible endpoint, and it does not have to be a
+local one. A catalogue of **fifteen providers** ships in
+`research_team/domain/providers.py`: OpenAI, Anthropic, Google Gemini, Mistral,
+Groq, Together, Fireworks, DeepSeek, xAI, OpenRouter, Ollama, LM Studio, vLLM,
+Azure OpenAI and AWS Bedrock. Each entry carries its base URL, the credentials
+it needs, and what it can do.
+
+Three of them — Ollama, LM Studio and vLLM — run on your own machine and need
+no key at all.
+
+```bash
+export AGENT_BASE_URL=https://api.groq.com/openai/v1/
+export AGENT_MODEL=llama-3.3-70b-versatile
+export AGENT_API_KEY=gsk_your_key_here
+```
+
+**Five roles pick their model independently**: `research`, `extraction`,
+`curation`, `embedding` and `vision`. Point extraction at something cheap and
+the research agent stays where it is. That was not true until 2026-08-29 —
+extraction and research resolved from one setting, so choosing a cheap
+extractor silently repointed the agent you talk to.
+
+There is a connection test that makes one live call and reports back:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/providers/openai/test \
+  -H 'content-type: application/json' -d '{"api_key": "sk-..."}'
+```
+
+```json
+{"provider_id":"openai","outcome":"unauthorized","ok":false,
+ "detail":"OpenAI refused the credential (401)","latency_ms":161}
+```
+
+Keys can also be stored, encrypted at rest under `AGENT_SETTINGS_KEY`, and
+scoped to a project, a user or a tenant. **A stored key is never read back** —
+the API returns a mask showing the last four characters.
+
+**One limit to know before you build on it.** The scoped store is a working,
+tested surface with no consumer below it yet: the running process still reads
+the environment and the built-in default, and nothing else. Setting an override
+records a decision; setting the environment variable is what changes which
+model answers. [`docs/how-to/bringing-your-own-model.md`](docs/how-to/bringing-your-own-model.md)
+walks through both halves.
+
 ## Configuration
 
-Everything is an environment variable. The ones a first run actually needs:
+There is one registry of settings and five layers that can answer for them:
+
+```
+project  →  user  →  tenant  →  environment  →  built-in default
+```
+
+The environment used to be the only layer. It is now the fourth of five, and
+it is the deployment layer: one process reads one environment. Seven variables
+stay environment-only, because no scope can answer for them —
+[`docs/configuration.md`](docs/configuration.md) lists them with the reason
+attached to each.
+
+The variables a first run actually needs:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -212,7 +301,6 @@ created on first project open. Both defaults keep everything in-process.
 | `/resume <n\|id>` | switch to a stored session by position or id prefix |
 | `/autonomy [tool] [level]` | show, or set a gated tool to `auto`, `ask` or `deny` |
 | `/research [n]` | work this project's topic queue autonomously |
-| `/checks` | per-check fire rate, override rate and time-to-decision |
 | `/health` | whether the session list's projection is healthy |
 | `/rebuild` | derive the session list from the log again; safe at any time |
 | `/help`, `/quit` | |
@@ -296,14 +384,26 @@ uv run pytest -m integration      # needs docker-compose.test.yml
 uv run pytest tests/integration/test_live.py -m live -v
 ```
 
-CI runs four gates, and passing three is not passing: `ruff check`,
-`ruff format --check`, `pytest`, and `cd frontend && npm run verify`.
+CI runs five gates, and passing four is not passing: `ruff check`,
+`ruff format --check`, `pytest`, `cd frontend && npm run verify`, and
+`cd frontend && npm run test:browser:ci`.
+
+The fifth is new. It runs `src/**/*.browser.test.tsx` in headless Chromium,
+because jsdom lays nothing out: `getComputedStyle` returns only what an inline
+style said, and a selector that matches nothing is indistinguishable from one
+that matches. Anything whose correctness is a computed style or a measurement
+belongs there. Two files are quarantined, both red on `main` before the job
+existed; `frontend/package.json` carries the list and the reason.
 
 ## Where to read more
 
 | | |
 |---|---|
-| [`docs/configuration.md`](docs/configuration.md) | every environment variable, and the costly defaults |
+| [`docs/configuration.md`](docs/configuration.md) | the five layers, all 41 settings, and the costly defaults |
+| [`docs/how-to/bringing-your-own-model.md`](docs/how-to/bringing-your-own-model.md) | pick a provider, store a key, test it, select it for a role |
+| [`docs/reference/settings-api.md`](docs/reference/settings-api.md) | the HTTP contract for settings, providers and profiles |
+| [`docs/how-to/presenting-a-lesson.md`](docs/how-to/presenting-a-lesson.md) | open a lesson's deck, move through it, link to a slide |
+| [`docs/design/lesson-slideshow.md`](docs/design/lesson-slideshow.md) | where slides come from, and what deriving them costs |
 | [`docs/design/architecture.md`](docs/design/architecture.md) | the four layers, the decider, concurrency, what the live feed can and cannot show |
 | [`docs/design/context-management.md`](docs/design/context-management.md) | the four context modes, and why the obvious alternative is wrong three times |
 | [`docs/design/interactive-components.md`](docs/design/interactive-components.md) | widgets in course markdown, and learner progress |
