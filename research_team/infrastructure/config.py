@@ -287,6 +287,48 @@ def interaction_log_enabled() -> bool:
     return _flag("interaction_log")
 
 
+def authorization_enabled() -> bool:
+    """Whether `AGENT_AUTH` selects the real checker.
+
+    Off by default, and off is what every configuration in this repository runs
+    today -- the whole test suite, and every other workstream in flight. It is
+    Declared in `domain/settings.py` like every other knob, so the settings UI
+    and the resolver see it without a second hand-written description of it.
+    Deployment scope only: a tenant that could turn its own authorization off
+    would be the whole feature undone from inside.
+
+    Declared as an **enum** rather than a boolean, which is the one choice here
+    worth arguing. `AGENT_AUTH=yes` would be `True` under `SettingType.BOOLEAN`
+    and is refused by the enum -- and refusing it is right, because the two
+    directions of a typo are not symmetric. A spelling that silently turns
+    authorization *off* is a security incident nobody sees; one that raises at
+    startup is an outage somebody fixes in a second. So every value but `on` and
+    `off` fails loudly instead of being guessed at.
+
+    "Off" still means `PermissiveAuthorizer`, so an unset variable is a local
+    install and not an open server; the gate that refuses anonymous requests is
+    W-A's, and this one only decides which adapter answers.
+    """
+    return _text("auth") == "on"
+
+
+def admin_subjects() -> frozenset[str]:
+    """The Zitadel subjects holding `instance.admin`, comma-separated.
+
+    Deployment scope only, rather than a setting any tenant could write.
+    `/api/summaries/rebuild`, `/api/corpus/rebuild` and `/api/workers` act on the
+    whole installation across every tenant, so a tenant that could name its own
+    instance admins could rebuild everyone else's corpus.
+
+    Empty means nobody, which is the safe reading of an unset variable and costs
+    nothing locally: with authorization off the permissive adapter answers, so an
+    empty set never locks a single-user install out of its own rebuild routes.
+    """
+    return frozenset(
+        part.strip() for part in _text("admin_subjects").split(",") if part.strip()
+    )
+
+
 def blob_root() -> Path:
     """Where media bytes live: beside the database, not inside it.
 

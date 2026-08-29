@@ -542,6 +542,31 @@ SETTINGS: tuple[SettingSpec, ...] = (
         "Stores",
         scopes=_DEPLOYMENT,
     ),
+    # --- authorization --------------------------------------------------------
+    _spec(
+        "AGENT_AUTH",
+        SettingType.ENUM,
+        "off",
+        "Authorization",
+        "Whether permissions are enforced. `off` wires a permissive checker -- "
+        "a real one, so every route runs the same resolution path -- and is what "
+        "a single-user local install runs.",
+        "Authorization",
+        choices=("off", "on"),
+        scopes=_DEPLOYMENT,
+    ),
+    _spec(
+        "AGENT_ADMIN_SUBJECTS",
+        SettingType.STRING,
+        "",
+        "Instance admins",
+        "Comma-separated Zitadel subjects holding `instance.admin`: the rebuild "
+        "and worker routes, which act across every tenant. Deployment scope only "
+        "-- a tenant that could name its own instance admins could rebuild "
+        "everyone else's corpus.",
+        "Authorization",
+        scopes=_DEPLOYMENT,
+    ),
     # --- search ---------------------------------------------------------------
     _spec(
         "AGENT_SEARXNG_URL",

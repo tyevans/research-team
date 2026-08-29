@@ -64,6 +64,11 @@ from research_team.application import (
     WorkerRoster,
 )
 from research_team.application.ask import AskService, ConversationRegistry
+from research_team.application.authorization import (
+    Authorizer,
+    PermissiveAuthorizer,
+    RoleTableAuthorizer,
+)
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.blobs import BlobStorePort
 from research_team.application.corpus_editing import CorpusEditor
@@ -223,6 +228,7 @@ from research_team.infrastructure.persistence.read_models import (
     OntologyRunner,
     SocraticDialogueRunner,
 )
+from research_team.infrastructure.persistence.tenants import TenantRunner
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.settings import (
     HttpProviderProbe,
@@ -750,6 +756,26 @@ class Application:
     handed -- see the comment beside its construction in `build_application`
     -- so `web.py` has to be able to reach it too, to hand the same instance
     to `create_app`."""
+
+    tenants: TenantRunner
+    """Keeps the four tenancy tables following the log. Idle until `start()`.
+
+    A field rather than a local for `topics`'s reason, sharpened: `authorizer`
+    below reads through it, and a second instance would give the checker its own
+    connection and its own view of who is a member -- which is a permission
+    answer that disagrees with the one `/api/tenants/{id}/members` renders."""
+
+    authorizer: Authorizer
+    """Which adapter answers "may this principal do this". Chosen once, here.
+
+    `PermissiveAuthorizer` unless `AGENT_AUTH` is on, and **not** an absent
+    dependency: see the class docstring for why off has to be a real authorizer.
+    Nothing calls this yet -- slice B3 puts the `Requires` marker on the routes
+    -- so at the time of writing this is wired and unread, which is stated
+    plainly because a wired-and-unread port is the shape CLAUDE.md's
+    "one adapter, no test between them" entry is about. The test that answers it
+    is `tests/integration/test_authorization_over_real_grants.py`, which drives
+    the real writer and the real checker over one database."""
 
     topics: TopicRunner
     """Keeps the topic tables following the log. Idle until `start()`.
@@ -1373,6 +1399,13 @@ class Application:
         await self.authoring.start()
         await self.dialogues.start()
         await self.interaction_log.start()
+        await self.tenants.start()
+        if not config.authorization_enabled():
+            # `LOCAL_TENANT` is a real tenant with a real row, not a special
+            # case in the checker -- see `seed_local_tenant`. Only with auth
+            # off: with it on, a `"local"` tenant nobody created would be a
+            # tenant nobody can see the membership of.
+            await self.tenants.seed_local_tenant()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
@@ -1533,6 +1566,12 @@ class Application:
             ("topics", self.topics.stop),
             ("definitions", self.definitions.stop),
             ("ontology", self.ontology.stop),
+            # Grouped with the projections above rather than beside the
+            # interaction log, which it superficially resembles: those two
+            # follow *different* stores, and this one follows the sessions
+            # store like its four neighbours here. It has to stop before
+            # `service` closes that store underneath it.
+            ("tenants", self.tenants.stop),
             ("catalog", self._catalog_runner.stop),
             ("course", self._course_runner.stop),
             ("blurb cache", self._blurb_cache.close),
@@ -1979,6 +2018,29 @@ def _build_application(
         resolved_tracer,
     )
     interaction_recorder = EventStoreInteractionRecorder(interaction_store, interaction_bus)
+
+    # The seventh projection over the sessions store, built beside the others
+    # for the reason stated above `topics`: a projection wired somewhere else is
+    # a projection somebody forgets to start, and this one's failure mode is the
+    # worst of the seven -- an empty membership table is indistinguishable from
+    # "this person has no role", so a build that never started it would refuse
+    # everybody with auth on and nobody would be able to say why.
+    tenants = TenantRunner(
+        repository.store, resolved_path, repository.publisher, resolved_tracer
+    )
+    # `AGENT_AUTH` off -- which is every configuration today, and every other
+    # workstream's -- selects the permissive adapter. Off is a real authorizer
+    # rather than an absent one so that the existing route tests keep running
+    # the real resolution path; see `PermissiveAuthorizer`.
+    #
+    # Slice B6 is what flips this default, and by then the marker will have been
+    # on every route for weeks with the checker answering "yes". If that goes
+    # wrong, the revert is this one line.
+    authorizer: Authorizer = (
+        RoleTableAuthorizer(tenants, config.admin_subjects())
+        if config.authorization_enabled()
+        else PermissiveAuthorizer()
+    )
 
     async def granted_tools(session: Session) -> tuple[BaseTool, ...]:
         """A grant-bound `fetch`, for a session `resolved_grants` holds one for.
@@ -3089,6 +3151,8 @@ def _build_application(
         blob_store=blob_store,
         topics=topics,
         settings=settings_deps,
+        tenants=tenants,
+        authorizer=authorizer,
         definitions=definition_invalidation,
         definition_readers=definition_reader,
         ontology=ontology,
@@ -3191,6 +3255,18 @@ _PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
     ("topics", "stop"),
     ("definition_invalidation", "stop"),
     ("ontology", "stop"),
+    # Beside the other sessions-store projections, mirroring `Application.close`
+    # -- the two lists are kept in the same order deliberately, since the
+    # comment above says the "in close but not here" direction has no compiler
+    # between them and ordering is the only thing a reader can diff by eye.
+    #
+    # Reachable but currently inert, and worth saying which: a `TenantRunner`
+    # holds nothing until `start()`, and `_build_application` only constructs
+    # it, so `stop()` on a partial build is a no-op today. It is listed anyway,
+    # because "this one happens to hold no resources yet" is a fact about this
+    # week rather than about the design, and the omission would be found the
+    # first time that changed -- by a hung interpreter, not by a test.
+    ("tenants", "stop"),
     ("catalog_runner", "stop"),
     ("course_runner", "stop"),
     ("blurb_cache", "close"),
