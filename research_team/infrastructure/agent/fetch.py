@@ -16,7 +16,7 @@ is anything the rest of the system has to carry.
 """
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -27,7 +27,12 @@ from trafilatura.metadata import extract_metadata
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.corpus_read import CorpusReadError, CorpusReadPort
 from research_team.application.grants import FetchGrant
-from research_team.infrastructure.agent.corpus_tools import bounded, format_document
+from research_team.application.tool_artifacts import Acknowledgement, Excerpt
+from research_team.infrastructure.agent.corpus_tools import (
+    bounded,
+    excerpt_artifact,
+    format_document,
+)
 from research_team.infrastructure.agent.recall import (
     PageMemo,
     Recall,
@@ -150,7 +155,9 @@ def _citation(
     return "\n".join(lines)
 
 
-async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str | None:
+async def stored_page(
+    corpus: CorpusReadPort, url: str, max_chars: int
+) -> tuple[str, Excerpt] | None:
     """This page as the corpus already holds it, or None.
 
     Matched on `normalize_url` rather than on the stored string, so a URL that
@@ -202,11 +209,12 @@ async def stored_page(corpus: CorpusReadPort, url: str, max_chars: int) -> str |
         # Listed and then unreadable: a drop landed between the two calls.
         return None
     span = bounded(document.text, None, None, max_chars)
-    return (
+    text = (
         "[recalled -- this page is already in this project's corpus, so it was "
         "not fetched again. Quote it from here; the offsets below are real.]\n\n"
         + format_document(document, span)
     )
+    return text, excerpt_artifact(document, span)
 
 
 def build_fetch_tool(
@@ -325,13 +333,13 @@ def build_fetch_tool(
     budget.
     """
 
-    @tool(FETCH_TOOL)
+    @tool(FETCH_TOOL, response_format="content_and_artifact")
     async def fetch(
         url: str,
         refresh: bool = False,
         *,
         tool_call_id: Annotated[str, InjectedToolCallId],
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         """Read one web page and return its main content as markdown text.
 
         `tool_call_id` is injected by the framework from the real `ToolCall`
@@ -355,10 +363,13 @@ def build_fetch_tool(
                 # and a fetch tool that grew the ability to read local files
                 # would be a way around the file tools -- and around the
                 # event log they write to.
-                return (
+                text_out = (
                     f"Only http and https URLs can be fetched; {scheme or 'that'} is not "
                     "one. Use the file tools to read the workspace."
                 )
+                return text_out, Acknowledgement(
+                    action=FETCH_TOOL, subject=url, detail=text_out, ok=False
+                ).as_artifact()
             if not refresh:
                 # Corpus before memo: both avoid the request, and only one
                 # comes back with offsets a claim can cite. Both return before
@@ -367,15 +378,35 @@ def build_fetch_tool(
                 if corpus is not None:
                     found = await stored_page(corpus, url, max_chars)
                     if found is not None:
-                        return found
+                        found_text, found_excerpt = found
+                        return found_text, found_excerpt.as_artifact()
                 if recall is not None:
                     remembered = recall.get(url, key=url_key(url))
                     if remembered is not None:
-                        return (
+                        # A memo hit carries no title, uri metadata or true
+                        # document length distinct from what was retained --
+                        # unlike a corpus hit, there is no `StoredDocument` to
+                        # build a real `Excerpt` from, only the text `Recall`
+                        # kept. `char_count=len(text)` and a full-span excerpt
+                        # is honest about that: the ruler draws the whole bar
+                        # filled, which is what "this is everything retained"
+                        # actually looks like, rather than claiming a range
+                        # into a document this call never re-measured.
+                        recalled_text = (
                             f"[recalled -- read {describe_age(remembered.age_seconds)} in "
                             f"this process, not a fresh read. Pass refresh=True if the "
                             f"page is expected to have changed since.]\n\n{remembered.text}"
                         )
+                        return recalled_text, Excerpt(
+                            source_id=url,
+                            title=None,
+                            label=None,
+                            start=0,
+                            end=len(remembered.text),
+                            char_count=len(remembered.text),
+                            text=remembered.text,
+                            uri=url,
+                        ).as_artifact()
             owned = client is None
             http = client or httpx.AsyncClient(
                 timeout=TIMEOUT,
@@ -405,10 +436,13 @@ def build_fetch_tool(
                     # file uses one -- can still hand back a 3xx regardless of
                     # `grant`, and a message that named "a granted fetch"
                     # would be false in that case.
-                    return (
+                    text_out = (
                         f"That URL redirected to {location}, which was not followed. "
                         "Fetch that URL directly if you still want it."
                     )
+                    return text_out, Acknowledgement(
+                        action=FETCH_TOOL, subject=url, detail=text_out, ok=False
+                    ).as_artifact()
                 response.raise_for_status()
                 if grant is not None and grant.covers(url):
                     # Spent here, not at `http.get()`: an HTTPStatusError is
@@ -422,16 +456,21 @@ def build_fetch_tool(
                 content_type = response.headers.get("content-type", "")
                 media_type = content_type.split(";")[0].strip().lower()
                 if media_type and "html" not in media_type and "xml" not in media_type:
-                    return (
+                    text_out = (
                         f"That URL returned {media_type}, which this tool cannot read -- "
                         "it reads HTML pages. No text this time."
                     )
+                    return text_out, Acknowledgement(
+                        action=FETCH_TOOL, subject=url, detail=text_out, ok=False
+                    ).as_artifact()
                 body = response.content[:max_bytes]
                 truncated = len(response.content) > max_bytes
                 html = body.decode(response.encoding or "utf-8", errors="replace")
                 extracted = extract_page(html, url)
                 if extracted is None:
-                    return UNREADABLE
+                    return UNREADABLE, Acknowledgement(
+                        action=FETCH_TOOL, subject=url, detail=UNREADABLE, ok=False
+                    ).as_artifact()
                 full, title, date = extracted
                 if pages is not None:
                     # The whole extraction, not the excerpt below it.
@@ -466,20 +505,44 @@ def build_fetch_tool(
                     # Only a page that was actually read. Remembering a
                     # failure would turn one outage into an hour of them.
                     recall.put(url, text, key=url_key(url))
-                return text
+                # `end` is `len(shown)` before the truncation marker was
+                # appended, not `len(text)` -- the marker and the citation
+                # header are not page content, and the ruler this draws is
+                # against the *document*, the same distinction
+                # `excerpt_artifact` makes for a corpus read.
+                artifact = Excerpt(
+                    source_id=kept or url,
+                    title=title,
+                    label=None,
+                    start=0,
+                    end=min(len(full), max_chars),
+                    char_count=len(full),
+                    text=shown,
+                    uri=url,
+                )
+                return text, artifact.as_artifact()
             except httpx.HTTPStatusError as error:
                 # The status is the actionable part: 404 means the URL is
                 # wrong, 403 means this page will not be readable this way at
                 # all. Not spent -- and per the outer `finally`, not left
                 # reserved either.
-                return (
+                text_out = (
                     f"Could not read that page: the server returned "
                     f"{error.response.status_code}."
                 )
+                return text_out, Acknowledgement(
+                    action=FETCH_TOOL, subject=url, detail=text_out, ok=False
+                ).as_artifact()
             except httpx.HTTPError as error:
-                return f"Could not reach that page: {error}"
+                text_out = f"Could not reach that page: {error}"
+                return text_out, Acknowledgement(
+                    action=FETCH_TOOL, subject=url, detail=text_out, ok=False
+                ).as_artifact()
             except UnicodeError as error:
-                return f"Could not decode that page: {error}"
+                text_out = f"Could not decode that page: {error}"
+                return text_out, Acknowledgement(
+                    action=FETCH_TOOL, subject=url, detail=text_out, ok=False
+                ).as_artifact()
             finally:
                 if owned:
                     await http.aclose()

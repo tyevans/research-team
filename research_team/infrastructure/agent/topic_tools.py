@@ -12,11 +12,13 @@ gated -- see `MAX_OPEN_TOPICS`. A cap works unattended; a gate does not, and the
 failure being guarded against is precisely a run with nobody watching it.
 """
 
+from typing import Any
 from uuid import UUID, uuid4
 
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application.retry import with_retry
+from research_team.application.tool_artifacts import Acknowledgement, Inventory, InventoryItem
 from research_team.application.topics import (
     LINK_SOURCE_TOOL,
     LIST_TOPICS_TOOL,
@@ -158,6 +160,39 @@ class RepositoryTopics(TopicPort):
         return topic
 
 
+def topic_inventory_artifact(kind: str, summaries: list[TopicSummary]) -> Inventory:
+    """The `Inventory` `list_topics` hands the console beside `format_topics`'s
+    string, and the one-item version `open_topic` hands beside its own line.
+
+    `unit="findings"`, and `size` is `findings` rather than `sources` or
+    `open_sub_questions`: it is the number that answers "how much is here",
+    where the other two answer "how much is left to do" and "how much is it
+    tied to". `detail` carries the rest -- status and what wants attention --
+    so nothing on the item is silently dropped for the one field the bar axis
+    can hold.
+    """
+    items = tuple(
+        InventoryItem(
+            item_id=str(summary.topic_id),
+            title=summary.question,
+            label=summary.status,
+            size=summary.findings,
+            detail=(
+                f"{'; '.join(summary.triggers)}"
+                if summary.triggers
+                else f"{summary.sources} source(s), {summary.open_sub_questions} open"
+            ),
+        )
+        for summary in summaries
+    )
+    return Inventory(
+        kind=kind,
+        unit="findings",
+        total=sum(item.size for item in items),
+        items=items,
+    )
+
+
 def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ...]:
     """The five topic tools, bound to one project.
 
@@ -167,46 +202,88 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
     against somebody else's research.
     """
 
-    @tool(LIST_TOPICS_TOOL)
-    async def list_topics() -> str:
+    @tool(LIST_TOPICS_TOOL, response_format="content_and_artifact")
+    async def list_topics() -> tuple[str, dict[str, Any]]:
         """List the questions this project is tracking and which want attention."""
-        return format_topics(await topics.list_topics(project_id))
+        summaries = await topics.list_topics(project_id)
+        return format_topics(summaries), topic_inventory_artifact(
+            "topics", summaries
+        ).as_artifact()
 
-    @tool(OPEN_TOPIC_TOOL)
-    async def open_topic(question: str, rationale: str, scope: str = "") -> str:
+    @tool(OPEN_TOPIC_TOOL, response_format="content_and_artifact")
+    async def open_topic(
+        question: str, rationale: str, scope: str = ""
+    ) -> tuple[str, dict[str, Any]]:
         """Start tracking a question. `rationale` says why it is worth answering.
 
         `scope` is optional and says what would count as an answer.
         """
         if not question.strip():
-            return "A topic needs a question. Nothing was opened."
+            text_out = "A topic needs a question. Nothing was opened."
+            return text_out, Acknowledgement(
+                action=OPEN_TOPIC_TOOL, subject=question, detail=text_out, ok=False
+            ).as_artifact()
         if not rationale.strip():
-            return (
+            text_out = (
                 "A topic needs a rationale -- why is this worth answering? Nothing was opened."
             )
+            return text_out, Acknowledgement(
+                action=OPEN_TOPIC_TOOL, subject=question, detail=text_out, ok=False
+            ).as_artifact()
         try:
             topic_id = await topics.open_topic(project_id, question, rationale, scope)
         except TopicError as error:
-            return str(error)
-        return f"Tracking {topic_id}: {question}"
+            text_out = str(error)
+            return text_out, Acknowledgement(
+                action=OPEN_TOPIC_TOOL, subject=question, detail=text_out, ok=False
+            ).as_artifact()
+        artifact = topic_inventory_artifact(
+            "topic",
+            [
+                TopicSummary(
+                    topic_id=topic_id,
+                    question=question,
+                    status="open",
+                    sources=0,
+                    findings=0,
+                    open_sub_questions=0,
+                )
+            ],
+        )
+        return f"Tracking {topic_id}: {question}", artifact.as_artifact()
 
-    @tool(RECORD_FINDING_TOOL)
-    async def record_finding(topic_id: str, summary: str, source_ids: list[str]) -> str:
+    @tool(RECORD_FINDING_TOOL, response_format="content_and_artifact")
+    async def record_finding(
+        topic_id: str, summary: str, source_ids: list[str]
+    ) -> tuple[str, dict[str, Any]]:
         """Record something learned about a topic, citing the sources it came from."""
         if not summary.strip():
-            return "A finding needs a summary. Nothing was recorded."
+            text_out = "A finding needs a summary. Nothing was recorded."
+            return text_out, Acknowledgement(
+                action=RECORD_FINDING_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
         parsed = _parse_id(topic_id)
         if parsed is None:
-            return f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            text_out = f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            return text_out, Acknowledgement(
+                action=RECORD_FINDING_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
         try:
             await topics.record_finding(parsed, summary, source_ids or [])
         except TopicError as error:
-            return str(error)
+            text_out = str(error)
+            return text_out, Acknowledgement(
+                action=RECORD_FINDING_TOOL, subject=str(parsed), detail=text_out, ok=False
+            ).as_artifact()
         cited = f" citing {', '.join(source_ids)}" if source_ids else ""
-        return f"Recorded against {parsed}{cited}."
+        return f"Recorded against {parsed}{cited}.", Acknowledgement(
+            action=RECORD_FINDING_TOOL, subject=str(parsed)
+        ).as_artifact()
 
-    @tool(RECORD_GAP_TOOL)
-    async def record_gap(topic_id: str, looking_for: str, tried: list[str]) -> str:
+    @tool(RECORD_GAP_TOOL, response_format="content_and_artifact")
+    async def record_gap(
+        topic_id: str, looking_for: str, tried: list[str]
+    ) -> tuple[str, dict[str, Any]]:
         """Record that you looked for something and did not find it.
 
         `looking_for` says what an answer would have looked like; `tried` says
@@ -215,29 +292,53 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
         your searches.
         """
         if not looking_for.strip():
-            return "A gap needs to say what was looked for. Nothing was recorded."
+            text_out = "A gap needs to say what was looked for. Nothing was recorded."
+            return text_out, Acknowledgement(
+                action=RECORD_GAP_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
         if not [item for item in tried if item.strip()]:
-            return "A gap needs to say what was tried. Nothing was recorded."
+            text_out = "A gap needs to say what was tried. Nothing was recorded."
+            return text_out, Acknowledgement(
+                action=RECORD_GAP_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
         parsed = _parse_id(topic_id)
         if parsed is None:
-            return f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            text_out = f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            return text_out, Acknowledgement(
+                action=RECORD_GAP_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
         try:
             await topics.record_gap(parsed, looking_for, tried)
         except TopicError as error:
-            return str(error)
-        return f"Recorded a gap against {parsed}."
+            text_out = str(error)
+            return text_out, Acknowledgement(
+                action=RECORD_GAP_TOOL, subject=str(parsed), detail=text_out, ok=False
+            ).as_artifact()
+        return f"Recorded a gap against {parsed}.", Acknowledgement(
+            action=RECORD_GAP_TOOL, subject=str(parsed)
+        ).as_artifact()
 
-    @tool(LINK_SOURCE_TOOL)
-    async def link_source(topic_id: str, source_id: str, note: str = "") -> str:
+    @tool(LINK_SOURCE_TOOL, response_format="content_and_artifact")
+    async def link_source(
+        topic_id: str, source_id: str, note: str = ""
+    ) -> tuple[str, dict[str, Any]]:
         """Attach a corpus document to the topic it bears on."""
         parsed = _parse_id(topic_id)
         if parsed is None:
-            return f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            text_out = f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            return text_out, Acknowledgement(
+                action=LINK_SOURCE_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
         try:
             await topics.link_source(parsed, source_id, note)
         except TopicError as error:
-            return str(error)
-        return f"Linked {source_id} to {parsed}."
+            text_out = str(error)
+            return text_out, Acknowledgement(
+                action=LINK_SOURCE_TOOL, subject=str(parsed), detail=text_out, ok=False
+            ).as_artifact()
+        return f"Linked {source_id} to {parsed}.", Acknowledgement(
+            action=LINK_SOURCE_TOOL, subject=str(parsed)
+        ).as_artifact()
 
     return (list_topics, open_topic, record_finding, record_gap, link_source)
 

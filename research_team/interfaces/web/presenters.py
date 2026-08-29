@@ -186,6 +186,15 @@ def message_view(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "role": _ROLE_FOR_TYPE.get(payload.get("type", ""), payload.get("type", "")),
         "content": data.get("content", ""),
+        # Both already sit in the stored payload -- `message_to_dict` keeps
+        # every field of a `ToolMessage` -- and both were being dropped here.
+        # `name` is what lets the console pair a result with its call; the
+        # artifact is what lets it draw anything but the model's own string.
+        # Absent on every message written before this feature and on every
+        # unconverted tool -- `None` in both cases, which is the permanent
+        # fallback path, not an error case.
+        "name": data.get("name"),
+        "artifact": data.get("artifact"),
         "tool_calls": [
             {"name": call.get("name", "?"), "args": call.get("args", {})}
             for call in (data.get("tool_calls") or [])

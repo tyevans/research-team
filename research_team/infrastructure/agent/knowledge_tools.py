@@ -6,6 +6,7 @@ raises turns an outage into a broken turn; a tool that says what happened lets
 the model carry on and leaves a readable record.
 """
 
+from typing import Any
 from uuid import UUID
 
 from langchain_core.tools import BaseTool, tool
@@ -25,6 +26,7 @@ from research_team.application.knowledge import (
     SourceRef,
     source_id_for_url,
 )
+from research_team.application.tool_artifacts import Acknowledgement, EntityList, EntityRef
 from research_team.infrastructure.agent.recall import PageMemo
 
 
@@ -84,6 +86,34 @@ def format_matches(outcome: SearchOutcome) -> str:
     )
 
 
+def entity_list_artifact(query: str, outcome: SearchOutcome) -> EntityList:
+    """The `EntityList` `graph_search`/`graph_describe` hand the console beside
+    `format_matches`'s string.
+
+    Sorted here, by descending `relationship_count`, rather than in the
+    renderer: the order is a property of the answer -- most connected first,
+    orphans last -- and two sorts that must agree is one too many.
+
+    `mode` is carried through unconditionally, not just on `graph_describe`.
+    `SearchOutcome.mode` exists to make a silent degradation visible, and a
+    console that drops it on one of the two callers restores the silence for
+    that caller alone.
+    """
+    return EntityList(
+        query=query,
+        mode=str(outcome.mode),
+        entities=tuple(
+            EntityRef(
+                entity_id=str(match.entity_id),
+                name=match.name,
+                entity_type=match.entity_type,
+                relationship_count=match.relationship_count,
+            )
+            for match in sorted(outcome.matches, key=lambda m: -m.relationship_count)
+        ),
+    )
+
+
 def build_knowledge_tools(
     knowledge: KnowledgePort,
     *,
@@ -105,7 +135,7 @@ def build_knowledge_tools(
     resolve anything would cost the model turns to discover.
     """
 
-    @tool(REMEMBER_TOOL)
+    @tool(REMEMBER_TOOL, response_format="content_and_artifact")
     async def remember(
         text: str,
         source_id: str,
@@ -113,7 +143,7 @@ def build_knowledge_tools(
         uri: str = "",
         title: str = "",
         published_at: str = "",
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         """Commit text to the graph, extracting entities and relationships from it."""
         try:
             ingested = await knowledge.ingest(
@@ -132,8 +162,13 @@ def build_knowledge_tools(
                 report=report,
             )
         except KnowledgeError as error:
-            return f"Could not record this: {error}"
-        return format_ingest(ingested)
+            text_out = f"Could not record this: {error}"
+            return text_out, Acknowledgement(
+                action=REMEMBER_TOOL, subject=source_id, detail=text_out, ok=False
+            ).as_artifact()
+        return format_ingest(ingested), Acknowledgement(
+            action=REMEMBER_TOOL, subject=ingested.source_id
+        ).as_artifact()
 
     remember_page: BaseTool | None = None
     if pages is not None:
@@ -141,8 +176,8 @@ def build_knowledge_tools(
         # runtime `assert pages is not None`, so the closure over `pages` is
         # narrowed by the type checker without a check that could only ever
         # fire on a wiring bug this branch already prevents.
-        @tool(REMEMBER_PAGE_TOOL)
-        async def remember_page(url: str, note: str = "") -> str:
+        @tool(REMEMBER_PAGE_TOOL, response_format="content_and_artifact")
+        async def remember_page(url: str, note: str = "") -> tuple[str, dict[str, Any]]:
             """Commit a page you have already fetched, by its URL, without re-typing it."""
             # Derived, not a parameter, and that is a deliberate narrowing of
             # this tool's surface. It used to take `source_id` and the model
@@ -159,11 +194,14 @@ def build_knowledge_tools(
                 # In band, naming the URL, rather than storing nothing quietly.
                 # A silent no-op is indistinguishable from success, and the
                 # corpus would be missing a document nobody was told about.
-                return (
+                text_out = (
                     f"Nothing retained for {url} -- it was not read in this "
                     f"process, or was read more than an hour ago. `fetch` it, "
                     f"then call this again."
                 )
+                return text_out, Acknowledgement(
+                    action=REMEMBER_PAGE_TOOL, subject=url, detail=text_out, ok=False
+                ).as_artifact()
             try:
                 ingested = await knowledge.ingest(
                     SourceRef(
@@ -178,52 +216,74 @@ def build_knowledge_tools(
                     report=report,
                 )
             except KnowledgeError as error:
-                return f"Could not record this: {error}"
-            return format_ingest(ingested)
+                text_out = f"Could not record this: {error}"
+                return text_out, Acknowledgement(
+                    action=REMEMBER_PAGE_TOOL, subject=url, detail=text_out, ok=False
+                ).as_artifact()
+            return format_ingest(ingested), Acknowledgement(
+                action=REMEMBER_PAGE_TOOL, subject=ingested.source_id
+            ).as_artifact()
 
-    @tool(GRAPH_SEARCH_TOOL)
-    async def graph_search(query: str) -> str:
+    @tool(GRAPH_SEARCH_TOOL, response_format="content_and_artifact")
+    async def graph_search(query: str) -> tuple[str, dict[str, Any]]:
         """Find entities in the project's knowledge graph by name."""
         try:
             outcome = await knowledge.search(query, limit=limit)
         except KnowledgeError as error:
-            return f"Could not search the graph: {error}"
-        return format_matches(outcome)
+            text_out = f"Could not search the graph: {error}"
+            return text_out, Acknowledgement(
+                action=GRAPH_SEARCH_TOOL, subject=query, detail=text_out, ok=False
+            ).as_artifact()
+        return format_matches(outcome), entity_list_artifact(query, outcome).as_artifact()
 
-    @tool(GRAPH_DESCRIBE_TOOL)
-    async def graph_describe(query: str) -> str:
+    @tool(GRAPH_DESCRIBE_TOOL, response_format="content_and_artifact")
+    async def graph_describe(query: str) -> tuple[str, dict[str, Any]]:
         """Find entities by describing them -- what they are, or what they relate to."""
         try:
             outcome = await knowledge.describe(query, limit=limit)
         except KnowledgeError as error:
-            return f"Could not search the graph: {error}"
+            text_out = f"Could not search the graph: {error}"
+            return text_out, Acknowledgement(
+                action=GRAPH_DESCRIBE_TOOL, subject=query, detail=text_out, ok=False
+            ).as_artifact()
         if outcome.mode is SearchMode.UNAVAILABLE:
             # Named rather than answered empty. An unwired card corpus returns
             # nothing for every query, which reads exactly like a project that
             # holds no such entity -- and a model told "no matches" will stop
             # asking, where one told the index is missing can fall back to
-            # `graph_search` on a name.
-            return (
+            # `graph_search` on a name. Still an `EntityList`, not an
+            # `Acknowledgement`: this is a degraded answer, not a refusal, and
+            # `mode` on the artifact is what carries the degradation to the
+            # console -- collapsing it to an acknowledgement would drop the
+            # very field this shape exists to carry.
+            text_out = (
                 "Describing entities is unavailable in this build -- there is no "
                 "entity-card index. Use graph_search with a name instead."
             )
-        return format_matches(outcome)
+            return text_out, entity_list_artifact(query, outcome).as_artifact()
+        return format_matches(outcome), entity_list_artifact(query, outcome).as_artifact()
 
-    @tool(UNMERGE_TOOL)
-    async def unmerge(merge_id: str) -> str:
+    @tool(UNMERGE_TOOL, response_format="content_and_artifact")
+    async def unmerge(merge_id: str) -> tuple[str, dict[str, Any]]:
         """Reverse a consolidation that joined two entities that are not the same thing."""
         try:
             parsed = UUID(merge_id)
         except ValueError:
-            return f"{merge_id!r} is not a valid merge id; use the one `remember` printed."
+            text_out = f"{merge_id!r} is not a valid merge id; use the one `remember` printed."
+            return text_out, Acknowledgement(
+                action=UNMERGE_TOOL, subject=merge_id, detail=text_out, ok=False
+            ).as_artifact()
         try:
             record = await knowledge.undo_merge(parsed)
         except KnowledgeError as error:
-            return f"Could not reverse that merge: {error}"
+            text_out = f"Could not reverse that merge: {error}"
+            return text_out, Acknowledgement(
+                action=UNMERGE_TOOL, subject=merge_id, detail=text_out, ok=False
+            ).as_artifact()
         return (
             f"Reversed: {record.canonical_name} gave back "
             f"{', '.join(record.absorbed_names) or '(none)'}."
-        )
+        ), Acknowledgement(action=UNMERGE_TOOL, subject=record.canonical_name).as_artifact()
 
     if remember_page is None:
         # A tool that could never resolve anything is worse than an absent

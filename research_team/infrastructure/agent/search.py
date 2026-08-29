@@ -12,13 +12,14 @@ strategies exist to clean up afterwards, and it is cheaper not to make the mess.
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application import SEARCH_TOOL
 from research_team.application.media_curation import SearchResult
+from research_team.application.tool_artifacts import Acknowledgement, Hit, HitList, SourceHits
 from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
 
 TIMEOUT = httpx.Timeout(10.0)
@@ -327,6 +328,42 @@ def format_recalled(recalled: Recalled, query: str) -> str:
     )
 
 
+def hit_list_artifact(query: str, results: tuple[SearchResult, ...]) -> HitList:
+    """The `HitList` a fresh, genuine result set hands the console.
+
+    `web_search` maps onto `hit_list` beside `search_sources` -- see the
+    design doc's shape table -- rather than the `entity_list` an earlier draft
+    of the plan named for it, which does not fit: a web result carries no
+    `entity_type` or `relationship_count`, only a title, a url and a snippet,
+    which is the same shape `search_sources` already draws.
+
+    One `SourceHits` per result, keyed on the result's url rather than a
+    document id this corpus never assigned one -- a web result has no
+    document to page through, so there is nothing for a second hit on the
+    same source to add. `start`/`end` are `0`/`len(snippet)`, the only
+    honest offsets for text with no underlying document to be a range of;
+    `char_count` is `0` for the same reason, and the renderer's ruler is
+    simply not drawn for a source with nothing to measure against.
+
+    Only called on a genuine, freshly-fetched result set -- a recalled
+    answer has no structured results behind it (`Recall` stores the
+    formatted string, not the parse), so it is acknowledged instead of
+    reconstructed from text that would have to be re-parsed to build this.
+    """
+    sources = tuple(
+        SourceHits(
+            source_id=result.url,
+            title=result.title,
+            label=None,
+            char_count=0,
+            total=1,
+            hits=(Hit(start=0, end=len(result.snippet), snippet=result.snippet),),
+        )
+        for result in results
+    )
+    return HitList(pattern=query, total=len(results), suppressed=0, sources=sources)
+
+
 def _exhausted_notice(count: int) -> str:
     """What `web_search` says instead of searching, past the bound.
 
@@ -373,13 +410,13 @@ def build_search_tool(
     default_engines, default_categories = engines, categories
     default_time_range = time_range
 
-    @tool(SEARCH_TOOL)
+    @tool(SEARCH_TOOL, response_format="content_and_artifact")
     async def web_search(
         query: str,
         engines: str | None = None,
         categories: str | None = None,
         time_range: str | None = None,
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         """Search the web. Returns titles, URLs, and short snippets.
 
         `categories` narrows what kind of thing is searched -- `science` for
@@ -415,8 +452,14 @@ def build_search_tool(
         if attempts is not None and attempts.exhausted():
             # Past the bound, the request is never made -- the whole point is
             # that another search would not help, so there is nothing to gain
-            # by spending the round trip to confirm it.
-            return _exhausted_notice(MAX_EMPTY_SEARCHES)
+            # by spending the round trip to confirm it. A refusal, not a
+            # result: `Acknowledgement(ok=False)` rather than an empty
+            # `HitList`, so the console draws it as punctuation rather than as
+            # a card claiming zero matches were found.
+            text_out = _exhausted_notice(MAX_EMPTY_SEARCHES)
+            return text_out, Acknowledgement(
+                action=SEARCH_TOOL, subject=query, detail=text_out, ok=False
+            ).as_artifact()
         # Keyed explicitly rather than through `Recall`'s default, which would
         # key on the bare normalized query and collide with `fetch`'s URL keys.
         # The parameters are part of it because the instance answers
@@ -433,7 +476,16 @@ def build_search_tool(
         if recall is not None:
             remembered = recall.get(query, key=memo_key)
             if remembered is not None:
-                return format_recalled(remembered, query)
+                # A recalled answer has no structured results behind it --
+                # `Recall` stores `format_results`' string, not the parse --
+                # so there is nothing to build a `HitList` from without
+                # re-parsing text that was formatted to be read, not to be
+                # parsed back. Acknowledged instead: not an error, but not the
+                # shape this tool draws when it actually has results either.
+                text_out = format_recalled(remembered, query)
+                return text_out, Acknowledgement(
+                    action=SEARCH_TOOL, subject=query, detail="recalled"
+                ).as_artifact()
         owned = client is None
         http = client or httpx.AsyncClient(timeout=TIMEOUT)
         try:
@@ -465,17 +517,31 @@ def build_search_tool(
                 # transport-error guard exists to prevent, reached by a path
                 # that never raises.
                 recall.put(query, results, key=memo_key)
-            return results
+            if results is _MALFORMED_PAYLOAD:
+                return results, Acknowledgement(
+                    action=SEARCH_TOOL, subject=query, detail=results, ok=False
+                ).as_artifact()
+            # Both "a genuine result set" and "No results." build a `HitList`
+            # -- an empty one for the latter, `parse_results` returning `()`
+            # -- the same convention `search_sources` uses for a valid search
+            # that matched nothing: not found is an answer, not an error.
+            parsed = parse_results(payload, limit) or ()
+            return results, hit_list_artifact(query, parsed).as_artifact()
         except ValueError:
             # Not JSON. Overwhelmingly the default-settings case, and worth
             # naming precisely -- the model cannot fix it, but the person
             # reading the log can. Not counted: the instance never answered
             # the question, so this is not evidence of an absent result.
-            return _JSON_DISABLED
+            return _JSON_DISABLED, Acknowledgement(
+                action=SEARCH_TOOL, subject=query, detail=_JSON_DISABLED, ok=False
+            ).as_artifact()
         except httpx.HTTPError as error:
             # Unreachable, not empty -- an outage is not the model having
             # looked and found nothing, and must not be counted as if it were.
-            return f"Could not reach the search instance: {error}"
+            text_out = f"Could not reach the search instance: {error}"
+            return text_out, Acknowledgement(
+                action=SEARCH_TOOL, subject=query, detail=text_out, ok=False
+            ).as_artifact()
         finally:
             if owned:
                 await http.aclose()
