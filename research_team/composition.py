@@ -2119,7 +2119,9 @@ def build_application(
     # misconfigured model *name* is the one embedding failure that can be
     # caught at startup. The endpoint itself is probed on first ingest, in the
     # adapter.
-    embedding_provider = build_embedding_provider() if vector_kind != "none" else None
+    embedding_provider = (
+        build_embedding_provider() if vector_kind != config.NO_VECTOR_STORE else None
+    )
 
     graphs = ProjectGraphs(
         build_store=lambda: build_graph_store(config.graph_store()),

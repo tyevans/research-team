@@ -41,7 +41,7 @@ def test_a_default_install_embeds(unset):
     below `HIGH_SIMILARITY` 0.92.
     """
     assert config.vector_store() == "memory"
-    assert config.embeddings_enabled() is True
+    assert config.vector_store() != config.NO_VECTOR_STORE
 
 
 def test_asking_for_a_vector_store_is_what_turns_embeddings_on(monkeypatch, unset):
@@ -49,7 +49,7 @@ def test_asking_for_a_vector_store_is_what_turns_embeddings_on(monkeypatch, unse
     monkeypatch.setenv("AGENT_VECTOR_STORE", "memory")
 
     assert config.vector_store() == "memory"
-    assert config.embeddings_enabled() is True
+    assert config.vector_store() != config.NO_VECTOR_STORE
 
 
 def test_a_vector_store_that_does_not_exist_says_what_does(monkeypatch, unset):
