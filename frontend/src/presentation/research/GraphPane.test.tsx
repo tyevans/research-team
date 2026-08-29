@@ -5,7 +5,6 @@ import { useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { expect, it, vi } from 'vitest'
 
-import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import { InteractionLogContext } from '@app/interaction-log-provider.tsx'
 import type { Emitter } from '@application/interaction-log/emitter.ts'
@@ -20,6 +19,7 @@ import {
 } from '@domain/knowledge/graph.ts'
 import { ProjectId } from '@domain/shared/identifier.ts'
 
+import { buildContainer, type ContainerParts } from '../../test/container.ts'
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { StreamProvider } from '../shell/StreamProvider.tsx'
 import { FRAME_DEBOUNCE_MS } from '../shell/use-frame-refresh.ts'
@@ -160,21 +160,22 @@ const fakeLog = (record: Emitter['record'] = vi.fn()): Emitter => ({
 
 const renderWithContainer = (
   ui: ReactElement,
-  parts: Partial<AppContainer>,
+  parts: ContainerParts,
   stream: EventStream = fakeStream().stream,
   log: Emitter = fakeLog(),
 ) => {
-  const container = {
+  const container = buildContainer({
     stream,
     usages: fakeUsages(),
-    // Named here rather than left to the cast. `GraphPane` destructures
-    // `exports` off the container to build the download links, and an absent
-    // key survives `as unknown as Container` to fail at the first render with
-    // "Cannot read properties of undefined" -- which reads as a bug in the
-    // pane rather than a gap in this harness.
+    // Named rather than left to the fallback. `GraphPane` *destructures*
+    // `exports` off the container to build the download links, and a
+    // destructured absent key is read before anything calls it -- so the proxy
+    // in `buildContainer` cannot turn it into a message naming the seam, the
+    // way it can for a method call. The same reason it was named before the
+    // cast went: this is the one key here whose absence is not diagnosable.
     exports: fakeExports(),
     ...parts,
-  } as unknown as AppContainer
+  })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>

@@ -6,9 +6,10 @@ import courseCss from '../../styles/course.css?raw'
 import treeCss from '../../styles/tree.css?raw'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import type { Container } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import { SessionId } from '@domain/shared/identifier.ts'
+
+import { buildContainer } from '../../test/container.ts'
 
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { AutonomyPanel } from '../shell/AutonomyPanel.tsx'
@@ -292,13 +293,13 @@ it('survives the route merge: the dressing holds with the view stylesheets delet
  */
 const renderPanel = () => {
   const policy = { levels: new Map([['fetch', 'ask']]), gated: ['fetch'] }
-  const container = {
+  const container = buildContainer({
     autonomy: {
       read: () => Promise.resolve(policy),
       setLevel: () => Promise.resolve(policy),
       allowAll: () => Promise.resolve({ changed: new Map(), policy }),
     },
-  } as unknown as Container
+  })
 
   return render(
     <QueryClientProvider

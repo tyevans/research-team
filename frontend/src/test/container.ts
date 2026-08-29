@@ -109,5 +109,10 @@ export const buildContainer = (parts: ContainerParts = {}): Container => {
     // consumer probing for a capability sees a hole the proxy would have
     // filled.
     has: () => true,
-  }) as Container
+    // The deliberate cast, and the only one left. The proxy answers for every
+    // key `Container` declares -- `has` says so and `get` means it -- but that
+    // is a run-time property the compiler has no way to read off a
+    // `Record<string, unknown>`. It is here rather than in nine fixtures, which
+    // is the whole point of the module.
+  }) as unknown as Container
 }

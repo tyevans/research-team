@@ -10,6 +10,7 @@ import { Pane } from '@presentation/layout/Pane.tsx'
 import { Split } from '@presentation/layout/Split.tsx'
 import { splitTemplate } from '@presentation/layout/split-tracks.ts'
 
+import { buildContainer } from '../../test/container.ts'
 import { SESSION_TRACKS, useSessionPanes } from './use-session-panes.ts'
 
 /** The session view's pane layout, carried across the migration onto `Split`.
@@ -33,7 +34,7 @@ import { SESSION_TRACKS, useSessionPanes } from './use-session-panes.ts'
  */
 
 const containerWith = (preferences: InMemoryPreferenceStore): Container =>
-  ({ preferences }) as unknown as Container
+  buildContainer({ preferences })
 
 const wrapper =
   (preferences: InMemoryPreferenceStore) =>

@@ -4,13 +4,14 @@ import type { ReactNode } from 'react'
 import { describe, expect, it } from 'vitest'
 
 import { useAttempts } from './use-attempts.ts'
-import type { Container } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { ItemProgress } from '@domain/lesson/attempt.ts'
 import type { ComponentBlock } from '@domain/lesson/document.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import { ComponentId, SessionId } from '@domain/shared/identifier.ts'
+
+import { buildContainer } from '../../test/container.ts'
 
 const session = SessionId('s1')
 const block = { kind: 'component', id: ComponentId('q1') } as ComponentBlock
@@ -28,7 +29,7 @@ const stored = (over: Partial<ItemProgress> = {}): ItemProgress => ({
  *  the ordering between "the learner started answering" and "their history
  *  arrived" is the whole point of these cases. */
 const harness = (progress: () => Promise<ReadonlyMap<ComponentId, ItemProgress>>) => {
-  const container = { lessons: { progress } } as unknown as Container
+  const container = buildContainer({ lessons: { progress } })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })

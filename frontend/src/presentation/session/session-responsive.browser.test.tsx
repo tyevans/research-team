@@ -5,7 +5,6 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { createSessionStore } from '@application/session/session-store.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
-import type { Container } from '@app/container.ts'
 import type { Message } from '@domain/conversation/message.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
@@ -15,6 +14,7 @@ import { Shell } from '@presentation/layout/Shell.tsx'
 import { StreamProvider } from '@presentation/shell/StreamProvider.tsx'
 
 import { resizeViewport, restoreViewport } from '../../test/browser-viewport.ts'
+import { buildContainer } from '../../test/container.ts'
 import { SessionView } from './SessionView.tsx'
 
 /** What the session page does below `--bp-wide`, in both of the two bands under
@@ -59,9 +59,11 @@ const MESSAGES: Message[] = Array.from({ length: 40 }, (_, i) => ({
 }))
 
 const container = () =>
-  ({
+  buildContainer({
     preferences: new InMemoryPreferenceStore(),
-    now: () => new Date('2026-08-10T00:00:00Z'),
+    // A number, which is what `Container['now']` declares. `as unknown as
+    // Container` was hiding a `Date` here; see B90.
+    now: () => Date.parse('2026-08-10T00:00:00Z'),
     stream: { connect: vi.fn(), disconnect: vi.fn() },
     sessions: {
       read: vi.fn().mockResolvedValue({
@@ -85,7 +87,7 @@ const container = () =>
       }),
       activity: vi.fn().mockResolvedValue(null),
     },
-  }) as unknown as Container
+  })
 
 const show = async () => {
   const deps = container()

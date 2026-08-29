@@ -5,7 +5,8 @@ import { expect, it, vi } from 'vitest'
 
 import { createSessionStore } from '@application/session/session-store.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
-import type { Container } from '@app/container.ts'
+import type { SessionRepository } from '@application/ports/repositories.ts'
+import { buildContainer, type ContainerParts } from '../../test/container.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { SessionId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
@@ -61,28 +62,31 @@ const head = {
 /** Only the ports the view and its store actually reach for, the way every
  *  other test in this tree does it: a fake that implemented everything would
  *  hide which dependencies this really has. */
-const container = () =>
-  ({
-    preferences: new InMemoryPreferenceStore(),
-    now: () => new Date('2026-08-10T00:00:00Z'),
-    stream: { connect: vi.fn(), disconnect: vi.fn() },
-    sessions: {
-      read: vi.fn().mockResolvedValue({ files: [], messages: [], compactedThrough: null, ...head }),
-      log: vi.fn().mockResolvedValue([]),
-    },
-    turns: {
-      current: vi.fn().mockResolvedValue({
-        running: false,
-        turnIndex: null,
-        startedAt: null,
-        elapsedSeconds: null,
-      }),
-      activity: vi.fn().mockResolvedValue(null),
-    },
-  }) as unknown as Container
+const parts = (): ContainerParts => ({
+  preferences: new InMemoryPreferenceStore(),
+  // A number, which is what `Container['now']` declares. It read
+  // `() => new Date(...)` until 2026-08-29 and typechecked, because
+  // `as unknown as Container` was deleting the comparison rather than making
+  // it: the store's arithmetic was running on a `Date` the whole time.
+  now: () => Date.parse('2026-08-10T00:00:00Z'),
+  stream: { connect: vi.fn(), disconnect: vi.fn() },
+  sessions: {
+    read: vi.fn().mockResolvedValue({ files: [], messages: [], compactedThrough: null, ...head }),
+    log: vi.fn().mockResolvedValue([]),
+  },
+  turns: {
+    current: vi.fn().mockResolvedValue({
+      running: false,
+      turnIndex: null,
+      startedAt: null,
+      elapsedSeconds: null,
+    }),
+    activity: vi.fn().mockResolvedValue(null),
+  },
+})
 
-const show = (over: Partial<Container> = {}) => {
-  const deps: Container = { ...container(), ...over }
+const show = (over: ContainerParts = {}) => {
+  const deps = buildContainer({ ...parts(), ...over })
   const store = createSessionStore({
     sessions: deps.sessions,
     turns: deps.turns,
@@ -130,7 +134,7 @@ const holdingAProject = () => {
     }),
     log: vi.fn().mockResolvedValue([]),
     release,
-  } as unknown as Container['sessions']
+  } satisfies Partial<SessionRepository>
   return { sessions, release }
 }
 

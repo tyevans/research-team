@@ -7,6 +7,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import { SessionId } from '@domain/shared/identifier.ts'
 
+import { buildContainer } from '../../test/container.ts'
 import { AutonomyLock } from './AutonomyLock.tsx'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
 
@@ -55,7 +56,7 @@ const policy = (
  *  forever would undo every click one refetch later. */
 const holder = (start: AutonomyPolicyView): Container => {
   let current = start
-  return {
+  return buildContainer({
     autonomy: {
       read: () => Promise.resolve(current),
       setLevel: (_id: SessionId, tool: string, level: string) => {
@@ -64,7 +65,7 @@ const holder = (start: AutonomyPolicyView): Container => {
       },
       allowAll: () => Promise.resolve({ changed: new Map(), policy: current }),
     },
-  } as unknown as Container
+  })
 }
 
 const Frame = ({ start, children }: { start: AutonomyPolicyView; children: ReactNode }) => {
