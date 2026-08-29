@@ -287,6 +287,16 @@
   --color-del-fg: light-dark(#b3352c, #f08d86);
   --color-del-bg: light-dark(#fbe8e6, #2a1315);
 
+  /* The quiet button's two borders, rest and hover. A pair rather than one
+     token because the whole tone *is* the difference between them: a
+     destructive action findable without competing, that firms up when you
+     reach for it. The dark column is `.btn-quiet`'s own `#3a2b2c`/`#543336`
+     carried across unchanged, so this is a light column being added and not a
+     dark one being restyled. Not `--tint-fail-line`, which is one shade for
+     both states and is the failure *badge*'s line, not a control's. */
+  --color-quiet-line: light-dark(#e3cecb, #3a2b2c);
+  --color-quiet-line-hover: light-dark(#d5aca6, #543336);
+
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
   --font-sans: ui-sans-serif, system-ui, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 
