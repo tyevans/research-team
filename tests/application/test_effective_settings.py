@@ -20,6 +20,7 @@ import pytest
 from research_team.application.effective import (
     EffectiveSettings,
     ExtractionSettings,
+    ResearchSettings,
     SettingsRevision,
 )
 from research_team.application.settings import SettingsResolver
@@ -376,3 +377,120 @@ async def test_closing_a_settings_deps_that_never_opened_anything_is_a_no_op():
     has a `SettingsDeps` whose stores hold no connection, and an unwind that
     raised there would replace the real error with this one."""
     await SettingsDeps().close()
+
+
+# --- the agent's own bundle -------------------------------------------------
+#
+# The defect these are against, in one sentence: `build_model()` answered for
+# the process, `_build_application` called it once, and the executor held that
+# answer for every project for the life of the process -- so a model saved
+# against a project resolved correctly through the API and was read by nothing
+# on the turn path. Topic seeding was the surface it was reported from, because
+# seeding is a turn and a wrong `base_url` there is a connection error rather
+# than a subtly worse answer.
+
+
+async def test_no_store_and_no_project_is_the_process_answer_for_research():
+    """The CLI, the REPL, and every test that never names a project.
+
+    Asserted against `config` rather than literals for the extraction twin's
+    reason: a literal passes with `config` changed underneath it, and "the
+    headless answer drifted" is the one regression this must not cause.
+    """
+    resolved = await EffectiveSettings().research(None)
+
+    assert resolved == ResearchSettings(
+        model=config.model_name(),
+        base_url=config.base_url(),
+        api_key=config.api_key(),
+    )
+
+
+async def test_a_project_scoped_chat_model_is_the_one_a_turn_would_use(effective, stores):
+    settings, _ = stores
+    await _write(settings, "model", "a-better-thinker")
+
+    assert (await effective.research(PROJECT_ID)).model == "a-better-thinker"
+
+
+async def test_a_project_scoped_endpoint_is_the_one_a_turn_would_dial(effective, stores):
+    """The reported symptom, at the layer that decides it.
+
+    A wrong endpoint is not a worse answer, it is a connection error -- which
+    is how this defect surfaced: seeding dialled the built-in default however
+    the settings page was filled in.
+    """
+    settings, _ = stores
+    await _write(settings, "base_url", "http://192.168.1.14:8080/v1/")
+
+    assert (await effective.research(PROJECT_ID)).base_url == "http://192.168.1.14:8080/v1/"
+
+
+async def test_one_projects_chat_model_does_not_reach_another(effective, stores):
+    settings, _ = stores
+    await _write(settings, "model", "only-for-this-one")
+
+    assert (await effective.research(OTHER_ID)).model == config.model_name()
+
+
+async def test_a_changed_chat_model_reaches_the_next_turn(effective, stores):
+    """Read (populating the cache), write, read again.
+
+    The assertion is the model a turn would be built with, never that a cache
+    was cleared: a cache assertion passes with the invalidation correct and the
+    consumption unwired, which is the exact shape of the defect this closes.
+    Proved red by removing `_revision.bump()` from `SettingsStore.put`.
+    """
+    settings, _ = stores
+    await _write(settings, "model", "the-first-choice")
+    assert (await effective.research(PROJECT_ID)).model == "the-first-choice"
+
+    await _write(settings, "model", "the-second-choice")
+
+    assert (await effective.research(PROJECT_ID)).model == "the-second-choice"
+
+
+async def test_a_research_profile_wins_over_the_settings_under_it(effective, stores):
+    """Selecting a profile moves all three fields together.
+
+    The half worth asserting is `base_url`: a build that took the model name
+    from the profile and the endpoint from the setting underneath would send a
+    hosted model's name to a local vLLM, which is the failure the bundle exists
+    to make impossible.
+    """
+    settings, profiles = stores
+    await _write(settings, "model", "the-setting-underneath")
+    await _write(settings, "base_url", "http://localhost:8080/v1/")
+    await profiles.put_profile(
+        PROJECT,
+        ModelProfile(
+            name="hosted",
+            provider_id="openai",
+            model="gpt-4o",
+            base_url="https://api.openai.com/v1/",
+        ),
+    )
+    await profiles.select(PROJECT, ModelRole.RESEARCH, "hosted")
+
+    resolved = await effective.research(PROJECT_ID)
+
+    assert (resolved.model, resolved.base_url) == ("gpt-4o", "https://api.openai.com/v1/")
+
+
+async def test_selecting_a_research_profile_does_not_move_extraction(effective, stores):
+    """Five roles, five selections. A build that read one selection list and
+    ignored the role would point extraction at the agent's profile."""
+    _, profiles = stores
+    await profiles.put_profile(
+        PROJECT,
+        ModelProfile(
+            name="hosted",
+            provider_id="openai",
+            model="gpt-4o",
+            base_url="https://api.openai.com/v1/",
+        ),
+    )
+    await profiles.select(PROJECT, ModelRole.RESEARCH, "hosted")
+
+    assert (await effective.research(PROJECT_ID)).model == "gpt-4o"
+    assert (await effective.extraction(PROJECT_ID)).model == config.extraction_model()

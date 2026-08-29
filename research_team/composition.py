@@ -2341,6 +2341,38 @@ def _build_application(
         """
         return _subagents_for(session, subagents)
 
+    async def turn_model(session: Session) -> BaseChatModel | None:
+        """Which model answers this turn, resolved from its project.
+
+        `None` for a session attached to no project, and for a build whose
+        caller injected a model: the executor then uses the one it was
+        constructed with, which is the process answer and the fake a test
+        handed in. An injected model is a caller saying which model they want
+        used -- `_extraction_model` refuses to second-guess the same statement
+        for the same reason.
+
+        This is the seam that makes the settings page's `Models` group reach a
+        turn at all. `build_model()` above answers for the *process* and runs
+        once, so before this the agent's model, endpoint and key were fixed at
+        startup: a value saved against a project stored fine, resolved fine
+        through `/api/settings/resolved`, and was read by nothing -- which is
+        `application/effective.py`'s "the whole scoped store is decorative",
+        arrived at through the one path that had no bundle.
+
+        Per turn rather than per session, matching `turn_tools` and
+        `turn_middleware`: the executor outlives any one turn, and a provider
+        consulted once would pin the first turn's endpoint onto every turn
+        after it -- including the turn right after somebody fixed a bad URL.
+        Resolution is a dict lookup until a write bumps the revision, so the
+        cost of asking every time is an await and a comparison.
+        """
+        if model is not None:
+            return None
+        project_id = session.state.project_id
+        if project_id is None:
+            return None
+        return build_model(await effective_settings.research(project_id))
+
     executor = DeepAgentTurnExecutor(
         resolved_model,
         subagents=subagents,
@@ -2350,6 +2382,7 @@ def _build_application(
         middleware_provider=turn_middleware,
         tools_provider=turn_tools,
         subagents_provider=turn_subagents,
+        model_provider=turn_model,
         # The same registry `turn_tools` (via `granted_tools`) and `start_run`
         # (below) consult -- see `resolved_grants`'s own note for why there
         # is exactly one instance and what two would cost.
