@@ -14,6 +14,7 @@ import { InteractionsView } from '@presentation/interactions/InteractionsView.ts
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { AutonomyLock } from '@presentation/shell/AutonomyLock.tsx'
+import { ThemeControl } from '@presentation/shell/ThemeControl.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
 import { DecisionBar } from '@presentation/shell/DecisionBar.tsx'
 import { AgentWidget } from '@presentation/agents/AgentWidget.tsx'
@@ -163,6 +164,13 @@ const Console = () => {
                   operates, and the left of this bar is for what the console is
                   rather than for what you can do to it. */}
               <AutonomyLock route={route} />
+              {/* Beside the lock, by the same test: a theme is a property of
+                  the reader rather than of the page they are on, so it belongs
+                  in the chrome and not on any one screen. Right of the lock
+                  rather than left because the lock changes what the agent may
+                  do and this changes only how it looks -- the bar reads from
+                  consequential to cosmetic. */}
+              <ThemeControl />
               <DriftBadge />
               <ConnectionBadge state={stream.connection} />
             </div>

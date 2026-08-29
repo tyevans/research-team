@@ -20,7 +20,9 @@
   margin: 12px;
   padding: 12px 14px;
   border: 1px solid var(--tint-fail-line);
-  background: #1a1113;
+  /* Was `#1a1113`; see `conversation.css`'s `.msg-tool.errored .msg-head`,
+     which wrote a third spelling of the same surface. */
+  background: var(--tint-fail);
   border-radius: var(--radius);
 }
 .error-box strong {

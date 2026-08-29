@@ -40,7 +40,7 @@ export const AreaDetail = ({ projectId, slug }: { projectId: ProjectId; slug: st
   const area = query.data
   return (
     <section className="rounded-md border border-line bg-bg-panel p-3">
-      <h3 className="font-medium m-0 text-sm">{area.title}</h3>
+      <h3 className="m-0 text-sm font-medium">{area.title}</h3>
       {area.summary !== null && <p className="mt-1 mb-0 text-xs text-fg-dim">{area.summary}</p>}
       <p className="mt-1 mb-2 text-xs text-fg-dim">
         {area.size} entities, most connected first. The course for this area is written to{' '}

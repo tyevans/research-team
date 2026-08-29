@@ -34,7 +34,7 @@ export const AskHead = ({ projectId, onReset }: { projectId: ProjectId; onReset:
   // defect `AskTurn.tsx` documents, caught here by the same screenshot.
   <header className="flex shrink-0 items-start justify-between gap-5 border-0 border-b border-solid border-line-soft px-5 pt-5 pb-4">
     <div>
-      <h1 className="font-semibold m-0 text-2xl">Ask</h1>
+      <h1 className="m-0 text-2xl font-semibold">Ask</h1>
       {/* `ask-sub` is a selector hook for `AskView.test.tsx`, which has no
           other way to tell this paragraph from the composer's own "not
           saved" copy -- both say the same sentence on purpose. */}

@@ -5145,6 +5145,25 @@ families, which is the shape a future sweep would start from.
 
 ### B155. `font-medium`, `font-semibold` and `font-normal` generate no rule, at 29 sites
 
+**Done, in the light-mode commit, which is where the entry said it belonged.**
+`theme.css` now declares three weights -- 400, 500, 600, one for each the
+console asks for -- and `check-tailwind.mjs` covers the `font-*` family, so a
+fourth has to be declared deliberately or the class that reaches for it fails
+the build. `font-bold` still generates nothing, which is the property being
+kept. `theme.browser.test.tsx` measures all three applying and `font-bold` not.
+
+Two corrections to the numbers below, both found by re-measuring rather than
+trusting them. `font-semibold` is at **17** sites now, not 16; the tree grew.
+And the count was only ever half the defect: **on a form control these
+utilities were failing for a second, independent reason**, because
+`tokens.css`'s unlayered `button, input, textarea, select { font: inherit }`
+is a shorthand that sets `font-size` and `font-weight` and beat every layered
+utility outright. #313 layered that rule. Declaring the tokens without it would
+have fixed `font-semibold` on a `<span>` and left it dead on a `<button>` --
+two fixes that look like one, which is why the count moved less than the diff
+suggests.
+
+
 Measured 2026-08-27, by adding `font` to `check-tailwind.mjs`'s `FAMILIES` and
 running against `origin/main`: `font-semibold` at 16 sites, `font-medium` at
 12, `font-normal` at 1. None of them emits anything. Font weights live in

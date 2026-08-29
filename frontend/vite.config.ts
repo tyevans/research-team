@@ -293,6 +293,19 @@ export default defineConfig({
                   reducedMotion: reduced ? 'reduce' : 'no-preference',
                 })
               },
+              // The same gap, for the same reason, on the preference light
+              // mode is built around. A test that wants to know whether an
+              // explicit `data-theme` beats the operating system has to be
+              // able to move the operating system, and `prefers-color-scheme`
+              // is not something a stylesheet or a DOM API can set.
+              //
+              // Worth knowing before writing an assertion against it: the
+              // headless browser's default is **light**, measured 2026-08-28.
+              // So a test that omits this command is testing the light branch,
+              // not "the system default" in the abstract.
+              async setColorScheme(context, scheme: 'light' | 'dark' | null) {
+                await context.page.emulateMedia({ colorScheme: scheme ?? 'no-preference' })
+              },
             },
             // Stated, because the layout rules this suite exists to check are
             // media queries and a media query reads the *viewport* -- not the

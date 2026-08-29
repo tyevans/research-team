@@ -53,7 +53,7 @@ export const CatalogTools = ({
   onReIllustrate: () => void
 }) => (
   <section className="crs-tools flex flex-col gap-2 rounded-md border border-solid border-line bg-bg-panel p-3">
-    <h2 className="font-semibold tracking-wide m-0 text-sm text-fg uppercase">Catalog upkeep</h2>
+    <h2 className="tracking-wide m-0 text-sm font-semibold text-fg uppercase">Catalog upkeep</h2>
     <SweepControl
       progress={blurb}
       starting={startingBlurb}

@@ -36,7 +36,7 @@ export const CategoryPage = ({
       <Button small onClick={onBack}>
         Back to catalog
       </Button>
-      <h2 className="font-semibold m-0 text-lg text-fg">{category.label}</h2>
+      <h2 className="m-0 text-lg font-semibold text-fg">{category.label}</h2>
       <span className="font-mono text-xs text-fg-faint">{category.candidates.length}</span>
     </div>
     {category.candidates.length === 0 ? (

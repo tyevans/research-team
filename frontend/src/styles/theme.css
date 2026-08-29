@@ -1,39 +1,49 @@
-/* The same tokens as `tokens.css`, expressed so Tailwind can generate
-   utilities from them.
+/* The palette, the type scale and the spacing rhythm. **The only file in this
+   repository that contains a colour literal.**
 
-   `tokens.css` stays, still imported, still the thing every existing
-   stylesheet consumes. This file adds a second *spelling* of the same values,
-   not a second palette: `@theme` turns each entry into both a CSS custom
-   property and the utility classes that read it, so `--color-bg` here yields
-   `bg-bg`, `text-bg`, `border-bg` and the `--color-bg` variable. That is what
-   makes an off-palette colour unwritable later on -- there is no utility for a
-   colour that is not a token.
+   That sentence is new, and it is the point of this commit. Until now the
+   palette was written twice -- here, and again as `:root` literals in
+   `tokens.css` -- and the comment that used to open this file called that "the
+   exact failure `tokens.css` exists to prevent", accepted it for the length of
+   the migration, and named the exit: *"Phase 5 deletes the `:root` block and
+   leaves this one."* This is that phase, and it arrives with light mode
+   because a second palette on top of a palette written twice is four places
+   for one colour.
 
-   Two things about this file are uncomfortable and are better said than
-   discovered.
+   `tokens.css`'s `:root` block still exists and no longer holds a value. Every
+   line in it now reads `--bg: var(--color-bg)` -- an alias, not a copy. What
+   that keeps and what it costs is argued there rather than here.
 
-   **It duplicates values, which is the exact failure `tokens.css` exists to
-   prevent.** Its own comment says "a second literal hex would be a second
-   palette, discoverable only by looking at both". This is that, deliberately,
-   for the length of the migration: the old stylesheets cannot read `@theme`
-   and the utilities cannot read `:root`, so during coexistence both spellings
-   have to exist. The mitigation is mechanical rather than a promise --
-   `theme.test.ts` parses both files and fails if any shared token disagrees,
-   so the drift this would otherwise invite is a failing test instead of a
-   colour that is subtly wrong on one page. Phase 5 deletes the `:root` block
-   and leaves this one.
+   **`@theme` is what makes an off-palette colour unwritable.** Each entry
+   becomes both a CSS custom property and the utility classes that read it, so
+   `--color-bg` yields `bg-bg`, `text-bg`, `border-bg` and the variable. There
+   is no utility for a colour that is not a token.
 
-   **Preflight is deliberately not imported.** The usual `@import "tailwindcss"`
-   pulls in Tailwind's base reset, which would restyle every heading, list,
-   button and form control in the console -- a large visual change in a phase
-   whose entire promise is that nothing moves. Importing the theme and utility
-   layers alone is the documented way to opt out, and it is why this file lists
-   its layers by hand rather than using the one-line import. The cost is that a
-   future contributor reaching for a Tailwind feature that assumes preflight
-   (`space-x-*` relies on it least; `border-*` assumes a reset border style)
-   will find it behaves unlike the documentation. Phase 5 is where taking
+   **Preflight is still deliberately not imported, and this is the commit that
+   was supposed to take it.** The old comment said phase 5 "is where taking
    preflight becomes worth the pixel diff, and it should be taken there in one
-   commit rather than drifted into. */
+   commit rather than drifted into". It is not taken here, and the refusal is a
+   decision rather than an omission:
+
+   - Preflight restyles every heading, list, button and form control in the
+     console. Folded into the commit that also repaints every surface in the
+     console, the visual review can no longer attribute a changed pixel to
+     either change. This commit's review is already the largest this console
+     has had; adding a reset makes its one question -- "is light mode right?"
+     -- unanswerable.
+   - The rules preflight would replace are not absent. `tokens.css` carries a
+     hand-written base layer (`box-sizing`, the field background, `a { color:
+     inherit }`, the placeholder tier) that exists *because* there is no reset,
+     each with a measurement in its comment. Taking preflight means auditing
+     every one of them against what preflight now does instead, which is a
+     second review of a different kind.
+
+   So the trade is unchanged and the deadline moves: preflight is worth taking,
+   in its own commit, against a console whose light mode has already been
+   reviewed. The cost of not taking it here is the same cost as before and is
+   still live -- a Tailwind feature that assumes a reset behaves unlike its
+   documentation, and CLAUDE.md records one such consequence (`border-solid`
+   beside a directional width draws three unwanted sides). */
 
 /* Tailwind's *default* theme is deliberately not imported either, and this is
    the load-bearing half of §4's promise rather than a size optimisation. With
@@ -49,17 +59,16 @@
    What it costs: `--breakpoint-*` is part of the default theme, so `md:` and
    friends generate nothing until breakpoints are declared here. That is
    correct for today -- `responsive.css` owns every media query in this console
-   and phase 5 is where the two meet -- but it is a trap for anyone who reaches
-   for a responsive variant before then, and it will fail silently, which is
-   the bad way to fail. Declaring the breakpoints belongs in the commit that
-   first needs one. */
+   -- but it is a trap for anyone who reaches for a responsive variant before
+   then, and it will fail silently, which is the bad way to fail. Declaring the
+   breakpoints belongs in the commit that first needs one. */
 @layer theme, base, components, utilities;
 
 /* `source(none)` turns off Tailwind's automatic file discovery, and `@source`
    opts back in exactly the files that can carry a `className`.
 
    Automatic discovery walks the whole project, and the two things it picks up
-   here are both unwanted: the committed build output under
+   here are both unwanted: the build output under
    `research_team/interfaces/web/static/`, which would feed Tailwind's own
    previous output back to it, and `src/styles/*.css`, where our class names
    are declared. Naming the sources makes the input to the build the set of
@@ -73,88 +82,248 @@
    at 1.2 kB gzipped of `app-` for rules nothing asked for.
 
    Those rules were checked rather than assumed to be harmless, because a
-   utility that *did* apply would be a silent visual change in a phase that
-   promises none. Every emitted name is either one this codebase already
-   defines a rule for -- and ours wins, since unlayered CSS beats every cascade
-   layer, `@layer utilities` included -- or one that is never used as a class
-   at all. The two that looked like exceptions on a first pass, `absolute` and
-   `relative`, turned out to be inline `style={{ position: … }}` values rather
-   than class names. If that check needs redoing after a phase adds components,
-   it is: for each class in `@layer utilities`, does this repo define the same
-   selector, and is the name used in a `className`? */
+   utility that *did* apply would be a silent visual change. Every emitted name
+   is either one this codebase already defines a rule for -- and ours wins,
+   since unlayered CSS beats every cascade layer, `@layer utilities` included
+   -- or one that is never used as a class at all. If that check needs redoing
+   after a phase adds components, it is: for each class in `@layer utilities`,
+   does this repo define the same selector, and is the name used in a
+   `className`? */
 @import 'tailwindcss/utilities.css' layer(utilities) source(none);
 @source '../**/*.tsx';
 
+/* Tailwind v4's `dark:` variant defaults to `prefers-color-scheme` and there
+   is no `darkMode` config key any more, because the JS config is gone. This
+   console has an explicit choice as well as a system default, so the variant
+   has to know about both.
+
+   Two rules rather than one, and the second is the half that is easy to miss:
+   `[data-theme='dark']` covers an explicit choice, and the media query covers
+   `system` resolving to dark. A single-selector variant of the shape the design
+   document proposes would leave every `dark:` utility inert for the *default*
+   setting, which is the setting almost every reader is on -- the silent-failure
+   shape this repository keeps rediscovering.
+
+   No component writes a `dark:` utility today (measured: zero occurrences in
+   `src/`), so this is unexercised rather than load-bearing. It is declared
+   anyway, because the alternative is that the first person to write one gets
+   the broken half. */
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-theme='system'], [data-theme='system'] *) {
+      @slot;
+    }
+  }
+}
+
 @theme {
-  /* Surfaces and lines. */
-  --color-bg: #0b0d10;
-  --color-bg-panel: #111418;
-  --color-bg-panel-2: #15191e;
-  --color-bg-raise: #1b2027;
-  --color-bg-hover: #1e242c;
-  --color-line: #232a33;
-  --color-line-soft: #1a2027;
-  --color-line-strong: #34404e;
+  /* Every colour below is `light-dark(light, dark)`: one declaration holding
+     both schemes, switched by the single `color-scheme` property that
+     `tokens.css` sets from `data-theme`. There is no `.light` block and no
+     second `@theme` -- which is the whole reason light mode and the `:root`
+     collapse are the same commit rather than two.
 
-  /* Text. The two lower tiers were raised for AA; `tokens.css` carries the
-     ratios and the reasoning, and these are the same values spelled for
-     Tailwind. A copy that disagrees with that one is the bug this comment
-     exists to make findable. */
-  --color-fg: #d7dee7;
-  --color-fg-dim: #a7b1bd;
-  --color-fg-faint: #7f8d9f;
+     **The light half is designed, not inverted.** An inversion of a dark
+     palette gives you a white page with saturated mid-tones on it, every one
+     of which fails AA: `--accent` (#e2a457) reads 1.9:1 on white. So the dark
+     values are unchanged and the light column was chosen against a constraint
+     -- every ink clears 4.5:1 against *every* surface it can land on, the way
+     `--fg-faint`'s comment below describes for the dark column.
 
-  /* The one accent. */
-  --color-accent: #e2a457;
-  --color-accent-dim: #7a5a2c;
-  --color-accent-fg: #17120a;
+     The surfaces are warm rather than neutral, because the one accent is
+     amber and a cold grey page fights it. The elevation order also inverts,
+     and deliberately: in dark, a panel is *lighter* than the page and
+     `--bg-hover` is the lightest thing in the file; in light a panel is
+     lighter (toward white) but `--bg-hover` is *darker* than what it sits on,
+     because "hover" means "further from the page", which is a different
+     direction in each scheme. That is the one place a mechanical inversion
+     would have produced something that looks wrong rather than merely
+     unreadable.
 
-  /* Graph-canvas edges. `GraphCanvas.tsx` does not read these directly -- it
-     reads `--link`/`--link-inferred` from `tokens.css`, the same way it reads
-     the kind palette below via `getComputedStyle` at runtime. This `@theme`
-     block emits its own `--color-link`/`--color-link-inferred` properties;
-     the two are required to agree, which a test enforces, but this file is
-     not what the canvas reads. */
-  --color-link: rgba(138, 149, 163, 0.35);
-  --color-link-inferred: rgba(138, 149, 163, 0.18);
+     Measured on 2026-08-28 with `contrast-probe`-style arithmetic and then
+     re-measured by axe over every story in the console
+     (`a11y.browser.test.tsx`), which is the number that counts because it
+     reads the composited colour rather than the declared one. */
+
+  /* Surfaces and lines.
+
+     Light column, worst-case ink ratios against each, are in the text tiers
+     below. `--bg-hover` (#edebe5) is the binding surface in light exactly as
+     it is in dark: the one every tier had to be chosen against. */
+  --color-bg: light-dark(#f7f6f3, #0b0d10);
+  --color-bg-panel: light-dark(#fdfcfa, #111418);
+  --color-bg-panel-2: light-dark(#faf9f6, #15191e);
+  --color-bg-raise: light-dark(#ffffff, #1b2027);
+  --color-bg-hover: light-dark(#edebe5, #1e242c);
+  --color-line: light-dark(#dcd8d0, #232a33);
+  --color-line-soft: light-dark(#e9e6df, #1a2027);
+  --color-line-strong: light-dark(#b4aea3, #34404e);
+
+  /* Text. Three tiers, and in both schemes the bottom two are the values they
+     are because of a number rather than because of taste.
+
+     Dark: `--fg-faint` was #5c6673, which is below AA against *every* surface
+     in the palette (2.68:1 on `--bg-hover`, 3.34 on `--bg`), and it is the
+     console's densest text -- counts, paths, chip labels. #7f8d9f is 4.62
+     (5.76). `--fg-dim` passed on its own at #8a95a3 and moved anyway, because
+     raising only the faint tier put the two within 3.2 points of CIE L*, which
+     is around the just-noticeable difference -- two tiers wearing three names.
+     #a7b1bd restores the gaps to 16.4 and 13.7 L*.
+
+     Light: the same constraint, measured against the same worst surface.
+     `--fg` 13.89, `--fg-dim` 6.46, `--fg-faint` 5.13 on `--bg-hover`; 15.32,
+     7.12 and 5.66 on `--bg`. The light scale is *shallower* than the dark one
+     and that is a property of light backgrounds rather than a compromise --
+     there is only so much room between 5:1 and 15:1, where dark has the whole
+     range from 4.6 to 17. Three steps a reader can see is still the bar and
+     these clear it.
+
+     `Tabs.browser.test.tsx` pins `--fg-faint` as an rgb() literal under the
+     dark scheme and fails if the dark column is edited without meaning to. */
+  --color-fg: light-dark(#1b1f24, #d7dee7);
+  --color-fg-dim: light-dark(#4b545e, #a7b1bd);
+  --color-fg-faint: light-dark(#59636e, #7f8d9f);
+
+  /* The one accent.
+
+     Amber both ways, and the light value is much darker rather than merely
+     less bright: #e2a457 is 1.90:1 on the light page, so the light column is
+     the hue carried down to where it can be read (#8f570b, 5.50 on `--bg`,
+     4.98 on `--bg-hover`). `--accent-fg` is text drawn *on* the accent, so it
+     flips: dark ink on a light amber in the dark scheme, light ink on a dark
+     amber in the light one.
+
+     `--accent-dim` is a muted accent used almost entirely as a border colour
+     (fourteen sites; `composer.css` argues the case for one of them). It moves
+     *away* from the surface in each scheme, so in dark it is darker than the
+     accent and in light it is lighter. That is the `--bg-hover` inversion
+     again and for the same reason. */
+  --color-accent: light-dark(#8f570b, #e2a457);
+  --color-accent-dim: light-dark(#d8ab63, #7a5a2c);
+  --color-accent-fg: light-dark(#fdf8f1, #17120a);
+
+  /* Text selection, which had been borrowing `--accent-dim` for its background
+     and hard-coding `#fff` for its foreground.
+
+     Two new tokens rather than a third scheme-conditional in `tokens.css`'s
+     rule, because that `#fff` was a colour literal outside the palette -- the
+     one thing this file exists to make impossible -- and because it stops
+     working the moment `--accent-dim` becomes light: white on the light
+     `--accent-dim` is 1.9:1, i.e. a selection whose text you cannot read.
+     Selection is a role, not a shade of the accent, and now says so.
+
+     Measured: light #1b1f24 on #f2d7a6 is 12.4:1; dark #ffffff on #7a5a2c is
+     5.31:1. */
+  --color-select-bg: light-dark(#f2d7a6, #7a5a2c);
+  --color-select-fg: light-dark(#1b1f24, #ffffff);
+
+  /* Graph-canvas edges. `GraphCanvas.tsx` reads `--link`/`--link-inferred`
+     from `tokens.css` at runtime through `getComputedStyle`, the same way it
+     reads the kind palette. That still works, and it works *because* those
+     aliases are registered with `@property` -- an unregistered custom property
+     hands `getComputedStyle` the literal string `light-dark(#…, #…)` rather
+     than a colour. `tokens.css` carries the measurement. */
+  --color-link: light-dark(rgba(60, 68, 82, 0.32), rgba(138, 149, 163, 0.35));
+  --color-link-inferred: light-dark(rgba(60, 68, 82, 0.16), rgba(138, 149, 163, 0.18));
 
   /* Event kinds carry the only other colour in the UI, so the log reads as a
-     legend for itself. `entity-colors.ts` reads these at runtime with
-     `getComputedStyle` for the graph canvas; `@theme` still emits them as
-     custom properties, so that code is untouched by this file existing. */
-  --color-k-session: #a78bfa;
-  --color-k-message: #6ba7f5;
-  --color-k-tool: #e2a457;
-  --color-k-file: #5ec98a;
-  --color-k-turn: #7e8b9b;
-  --color-k-failure: #f4736b;
-  /* Raised with `--k-compaction` in `tokens.css`, where the arithmetic is.
-     Short version: #5f7d8c was 4.2:1 on the compaction pane and 4.45 on
-     `--bg` -- below AA on every surface -- and the grey-ward lift that fixes
-     it collapses the gap to `--k-turn`. #679aae goes blue-ward instead. */
-  --color-k-compaction: #679aae;
+     legend for itself. `entity-colors.ts` and `GraphCanvas.tsx` read these at
+     runtime for the canvas.
 
-  /* Chip and box tints. */
-  --color-tint-session: #1a1630;
-  --color-tint-session-line: #3a3060;
-  --color-tint-fail: #241417;
-  --color-tint-fail-line: #45272a;
-  --color-tint-held: #241d10;
-  --color-tint-ok: #131f17;
-  --color-tint-ok-line: #24402c;
+     Two constraints, not one, and the second is the one that is easy to lose:
+     each has to clear AA on every surface, *and* the seven have to stay
+     distinguishable from each other. `--k-compaction`'s comment records the
+     dark column's tightest pair at 33.4 in RGB distance and explains why the
+     obvious grey-ward fix halves it. The light column's tightest pair is
+     `--k-compaction` against `--k-turn` at **48.7**, so light is the better
+     separated of the two; worst-case contrast across the light column is 4.63
+     (`--k-failure` on `--bg-hover`).
 
-  /* Diff. */
-  --color-add-fg: #82d9a4;
-  --color-add-bg: #0f2418;
-  --color-del-fg: #f08d86;
-  --color-del-bg: #2a1315;
+     Dark `--k-compaction` was #5f7d8c until 2026-08-23, when the axe sweep
+     reported 4.2:1 -- below AA on every surface. #679aae moves blue-ward
+     rather than grey-ward for the separation reason above; 5.97 on the
+     compaction pane's own #0f1519, 6.31 on `--bg`, 33.4 from `--k-turn`.
+     `a11y.browser.test.tsx` fails if it drifts back. */
+  --color-k-session: light-dark(#6d4bd0, #a78bfa);
+  --color-k-message: light-dark(#1a62ba, #6ba7f5);
+  --color-k-tool: light-dark(#8f570b, #e2a457);
+  --color-k-file: light-dark(#157346, #5ec98a);
+  --color-k-turn: light-dark(#5a646f, #7e8b9b);
+  --color-k-failure: light-dark(#c0362e, #f4736b);
+  --color-k-compaction: light-dark(#2f6d84, #679aae);
+
+  /* Chip and box tints. Backgrounds, so they are checked from the other side:
+     every text tier and every kind colour above clears AA on all of the light
+     values, and axe re-measures the composited result over every story in the
+     console under both schemes.
+
+     **`--tint-msg` and `--tint-msg-line` are new, and they are not a widening
+     of the palette -- they are two literals coming home.** `conversation.css`
+     wrote `#101a26` and `#24384f` inline for the user message's head and
+     border, which is precisely the "second palette, discoverable only by
+     looking at both" that this arrangement exists to prevent. They were
+     invisible while the console was dark-only; light mode found them by
+     painting a dark strip across a white page, and axe named them. Four more
+     were found the same way and did not need a token, because one already
+     existed -- see the commit message. */
+  --color-tint-msg: light-dark(#e6eefb, #101a26);
+  --color-tint-msg-line: light-dark(#bcd0ed, #24384f);
+  --color-tint-session: light-dark(#eeeafb, #1a1630);
+  --color-tint-session-line: light-dark(#cec3f0, #3a3060);
+  --color-tint-fail: light-dark(#fceceb, #241417);
+  --color-tint-fail-line: light-dark(#f0c3be, #45272a);
+  --color-tint-held: light-dark(#faf1de, #241d10);
+  --color-tint-ok: light-dark(#e9f4ed, #131f17);
+  --color-tint-ok-line: light-dark(#bcdfc9, #24402c);
+
+  /* Diff. The two foregrounds are inks on their own backgrounds as well as on
+     the page, so both pairs were measured: light `--add-fg` is 5.73 on
+     `--add-bg`, `--del-fg` is 5.14 on `--del-bg`. */
+  --color-add-fg: light-dark(#0f6b40, #82d9a4);
+  --color-add-bg: light-dark(#e4f3ea, #0f2418);
+  --color-del-fg: light-dark(#b3352c, #f08d86);
+  --color-del-bg: light-dark(#fbe8e6, #2a1315);
 
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
   --font-sans: ui-sans-serif, system-ui, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 
+  /* Font weights, and this is a decision about the type scale rather than a
+     convenience.
+
+     `scripts/check-tailwind.mjs` left the `font-*` family unchecked and said
+     why: `font-medium`, `font-semibold` and `font-normal` were written at 29
+     sites and generated **no CSS at any of them**, because font weights live
+     in Tailwind's default theme and this file omits it. The console had no
+     bold text where it thought it had sixteen instances of it, and nothing
+     could tell -- a missing utility looks exactly like an element nobody
+     styled.
+
+     That check declined to fix it, correctly, because declaring a token to
+     make an existing class valid is growing the palette to bless a typo --
+     which is the move this file exists to refuse. The difference here is that
+     this commit is deciding the type scale on purpose: three weights, matching
+     the three the console already asks for, and no more. `font-bold` and
+     `font-light` remain names that generate nothing, which is the property
+     worth keeping.
+
+     Why 600 and not 700 for `semibold`: the console is monospace-forward and
+     the mono stacks (`SF Mono`, `JetBrains Mono`, `Fira Code`) synthesise
+     rather than ship a 700, so 700 is a smeared 400 on most of this UI. 600
+     picks a real weight where one exists and a milder synthesis where it does
+     not.
+
+     `check-tailwind.mjs` now covers the `font-*` family, so the 29 sites are
+     load-bearing rather than decorative and a `font-black` cannot join them
+     silently. */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
   /* Type scale, 1.2 minor third off 13px. Named `--text-*` because that is the
-     namespace Tailwind generates `text-md` from; the values are `tokens.css`'s
-     `--t-*` unchanged. */
+     namespace Tailwind generates `text-md` from. */
   --text-xs: 10.5px;
   --text-sm: 12px;
   --text-md: 13px;
@@ -164,39 +333,35 @@
 
   --radius-md: 5px;
 
-  /* The one elevation this UI has. */
-  --shadow-1: 0 6px 20px rgb(0 0 0 / 50%);
+  /* The one elevation this UI has. `light-dark()` sits in the colour slot
+     rather than around the whole value: a shadow is not a colour, but its
+     colour is, and 50% black under a light panel is a bruise rather than a
+     lift. 12% is what reads as one on white. */
+  --shadow-1: 0 6px 20px light-dark(rgb(0 0 0 / 12%), rgb(0 0 0 / 50%));
 
   /* The spacing rhythm. Tailwind reads `--spacing-3` as the `3` step, so
-     `p-3` is `tokens.css`'s `--space-3`.
+     `p-3` is the console's third step.
 
      **`--spacing-0` is the zero step, and it is here because without it `m-0`
      and `p-0` compile to nothing.** Tailwind builds a bare step it has no
      explicit key for as `calc(var(--spacing) * N)` off the *base* `--spacing`
-     -- a different variable from these, part of the default theme this file
-     deliberately omits -- and an undefined variable in a `calc` makes the
-     whole declaration invalid, so the rule is dropped rather than emitted
-     wrong. `m-0` and `p-0` therefore did nothing at all on five shipped
-     elements, which silently kept the user agent's margins. Measured, not
-     reasoned: `.m-0` was absent from the built `index-*.css` while
-     `.m-\[0px\]{margin:0}` was present.
+     -- a different variable, part of the default theme this file deliberately
+     omits -- and an undefined variable in a `calc` makes the whole declaration
+     invalid, so the rule is dropped rather than emitted wrong. `m-0` and `p-0`
+     therefore did nothing at all on five shipped elements, which silently kept
+     the user agent's margins. Measured, not reasoned: `.m-0` was absent from
+     the built `index.css` while `.m-\[0px\]{margin:0}` was present.
 
      **Why this rather than defining the base `--spacing`.** Defining the base
      step fixes the same three utilities -- measured, by building with
      `--spacing: 4px` and diffing the output: it changed no existing rule,
-     because an explicit `--spacing-N` key wins over the derived multiplier, so
-     `p-1` stayed `var(--spacing-1)`. But it also turns on `p-7`, `m-13` and
-     `py-1.5` as generatable utilities, and that is the load-bearing half of
-     this file's own promise: with the default theme out, "the only spacings
-     that exist are the ones declared below, and a typo is a class that
-     generates no CSS rather than a second palette". The base step gives that
-     up to fix zero. This gives up nothing -- the diff against `--spacing-0`
-     alone is exactly `.m-0{margin:var(--spacing-0)}` and `.p-0`, and `py-1.5`
-     still correctly generates nothing.
+     because an explicit `--spacing-N` key wins over the derived multiplier. But
+     it also turns on `p-7`, `m-13` and `py-1.5` as generatable utilities, which
+     is the load-bearing half of this file's own promise. The base step gives
+     that up to fix zero. This gives up nothing.
 
      The cost, since it is real: zero is now the one step that can be written
-     two ways, `p-0` and `p-[0px]`. `AutonomyAllowAll` uses the second and its
-     comment explains why; that comment is now historical and says so. */
+     two ways, `p-0` and `p-[0px]`. */
   --spacing-0: 0px;
   --spacing-1: 3px;
   --spacing-2: 6px;
@@ -206,7 +371,10 @@
   --spacing-6: 28px;
 }
 
-/* Deliberately *not* in `@theme`: `--topbar-h`, and the panes' 34px rail.
-   Those are layout constants rather than theme values -- there is no such
-   thing as a `topbar-h` utility, and putting them here would offer one. They
-   stay as ordinary custom properties in `tokens.css`. */
+/* Deliberately *not* in `@theme`: `--topbar-h`, the panes' 34px rail, the
+   breakpoints and the z-scale. Those are layout constants rather than theme
+   values -- there is no such thing as a `topbar-h` utility, and putting them
+   here would offer one. The z-scale in particular must not become a utility:
+   its whole value is that there are three levels and that every dismissable
+   layer shares one of them, and a `z-overlay` class is an invitation to write
+   a fourth. They stay as ordinary custom properties in `tokens.css`. */

@@ -65,11 +65,11 @@
   white-space: normal;
 }
 .msg-user {
-  border-color: #24384f;
+  border-color: var(--tint-msg-line);
 }
 .msg-user .msg-head {
   color: var(--k-message);
-  background: #101a26;
+  background: var(--tint-msg);
 }
 .msg-assistant .msg-head {
   color: var(--fg-dim);
@@ -81,11 +81,17 @@
   color: var(--k-tool);
 }
 .msg-tool.errored {
-  border-color: #45272a;
+  /* Was `#45272a`, which is `--tint-fail-line` written out. */
+  border-color: var(--tint-fail-line);
 }
 .msg-tool.errored .msg-head {
   color: var(--k-failure);
-  background: #1e1214;
+  /* Was `#1e1214`. `.error-box` wrote `#1a1113` for the same idea and
+     `--tint-fail` already held `#241417`: three near-identical failure
+     surfaces, two of them literals. They are one token now, which moves the
+     dark console by a few units on two elements -- a deliberate, stated cost of
+     the collapse rather than a retune. */
+  background: var(--tint-fail);
 }
 
 /* --- compaction -------------------------------------------------------- */
@@ -94,7 +100,9 @@
 .compaction {
   border: 1px dashed var(--k-compaction);
   border-radius: var(--radius);
-  background: #0f1519;
+  /* Was `#0f1519`, a literal one shade off `--bg-panel`. Nothing was reading
+     the difference; light mode is what made it a dark strip on a white page. */
+  background: var(--bg-panel);
   padding: 8px 10px 0;
   margin-bottom: 2px;
 }

@@ -1,147 +1,359 @@
-/* Design tokens: the palette, the type scale and the spacing rhythm.
+/* The console's token vocabulary, and -- since this commit -- **not a
+   palette**. There is no colour literal below. Every name here is an alias for
+   the `@theme` entry of the same name in `theme.css`, which is now the one
+   file in the repository that holds a colour.
 
-   One accent (amber); event kinds carry the only other colour in the UI, so
-   the log reads as a legend for itself. Every other file here consumes these
-   and defines none of its own -- a second literal hex would be a second
-   palette, discoverable only by looking at both. */
+   This file used to open by warning that "a second literal hex would be a
+   second palette, discoverable only by looking at both", and then, from phase
+   0 onward, was itself the second one. `theme.test.ts` held the two in
+   agreement mechanically while that lasted. It is over: the values moved to
+   `theme.css`, where they could carry a light column as well as a dark one,
+   and what is left here is a rename.
 
-/* research-team — developer console
-   Dark, dense, monospace-forward. One accent (amber); event kinds carry the
-   only other colour in the UI, so the log reads as a legend for itself. */
+   **Why a rename layer survives at all, since one spelling was the goal.**
+   Tailwind's namespaces are what turn a variable into a utility -- a colour
+   has to be `--color-*` to yield `bg-*`, the type scale has to be `--text-*`
+   to yield `text-*`, the rhythm has to be `--spacing-N`. Deleting this block
+   outright means every one of ~700 `var(--fg-dim)` in twenty stylesheets, and
+   every `var(--space-3)` in sixty `.tsx` files, becomes `var(--color-fg-dim)`
+   and `var(--spacing-3)`: the console adopts Tailwind's namespace as its own
+   vocabulary, in a diff nobody can review, for one fewer indirection.
+
+   What that would buy is one name instead of two. What it costs is the whole
+   diff and, at the moment this landed, a collision with two other agents live
+   in twenty of those files. What it would *not* buy is the thing the warning
+   was about, because that is already bought: with every line below reading
+   `var(--color-x)`, there is exactly one place a colour is written, and a
+   drift between the two spellings is not merely caught by a test -- it is
+   unrepresentable.
+
+   So the honest statement of the trade: two names, one value, and the rename
+   is checked by `theme.test.ts`, which no longer compares values because there
+   is nothing to compare. If someone later wants the single spelling, it is a
+   mechanical sed and this paragraph is the argument they have to answer.
+
+   `--topbar-h`, `--rail-w`, the breakpoints and the z-scale are *not* aliases.
+   They are layout constants with no theme counterpart, argued where they are
+   declared. */
+
+/* **Registration, and it is not decoration.**
+
+   `GraphCanvas.tsx`, `GraphLegend.tsx` and `TimelineCanvas.tsx` each read the
+   kind palette off `document.documentElement` at runtime with
+   `getComputedStyle`, because a canvas painter needs a literal colour string.
+   An *unregistered* custom property computes to its own token stream, so with
+   the palette moved to `light-dark()` those three would have received the
+   string `light-dark(#a78bfa, #6d4bd0)` and handed it to `fillStyle`, which
+   ignores an unparseable value in silence and keeps whatever colour it had.
+   Three canvases painting in the previous entity's colour, with nothing
+   thrown, nothing logged and nothing in any jsdom test able to see it.
+
+   **Measured on 2026-08-28, in Chromium, before any of this was written.** The
+   same property declared twice, once bare and once behind `@property { syntax:
+   "<color>" }`, read back from a descendant: the bare one returned
+   `"light-dark(#ffffff, #000000)"` and the registered one returned
+   `"rgb(255, 255, 255)"`. `docs/design/frontend-library-adoption.md` §1 asserts
+   the opposite -- "that resolves `light-dark()` to the active scheme's colour,
+   so it keeps working" -- and it is wrong for a custom property. That is the
+   single most expensive thing this commit found out, and it cost three
+   minutes because it was probed rather than reasoned about.
+
+   Every colour alias is registered, not only the nine that are read today.
+   Registering the subset would mean the next component to reach for
+   `getComputedStyle` picks whichever token nobody anticipated, and gets the
+   silent version. `theme.browser.test.tsx` measures a registered token
+   resolving and fails if a registration is dropped.
+
+   `initial-value: #ff00ff` on all of them, deliberately. A registered property
+   whose declaration fails to parse falls back to its initial value rather than
+   to nothing, so the fallback has to be a colour that cannot be mistaken for a
+   design decision. Magenta on screen means "this token did not resolve"; a
+   plausible grey there would mean nothing at all.
+
+   Only colours are registered. `--shadow-1`, `--mono`, `--sans`, `--t-*`,
+   `--space-*` and `--radius` are not colours, nothing reads them at runtime,
+   and `<color>` is the only syntax that buys the resolution above. */
+@property --bg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --bg-panel {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --bg-panel-2 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --bg-raise {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --bg-hover {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --line {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --line-soft {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --line-strong {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --fg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --fg-dim {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --fg-faint {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --accent {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --accent-dim {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --accent-fg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --select-bg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --select-fg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --link {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --link-inferred {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --k-session {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --k-message {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --k-tool {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --k-file {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --k-turn {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --k-failure {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --k-compaction {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-msg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-msg-line {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-session {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-session-line {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-fail {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-fail-line {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-held {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-ok {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --tint-ok-line {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --add-fg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --add-bg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --del-fg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+@property --del-bg {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #ff00ff;
+}
+
+/* Which way round the console is, from the reader's choice and nothing else.
+
+   Four rules, and the first two are the same rule written twice on purpose: a
+   document that has not been given a `data-theme` yet -- Storybook's iframe, a
+   test that renders into a bare page, `index.html` in the half-tick before the
+   pre-paint script runs -- has to behave like `system` rather than like
+   nothing. `color-scheme: light dark` is what makes `light-dark()` pick a
+   branch at all; without it every token resolves to its *light* value
+   regardless of the operating system, which is the failure that looks most
+   like it works.
+
+   `color-scheme` is also not just an input to `light-dark()`. It is the one
+   declaration that tells the browser which way round to draw the things the
+   stylesheet cannot reach: the `<select>` popup, the date picker, the checkbox
+   and radio, the scrollbar gutter, and the canvas behind a page that has not
+   painted yet. That was measured when it first landed as `dark`: a checkbox
+   and a radio are white squares without it and dark ones with it, because
+   `background` does not reach a control the UA paints through `appearance`.
+   `color-scheme.browser.test.tsx` now measures all three states.
+
+   What it does *not* do is make the `background: var(--bg)` rule below
+   redundant, which was the open question when this was one line. `color-scheme:
+   dark` gives fields the UA's dark field colour -- Chromium's `rgb(59, 59, 59)`
+   -- not `--bg`, so a bare `<input>` beside a `.input` would sit two shades
+   apart on the same line. The same is true in light. That test holds it. */
+:root,
+:root[data-theme='system'] {
+  color-scheme: light dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
 
 :root {
-  /* The browser is told which way round this console is, once, before any of
-     the tokens below try to say it a control at a time. Everything the UA
-     draws for itself follows from this and from nothing in this file: the
-     `<select>` popup, the date picker, the checkbox and radio, the focus
-     ring, and the canvas behind a page that has not painted yet.
+  --bg: var(--color-bg);
+  --bg-panel: var(--color-bg-panel);
+  --bg-panel-2: var(--color-bg-panel-2);
+  --bg-raise: var(--color-bg-raise);
+  --bg-hover: var(--color-bg-hover);
+  --line: var(--color-line);
+  --line-soft: var(--color-line-soft);
+  --line-strong: var(--color-line-strong);
+  --fg: var(--color-fg);
+  --fg-dim: var(--color-fg-dim);
+  --fg-faint: var(--color-fg-faint);
+  --accent: var(--color-accent);
+  --accent-dim: var(--color-accent-dim);
+  --accent-fg: var(--color-accent-fg);
+  --select-bg: var(--color-select-bg);
+  --select-fg: var(--color-select-fg);
+  --link: var(--color-link);
+  --link-inferred: var(--color-link-inferred);
+  --k-session: var(--color-k-session);
+  --k-message: var(--color-k-message);
+  --k-tool: var(--color-k-tool);
+  --k-file: var(--color-k-file);
+  --k-turn: var(--color-k-turn);
+  --k-failure: var(--color-k-failure);
+  --k-compaction: var(--color-k-compaction);
+  --tint-msg: var(--color-tint-msg);
+  --tint-msg-line: var(--color-tint-msg-line);
+  --tint-session: var(--color-tint-session);
+  --tint-session-line: var(--color-tint-session-line);
+  --tint-fail: var(--color-tint-fail);
+  --tint-fail-line: var(--color-tint-fail-line);
+  --tint-held: var(--color-tint-held);
+  --tint-ok: var(--color-tint-ok);
+  --tint-ok-line: var(--color-tint-ok-line);
+  --add-fg: var(--color-add-fg);
+  --add-bg: var(--color-add-bg);
+  --del-fg: var(--color-del-fg);
+  --del-bg: var(--color-del-bg);
 
-     It is one declaration and it is not a small change -- it repaints every
-     native control at once -- so it was looked at in Chromium rather than
-     reasoned about, side by side with and without. What that showed: a
-     checkbox and a radio are white squares without it and dark ones with it,
-     which is the live defect, because `background` does not reach a control
-     the UA paints through `appearance` and the rule below therefore never
-     touched them. Scrollbars are not part of the change; `base.css` already
-     draws those itself, both ways round.
-
-     What it does *not* do is make the rules further down redundant, which was
-     the open question. `color-scheme: dark` gives fields the UA's dark field
-     colour -- Chromium's `rgb(59, 59, 59)` -- not `--bg` (#0b0d10), so a bare
-     `<input>` beside a `.input` would sit two shades apart on the same line.
-     The `background: var(--bg)` rule below still does work and stays;
-     `color-scheme.browser.test.tsx` fails if that ever stops being true. */
-  color-scheme: dark;
-
-  --bg: #0b0d10;
-  --bg-panel: #111418;
-  --bg-panel-2: #15191e;
-  --bg-raise: #1b2027;
-  --bg-hover: #1e242c;
-  --line: #232a33;
-  --line-soft: #1a2027;
-  /* hover and focus borders. Was a literal in `.node:hover`, which is exactly
-     the second palette the note above says this file exists to prevent. */
-  --line-strong: #34404e;
-
-  /* Three tiers, and the bottom two are the values they are because of a
-     number rather than because of taste. Both were chosen against
-     `--bg-hover` (#1e242c), the *lightest* surface anything is written on, so
-     a tier that clears AA there clears it everywhere in this file; the ratios
-     against `--bg` (#0b0d10) are in brackets because that is the surface most
-     of the console actually is.
-
-     `--fg-faint` was #5c6673, which was 2.68:1 on `--bg-hover` and 3.34:1 on
-     `--bg` -- below AA's 4.5 against *every* surface in this palette, not an
-     unlucky one, and it is the console's densest text (counts, paths, chip
-     labels). #7f8d9f is 4.62 (5.76).
-
-     Darkening the surfaces instead was considered and is arithmetically
-     impossible, which is worth writing down so nobody re-derives it: #5c6673
-     on pure black is 3.60:1. There is no surface, in this palette or any
-     other, that the old value passes against.
-
-     `--fg-dim` was #8a95a3 and passed on its own (5.14 on `--bg-hover`). It
-     moved anyway, because raising only the faint tier collapses the
-     hierarchy: #7f8d9f against #8a95a3 is 3.2 points of CIE L*, which is
-     around the just-noticeable difference -- two tiers wearing three names.
-     #a7b1bd restores the gaps to 16.4 and 13.7 L* (they were 26.9 and 18.5).
-     The scale is a third shallower than it was and that is the honest price
-     of the floor moving up; it is still three steps a reader can see.
-
-     `Tabs.browser.test.tsx` pins `--fg-faint` as an rgb() literal and fails
-     if either of these is edited without meaning to. */
-  --fg: #d7dee7;
-  --fg-dim: #a7b1bd;
-  --fg-faint: #7f8d9f;
-
-  --accent: #e2a457;
-  --accent-dim: #7a5a2c;
-  --accent-fg: #17120a;
-
-  /* Graph-canvas edges. Both were one inlined literal (`linkColor`) until the
-     inferred/asserted split needed a second -- moving both here rather than
-     adding a token for only the new one keeps the exception in one place
-     instead of two. Same grey, lower alpha for the inferred line: colour on
-     that canvas already carries entity type, so distinguishing an inferred
-     edge by hue would overload a channel instead of adding one -- see
-     `GraphCanvas.tsx`'s `linkColor`. */
-  --link: rgba(138, 149, 163, 0.35);
-  --link-inferred: rgba(138, 149, 163, 0.18);
-
-  --k-session: #a78bfa;
-  --k-message: #6ba7f5;
-  --k-tool: #e2a457;
-  --k-file: #5ec98a;
-  --k-turn: #7e8b9b;
-  --k-failure: #f4736b;
-  /* #5f7d8c until 2026-08-23, when the axe sweep reached the compaction pane
-     for the first time and reported 4.2:1 -- below AA, and below it on *every*
-     surface rather than an unlucky one: 4.2 on the pane's own #0f1519 and 4.45
-     on `--bg`. `.compaction-title` is `--t-xs` uppercase, so 4.5 is the bar.
-     Same shape as the `--fg-faint` finding this file already records.
-
-     The obvious lift is toward grey and it is the wrong direction. This token's
-     nearest neighbour in the kind palette is `--k-turn` (#7e8b9b), already only
-     37.2 apart in RGB, and every grey-ward candidate that clears AA halves that
-     -- #6d8d9d lands 17.2 away, which is two legend colours a reader cannot
-     tell apart. That is the hierarchy collapse the `--fg-dim` note above
-     describes, arriving in the kind palette instead of the text tiers.
-
-     #679aae moves toward blue instead. Measured: 5.97 on #0f1519, 6.31 on
-     `--bg`, 5.31 on `--bg-raise`, and 33.4 from `--k-turn` -- clear of AA on
-     every surface this console paints, with the separation essentially intact.
-     `a11y.browser.test.tsx` fails if it drifts back. */
-  --k-compaction: #679aae;
-
-  /* Chip and box tints. Each of these was written out twice already -- once in
-     `tree.css` for a chip and once in `states.css` for the error box -- so the
-     two could drift apart with nothing to say they had. */
-  --tint-session: #1a1630;
-  --tint-session-line: #3a3060;
-  --tint-fail: #241417;
-  --tint-fail-line: #45272a;
-  --tint-held: #241d10;
-  --tint-ok: #131f17;
-  --tint-ok-line: #24402c;
-
-  --add-fg: #82d9a4;
-  --add-bg: #0f2418;
-  --del-fg: #f08d86;
-  --del-bg: #2a1315;
-
-  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
-  --sans: ui-sans-serif, system-ui, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
+  --mono: var(--font-mono);
+  --sans: var(--font-sans);
 
   /* type scale, 1.2 minor third off 13px */
-  --t-xs: 10.5px;
-  --t-sm: 12px;
-  --t-md: 13px;
-  --t-lg: 15.5px;
-  --t-xl: 19px;
-  --t-2xl: 23px;
+  --t-xs: var(--text-xs);
+  --t-sm: var(--text-sm);
+  --t-md: var(--text-md);
+  --t-lg: var(--text-lg);
+  --t-xl: var(--text-xl);
+  --t-2xl: var(--text-2xl);
 
-  --radius: 5px;
+  --radius: var(--radius-md);
   --topbar-h: 44px;
 
   /* Layout constants. The fourth family, and it exists for the reason this
@@ -250,32 +462,65 @@
   --z-overlay: 100;
   --z-toast: 200;
 
-  /* The one elevation this UI has: a toast, and now the row menu. */
-  --shadow-1: 0 6px 20px rgb(0 0 0 / 50%);
+  /* `--shadow-1` is deliberately absent from this block, and it is the one
+     token that could not be aliased. Its `@theme` name is already
+     `--shadow-1` -- Tailwind's shadow namespace happens to be the name this
+     console had chosen -- so `--shadow-1: var(--shadow-1)` here would be a
+     self-reference, which CSS resolves as a cycle and drops. Every consumer
+     already reads the `@theme` declaration directly. Nothing to do; worth a
+     sentence, because "the alias is missing" and "the alias was forgotten"
+     look identical. */
 
   /* The spacing rhythm. Literal pixels everywhere before this, which was
      survivable while a row had one level of padding; the project row has
      four nested ones.
 
-     `--space-0` is here for `theme.css`'s benefit rather than for any
-     stylesheet's: no rule in this repository reads it, and one that wanted
-     zero would write `0`. It exists because `theme.css` needs a `--spacing-0`
-     to make `m-0` and `p-0` generate rules at all, and `theme.test.ts` fails
-     any name in `@theme` that has no counterpart here. Declaring the pair is
-     cheaper than an exemption, and it means the first test also pins this step
-     at zero -- a `--spacing-0: 1px` would fail rather than quietly making
-     every `p-0` in the console one pixel. */
-  --space-0: 0px;
-  --space-1: 3px;
-  --space-2: 6px;
-  --space-3: 10px;
-  --space-4: 14px;
-  --space-5: 20px;
-  --space-6: 28px;
+     `--space-0` is here for the same reason `--spacing-0` is declared in
+     `theme.css`: no rule in this repository reads it, and one that wanted zero
+     would write `0`, but without it `m-0` and `p-0` generate no CSS at all. */
+  --space-0: var(--spacing-0);
+  --space-1: var(--spacing-1);
+  --space-2: var(--spacing-2);
+  --space-3: var(--spacing-3);
+  --space-4: var(--spacing-4);
+  --space-5: var(--spacing-5);
+  --space-6: var(--spacing-6);
 }
+/* **The audit `@layer base` prompted, and what it found.**
 
-* {
-  box-sizing: border-box;
+   #313 layered the two bare-control rules after measuring that every `bg-*`,
+   `text-*` and `text-<size>` utility written on a button, input, textarea or
+   select was inert -- an unlayered normal declaration beats a layered one
+   whatever the specificity, and Tailwind emits into `@layer utilities`. This
+   file was then swept for every *other* unlayered rule setting a property a
+   utility could plausibly set. Four more were found and are layered below.
+   Each is a **default** -- what an element looks like when nobody said -- which
+   is precisely what `@layer base` is for.
+
+   `box-sizing` is the one worth naming, because it is the least obvious and
+   the widest: `*` at specificity (0,0,0) still beat `@layer utilities`, so
+   `box-content` has never worked anywhere in this console. Nothing writes it
+   today, which is why it was invisible.
+
+   **What deliberately stays unlayered, and it is one rule.**
+   `:focus-visible` at the end of this file is a *decision* rather than a
+   default -- the console has one focus ring and a component does not get to
+   opt out of it by reaching for a utility. CLAUDE.md records what that costs:
+   `focus-visible:outline-offset-[-2px]` loses to it, silently, and the answer
+   is a named class in a stylesheet (`.lay-ring-inward` in `layout.css`) which
+   competes on equal terms. Layering it would make that class unnecessary and
+   would also make the ring optional, which is the trade being refused.
+
+   The `html`/`body` rules also stay unlayered, and that is a weaker argument
+   worth stating as weak: they set `height`, `margin`, `display` and `overflow`
+   on two elements that never carry a `className` in this application, because
+   React mounts into `#root`. So there is nothing for them to beat. They would
+   be harmless in `@layer base` and are left alone rather than moved for
+   symmetry, which would be a diff with no measurement behind it. */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
 }
 
 html,
@@ -343,9 +588,11 @@ body {
 
    Background only, not border, and the reason has since changed under it.
    This said the UA's black `outset` border disappeared against `--bg`, so a
-   bare button read as unbordered text; with `color-scheme: dark` declared at
-   the top of this file that border is white, and a bare button now reads as a
-   button. The rule is unchanged and the conclusion still holds -- what a
+   bare button read as unbordered text; with `color-scheme` declared above,
+   that border follows the scheme -- light in dark mode, dark in light mode --
+   and a bare button reads as a button either way. That is one thing light mode
+   made *better* rather than harder, and it is the browser doing it rather than
+   this file. The rule is unchanged and the conclusion still holds -- what a
    control's outline should be is a decision about how the console looks
    rather than about whether its text can be read -- but the sentence is
    updated because a comment that describes a colour the browser stopped
@@ -398,21 +645,35 @@ body {
    well would repaint every link in the console in the same commit as a
    contrast fix, and L-§9.3's "nothing on the page is a link" is an argument
    about navigation, not a licence to make the remaining ones invisible. */
-a {
-  color: inherit;
+@layer base {
+  a {
+    color: inherit;
+  }
 }
 
 /* Dimmer than a real value, and deliberately not `--fg-faint`: a placeholder
    is a hint, not disabled content, so it stays legible while reading as
    secondary. */
-input::placeholder,
-textarea::placeholder {
-  color: var(--fg-dim);
+@layer base {
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--fg-dim);
+  }
 }
 
-::selection {
-  background: var(--accent-dim);
-  color: #fff;
+/* Its own pair of tokens since light mode landed, rather than `--accent-dim`
+   plus a literal `#fff`. Two reasons, and the second is the one that forced
+   it: the literal was a colour outside the palette, which is the arrangement
+   this file's opening rule forbids; and `--accent-dim` is a *border* colour
+   that moves away from the surface in each scheme, so its light value is a
+   pale amber on which white text reads 1.9:1 -- a selection whose text cannot
+   be read while it is selected. Selection is a role rather than a shade of the
+   accent, and now says so. `theme.css` carries both pairs' ratios. */
+@layer base {
+  ::selection {
+    background: var(--select-bg);
+    color: var(--select-fg);
+  }
 }
 
 :focus-visible {

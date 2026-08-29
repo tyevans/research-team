@@ -159,7 +159,7 @@ export const GraphDetail = ({
           {/* Entity names in this corpus run to whole sentences -- a `fact` is
               a full clause -- so the heading wraps rather than being clipped to
               one line. */}
-          <h3 className="font-semibold m-0 text-sm [overflow-wrap:anywhere]">{node.name}</h3>
+          <h3 className="m-0 text-sm font-semibold [overflow-wrap:anywhere]">{node.name}</h3>
           <p className="mx-0 mt-[2px] mb-0 font-mono text-xs text-fg-dim">{node.entityType}</p>
         </div>
         <div className="flex shrink-0 gap-2">

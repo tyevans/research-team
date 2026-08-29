@@ -130,9 +130,13 @@ places for one colour.
 Each token holds **both** values in one declaration, in one file, and the
 switch is a single `color-scheme` property. No `.dark` block, no duplicated
 `@theme`, no second palette to hold in sync. That means the phase-5 collapse
-and light mode become the *same* commit rather than two, and `theme.test.ts`
-keeps working unchanged, because it compares token names rather than resolved
-colours.
+and light mode become the *same* commit rather than two, and ~~`theme.test.ts`
+keeps working unchanged~~ — it was rewritten. With `tokens.css`'s `:root`
+holding aliases rather than values there is nothing left to compare, so the
+value-agreement assertion is deleted and what replaced it checks the *rename*:
+every alias points at a token that exists, and every colour the theme declares
+is aliased. `--fg-dim: var(--color-fg-dm)` is the defect it now catches, and it
+types, lints, builds and paints magenta.
 
 The switch:
 
@@ -149,6 +153,13 @@ because the JS config is gone:
 ```css
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 ```
+
+**That one-liner is half a variant and shipped as two rules instead.** It
+matches an explicit choice and nothing else, so every `dark:` utility would be
+inert for `system` — the default, and the setting almost every reader is on.
+The implemented form adds a `prefers-color-scheme: dark` arm matching
+`[data-theme='system']`. Nothing writes a `dark:` utility today, which is
+precisely why the broken half would have been found late.
 
 ### Browser support, specifically
 
@@ -177,9 +188,28 @@ is the thing we would otherwise be writing anyway.
   measured in the browser project rather than reasoned about. **Write that
   assertion as a `.browser.test.tsx` before converting forty tokens.**
 - **`GraphCanvas` and `entity-colors.ts` read tokens at runtime through
-  `getComputedStyle`.** That resolves `light-dark()` to the active scheme's
-  colour, so it keeps working — but the canvas caches, and a theme toggle now
-  has to invalidate that cache. Today nothing can change, so nothing does.
+  `getComputedStyle`.** ~~That resolves `light-dark()` to the active scheme's
+  colour, so it keeps working~~ — **this is wrong, and it was measured wrong on
+  2026-08-28 before the implementation trusted it.** An *unregistered* custom
+  property computes to its own token stream, so `getPropertyValue('--k-session')`
+  hands back the literal two-branch expression, not a colour; `fillStyle`
+  ignores an unparseable value in silence and keeps the colour it had. Three
+  canvases would have painted in the previous entity's colour with nothing
+  thrown and nothing logged.
+
+  The fix is `@property { syntax: "<color>"; inherits: true }` on every colour
+  token, which makes the property resolve at computed-value time. Measured in
+  Chromium: the same value read back bare returns
+  `"light-dark(#ffffff, #000000)"` and registered returns `"rgb(255, 255, 255)"`.
+  `tokens.css` carries the registration block and the argument;
+  `theme.browser.test.tsx` fails if a registration is dropped.
+
+  The caching half of the original bullet stands and is still not done — see
+  the commit that landed light mode.
+
+  **The general lesson is the one this repository keeps relearning**: three
+  minutes of probing the seam beat a paragraph of reasoning about what the code
+  downstream of it does with the answer.
 - **`color-scheme.browser.test.tsx` is rewritten, not extended.** It currently
   asserts the UA paints a control dark. It becomes three assertions, one per
   `data-theme` state, and the `light dark` default is the case that will catch

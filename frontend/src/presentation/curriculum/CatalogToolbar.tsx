@@ -69,7 +69,7 @@ export const CatalogToolbar = ({
               moment anything is typed, so a reader who looks away loses the
               only statement of what the field is for -- and it is announced by
               nothing when the field is empty in some readers. */}
-          <label htmlFor={searchId} className="font-semibold text-xs text-fg-dim uppercase">
+          <label htmlFor={searchId} className="text-xs font-semibold text-fg-dim uppercase">
             Search the catalog
           </label>
           <input

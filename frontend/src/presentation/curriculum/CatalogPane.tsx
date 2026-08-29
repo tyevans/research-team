@@ -351,7 +351,7 @@ const Shelf = ({
 }) => (
   <section className="crs-shelf flex flex-col gap-2">
     <div className="flex items-baseline gap-2">
-      <h2 className="font-semibold tracking-wide m-0 text-sm text-fg uppercase">{shelf.label}</h2>
+      <h2 className="tracking-wide m-0 text-sm font-semibold text-fg uppercase">{shelf.label}</h2>
       <span className="font-mono text-xs text-fg-faint">{shelf.candidates.length}</span>
       {shelf.curated && (
         // Said out loud, because the sort control is right there and does

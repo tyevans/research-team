@@ -240,7 +240,7 @@ export const TopicManagePane = ({
       className="mt-[16px] flex flex-col border-0 border-t border-solid border-line pt-[12px]"
     >
       <header className="mb-[8px] flex items-center gap-[8px]">
-        <h3 className="font-semibold m-0 text-sm">{topic.question}</h3>
+        <h3 className="m-0 text-sm font-semibold">{topic.question}</h3>
         <span className="flex-auto" />
         <button type="button" className="btn btn-sm" ref={closeButtonRef} onClick={onClose}>
           Close
@@ -319,7 +319,7 @@ export const TopicManagePane = ({
           own empty state ("Run the media curation chain from a topic...")
           points here. */}
       <section className="mt-[16px] border-0 border-t border-solid border-line pt-[12px]">
-        <h3 className="font-medium m-0 mb-[8px] font-mono text-xs tracking-[0.06em] text-fg-faint uppercase">
+        <h3 className="m-0 mb-[8px] font-mono text-xs font-medium tracking-[0.06em] text-fg-faint uppercase">
           Media
         </h3>
         <Button
@@ -347,7 +347,7 @@ export const TopicManagePane = ({
         {/* `.topic-section-heading`'s rule, per branch and whole: the mono
             face, the 10.5px, the 0.06em tracking and the faint tone all
             travelled together and none of them is a default. */}
-        <h3 className="font-medium m-0 mb-[8px] font-mono text-xs tracking-[0.06em] text-fg-faint uppercase">
+        <h3 className="m-0 mb-[8px] font-mono text-xs font-medium tracking-[0.06em] text-fg-faint uppercase">
           Documents
         </h3>
         <TopicDocuments projectId={projectId} topicId={topic.topicId} />
