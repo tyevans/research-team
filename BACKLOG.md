@@ -4969,7 +4969,12 @@ would make `LearningArea` -- a pure derivation of the graph -- depend on
 authoring output, and would mean `project_areas` could no longer be driven with
 a literal in a test, which is what `test_projection_is_deterministic` rests on.
 
-### B160. An authoring phase that fails twice still restarts the area from phase 1
+### B161. An authoring phase that fails twice still restarts the area from phase 1
+
+*Filed as B160 and renumbered before merge: #329 took B160 for the two
+quarantined browser tests while this branch was in flight. Three branches
+picked 160 independently on 2026-08-29, which is [[B116]]'s subject and the
+reason `tests/test_backlog_ids.py` exists.*
 
 `CourseAuthor._phase` retries a refused phase once, in the same session, which
 is where the resumption story stops. A phase whose second attempt also fails
