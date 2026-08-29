@@ -687,7 +687,14 @@ export interface CurriculumRepository {
    * Answers the run that has *begun*, not the files. Those arrive over the log
    * like any other write, so a caller wanting them invalidates its file list on
    * those frames rather than reading this result for them. */
-  author(projectId: ProjectId, request: { area?: string; lessons?: number }): Promise<AuthoringRun>
+  /** `takeOver` releases whoever holds the project first. Off by default:
+   *  a take-over ends somebody else's session, so the console asks before
+   *  sending it. 409 when the holder is mid-turn -- releasing then advances
+   *  the tip past writes still coming. */
+  author(
+    projectId: ProjectId,
+    request: { area?: string; lessons?: number; takeOver?: boolean },
+  ): Promise<AuthoringRun>
 
   /** Stop this project's authoring run. Answers how many targets it abandoned.
    *
@@ -732,6 +739,13 @@ export interface RealizeResult {
   readonly realized: boolean
   readonly authoring: AuthoringRun | null
   readonly reason: string | null
+  /** The session holding the project, when that is why no run started.
+   *
+   * Set only for the holder case, so a caller can offer the take-over
+   * without matching on `reason`'s wording. Writing a course needs the
+   * project's filesystem and `JoinProject` admits one session at a time --
+   * see `_authoring_holder` in `app.py` for what this being invisible cost. */
+  readonly heldBy: SessionId | null
 }
 
 /** `_NOT_RUNNING`'s shape in `blurb_sweep.py` -- one project, one sweep at a

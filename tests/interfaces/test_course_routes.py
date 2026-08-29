@@ -21,6 +21,7 @@ from redstring import Entity, ExtractionMethod, Provenance, Relationship
 from research_team.application.course_catalog import CatalogService
 from research_team.application.curriculum import CurriculumService
 from research_team.composition import build_application
+from research_team.domain.session import SessionPurpose
 from research_team.infrastructure.knowledge.seeded_art import SeededArtProvider
 from research_team.infrastructure.knowledge.type_plurality_grouper import TypePluralityGrouper
 from research_team.interfaces.web import create_app
@@ -340,3 +341,64 @@ async def test_an_unrealized_courses_write_side_is_503_when_unwired(app_and_clie
         response = await client.post(f"/api/projects/{project_id}/catalog/some-slug/realize")
 
     assert response.status_code == 503
+
+
+async def test_realizing_a_held_project_names_the_holder_instead_of_starting(app_and_client):
+    """The defect this route shipped with, and the whole reason `heldBy` exists.
+
+    `CourseAuthor.author_area` opens with `start_in_project`, whose
+    `JoinProject` refuses while anybody holds the project -- so a project
+    somebody has open in chat refused every authoring run, ~30ms after a 202
+    the console read as "it started". Measured on the owner's database on
+    2026-08-29: three `CourseAuthoringFailed` events in half an hour, all
+    naming one `purpose: chat` session that had done nothing since it joined.
+
+    Reverting the holder check in `realize_course` does not merely change
+    `heldBy` to `None` here -- it makes `author.asked` non-empty, because the
+    run starts, and that is the assertion that separates "asked before
+    starting" from "reported after failing".
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_one_cluster(application, project_id)
+    slug = await _one_candidate_slug(app_and_client, project_id)
+
+    holder = await application.service.start_in_project(UUID(project_id), SessionPurpose.CHAT)
+
+    response = await client.post(f"/api/projects/{project_id}/catalog/{slug}/realize")
+
+    assert response.status_code == 202
+    body = response.json()
+    # The decision is still recorded -- holding is about where the next write
+    # goes, not about whether a person may choose a course.
+    assert body["realized"] is True
+    assert body["authoring"] is None
+    assert body["heldBy"] == str(holder)
+    assert str(holder) in body["reason"]
+    assert app_and_client.author.asked == []
+
+    await application.courses_caught_up()
+    assert await application.courses.get(UUID(project_id), slug) is not None
+
+
+async def test_realizing_an_unheld_project_starts_the_run_and_names_nobody(app_and_client):
+    """The other side of the check above.
+
+    Without it this file could not tell a holder check that is right from one
+    that fires on every project -- which would refuse authoring everywhere and
+    look, from `test_realizing_a_held_project_...` alone, exactly correct.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_one_cluster(application, project_id)
+    slug = await _one_candidate_slug(app_and_client, project_id)
+
+    response = await client.post(f"/api/projects/{project_id}/catalog/{slug}/realize")
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["heldBy"] is None
+    assert body["reason"] is None
+    assert body["authoring"] is not None
+    await app_and_client.authoring.wait(UUID(project_id))
+    assert app_and_client.author.asked == [slug]

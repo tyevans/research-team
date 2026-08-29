@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -9,6 +9,7 @@ import { fitSummary, outlineAge } from '@domain/knowledge/course.ts'
 import { titleCase } from '@domain/knowledge/title-case.ts'
 import { SessionId, type ProjectId } from '@domain/shared/identifier.ts'
 
+import { Confirm } from '../common/Confirm.tsx'
 import { Button, ErrorBox, Loading } from '../common/primitives.tsx'
 import { sessionHref } from '../routing/routes.ts'
 import { CourseMembers } from './CourseMembers.tsx'
@@ -33,7 +34,7 @@ export const CoursePage = ({
   slug: string
   onBack: () => void
 }) => {
-  const { courses } = useContainer()
+  const { courses, curricula } = useContainer()
   const queryClient = useQueryClient()
 
   const query = useQuery({
@@ -44,9 +45,39 @@ export const CoursePage = ({
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.courseDetail(projectId, slug) })
 
+  /** The holding session, when that is why the run did not start.
+   *
+   * Held in state rather than read off `realize.data` on every render,
+   * because dismissing the dialog must not un-realize the course: the
+   * decision is appended whatever the holder is doing, and only the offer to
+   * take the lock is dismissible. */
+  const [heldBy, setHeldBy] = useState<SessionId | null>(null)
+
   const realize = useMutation({
     mutationFn: () => courses.realize(projectId, slug),
-    onSuccess: () => void invalidate(),
+    onSuccess: (result) => {
+      setHeldBy(result.heldBy)
+      void invalidate()
+    },
+  })
+
+  /** Take the project off its holder and write the course.
+   *
+   * `curricula.author` rather than a second call to `realize`: the course is
+   * already realized by the time this is reachable, and realizing twice is a
+   * 409. One area, named, so this writes the course the reader is looking at
+   * and not the whole path.
+   *
+   * The 409 this can answer -- the holder is mid-turn -- is rendered rather
+   * than swallowed. It is the one case where the honest answer is "not yet",
+   * and a dialog that closed on it would look like a take-over that worked.
+   */
+  const takeOver = useMutation({
+    mutationFn: () => curricula.author(projectId, { area: slug, takeOver: true }),
+    onSuccess: () => {
+      setHeldBy(null)
+      void invalidate()
+    },
   })
 
   const abandon = useMutation({
@@ -160,6 +191,33 @@ export const CoursePage = ({
         )}
       </div>
 
+      {heldBy !== null && (
+        <Confirm
+          heading="Another session has this project"
+          // The refusal goes *in* the dialog, not under it. `Drawer` traps
+          // focus and covers the page, so an error paragraph rendered beside
+          // the page's other text is one nobody in this dialog can read --
+          // and a take-over that answered "the holder is mid-turn" would
+          // look exactly like a button that does nothing.
+          lines={[
+            `Writing this course needs the project's workspace, and session ${String(heldBy).slice(0, 8)} is holding it. Nothing has been written yet.`,
+            'Taking it over ends that session. What it already wrote stays in the project.',
+            ...(takeOver.isError
+              ? [
+                  takeOver.error instanceof Error
+                    ? takeOver.error.message
+                    : 'Could not take the project over.',
+                ]
+              : []),
+          ]}
+          confirmLabel={takeOver.isPending ? 'Taking it…' : 'Take it and write the course'}
+          onConfirm={() => takeOver.mutate()}
+          onCancel={() => {
+            setHeldBy(null)
+            takeOver.reset()
+          }}
+        />
+      )}
       {course === null ? (
         <div className="flex flex-col items-start gap-1">
           <Button onClick={() => realize.mutate()} disabled={realize.isPending}>

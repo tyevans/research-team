@@ -1049,6 +1049,11 @@ export const realizeCourseDto = z.object({
   realized: z.boolean(),
   authoring: authoringFrameDto.nullable().default(null),
   reason: z.string().nullable().default(null),
+  // The holding session, named rather than left inside `reason` for the
+  // console to parse a UUID out of. `null` covers both "nothing holds this"
+  // and every other reason a run did not start; the two are distinguished by
+  // this field being set, not by reading the prose.
+  heldBy: z.string().nullable().default(null),
 })
 
 export const abandonCourseDto = z.object({

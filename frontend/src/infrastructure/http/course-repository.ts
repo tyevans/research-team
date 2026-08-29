@@ -5,7 +5,7 @@ import type {
   RealizeResult,
 } from '@application/ports/repositories.ts'
 import type { CourseDetail, CourseText } from '@domain/knowledge/course.ts'
-import type { ProjectId } from '@domain/shared/identifier.ts'
+import { SessionId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, seg } from './http-client.ts'
@@ -42,6 +42,7 @@ export class HttpCourseRepository implements CourseRepository {
       realized: raw.realized,
       authoring: raw.authoring === null ? null : toAuthoringRun(raw.authoring),
       reason: raw.reason,
+      heldBy: raw.heldBy === null ? null : SessionId(raw.heldBy),
     }
   }
 
