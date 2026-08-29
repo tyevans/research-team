@@ -6,7 +6,7 @@ with enough detail that picking it up does not require rediscovering it.
 The `B` numbers are stable handles, not a taxonomy. Closed entries are deleted;
 if tracked code cites one by name, say where its reasoning went before deleting.
 
-<!-- next id: 182 -->
+<!-- next id: 183 -->
 
 **Take your id from that line and increment it in the same commit.** Do not
 grep the file for the largest number in use: that is a read of *your* branch,
@@ -5603,3 +5603,66 @@ three weights this console actually wants and turn the family on in the same
 commit, or decide the console has one weight and delete the 29 classes. Both
 are visual changes and want a browser check, which is the other reason this
 was not folded into the commit that found it.
+
+### B182. No setting is consumed at the scope it is declared at, and nothing can tell
+
+Narrowing `embedding_model` and `embedding_dimension` to `_DEPLOYMENT` closed
+one instance of a class the registry cannot currently see. The two were
+declared at every scope, the settings page rendered editable controls for them
+on a project page, and every reader in the tree is the process-wide
+`config.embedding_model()` / `config.embedding_dimension()`. A user could set a
+value, see it stored, see it resolve, and watch nothing use it.
+
+**The general property -- a setting declared at a scope is consumed at that
+scope -- is not testable today, and the reason is not that it is hard to
+derive.** It is that there is nothing to derive it from.
+`SettingsResolver.resolve` / `resolve_all` has exactly two production callers:
+`interfaces/web/settings.py`, which is the settings surface reading its own
+values back to render them, and `ModelProfileService.roles`, which is the same
+surface's model form. Every other consumer of every setting in the registry
+reaches it through `research_team/infrastructure/config.py`, which reads
+`os.environ` and has no scope at all.
+
+**So state the condition, not a count.** A setting is consumed at project
+scope when something reads it through a *scope chain*; it is not when its only
+reader is `config.<key>()`. Every remaining project-scoped setting was in the
+second position when this was written, and the count is deliberately not
+recorded here, because it is a moving number rather than a fact about the
+system: W-C2's #340 was in flight the same day and wires the extraction family
+-- `extraction_model` and its `model` fallback, `base_url`, `api_key`,
+`extraction_thinking`, `extraction_concurrency`, `extraction_chunk_size`,
+`consolidation_batch`, `knowledge_domain` -- to resolve per project through a
+snapshot keyed on the project id. Any number written down here goes stale the
+hour that merges, and a stale number in a backlog entry is read as a
+measurement.
+
+The test for any one key is one grep: find its reader. If the reader is a
+module-level function in `research_team/infrastructure/config.py` reading
+`os.environ`, the project-scope declaration is decoration. The keys still in
+that position after #340 are the model-and-endpoint remainder (`curation_model`,
+`vision_model`, `embedding_base_url`, `embedding_api_key`), the transcriber and
+perception pair, the whole `context` family, `authoring_rounds`,
+`catalog_sweep_concurrency`, and the two `searxng` keys.
+
+None of those are the same defect as the embedding pair, and none should be
+narrowed. A per-project chat model, context window or knowledge domain is
+**meaningful and merely unwired** -- work W-C2 should finish, and narrowing
+them would foreclose it. The embedding pair is different in kind: a
+per-project answer for it is not unread but **incoherent**, because the store
+the width configures is one object two projects share, so disagreement raises
+`DimensionMismatchError` on the first write -- a poison event rather than a
+lost preference.
+
+**What would make this a test rather than an entry.** A consumer that takes a
+scope chain. Once request-scoped resolution exists, the population is
+derivable the way `test_every_key_config_asks_for_is_declared` already derives
+its own: walk the tree for the reader each key is fetched through, and require
+a key declared at `Scope.PROJECT` to be reached by something that was handed a
+project. Until then the only available test is the hand-written pair in
+`test_the_embedding_pair_is_not_offered_on_a_project_form`, which pins two keys
+and says nothing about the rest.
+
+The shape is CLAUDE.md's "two structures that must agree, in two places the
+merge cannot compare", with the second structure missing rather than
+disagreeing. A scope declaration is half a contract; the reader is the other
+half, and there is no reader.

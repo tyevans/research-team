@@ -213,6 +213,28 @@ def test_the_scopes_a_deployment_setting_offers_exclude_a_project():
     assert Scope.PROJECT in BY_KEY["model"].scopes
 
 
+@pytest.mark.parametrize("key", ["embedding_model", "embedding_dimension"])
+def test_the_embedding_pair_is_not_offered_on_a_project_form(key):
+    """A width is fixed when a shared `VectorStore` is constructed, so two
+    projects disagreeing raises `DimensionMismatchError` on the first write --
+    a poison event, not a per-project answer. The two move together
+    (`config.embedding_model`: set both or neither), so both are pinned.
+
+    Red before the fix: both were declared at the registry default, and the
+    settings page rendered editable controls for them on a project page while
+    every reader in the tree is the process-wide `config.embedding_*()`.
+
+    **This is a hand-written pair, and deliberately so.** The general property
+    -- a setting declared at a scope is consumed at that scope -- is not
+    derivable today, because nothing in the tree consumes a scope-resolved
+    setting behaviourally: `SettingsResolver.resolve` has two production
+    callers and both are the settings surface reading its own values back for
+    display. Deriving the answer needs a consumer to derive it from. See
+    BACKLOG B182.
+    """
+    assert BY_KEY[key].scopes == {Scope.TENANT}
+
+
 def _key_helpers(tree: ast.Module) -> set[str]:
     """The reader helpers, from the module rather than from a list here.
 
