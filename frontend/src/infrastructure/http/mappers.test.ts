@@ -78,6 +78,31 @@ describe('toMessage', () => {
   it('defaults tool calls to none', () => {
     expect(toMessage(parse(dto.messageDto, { role: 'user' })).toolCalls).toEqual([])
   })
+
+  it('carries the tool name and its artifact', () => {
+    // Both already sat in the stored langchain payload and were dropped by
+    // `message_view` until the activity stream needed them: `name` is what
+    // pairs a result with its call, and the artifact is what lets the console
+    // draw anything but the model's own string.
+    const message = toMessage(
+      parse(dto.messageDto, {
+        role: 'tool',
+        name: 'search_sources',
+        artifact: { shape: 'hit_list', version: 1 },
+      }),
+    )
+    expect(message.name).toBe('search_sources')
+    expect(message.artifact).toEqual({ shape: 'hit_list', version: 1 })
+  })
+
+  it('gives a message written before artifacts existed a null artifact', () => {
+    // The permanent path, not an error case -- every message in a real
+    // database takes it. `null` rather than `undefined` so `artifactOf` has
+    // one absent case to recognise instead of two.
+    const message = toMessage(parse(dto.messageDto, { role: 'tool' }))
+    expect(message.name).toBeNull()
+    expect(message.artifact).toBeNull()
+  })
 })
 
 describe('toSession', () => {

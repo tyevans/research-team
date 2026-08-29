@@ -45,6 +45,13 @@ export const messageDto = z.object({
     .array(z.object({ name: z.string(), args: z.record(z.string(), z.unknown()).default({}) }))
     .default([]),
   is_error: z.boolean().default(false),
+  /** Both already sat in the stored langchain payload and were dropped by
+   *  `message_view` until the activity-stream work. `artifact` stays opaque
+   *  here for the reason `content` does: this layer describes the wire, and
+   *  deciding whether an artifact is a shape the console can draw is
+   *  `artifactOf`'s job, one layer in. */
+  name: maybe(z.string()),
+  artifact: opaque,
 })
 
 export const workspaceFileDto = z.object({

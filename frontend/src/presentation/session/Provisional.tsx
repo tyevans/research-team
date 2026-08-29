@@ -1,8 +1,10 @@
 import clsx from 'clsx'
 
-import { activityContent, type ActivityEntry } from '@domain/activity/activity.ts'
+import { activityContent, activityMessage, type ActivityEntry } from '@domain/activity/activity.ts'
 
 import { Markdown } from '../common/content.tsx'
+import { ToolResult } from './shapes/ToolResult.tsx'
+import type { Phase } from './shapes/parts.tsx'
 
 /** One provisional entry, wherever provisional content is shown.
  *
@@ -20,32 +22,54 @@ import { Markdown } from '../common/content.tsx'
  * labelled "discarded — not recorded", so a per-bubble tag there is the same
  * sentence twice — and it would carry the pulsing dot, which claims a turn is
  * in flight that ended before the reader opened the fold.
+ *
+ * **A tool result goes through `ToolResult`, which is the same call the
+ * committed transcript makes.** That is the property "phase is position"
+ * rests on: a `search_sources` answer is one shape drawn once, with `phase`
+ * saying which end of the stream it is at, so the card does not visibly
+ * re-lay-out at the instant the turn commits. Where the entry carries no
+ * artifact — every entry written before this work, and every tool nobody has
+ * converted — `fallback` is this component's own markup, unchanged, so the
+ * common case on real history renders exactly as it renders now.
  */
 export const ProvisionalBubble = ({
   entry,
   tag = 'in progress — not yet recorded',
+  phase = 'live',
 }: {
   entry: ActivityEntry
   tag?: string | null
+  /** Which end of the stream this entry is at, for the shape inside it.
+   *
+   * Defaults to `live` because the live tail is the reason this component
+   * exists. The timeline's discarded fold passes `settled` for the same
+   * reason it passes `tag={null}`: that turn ended before the reader opened
+   * the fold, and a pulsing glyph there claims content is still arriving.
+   */
+  phase?: Phase
 }) => {
   const content = activityContent(entry)
+
+  // This component's own body markup, kept exactly as it is so that handing it
+  // to `ToolResult` as the fallback changes nothing about an entry with no
+  // artifact. Empty is a real state and it is the first one: a delta
+  // accumulator starts at "" and a whole-message entry can carry only calls.
+  // It gets no body element at all rather than an empty one, because
+  // `Markdown` answers an empty source with "(empty file)" -- correct for the
+  // file viewer it was written for, nonsense under a turn that has simply not
+  // said anything yet.
+  const body = content.text ? (
+    content.form === 'prose' ? (
+      <Markdown className="provisional-body" source={content.text} />
+    ) : (
+      <div className="provisional-body mono">{content.text}</div>
+    )
+  ) : null
 
   return (
     <div className={clsx('provisional', `provisional-${entry.kind}`)}>
       {tag === null ? null : <div className="provisional-tag">{tag}</div>}
-      {/* Empty is a real state and it is the first one: a delta accumulator
-          starts at "" and a whole-message entry can carry only calls. It gets
-          no body element at all rather than an empty one, because `Markdown`
-          answers an empty source with "(empty file)" -- correct for the file
-          viewer it was written for, nonsense under a turn that has simply not
-          said anything yet. */}
-      {content.text ? (
-        content.form === 'prose' ? (
-          <Markdown className="provisional-body" source={content.text} />
-        ) : (
-          <div className="provisional-body mono">{content.text}</div>
-        )
-      ) : null}
+      <ToolResult message={activityMessage(entry)} phase={phase} fallback={body} />
     </div>
   )
 }

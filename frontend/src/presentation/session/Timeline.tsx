@@ -384,9 +384,11 @@ const Discarded = ({ entries }: { entries: readonly ActivityEntry[] }) => {
           which this copy of the markup did not render. No tag: the fold above
           already says "discarded — not recorded", and the tag carries the
           pulsing dot, which would claim a turn is arriving that failed before
-          the reader opened this. */}
+          the reader opened this. `phase="settled"` for the same reason, one
+          level down — it is what stops the glyph on a shaped tool result
+          inside this fold from pulsing at a reader looking at a dead turn. */}
       {entries.map((entry) => (
-        <ProvisionalBubble key={entry.messageId} entry={entry} tag={null} />
+        <ProvisionalBubble key={entry.messageId} entry={entry} tag={null} phase="settled" />
       ))}
     </Disclosure>
   )

@@ -1,5 +1,5 @@
 import type { MessageId, SessionId } from '../shared/identifier.ts'
-import { callSummary, contentText, truncate } from '../conversation/message.ts'
+import { callSummary, contentText, truncate, type Message } from '../conversation/message.ts'
 
 export const ACTIVITY_SUMMARY_LIMIT = 160
 /** How wide a provisional bubble's call summary may get, in characters.
@@ -66,13 +66,24 @@ export interface ActivityContent {
   readonly text: string
 }
 
+/** The langchain payload's `data`, or `undefined`.
+ *
+ * A whole-message entry nests everything under `data` — the same nesting the
+ * timeline's summariser unwraps — so reading `payload.content` directly gets
+ * `undefined` every time, silently. One unwrapper rather than two: this was
+ * inline in `activityContent` and `activityMessage` needs the same object to
+ * reach `name`, `status` and `artifact`, and two copies of a cast this shape
+ * is how one of them ends up reading a level that is not there. */
+const entryData = (entry: ActivityEntry): Record<string, unknown> | undefined => {
+  const payload = entry.payload
+  return payload && typeof payload === 'object'
+    ? ((payload as Record<string, unknown>)['data'] as Record<string, unknown> | undefined)
+    : undefined
+}
+
 export const activityContent = (entry: ActivityEntry): ActivityContent => {
   if (entry.text) return { form: 'prose', text: entry.text }
-  const payload = entry.payload
-  const data =
-    payload && typeof payload === 'object'
-      ? ((payload as Record<string, unknown>)['data'] as Record<string, unknown> | undefined)
-      : undefined
+  const data = entryData(entry)
   const calls = Array.isArray(data?.['tool_calls']) ? (data['tool_calls'] as unknown[]) : []
   if (calls.length > 0) {
     // The same "→ name(arg), name(arg)" shape the timeline uses for a
@@ -92,3 +103,31 @@ export const activityContent = (entry: ActivityEntry): ActivityContent => {
 
 /** The body text alone, for callers that do not care which form it took. */
 export const activityBody = (entry: ActivityEntry): string => activityContent(entry).text
+
+/** A provisional entry as the message it is about to become.
+ *
+ * The stream renders `Message`s, and a provisional entry is the same langchain
+ * payload the committed message will be folded from — so converting here lets
+ * one component draw both, which is the property "phase is position" needs. If
+ * the two were drawn by different code they would drift, and the drift would
+ * be visible as every card in a turn changing at the instant it commits.
+ *
+ * `content` is `activityContent`'s text, so a message with no artifact carries
+ * exactly the string the fallback renders. The `form` is deliberately not
+ * carried onto the message: `Message` has no field for it, and the one caller
+ * that needs the distinction — `ProvisionalBubble`, whose fallback picks
+ * `Markdown` for prose and literal markup for an assembled `→ name(arg)` label
+ * — asks `activityContent` for it directly. Threading a field through a shape
+ * that cannot hold it is how the two halves of that decision would drift. */
+export const activityMessage = (entry: ActivityEntry): Message => {
+  const data = entryData(entry)
+  const name = data?.['name']
+  return {
+    role: 'tool',
+    content: activityContent(entry).text,
+    toolCalls: [],
+    isError: data?.['status'] === 'error',
+    name: typeof name === 'string' ? name : null,
+    artifact: data?.['artifact'] ?? null,
+  }
+}

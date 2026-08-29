@@ -93,6 +93,27 @@
      the collapse rather than a retune. */
   background: var(--tint-fail);
 }
+/* A tool result drawn from an artifact brings its own boundary: `stream.css`
+ * runs a rule down the gutter and indents the body behind it. A border and a
+ * background around that draws the same edge twice, which is most of what made
+ * a turn with nine tool calls read as nine heavy blocks.
+ *
+ * The frame is dropped rather than the spine, and that choice is not
+ * symmetrical with the live tail below, where the spine is dropped instead.
+ * The reason is what each rule is *for*: here the spine is the structure of
+ * the machinery and the bubble is chrome around it, while on a provisional
+ * entry the accent rail is the live marker and carries meaning the spine
+ * cannot. Whichever rule says something keeps drawing; the other stops.
+ *
+ * `border: 0` rather than `border-color: transparent` -- geometry inside a run
+ * is not the phase-identity property, which is held between two renderings of
+ * the same `ToolResult` and is unaffected by what its container does. */
+.msg.bare {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
 
 /* --- compaction -------------------------------------------------------- */
 /* The log kept everything; only what the MODEL sees changed. Styled as an

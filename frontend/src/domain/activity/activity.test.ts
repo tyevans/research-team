@@ -5,6 +5,7 @@ import {
   ACTIVITY_SUMMARY_LIMIT,
   activityBody,
   activityEntries,
+  activityMessage,
   emptyActivity,
   putActivity,
   type ActivityEntry,
@@ -116,5 +117,41 @@ describe('activityBody', () => {
 
   it('is empty for a frame carrying neither', () => {
     expect(activityBody(entry('a'))).toBe('')
+  })
+})
+
+describe('activityMessage', () => {
+  it('lifts the artifact and the tool name out of the payload', () => {
+    // A provisional entry and the message it becomes are the same langchain
+    // payload, so one component can draw both. Two components that agree are
+    // two components that will stop agreeing, and the drift would be visible
+    // as every card in a turn changing at the instant it commits.
+    const message = activityMessage(
+      entry('a', {
+        payload: {
+          data: {
+            name: 'search_sources',
+            artifact: { shape: 'hit_list', version: 1 },
+            content: '19 match(es)',
+          },
+        },
+      }),
+    )
+    expect(message.name).toBe('search_sources')
+    expect(message.artifact).toEqual({ shape: 'hit_list', version: 1 })
+    expect(message.role).toBe('tool')
+  })
+
+  it('carries the fallback text as content for an entry with no artifact', () => {
+    // Already flattened, so a bubble with no artifact renders exactly what it
+    // renders today rather than whatever a second flattener would produce.
+    const message = activityMessage(entry('a', { text: 'still writing' }))
+    expect(message.content).toBe('still writing')
+    expect(message.artifact).toBeNull()
+  })
+
+  it('reads an errored tool result', () => {
+    const message = activityMessage(entry('a', { payload: { data: { status: 'error' } } }))
+    expect(message.isError).toBe(true)
   })
 })
