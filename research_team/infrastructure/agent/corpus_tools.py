@@ -18,6 +18,7 @@ approval would make every other approval mean less.
 """
 
 import re
+from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
@@ -32,6 +33,16 @@ from research_team.application.corpus_read import (
     StoredDocument,
 )
 from research_team.application.corpus_spans import Span, chunk, quote
+from research_team.application.tool_artifacts import (
+    Acknowledgement,
+    Excerpt,
+    Hit,
+    HitList,
+    Inventory,
+    InventoryItem,
+    SourceHits,
+)
+from research_team.domain import TextRecord
 
 MAX_CHARS = 20_000
 """How much of a document reaches the model in one call.
@@ -201,6 +212,172 @@ def bounded(text: str, start: int | None, end: int | None, max_chars: int) -> Sp
     return Span(span.start, span.start + first.end, first.text)
 
 
+async def collect_matches(
+    expression: re.Pattern[str], corpus: CorpusReadPort, listings: list[SourceListing]
+) -> tuple[list[tuple[str, Span]], int, dict[str, int]]:
+    """Every match `search_sources` would report, across every listed source.
+
+    Extracted from the tool's own loop so the byte-equality test and
+    `hit_list_artifact` drive the exact matching the tool does rather than a
+    second implementation of it. Takes the *compiled* pattern -- compiling it
+    here too would compile twice for one search, and `search_sources` already
+    has to compile first so an invalid regex is reported as one before this
+    runs. Takes `corpus` rather than pre-fetched text for the same reason the
+    inline loop did: `SourceListing` is metadata only, and reading each
+    source's body is still this function's job.
+
+    The third element is what `SourceHits.total` needs and `suppressed` alone
+    cannot give it: `suppressed` is one number for the whole search, and a
+    corpus with two sources each cut short by `MAX_PER_SOURCE` has no way to
+    say how much of it belongs to which. Counted here instead, while every
+    match -- kept or not -- is still being enumerated, rather than
+    reconstructed afterwards from a total that was never split by source.
+    """
+    hits: list[tuple[str, Span]] = []
+    suppressed = 0
+    source_totals: dict[str, int] = {}
+    for listing in listings:
+        found = listing.record.source_id
+        document = await corpus.read_document(found)
+        if document is None:
+            # Media, or a row whose text is gone. Skipped rather than
+            # reported: a search says where a phrase is, and "this source
+            # has no text to search" is a fact about the corpus that
+            # belongs to `list_sources`.
+            continue
+        total = 0
+        for index, match in enumerate(expression.finditer(document.text)):
+            total = index + 1
+            if index >= MAX_PER_SOURCE or len(hits) >= MAX_MATCHES:
+                suppressed += 1
+                continue
+            hits.append(
+                (
+                    found,
+                    quote(document.text, match.start(), match.end(), context=SNIPPET_CONTEXT),
+                )
+            )
+        if total:
+            source_totals[found] = total
+    return hits, suppressed, source_totals
+
+
+def hit_list_artifact(
+    pattern: str,
+    hits: list[tuple[str, Span]],
+    suppressed: int,
+    listings: list[SourceListing],
+    source_totals: dict[str, int],
+) -> HitList:
+    """The `HitList` `search_sources` hands the console beside `format_matches`'s string.
+
+    Sources are ordered as `listings` lists them, not in hit-discovery order:
+    the console draws one card per source, and a card order that shuffled
+    with every search would be a worse reading of a list that was never
+    shuffled.
+
+    `HitList.total` sums `source_totals` -- every match found, including ones
+    a source-cap or the global cap dropped -- rather than `len(hits)`, which
+    is only what survived both.
+    """
+    grouped: dict[str, list[Hit]] = {}
+    for source_id, span in hits:
+        grouped.setdefault(source_id, []).append(
+            Hit(start=span.start, end=span.end, snippet=" ".join(span.text.split()))
+        )
+    sources = []
+    for listing in listings:
+        source_id = listing.record.source_id
+        kept = grouped.get(source_id)
+        if not kept:
+            continue
+        record = listing.record
+        # A media source is never in `hits` -- `collect_matches` skips any
+        # source `read_document` answers `None` for -- so `record` here is
+        # always a `TextRecord` and always has a `char_count`.
+        char_count = record.char_count if isinstance(record, TextRecord) else 0
+        sources.append(
+            SourceHits(
+                source_id=source_id,
+                title=record.title,
+                # No per-source label distinct from `title` on this corpus;
+                # carried as `None` rather than duplicating the title, which
+                # would suggest the two can differ here when they cannot.
+                label=None,
+                char_count=char_count,
+                total=source_totals.get(source_id, len(kept)),
+                hits=tuple(kept),
+            )
+        )
+    return HitList(
+        pattern=pattern,
+        total=sum(source_totals.values()),
+        suppressed=suppressed,
+        sources=tuple(sources),
+    )
+
+
+def excerpt_artifact(document: StoredDocument, span: Span) -> Excerpt:
+    """The `Excerpt` `read_source` hands the console beside `format_document`'s string.
+
+    `char_count` comes from the record, not `len(span.text)` -- the console's
+    ruler draws the excerpt against the *whole* document, and the two numbers
+    are deliberately different whenever the read stopped short of the end.
+    """
+    record = document.record
+    return Excerpt(
+        source_id=record.source_id,
+        title=record.title,
+        label=None,
+        start=span.start,
+        end=span.end,
+        char_count=record.char_count,
+        text=span.text,
+        uri=record.uri,
+    )
+
+
+def inventory_artifact(listings: list[SourceListing]) -> Inventory:
+    """The `Inventory` `list_sources` hands the console beside `format_listing`'s string.
+
+    `unit="chars"` throughout, even though a media item's `size` below is
+    bytes -- one bar axis cannot honestly hold both units at once, which is
+    the grid mistake `SourceHits.char_count`'s docstring in `tool_artifacts.py`
+    warns about, in miniature. A media item is carried with `size=0` and its
+    true byte count folded into `detail` instead, so it is never drawn as a
+    bar on the wrong scale beside a text source's character count.
+    """
+    items = []
+    for listing in listings:
+        record = listing.record
+        if isinstance(record, TextRecord):
+            items.append(
+                InventoryItem(
+                    item_id=record.source_id,
+                    title=record.title,
+                    label=None,
+                    size=record.char_count,
+                    detail=None,
+                )
+            )
+        else:
+            items.append(
+                InventoryItem(
+                    item_id=record.source_id,
+                    title=record.title,
+                    label=None,
+                    size=0,
+                    detail=f"{record.media_type}, {record.byte_count} bytes",
+                )
+            )
+    return Inventory(
+        kind="source",
+        unit="chars",
+        total=sum(item.size for item in items),
+        items=tuple(items),
+    )
+
+
 def build_corpus_tools(
     corpus: CorpusReadPort, *, max_chars: int = MAX_CHARS
 ) -> tuple[BaseTool, ...]:
@@ -225,104 +402,115 @@ def build_corpus_tools(
             listed += f", and {len(summaries) - MAX_LISTED} more"
         return f"Available: {listed}. Use `{LIST_SOURCES_TOOL}` for details."
 
-    @tool(LIST_SOURCES_TOOL)
-    async def list_sources() -> str:
+    @tool(LIST_SOURCES_TOOL, response_format="content_and_artifact")
+    async def list_sources() -> tuple[str, dict[str, Any]]:
         """List the source documents stored in this project's corpus."""
         try:
             summaries = await corpus.list_sources()
         except CorpusReadError as error:
-            return f"Could not read the corpus: {error}"
-        return format_listing(summaries)
+            text = f"Could not read the corpus: {error}"
+            return text, Acknowledgement(
+                action=LIST_SOURCES_TOOL, subject="corpus", detail=text, ok=False
+            ).as_artifact()
+        return format_listing(summaries), inventory_artifact(summaries).as_artifact()
 
-    @tool(SEARCH_SOURCES_TOOL)
-    async def search_sources(pattern: str, source_id: str | None = None) -> str:
+    @tool(SEARCH_SOURCES_TOOL, response_format="content_and_artifact")
+    async def search_sources(
+        pattern: str, source_id: str | None = None
+    ) -> tuple[str, dict[str, Any]]:
         """Search stored sources for a regular expression, reporting
         `source_id@start-end` for every match."""
         try:
             expression = re.compile(pattern, re.IGNORECASE)
         except re.error as error:
-            return (
+            text = (
                 f"{pattern!r} is not a valid regular expression: {error}. "
                 "Escape any regex punctuation you meant literally."
             )
+            return text, Acknowledgement(
+                action=SEARCH_SOURCES_TOOL, subject=pattern, detail=text, ok=False
+            ).as_artifact()
         try:
             listings = await corpus.list_sources()
         except CorpusReadError as error:
-            return f"Could not read the corpus: {error}"
+            text = f"Could not read the corpus: {error}"
+            return text, Acknowledgement(
+                action=SEARCH_SOURCES_TOOL, subject=pattern, detail=text, ok=False
+            ).as_artifact()
         if source_id is not None:
             listings = [
                 listing for listing in listings if listing.record.source_id == source_id
             ]
             if not listings:
-                return (
+                text = (
                     f"No source {source_id!r} in this project's corpus. {await _available()}"
                 )
+                return text, Acknowledgement(
+                    action=SEARCH_SOURCES_TOOL, subject=source_id, detail=text, ok=False
+                ).as_artifact()
 
-        hits: list[tuple[str, Span]] = []
-        suppressed = 0
-        for listing in listings:
-            found = listing.record.source_id
-            try:
-                document = await corpus.read_document(found)
-            except CorpusReadError as error:
-                return f"Could not read the corpus: {error}"
-            if document is None:
-                # Media, or a row whose text is gone. Skipped rather than
-                # reported: a search says where a phrase is, and "this source
-                # has no text to search" is a fact about the corpus that
-                # belongs to `list_sources`.
-                continue
-            for index, match in enumerate(expression.finditer(document.text)):
-                if index >= MAX_PER_SOURCE or len(hits) >= MAX_MATCHES:
-                    suppressed += 1
-                    continue
-                hits.append(
-                    (
-                        found,
-                        quote(
-                            document.text, match.start(), match.end(), context=SNIPPET_CONTEXT
-                        ),
-                    )
-                )
-        return format_matches(pattern, hits, suppressed)
+        try:
+            hits, suppressed, source_totals = await collect_matches(
+                expression, corpus, listings
+            )
+        except CorpusReadError as error:
+            text = f"Could not read the corpus: {error}"
+            return text, Acknowledgement(
+                action=SEARCH_SOURCES_TOOL, subject=pattern, detail=text, ok=False
+            ).as_artifact()
+        artifact = hit_list_artifact(pattern, hits, suppressed, listings, source_totals)
+        return format_matches(pattern, hits, suppressed), artifact.as_artifact()
 
-    @tool(READ_SOURCE_TOOL)
+    @tool(READ_SOURCE_TOOL, response_format="content_and_artifact")
     async def read_source(
         source_id: str,
         start: int | None = None,
         end: int | None = None,
         find: str | None = None,
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         """Read a stored source document -- a character range of one, or the window around a
         regular expression -- with its offsets."""
         try:
             document = await corpus.read_document(source_id)
         except CorpusReadError as error:
-            return f"Could not read the corpus: {error}"
+            text = f"Could not read the corpus: {error}"
+            return text, Acknowledgement(
+                action=READ_SOURCE_TOOL, subject=source_id, detail=text, ok=False
+            ).as_artifact()
         if document is None:
-            return f"No source {source_id!r} in this project's corpus. {await _available()}"
+            text = f"No source {source_id!r} in this project's corpus. {await _available()}"
+            return text, Acknowledgement(
+                action=READ_SOURCE_TOOL, subject=source_id, detail=text, ok=False
+            ).as_artifact()
         if find is not None:
             try:
                 expression = re.compile(find, re.IGNORECASE)
             except re.error as error:
-                return (
+                text = (
                     f"{find!r} is not a valid regular expression: {error}. "
                     "Escape any regex punctuation you meant literally."
                 )
+                return text, Acknowledgement(
+                    action=READ_SOURCE_TOOL, subject=source_id, detail=text, ok=False
+                ).as_artifact()
             match = expression.search(document.text, start or 0)
             if match is None:
                 where = "" if start is None else f" at or after character {start}"
-                return (
+                text = (
                     f"No match for {find!r} in {source_id!r}{where}. "
                     f"Use `{SEARCH_SOURCES_TOOL}` to find which source holds it."
                 )
+                return text, Acknowledgement(
+                    action=READ_SOURCE_TOOL, subject=source_id, detail=text, ok=False
+                ).as_artifact()
             # The match decides where the window opens and `max_chars` decides
             # where it ends, so `end` is deliberately ignored here: a caller
             # that supplied both was addressing the same read two ways, and
             # honouring the range could return a window with no match in it.
             start = max(0, match.start() - LEAD_CONTEXT)
             end = None
-        return format_document(document, bounded(document.text, start, end, max_chars))
+        span = bounded(document.text, start, end, max_chars)
+        return format_document(document, span), excerpt_artifact(document, span).as_artifact()
 
     return (list_sources, search_sources, read_source)
 

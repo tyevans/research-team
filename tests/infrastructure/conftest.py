@@ -7,16 +7,25 @@ non-daemon worker thread to be forgotten and resurface as an unrelated test's
 "Event loop is closed".
 """
 
+from uuid import uuid4
+
 import pytest
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from redstring import InMemoryGraphStore
 
+from research_team.application.corpus_read import (
+    CorpusReadError,
+    SourceListing,
+    StoredDocument,
+)
+from research_team.domain.corpus import Corpus, StoreSourceDocument
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.persistence.event_store import (
     build_corpus_repository,
     build_judgements_repository,
 )
+from research_team.infrastructure.persistence.read_models import CorpusStore, to_record
 from tests.conftest import fake_provider
 
 
@@ -110,4 +119,90 @@ async def build_adapter():
     for snapshot_store in opened_snapshot_stores:
         await snapshot_store.close()
     for store in opened_event_stores:
+        await store.close()
+
+
+class _CorpusStoreReadPort:
+    """`CorpusReadPort` over a real `CorpusStore`, for `test_corpus_tool_artifacts.py`.
+
+    Deliberately not `ProjectCorpusReader` (`infrastructure/persistence/corpus_reader.py`):
+    that class reads through a `CorpusRunner`, whose `list_all`/`get` are the
+    very calls the artifact tests exist to exercise -- a fixture built on them
+    would seed the corpus through the same path the tool reads it back on, and
+    CLAUDE.md's "Read models" section is explicit that such a fixture cannot
+    see that path go missing. This wraps `CorpusStore` directly instead, which
+    the seeding fixtures below never touch except through `projection.handle`.
+    """
+
+    def __init__(self, store: CorpusStore, project_id) -> None:
+        self._store = store
+        self._project_id = project_id
+
+    async def list_sources(self) -> list[SourceListing]:
+        try:
+            rows = await self._store.list_all(self._project_id)
+        except RuntimeError as error:
+            raise CorpusReadError(str(error)) from error
+        return [SourceListing(record=to_record(row), extracted=False) for row in rows]
+
+    async def read_document(self, source_id: str) -> StoredDocument | None:
+        row = await self._store.get(self._project_id, source_id)
+        if row is None:
+            return None
+        return StoredDocument(
+            record=to_record(row), text=row.text, locator_map=row.locator_map
+        )
+
+
+async def _seed(store: CorpusStore, project_id, *documents: StoreSourceDocument) -> None:
+    """Write documents by driving the aggregate, then folding its events into
+    `store.projection` -- the writer's path, not the reader's. Mirrors
+    `test_corpus_read_model.py`'s `_events`/`_project` helpers.
+    """
+    corpus = Corpus(project_id)
+    for command in documents:
+        corpus.execute(command)
+    for event in corpus.uncommitted_events:
+        await store.projection.handle(event)
+
+
+@pytest.fixture
+async def seeded_corpus(db_path):
+    """A corpus holding two real documents, for the artifact tests to search
+    and read. Seeded through `Corpus`/`CorpusProjection` -- the writer -- and
+    never through `list_sources`/`read_document`, which are the calls under
+    test.
+    """
+    store = await CorpusStore.open(db_path)
+    project_id = uuid4()
+    await _seed(
+        store,
+        project_id,
+        StoreSourceDocument(
+            corpus_id=project_id,
+            source_id="seed-one",
+            text="A study of magic squares and their properties. " * 20,
+            title="Magic Squares",
+        ),
+        StoreSourceDocument(
+            corpus_id=project_id,
+            source_id="seed-two",
+            text="The history of stage magic and illusion. " * 5,
+            title="Stage Magic",
+        ),
+    )
+    try:
+        yield _CorpusStoreReadPort(store, project_id)
+    finally:
+        await store.close()
+
+
+@pytest.fixture
+async def empty_corpus(db_path):
+    """A corpus with no sources -- the miss path, `Acknowledgement`/empty
+    shapes rather than a `None` artifact."""
+    store = await CorpusStore.open(db_path)
+    try:
+        yield _CorpusStoreReadPort(store, uuid4())
+    finally:
         await store.close()
