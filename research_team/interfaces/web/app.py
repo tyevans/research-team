@@ -182,6 +182,13 @@ from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep, RerollAlreadyActive
 from research_team.interfaces.web.art_sweep import SweepAlreadyActive as ArtSweepAlreadyActive
+from research_team.interfaces.web.auth import (
+    AuthConfig,
+    AuthGate,
+    SessionSigner,
+    SessionStore,
+    register_auth_routes,
+)
 from research_team.interfaces.web.authored_files import (
     is_path_file,
     path_file,
@@ -1034,6 +1041,7 @@ def create_app(
     art_matcher: LibraryArtProvider | None = None,
     settings: SettingsDeps | None = None,
     project_summaries: ProjectSummaries | None = None,
+    auth: AuthConfig | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -1046,6 +1054,31 @@ def create_app(
     app = FastAPI(title="research-team", docs_url="/api/docs", lifespan=lifespan)
 
     app.add_middleware(_InteractionBodyCap)
+    # Registered unconditionally, and inert unless `AGENT_AUTH` is on -- see
+    # `AuthGate`, whose first branch forwards without reading a cookie when
+    # auth is off. Registering it conditionally would mean the two states of
+    # this app differ in their middleware stack as well as in their behaviour,
+    # and the whole promise of the flag is that `off` is the build that
+    # existed before identity did.
+    app.add_middleware(AuthGate)
+    # `AuthConfig` rather than a bare `enabled` flag, so that a test can point
+    # the issuer at a fake ASGI app without setting an environment variable.
+    # The default is an auth-off config rather than `None`: `app.state.auth`
+    # being absent and being present-and-disabled would otherwise be two
+    # distinguishable states with identical intent, and `principal_of` would
+    # need to handle both.
+    register_auth_routes(
+        app,
+        auth
+        if auth is not None
+        else AuthConfig(
+            enabled=False,
+            client=None,
+            signer=SessionSigner.from_config(""),
+            sessions=SessionStore(),
+            public_url="",
+        ),
+    )
 
     # Strong references for `accept_media_proposal`'s fire-and-forget worker
     # runs (Task 11b). `asyncio.create_task` only *weakly* holds its task --

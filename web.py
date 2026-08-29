@@ -8,12 +8,14 @@ from research_team.application.curriculum import CurriculumService
 from research_team.application.grants import GrantRegistry
 from research_team.composition import build_application
 from research_team.infrastructure import config
+from research_team.infrastructure.identity import OidcClient
 from research_team.interfaces.web import (
     ExtractionActivity,
     TurnActivity,
     WebApprovals,
     create_app,
 )
+from research_team.interfaces.web.auth import AuthConfig, SessionSigner, SessionStore
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
@@ -76,6 +78,38 @@ def main() -> None:
     # application's repository and its projection. The ordering is the whole
     # difference between this and `seeding` beside it.
     authoring = AuthoringActivity(application.authoring_runs, application.authoring)
+
+    # Also after `build_application`, and for `authoring`'s reason: the
+    # recorder and the read model both come off the application's own event
+    # store, and a config assembled before it existed could only have held
+    # a second pair.
+    #
+    # The `OidcClient` is built even when `AGENT_AUTH` is off, provided an
+    # issuer and a client id are configured. It costs one object and no
+    # network -- discovery is lazy -- and it means `/auth/login` works on an
+    # instance with the flag off, which is how somebody tries identity out
+    # before making it mandatory for everyone. `AuthGate` is what the flag
+    # governs; the routes are always there. Withheld only when there is no
+    # client id at all, where every route would 503 anyway and a client
+    # pointed at nothing is a discovery failure waiting to be misread as an
+    # outage.
+    auth = AuthConfig(
+        enabled=config.auth_enabled(),
+        client=(
+            OidcClient(
+                issuer=config.oidc_issuer(),
+                client_id=config.oidc_client_id(),
+                client_secret=config.oidc_client_secret(),
+            )
+            if config.oidc_client_id()
+            else None
+        ),
+        signer=SessionSigner.from_config(config.session_secret()),
+        sessions=SessionStore(),
+        public_url=config.auth_public_url(),
+        recorder=application.user_recorder,
+        users=application.users,
+    )
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -280,6 +314,14 @@ def main() -> None:
             art_reroll=application.art_reroll,
             art_generator=application.art_generator,
             art_matcher=application.art_matcher,
+            # The whole of identity, in one record. Not gated on
+            # `config.auth_enabled()` at this call site, unlike
+            # `interactions` above: the flag lives *inside* the record, and
+            # passing `None` when it is off would make the app fall back to
+            # `create_app`'s own auth-off default -- the same behaviour by a
+            # longer route, with `/auth/login` answering 503 on an instance
+            # whose issuer is configured and working.
+            auth=auth,
         ),
         host=config.web_host(),
         port=config.web_port(),

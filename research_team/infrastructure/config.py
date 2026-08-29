@@ -1034,3 +1034,96 @@ def blob_sweep_grace_seconds() -> float:
     reports before it deletes rather than running on a timer.
     """
     return _float("blob_sweep_grace")
+
+
+DEFAULT_OIDC_ISSUER = "http://localhost:8081"
+"""Where `docker-compose.yml`'s Zitadel answers, on the host.
+
+The default names the local development IdP rather than being empty, unlike
+every other integration in this module, because it is only ever read when
+`auth_enabled()` is true -- and the only way that becomes true without an
+issuer being chosen deliberately is somebody running the compose stack.
+Pointing it anywhere else would mean two variables to set instead of one.
+"""
+
+DEFAULT_AUTH_PUBLIC_URL = "http://localhost:8000"
+
+
+def auth_enabled() -> bool:
+    """Whether this instance requires a signed-in user. Off unless switched on.
+
+    Off by default, and the default is load-bearing rather than cautious. The
+    console, the REPL and ninety-odd routes were all written with no notion of
+    a person, and turning identity on flips every one of them from "answer" to
+    "401 unless a cookie says otherwise". Shipping that as the default would
+    break every existing test, every other in-flight branch of the user-system
+    plan, and every running instance, on one commit.
+
+    So `off` means the app behaves exactly as it did before identity existed:
+    no gate, no redirect, and `/api/me` answering 401 because there is nobody
+    to describe. `on` means unauthenticated `/api/*` requests get 401 and the
+    console sends the browser to the IdP. `tests/interfaces/test_auth_gate.py`
+    holds *both* states -- a flag with only its enabled path tested is a flag
+    whose default nobody checked, and the default is the whole reason this
+    flag exists.
+
+    Follows `interaction_log_enabled`'s parsing rather than `bool(os.getenv)`:
+    `AGENT_AUTH=off` must mean off, and a bare truthiness test reads the
+    string "off" as true.
+    """
+    return os.getenv("AGENT_AUTH", "off").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def oidc_issuer() -> str:
+    """The OIDC issuer to discover `.well-known/openid-configuration` under.
+
+    Trailing slashes are stripped because an ID token's `iss` claim is checked
+    for *exact* string equality: a configured `http://localhost:8081/` fails
+    validation against a token that says `http://localhost:8081`, and the
+    error names the claim rather than the variable that caused it.
+    """
+    return os.getenv("AGENT_OIDC_ISSUER", DEFAULT_OIDC_ISSUER).strip().rstrip("/")
+
+
+def oidc_client_id() -> str:
+    return os.getenv("AGENT_OIDC_CLIENT_ID", "").strip()
+
+
+def oidc_client_secret() -> str:
+    """The confidential client's secret. Empty means treat this as public.
+
+    Empty is permitted rather than refused: PKCE is what actually binds the
+    authorization code to the browser that started the flow, and a public
+    client with PKCE is a supported -- if weaker -- configuration. The compose
+    stack provisions a confidential client and sets this, so the empty case is
+    for somebody pointing the app at an IdP they do not administer.
+    """
+    return os.getenv("AGENT_OIDC_CLIENT_SECRET", "").strip()
+
+
+def auth_public_url() -> str:
+    """The origin a browser reaches *this app* on, for building redirect URIs.
+
+    Not derived from the incoming request, deliberately. `request.base_url`
+    reflects whatever `Host` header arrived, so an attacker-chosen host would
+    put an attacker-chosen `redirect_uri` into the authorization request. The
+    IdP's allow-list is the backstop, but building the URL from configuration
+    means the app never *asks* for a redirect it did not intend. The cost is
+    one more variable to set behind a reverse proxy, which is stated in
+    `docs/how-to/running-the-whole-stack.md`.
+    """
+    return os.getenv("AGENT_AUTH_PUBLIC_URL", DEFAULT_AUTH_PUBLIC_URL).strip().rstrip("/")
+
+
+def session_secret() -> str:
+    """The key session cookies are signed with. Empty means "mint a fresh one".
+
+    An empty default rather than a hard-coded constant: a shipped default
+    secret is a signing key every deployment shares, which is the same as no
+    signature at all -- anyone could mint a cookie naming any subject.
+    `SessionSigner.from_config` mints a random key when this is empty, which
+    costs every restart its sessions (a redeploy signs everybody out), and
+    that is the right trade for a value whose absence must never be silently
+    insecure.
+    """
+    return os.getenv("AGENT_SESSION_SECRET", "").strip()
