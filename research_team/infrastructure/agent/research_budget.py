@@ -21,12 +21,52 @@ particular run peaked at **7,275**. The window was never the constraint. What
 is unbounded is the number of tool rounds inside one phase, and a phase that
 spends its rounds researching arrives at the write with nothing left to say.
 
-**The threshold is read off the same log rather than chosen.** Phase 1's model
-calls, per session: the four sessions that completed all four phases took 10,
-8, 12 and 15; the sessions that died took 18 (three times, the run above), 41,
-and 12. Every run that finished stayed at or under 15, and every phase 1 that
-ran past 16 either failed at that phase or died later. `DEFAULT_ROUNDS` is 16
--- above every success on record, below every spiral on record.
+**The threshold was derived from the log, and the log gave the wrong number.**
+This is worth reading before changing it, because the reasoning was sound and
+the answer was inert.
+
+The first `DEFAULT_ROUNDS` was 16, from phase 1's *total* model calls per
+session: 10, 8, 12 and 15 in the four that completed all four phases; 18
+(three times, the run above), 41 and 12 in ones that died. Above every
+success, below every spiral -- and **measured to change nothing.** Replaying
+the stored 4,891-character phase-1 prompt against the live endpoint on
+2026-08-29, budget off and budget at 16 gave byte-identical outcomes:
+`rounds=18 tool_results=30 unit.md written=False reply_chars=0`, refused at
+`unit.md was not written` both times. By round 17 the model had already
+stopped researching -- round 17 was `ls`, round 18 was the empty stop -- so a
+bound that bites at 17 bites after the failure is over.
+
+The quantity that matters is not how many rounds a phase takes but **how many
+it takes before it first writes anything**, and those are different numbers
+because the budget withdraws only the reading tools: a phase cut off at round
+6 keeps writing at rounds 7 through 20. Measured across all 22 sessions, the
+round of the first `write_file`/`edit_file`/`task` call: 6, 2, 2, 1 / 5, 8, 2,
+1 / 6, 1, 2, 1 / 9, 6, 2, 1 in the four that finished, and NEVER (18 rounds)
+three times in the run above.
+
+Three live runs of the same prompt against the same model and project settle
+it:
+
+| `AGENT_AUTHORING_ROUNDS` | rounds | tool results | `unit.md` | checkpoint |
+|---|---|---|---|---|
+| 0 (off) | 18 | 30 | no | refused |
+| 16 | 18 | 30 | no | refused |
+| 10 | 68 | 83 | **yes** | pass |
+| 6 | 20 | 24 | **yes** | pass |
+
+`DEFAULT_ROUNDS` is 6: it is the only measured value that both passes and
+stays cheap. 10 also passes, and costs 3.4x the rounds and 3.5x the tool calls
+to do it -- far outside the ~10% band this project treats as single-run noise,
+so the gap is real even from one run each.
+
+**What 6 costs, stated plainly.** Of the phase 1s on record that did write,
+several first wrote at rounds 7, 9, 10 and 11, so this cuts their reading
+short. That is not the same as stopping them -- they keep every writing tool
+and every subagent, and the one case where it was actually measured
+(`mid-2000s` at 6) went from refused to passing. But it is a real narrowing,
+it was chosen on one corpus against one model, and `AGENT_AUTHORING_ROUNDS`
+exists so that whoever meets a corpus it is wrong about does not have to edit
+code.
 
 **What it does is withdraw tools, not add prose.** A system-prompt sentence
 asking the model to stop researching is exactly the shape CLAUDE.md's
@@ -56,9 +96,8 @@ from research_team.infrastructure.config import DEFAULT_AUTHORING_ROUNDS
 #:
 #: An alias, not a second definition: the value lives in `config` because that
 #: module imports nothing from the project, and the paragraph above is what it
-#: means. See the module docstring for where 16 came from -- it is the smallest
-#: bound that admits every phase 1 in this repository's log that went on to
-#: finish.
+#: means. See the module docstring for the three live runs that fixed it at 6,
+#: and for why the number derived from the log alone was 16 and inert.
 DEFAULT_ROUNDS = DEFAULT_AUTHORING_ROUNDS
 
 #: The tools withdrawn once the budget is spent, by name.

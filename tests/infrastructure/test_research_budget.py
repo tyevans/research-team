@@ -161,7 +161,7 @@ def test_the_default_is_the_one_the_environment_reads():
     about, one layer over."""
     from research_team.infrastructure import config
 
-    assert DEFAULT_ROUNDS == config.DEFAULT_AUTHORING_ROUNDS == 16
+    assert DEFAULT_ROUNDS == config.DEFAULT_AUTHORING_ROUNDS == 6
 
 
 @pytest.mark.asyncio
