@@ -295,6 +295,22 @@ SETTINGS: tuple[SettingSpec, ...] = (
         "Describes frames and images. Unset means no vision at all.",
         "Models",
     ),
+    # **The pair below is deployment-scoped because a vector store is shared,
+    # not because embeddings are uninteresting per project.** A `VectorStore`'s
+    # width is fixed at construction -- at DDL time for pgvector -- and every
+    # project in the process writes into the same one. Two projects resolving
+    # different widths does not give each its own store; it raises
+    # `DimensionMismatchError` on the first write, which is a *poison event*
+    # (`redstring_adapter.py`, `rebuild.py`): the ingest stops and replaying the
+    # log stops with it. And the two move together -- `config.embedding_model`'s
+    # docstring says set both or neither -- so scoping them apart would let a
+    # project change the model and inherit the tenant's width.
+    #
+    # They were declared at the default (every scope) until 2026-08-29, which
+    # rendered editable controls for both on a project page while every reader
+    # in the tree is `config.embedding_model()` / `config.embedding_dimension()`
+    # -- process-wide, scope-blind. A user could set a value, see it stored, see
+    # it resolve, and watch nothing use it.
     _spec(
         "AGENT_EMBEDDING_MODEL",
         SettingType.STRING,
@@ -302,6 +318,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         "Embedding model",
         "Turns text into vectors. Not the chat model -- see its reader's docstring.",
         "Embeddings",
+        scopes=_DEPLOYMENT,
     ),
     _spec(
         "AGENT_EMBEDDING_DIMENSION",
@@ -311,6 +328,7 @@ SETTINGS: tuple[SettingSpec, ...] = (
         "This model's vector width. A property of the model, not a taste.",
         "Embeddings",
         minimum=1,
+        scopes=_DEPLOYMENT,
     ),
     _spec(
         "AGENT_EMBEDDING_BASE_URL",
