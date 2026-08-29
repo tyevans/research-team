@@ -446,3 +446,44 @@ def test_the_lazy_art_store_forwards_every_method_the_real_one_has():
     missing = surface(ArtStore) - surface(_LazyArtStore)
 
     assert missing == set(), f"_LazyArtStore does not forward: {sorted(missing)}"
+
+
+def test_every_partial_build_resource_is_a_local_of_the_build() -> None:
+    """`_PARTIAL_BUILD_RESOURCES` names another function's local variables, and
+    Python ties it to them in no way at all.
+
+    Rename `corpus` inside `_build_application` and the entry stops matching,
+    `frame.f_locals.get` returns `None`, that resource is dropped from the
+    teardown, and the build raises exactly as it did before. B100's leak comes
+    back silently, looking identical to the leak the wrapper exists to prevent
+    -- and it comes back during a refactor, which is when nobody is reading the
+    comment above the tuple.
+
+    Static, over the function's own AST, so it costs nothing and cannot be
+    fooled by which branch a particular build took: a name is checked against
+    every assignment in the body, not against the locals of one run.
+
+    What it does not cover, stated because the asymmetry is easy to misread as
+    coverage: a resource added to `Application.close` and *not* to the tuple.
+    That direction has no static handle -- `close()` reads attributes off an
+    instance -- and stays a silent omission.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from research_team.composition import _PARTIAL_BUILD_RESOURCES, _build_application
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_build_application)))
+    assigned = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+
+    missing = sorted(name for name, _ in _PARTIAL_BUILD_RESOURCES if name not in assigned)
+    assert not missing, (
+        f"_PARTIAL_BUILD_RESOURCES names locals that _build_application does not "
+        f"assign: {missing}. Each one is silently dropped from the partial-build "
+        "teardown -- the B100 leak, back, with nothing raising."
+    )

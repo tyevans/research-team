@@ -3081,11 +3081,27 @@ def _build_application(
 #: B98's ordering already means an un-injected one is never constructed before
 #: the return.
 #:
-#: This drifts if a resource is added to `Application.close` and not here, and
-#: nothing catches that automatically -- `close()` reads attributes off an
-#: instance, this reads names out of a frame, and there is no compiler between
-#: them. `test_a_partial_build_closes_what_it_already_opened` is the only thing
-#: that would notice, and only for the names it names.
+#: **What breaks this, and why the failure is the worst possible shape.** These
+#: are the names of another function's local variables. Nothing in Python ties
+#: them to the assignments in `_build_application`: rename `corpus` there and
+#: this entry stops matching, `frame.f_locals.get` returns `None`, the resource
+#: is quietly dropped from the teardown, and the build still raises exactly as
+#: it did before. The leak comes back, silently, looking identical to the leak
+#: this constant exists to prevent -- and it comes back at the moment someone
+#: is refactoring, which is when they are least likely to be reading this.
+#:
+#: So the names are not left to a comment.
+#: `test_every_partial_build_resource_is_a_local_of_the_build` parses
+#: `_build_application` and asserts every name here is assigned in it, which
+#: turns a rename into a red test rather than a returned leak. Read that test
+#: before editing this tuple; it is the contract, and this paragraph is only
+#: the reason for it.
+#:
+#: The other direction is *not* covered and cannot cheaply be: a resource added
+#: to `Application.close` and not here is still a silent omission, because
+#: `close()` reads attributes off an instance and this reads names out of a
+#: frame, with no compiler between them. `test_a_partial_build_closes_what_it_
+#: already_opened` would notice only for the names it names.
 _PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
     ("research_supervisor", "stop_all"),
     ("turns", "cancel_all"),
