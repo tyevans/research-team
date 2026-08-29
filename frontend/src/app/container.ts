@@ -20,6 +20,7 @@ import type {
   ProjectRepository,
   SessionRepository,
   SettingsRepository,
+  ProvidersRepository,
   CurriculumRepository,
   ExportRepository,
   TimelineRepository,
@@ -36,6 +37,7 @@ import { HttpCourseRepository } from '@infrastructure/http/course-repository.ts'
 import { HttpDefinitionsRepository } from '@infrastructure/http/definitions-repository.ts'
 import { HttpOntologyRepository } from '@infrastructure/http/ontology-repository.ts'
 import { HttpSettingsRepository } from '@infrastructure/http/settings-repository.ts'
+import { HttpProvidersRepository } from '@infrastructure/http/providers-repository.ts'
 import { HttpDialogueRepository } from '@infrastructure/http/dialogue-repository.ts'
 import { HttpDocumentRepository } from '@infrastructure/http/document-repository.ts'
 import { HttpGraphRepository } from '@infrastructure/http/graph-repository.ts'
@@ -85,6 +87,7 @@ export interface Container {
   readonly definitions: DefinitionsRepository
   readonly ontology: OntologyRepository
   readonly settings: SettingsRepository
+  readonly providers: ProvidersRepository
   readonly curricula: CurriculumRepository
   readonly catalog: CatalogRepository
   readonly courses: CourseRepository
@@ -135,6 +138,7 @@ export const createContainer = (baseUrl = ''): Container => {
     definitions: new HttpDefinitionsRepository(http),
     ontology: new HttpOntologyRepository(http),
     settings: new HttpSettingsRepository(http),
+    providers: new HttpProvidersRepository(http),
     curricula: new HttpCurriculumRepository(http),
     catalog: new HttpCatalogRepository(http),
     courses: new HttpCourseRepository(http),
