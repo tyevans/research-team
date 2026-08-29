@@ -55,8 +55,18 @@ are independent and run in parallel.
 
 ## Rules that apply to every workstream
 
-- The four gates in `CLAUDE.md` are the bar, plus `npm run test:browser` for
-  anything whose correctness is a computed style.
+- The four gates in `CLAUDE.md` are the bar, and **CI is what runs them.** Do
+  not run a full suite locally: it takes about ten minutes here against two on
+  CI, several agents share this machine, and a loaded box produces failures
+  that are not real (CLAUDE.md, "A failure under load is not evidence"). Run
+  `uv run ruff check .` and `uv run ruff format --check .` -- cheap, repo-wide,
+  and the gate most often missed -- plus the specific test files you touched,
+  and then push. `npm run verify`'s full chain belongs to CI too; run the
+  individual `vitest` files you wrote, one process at a time.
+- `npm run test:browser` is still yours to run for anything whose correctness
+  is a computed style or a measurement, narrowly, on the files you touched.
+  jsdom lays nothing out, so there is no CI substitute for it -- it is outside
+  `verify` and outside CI on purpose.
 - Pre-release: break events, data and contracts rather than migrating. Say so
   in the docstring and update `tests/infrastructure/test_schema_evolution.py`.
 - Every new port with exactly one adapter needs a test that drives both ends
