@@ -20,10 +20,10 @@ interesting part fast and stay in it.**
 
 Three words hold the whole design:
 
-| Word | What it means here |
-|---|---|
-| **Quiet** | The surface says nothing on its own. Every mark on screen is data or a control. |
-| **Dense** | Small type, tight rhythm, many rows visible at once. Scrolling is a cost. |
+| Word        | What it means here                                                                      |
+| ----------- | --------------------------------------------------------------------------------------- |
+| **Quiet**   | The surface says nothing on its own. Every mark on screen is data or a control.         |
+| **Dense**   | Small type, tight rhythm, many rows visible at once. Scrolling is a cost.               |
 | **Legible** | Density never costs contrast. Every ink clears WCAG AA on every surface it can land on. |
 
 The reference feel is a **terminal that a typographer designed**: monospace
@@ -59,7 +59,7 @@ Light and dark are both designed. Light is not an inversion of dark.
 - `--bg-raise` — the one raised surface: menus, popovers, toasts.
 - `--bg-hover` — the pointer response.
 
-Elevation moves *away from the page* in both schemes. In dark, a raised
+Elevation moves _away from the page_ in both schemes. In dark, a raised
 surface is lighter. In light, hover is darker. Do not invert this
 mechanically; the direction of "further from the page" differs by scheme.
 
@@ -78,7 +78,7 @@ different layout instead.
 **Accent.** `--accent` is amber and there is exactly one. Use it for the
 current selection, the live state, and the primary action. Nothing else. An
 accent that appears four times per screen has stopped meaning anything.
-`--accent-fg` is the ink drawn *on* the accent. `--accent-dim` is a border, not
+`--accent-fg` is the ink drawn _on_ the accent. `--accent-dim` is a border, not
 a fill.
 
 **Kinds.** Seven event-kind colours (`--k-session`, `--k-message`, `--k-tool`,
@@ -106,11 +106,11 @@ declared value. The composited colour is the one a reader sees.
 
 ### 3.1 Three families, three jobs
 
-| Family | Job |
-|---|---|
-| `--font-mono` | The default. Identifiers, values, paths, log rows, controls, counts. |
-| `--font-sans` | Interface prose that is not data: headings, help text, empty states. |
-| `--font-serif` | Quoted human words: source excerpts, dialogue, passages. |
+| Family         | Job                                                                  |
+| -------------- | -------------------------------------------------------------------- |
+| `--font-mono`  | The default. Identifiers, values, paths, log rows, controls, counts. |
+| `--font-sans`  | Interface prose that is not data: headings, help text, empty states. |
+| `--font-serif` | Quoted human words: source excerpts, dialogue, passages.             |
 
 The serif is load-bearing. It is what lets a reader follow prose down a page
 while tool traffic blurs. Use it only for text a person wrote or said. Never
@@ -179,8 +179,7 @@ usable on a phone, and it must not pretend to be a phone app.
 
 ### 5.3 Depth
 
-Three z levels and no more: `--z-sticky` 10, `--z-overlay` 100, `--z-toast`
-200. Every dismissable layer shares the overlay level. If you want a fourth
+Three z levels and no more: `--z-sticky` 10, `--z-overlay` 100, `--z-toast` 200. Every dismissable layer shares the overlay level. If you want a fourth
 level, your layer belongs at one of the three.
 
 One elevation exists — `--shadow-1`. Use it only on `--bg-raise`.
