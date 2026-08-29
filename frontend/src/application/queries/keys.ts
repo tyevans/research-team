@@ -52,6 +52,19 @@ export const queryKeys = {
   projects: () => ['projects'] as const,
   health: () => ['health'] as const,
 
+  /** Whether identity is required, and whether there is a session.
+   *
+   * Two keys rather than one, because the two questions have different
+   * lifetimes and different failure modes. `authStatus` is answerable without
+   * a session and never 401s, so it is safe to fetch on the first render of a
+   * signed-out console. `currentUser` 401s without one, which is exactly what
+   * makes it useful -- it is how a tab that sat open past its cookie's expiry
+   * finds out, and invalidating it is how the account menu refreshes after a
+   * profile change. Sharing a key would make a 401 from the second look like
+   * a failure of the first, and the login screen would never render. */
+  authStatus: () => ['auth', 'status'] as const,
+  currentUser: () => ['auth', 'me'] as const,
+
   /** Deliberately unparameterised. The autonomy policy is one object serving
    *  the whole instance, so keying it by session or project would give the
    *  drawer and the queue's panel separate caches over the same state — and

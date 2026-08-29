@@ -1102,3 +1102,48 @@ export interface InteractionLogRepository {
    *  that changed as somebody scrolled. */
   summary(filters: InteractionFilters): Promise<InteractionSummary>
 }
+
+/** Who is signed in, and whether anybody has to be.
+ *
+ * Two questions rather than one, and they are genuinely different. `status()`
+ * is answerable without a session and is what decides between showing the app
+ * and showing a login screen. `me()` needs a session and answers 401 without
+ * one, which is what makes it usable as the console's own liveness check for
+ * a session that expired while a tab sat open.
+ *
+ * The two sign-in verbs are *hrefs*, not methods: an OIDC authorization
+ * request is a navigation, and fetching it would follow the redirect inside
+ * XHR where no login form can be shown.
+ */
+export interface AuthRepository {
+  status(): Promise<AuthStatus>
+  me(): Promise<Principal>
+  loginHref(next: string, options?: { signup?: boolean }): string
+  logoutHref(): string
+}
+
+export interface AuthStatus {
+  /** Whether this build refuses unauthenticated `/api/*`. `false` is the
+   *  default and means the console behaves exactly as it did before identity
+   *  existed. */
+  readonly authRequired: boolean
+  readonly authenticated: boolean
+  /** Whether an identity provider is configured. `authRequired && !configured`
+   *  is a misconfigured instance, and the login screen says so rather than
+   *  offering a button that 503s. */
+  readonly configured: boolean
+}
+
+export interface Principal {
+  readonly subject: string
+  readonly tenantId: string
+  readonly email: string
+  readonly displayName: string
+  readonly avatarUrl: string
+  readonly firstSeenAt: string
+  readonly lastSeenAt: string
+  /** `false` means the server answered from the session cookie because the
+   *  `users` projection had no row. Momentary right after a first sign-in;
+   *  persistent means the projection is not running. */
+  readonly mirrored: boolean
+}

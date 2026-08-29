@@ -216,6 +216,14 @@ const BUDGET_KB = {
   // rule that survives both is not "deltas compound" or "deltas don't" -- it
   // is that you cannot know which without building the merged tree, so keep
   // the highest and re-measure.
+  //
+  // W-A's identity foundation -- a login screen, an account menu, an auth
+  // repository with two zod schemas, and two query hooks -- lands on top of
+  // all four and **does not move this line**. Measured on the merged tree
+  // rather than estimated, which is the rule the paragraph above arrives at:
+  // 118.6 kB against the 117.3 above, so 1.3 kB. It fits inside the
+  // headroom the deck's raise already took, so raising again would be taking
+  // headroom over headroom.
   app: 124, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering

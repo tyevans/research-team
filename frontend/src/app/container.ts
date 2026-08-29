@@ -4,6 +4,7 @@ import type { PreferenceStore } from '@application/ports/preferences.ts'
 import type {
   ApprovalRepository,
   AskRepository,
+  AuthRepository,
   AutonomyRepository,
   CatalogRepository,
   CourseRepository,
@@ -30,6 +31,7 @@ import type {
   WorkspaceRepository,
 } from '@application/ports/repositories.ts'
 import { HttpAskRepository } from '@infrastructure/http/ask-repository.ts'
+import { HttpAuthRepository } from '@infrastructure/http/auth-repository.ts'
 import { HttpAutonomyRepository } from '@infrastructure/http/autonomy-repository.ts'
 import { HttpCatalogRepository } from '@infrastructure/http/catalog-repository.ts'
 import { HttpCourseRepository } from '@infrastructure/http/course-repository.ts'
@@ -95,6 +97,12 @@ export interface Container {
   readonly workers: WorkerRepository
   readonly extractions: ExtractionRepository
   readonly health: HealthRepository
+  /** Sign-in, sign-out and who is signed in. A repository like the rest even
+   *  though two of its four members are URL builders rather than requests --
+   *  the alternative is a component knowing that `/auth/login` exists, which
+   *  is the one piece of routing knowledge this layer is here to keep out of
+   *  the presentation. */
+  readonly auth: AuthRepository
   /** Its own adapter rather than one built on `HttpClient`: it POSTs and reads
    *  a stream, and `HttpClient` reads whole bodies. */
   readonly ask: AskRepository
@@ -117,8 +125,18 @@ export interface Container {
   readonly now: () => number
 }
 
-export const createContainer = (baseUrl = ''): Container => {
-  const http = new HttpClient(baseUrl)
+export const createContainer = (
+  baseUrl = '',
+  /** What to do the first time a request answers 401.
+   *
+   * Threaded from `main.tsx` rather than decided here, because "reload the
+   * page" is a browser behaviour and this module composes adapters. Optional
+   * so that every test harness building a container keeps working unchanged --
+   * and so that a container built without it simply lets the 401 surface as an
+   * `ApiError`, which is what a test wants to assert on. */
+  onUnauthorized?: () => void,
+): Container => {
+  const http = new HttpClient(baseUrl, onUnauthorized)
   return {
     sessions: new HttpSessionRepository(http),
     workspace: new HttpWorkspaceRepository(http),
@@ -143,6 +161,7 @@ export const createContainer = (baseUrl = ''): Container => {
     workers: new HttpWorkerRepository(http),
     extractions: new HttpExtractionRepository(http),
     health: new HttpHealthRepository(http),
+    auth: new HttpAuthRepository(http),
     ask: new HttpAskRepository(baseUrl),
     // `baseUrl` and not `http`, like `ask`: it POSTs and reads a stream, which
     // `HttpClient` would buffer whole.
