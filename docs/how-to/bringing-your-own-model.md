@@ -6,32 +6,24 @@ one, store a key for it, test that the key works, and select it for a role.
 Every command below was run against a live server on 2026-08-29. The responses
 are copied from that run, not composed.
 
-## Before you start: what works today, and what does not
+## Before you start: which role you are choosing a model for
 
-> **STATUS, 2026-08-29 — delete this whole section when the resolver is wired.**
-> W-C2 is doing that now. It states what is *connected*, not how the system is
-> meant to work, so it expires rather than needing a rewrite. When it goes,
-> section 5 stops being mandatory and becomes one of two ways to do the same
-> thing. Delete the matching section in
-> [`docs/configuration.md`](../configuration.md) at the same time.
+**A stored choice takes effect for extraction. It does not take effect for the
+other four roles.** Read this before you pick a section, because the two halves
+of this page do different jobs.
 
-**Read this first, or you will configure something that has no effect.**
+- **Extraction.** Sections 1 to 4 are enough. A profile selected for the
+  extraction role, or an `extraction_model`, `base_url` and `api_key` written at
+  project scope, is read by the next extraction run in that project. You do not
+  restart, and you do not set an environment variable.
+- **Research, curation, embedding and vision.** Section 5 is the only way. The
+  clients for these four roles are built from `config.<key>()`, which reads the
+  environment and then the built-in default. A scoped override for them is
+  stored, reads back correctly, and changes nothing.
 
-The settings API stores your choice and reports it back correctly. **The
-running agent does not read it yet.** `research_team/infrastructure/config.py`
-is what builds the model clients, and it resolves the environment and the
-built-in default — nothing else.
-
-So there are two halves to this page:
-
-- **Sections 1 to 4** use the HTTP API. They let you browse the catalogue,
-  test a key against a real endpoint, and record a choice. This is the part
-  that is built and tested.
-- **Section 5** sets the environment variables. This is the part that changes
-  which model answers you.
-
-Do both. Section 4 records the decision where the console will read it once
-the console exists. Section 5 makes the decision take effect now.
+`research_team/application/effective.py` is the consuming half for extraction.
+[`docs/configuration.md`](../configuration.md) lists the nine settings it covers
+and states the rule that decides the question for any other key.
 
 ## 0. Start a server
 
@@ -235,8 +227,14 @@ There are five roles, and each has its own setting:
 | `research` | `model` | The agent you talk to |
 | `extraction` | `extraction_model` | Pulls entities and relationships out of documents |
 | `curation` | `curation_model` | Phrases media searches and judges the results |
-| `embedding` | `embedding_model` | Turns text into vectors |
+| `embedding` | `embedding_model` | Turns text into vectors. Tenant scope only — see below |
 | `vision` | `vision_model` | Describes frames and images |
+
+**`embedding_model` refuses a project or user override with a 422.** Its width,
+`embedding_dimension`, is baked into a vector store the whole process shares, so
+two projects that disagree raise `DimensionMismatchError` on the first write. A
+profile selected for the embedding role at tenant scope is still only a record;
+the client is built from the environment.
 
 **The five are independent, and that is recent.** Extraction used to resolve
 from `model`, so choosing a cheap extraction model silently repointed the
@@ -296,10 +294,29 @@ Four things about this surface:
 A role with no profile reads its own setting. A role whose setting is empty
 falls back to the chat model, and says so with `layer: "fallback"`.
 
-## 5. Make it take effect
+**Only the extraction role's selection reaches a run.** `open_graph` asks
+`EffectiveSettings.extraction` for the project it is opening, and that call is
+what reads the profile: its model, its `base_url` and the secret its
+`credential_key` names all replace the settings underneath, together. The other
+four roles report their selection on this surface and build their clients from
+the environment. Verified on 2026-08-29 against a live endpoint: selecting a
+profile for `extraction` made the endpoint report the profile's model name in
+its error, where the same project had reported `extraction_model`'s value a run
+earlier.
 
-Set the environment variables and restart. This is the layer the running
-process reads.
+**A profile with no `base_url` of its own leaves the endpoint alone.** The
+field is the profile's, not the catalogue's, and it is optional. Give it a value
+when the profile names a hosted provider. Leave it out when the endpoint belongs
+to the deployment rather than to the choice of model.
+
+## 5. Make it take effect for the other four roles
+
+Set the environment variables and restart. This is the only layer the research,
+curation, embedding and vision clients read.
+
+Skip this section if you are configuring **extraction** only. Step 4 already
+made that choice take effect, and an environment variable set here is the layer
+underneath it: the project override wins for extraction either way.
 
 For a hosted OpenAI-compatible provider — Groq here — the chat endpoint is
 three variables:

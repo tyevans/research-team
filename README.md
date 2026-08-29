@@ -214,12 +214,14 @@ Keys can also be stored, encrypted at rest under `AGENT_SETTINGS_KEY`, and
 scoped to a project, a user or a tenant. **A stored key is never read back** —
 the API returns a mask showing the last four characters.
 
-**One limit to know before you build on it** *(status, 2026-08-29 — being fixed
-now; delete this paragraph when the resolver is wired)*. The scoped store is a
-working, tested surface with no consumer below it yet: the running process
-still reads the environment and the built-in default, and nothing else. Setting
-an override records a decision; setting the environment variable is what
-changes which model answers.
+**One limit to know before you build on it.** A scoped override reaches the
+run for **knowledge extraction** only. A project's `extraction_model`,
+`base_url`, `api_key`, chunking and concurrency, and a model profile selected
+for the extraction role, are read by that project's next extraction. The
+research agent, the media curator, the embedder and the vision describer still
+read the environment and the built-in default, so an override for those is
+stored and unused. [`docs/configuration.md`](docs/configuration.md) states the
+rule and names the settings on each side;
 [`docs/how-to/bringing-your-own-model.md`](docs/how-to/bringing-your-own-model.md)
 walks through both halves.
 
