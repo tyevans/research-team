@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import type { EntityListArtifact, EntityRef } from '@domain/conversation/artifact.ts'
 
-import { Bar, Expander, Header, Item, Row, type Phase } from './parts.tsx'
+import { Bar, Expander, Header, Item, Row, type ShapeProps } from './parts.tsx'
 
 const CAP = 5
 
@@ -22,7 +22,7 @@ const byCount = (a: EntityRef, b: EntityRef) =>
  * a `graph_search` returns, and in the paragraph this replaces it was the least
  * visible thing on screen. `0` reads as a measurement; `–` reads as the absence
  * it is. */
-export const EntityList = ({ artifact, phase }: { artifact: EntityListArtifact; phase: Phase }) => {
+export const EntityList = ({ artifact, phase, tool }: ShapeProps<EntityListArtifact>) => {
   const [expanded, setExpanded] = useState(false)
   const linked = artifact.entities.filter((e) => e.relationship_count > 0).sort(byCount)
   const unlinked = artifact.entities.filter((e) => e.relationship_count <= 0).sort(byCount)
@@ -48,7 +48,7 @@ export const EntityList = ({ artifact, phase }: { artifact: EntityListArtifact; 
   return (
     <Row glyph="◇" phase={phase}>
       <Header
-        name="graph_search"
+        name={tool ?? 'graph_search'}
         arg={`“${artifact.query}”`}
         count={`${artifact.entities.length} entit${artifact.entities.length === 1 ? 'y' : 'ies'}`}
         title={artifact.mode}

@@ -50,20 +50,27 @@ export const ToolResult = ({
     )
   }
 
+  // The header names the tool that actually ran, not the tool the shape was
+  // designed around. A shape is shared: `hit_list` serves `search_sources` and
+  // `web_search` both, so a name baked into the component is wrong for every
+  // producer but one — and wrong while reading as authoritative, which is the
+  // worst of both.
+  const tool = message.name
+
   switch (artifact.shape) {
     case 'hit_list':
-      return <HitList artifact={artifact} phase={phase} />
+      return <HitList artifact={artifact} phase={phase} tool={tool} />
     case 'entity_list':
-      return <EntityList artifact={artifact} phase={phase} />
+      return <EntityList artifact={artifact} phase={phase} tool={tool} />
     case 'excerpt':
-      return <Excerpt artifact={artifact} phase={phase} />
+      return <Excerpt artifact={artifact} phase={phase} tool={tool} />
     case 'inventory':
-      return <Inventory artifact={artifact} phase={phase} />
+      return <Inventory artifact={artifact} phase={phase} tool={tool} />
     case 'acknowledgement':
       return <Acknowledgement artifact={artifact} phase={phase} />
     case 'file_change':
-      return <FileChange artifact={artifact} phase={phase} />
+      return <FileChange artifact={artifact} phase={phase} tool={tool} />
     case 'delegation':
-      return <Delegation artifact={artifact} phase={phase} />
+      return <Delegation artifact={artifact} phase={phase} tool={tool} />
   }
 }

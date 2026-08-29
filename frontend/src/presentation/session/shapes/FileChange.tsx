@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import type { FileChangeArtifact } from '@domain/conversation/artifact.ts'
 
-import { Bar, Expander, Header, Row, type Phase } from './parts.tsx'
+import { Bar, Expander, Header, Row, type ShapeProps } from './parts.tsx'
 
 const PREVIEW = 300
 
@@ -14,7 +14,7 @@ const PREVIEW = 300
  * was trying to — *how much of this file moved* — and the before/after goes
  * behind an expander, because most edits are not the one the reader is
  * looking for. */
-export const FileChange = ({ artifact, phase }: { artifact: FileChangeArtifact; phase: Phase }) => {
+export const FileChange = ({ artifact, phase, tool }: ShapeProps<FileChangeArtifact>) => {
   const [expanded, setExpanded] = useState(false)
   const touched = artifact.added + artifact.removed
   const hasDiff = artifact.before !== null || artifact.after !== null
@@ -24,7 +24,7 @@ export const FileChange = ({ artifact, phase }: { artifact: FileChangeArtifact; 
   return (
     <Row glyph="±" phase={phase}>
       <Header
-        name="edit_file"
+        name={tool ?? 'edit_file'}
         arg={artifact.path}
         title={artifact.path}
         count={

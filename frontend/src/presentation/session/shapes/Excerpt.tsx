@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import type { ExcerptArtifact } from '@domain/conversation/artifact.ts'
 
-import { Expander, Header, Quote, Row, compact, percent, type Phase } from './parts.tsx'
+import { Expander, Header, Quote, Row, compact, percent, type ShapeProps } from './parts.tsx'
 
 const PREVIEW = 400
 
@@ -12,7 +12,7 @@ const PREVIEW = 400
  * document from near its start is making a materially different claim from one
  * that read the whole thing, and `@1529-3872 of 25784` in a paragraph of
  * monospace does not distinguish them at a glance. */
-export const Excerpt = ({ artifact, phase }: { artifact: ExcerptArtifact; phase: Phase }) => {
+export const Excerpt = ({ artifact, phase, tool }: ShapeProps<ExcerptArtifact>) => {
   const [expanded, setExpanded] = useState(false)
   const { start, end, char_count: total, text } = artifact
   const name = artifact.title ?? artifact.source_id
@@ -21,7 +21,7 @@ export const Excerpt = ({ artifact, phase }: { artifact: ExcerptArtifact; phase:
   return (
     <Row glyph="▤" phase={phase}>
       <Header
-        name="read_source"
+        name={tool ?? 'read_source'}
         arg={artifact.label ? `${name} · ${artifact.label}` : name}
         title={artifact.uri ?? artifact.source_id}
         count={

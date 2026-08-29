@@ -1,6 +1,6 @@
 import type { DelegationArtifact } from '@domain/conversation/artifact.ts'
 
-import { Header, Item, Row, percent, type Phase } from './parts.tsx'
+import { Header, Item, Row, percent, type ShapeProps } from './parts.tsx'
 
 /** Every worker on one wall-clock axis against the turn.
  *
@@ -9,7 +9,7 @@ import { Header, Item, Row, percent, type Phase } from './parts.tsx'
  * plausible duration say nothing at all. `started_ms` is relative to the turn
  * for the same reason — an absolute clock would make the renderer reason about
  * skew, and would make a replayed turn draw differently from a live one. */
-export const Delegation = ({ artifact, phase }: { artifact: DelegationArtifact; phase: Phase }) => {
+export const Delegation = ({ artifact, phase, tool }: ShapeProps<DelegationArtifact>) => {
   // The axis is the turn so far, so a worker still running does not shrink the
   // scale of the ones that finished; `?? 0` treats an unfinished worker as
   // contributing only its start, which is all that is known about it.
@@ -21,7 +21,7 @@ export const Delegation = ({ artifact, phase }: { artifact: DelegationArtifact; 
   return (
     <Row glyph="⑂" phase={phase}>
       <Header
-        name="ask_agent"
+        name={tool ?? 'ask_agent'}
         arg={artifact.task}
         count={`${artifact.workers.length} worker${artifact.workers.length === 1 ? '' : 's'}`}
       />

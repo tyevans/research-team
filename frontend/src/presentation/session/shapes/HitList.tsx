@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import type { HitListArtifact } from '@domain/conversation/artifact.ts'
 
-import { Expander, Header, Item, Quote, Row, Sparkline, type Phase } from './parts.tsx'
+import { Expander, Header, Item, Quote, Row, Sparkline, type ShapeProps } from './parts.tsx'
 
 const CAP = 5
 
@@ -13,7 +13,7 @@ const CAP = 5
  * positioning every hit against that document's own length, and a count. One
  * representative snippet goes below, because nineteen snippets is the wall of
  * text this design replaces. */
-export const HitList = ({ artifact, phase }: { artifact: HitListArtifact; phase: Phase }) => {
+export const HitList = ({ artifact, phase, tool }: ShapeProps<HitListArtifact>) => {
   const [expanded, setExpanded] = useState(false)
   const sources = [...artifact.sources].sort((a, b) => b.total - a.total)
   const shown = expanded ? sources : sources.slice(0, CAP)
@@ -23,7 +23,7 @@ export const HitList = ({ artifact, phase }: { artifact: HitListArtifact; phase:
   return (
     <Row glyph="⌕" phase={phase}>
       <Header
-        name="search_sources"
+        name={tool ?? 'search_sources'}
         arg={`/${artifact.pattern}/`}
         count={`${artifact.total} in ${sources.length} source${sources.length === 1 ? '' : 's'}`}
       />

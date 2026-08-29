@@ -23,12 +23,16 @@ import type { Message } from '@domain/conversation/message.ts'
  * the shape the renderer *wishes* it received is a fixture that agrees with a
  * mapping nobody wrote. */
 
-export const toolMessage = (artifact: unknown, content = '19 match(es) for /magic/'): Message => ({
+export const toolMessage = (
+  artifact: unknown,
+  content = '19 match(es) for /magic/',
+  name: string | null = 'search_sources',
+): Message => ({
   role: 'tool',
   content,
   toolCalls: [],
   isError: false,
-  name: 'search_sources',
+  name,
   artifact,
 })
 

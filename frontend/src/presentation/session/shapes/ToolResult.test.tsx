@@ -63,6 +63,26 @@ describe('ToolResult', () => {
     expect(screen.getByTestId('ack')).toBeInTheDocument()
   })
 
+  it('names the tool that ran, not the tool the shape was designed around', () => {
+    // A shape is shared: `hit_list` serves `search_sources` and `web_search`
+    // both. Red if a shape hard-codes its own name in the header, which is
+    // wrong for every producer but one and reads as authoritative while being
+    // wrong. `search` was paired with `entity_list` in the plan and with
+    // `hit_list` in the spec; the spec won, and this is the assertion that
+    // makes the disagreement cost nothing.
+    render(<ToolResult message={toolMessage(hitList, '…', 'web_search')} phase="settled" />)
+    expect(screen.getByText('web_search')).toBeInTheDocument()
+    expect(screen.queryByText('search_sources')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the shape’s commonest producer when the name is absent', () => {
+    // Every message written before `message_view` stopped dropping `name`
+    // arrives with it null, and a header that read an empty tool name would
+    // look like a rendering failure rather than like old history.
+    render(<ToolResult message={toolMessage(hitList, '…', null)} phase="settled" />)
+    expect(screen.getByText('search_sources')).toBeInTheDocument()
+  })
+
   it.each([
     ['hit_list', hitList, 'hit-source'],
     ['entity_list', entityList, 'entity'],
