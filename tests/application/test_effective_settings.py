@@ -12,6 +12,7 @@ correct and the consumption unwired, which is the whole defect this branch
 exists to close.
 """
 
+import asyncio
 from uuid import UUID
 
 import pytest
@@ -27,6 +28,7 @@ from research_team.infrastructure import config
 from research_team.infrastructure.settings.profiles import ModelProfileStore
 from research_team.infrastructure.settings.secrets import AesGcmSecretBox
 from research_team.infrastructure.settings.store import SettingsStore
+from research_team.interfaces.web.settings import SettingsDeps
 
 PROJECT_ID = UUID("0f4a1c6e-2b7d-4a51-9c33-5d8e17b04a92")
 OTHER_ID = UUID("8c21ba50-4f19-4d6c-b3a7-6e0d92f15c48")
@@ -324,3 +326,53 @@ def test_no_settings_is_the_client_config_would_have_built():
 
     assert client.model_name == config.extraction_model()
     assert str(client.openai_api_base) == config.base_url()
+
+
+# --- teardown --------------------------------------------------------------
+
+
+async def test_closing_the_settings_deps_releases_both_stores_threads(tmp_path):
+    """The regression that cost this branch an 84-minute CI job.
+
+    `aiosqlite` starts a **non-daemon** worker thread per connection, so an
+    unclosed store keeps `threading._shutdown` waiting and the interpreter
+    never exits. Until this branch the override table was opened only by a
+    settings *route*, so almost no test opened it and the omission was free.
+    Resolution now happens at `open_graph`, which every attach reaches.
+
+    Measured rather than reasoned, 2026-08-29: CI's `pytest` job finished the
+    suite in 6m26s (`1 failed, 4120 passed`) and then sat a further 78 minutes
+    before being cancelled, with the runner reporting orphan `uv` and `pytest`
+    processes. The count below is the same probe, in a test: two threads open,
+    zero after `close()`.
+
+    Counting threads rather than asserting `store._connection is None`, because
+    the private attribute is the mechanism and the thread is the harm -- an
+    adapter that nulled the handle without joining its worker would pass the
+    first assertion and hang the process exactly as before.
+    """
+    import threading
+
+    def non_daemon() -> int:
+        return len([t for t in threading.enumerate() if not t.daemon])
+
+    path = str(tmp_path / "settings.db")
+    base = non_daemon()
+    deps = SettingsDeps(
+        store=await SettingsStore.open(path),
+        profiles=await ModelProfileStore.open(path),
+    )
+    assert non_daemon() == base + 2
+
+    await deps.close()
+    await asyncio.sleep(0.1)
+
+    assert non_daemon() == base
+
+
+async def test_closing_a_settings_deps_that_never_opened_anything_is_a_no_op():
+    """What makes the `close()` step safe to list unconditionally in
+    `_PARTIAL_BUILD_RESOURCES`: a build that raises before any settings request
+    has a `SettingsDeps` whose stores hold no connection, and an unwind that
+    raised there would replace the real error with this one."""
+    await SettingsDeps().close()

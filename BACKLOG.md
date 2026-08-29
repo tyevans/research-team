@@ -6,7 +6,7 @@ with enough detail that picking it up does not require rediscovering it.
 The `B` numbers are stable handles, not a taxonomy. Closed entries are deleted;
 if tracked code cites one by name, say where its reasoning went before deleting.
 
-<!-- next id: 183 -->
+<!-- next id: 184 -->
 
 **Take your id from that line and increment it in the same commit.** Do not
 grep the file for the largest number in use: that is a read of *your* branch,
@@ -3120,7 +3120,15 @@ strip's own width and accept clipped labels. Whichever is chosen changes
 narrates it, so read that comment first — it already carries the history of
 every floor move to date.
 
-### B178. Four of the five model roles still resolve process-wide
+### B183. Four of the five model roles still resolve process-wide
+
+Filed as B178, then B182; renumbered twice on rebase. The first collision is
+what #328's `<!-- next id: -->` marker exists to prevent and predates it. The
+second happened *with* the marker in play on both sides and still did not
+conflict, because #345 and this branch both took 182 and both wrote 183 -- two
+sides landing on the same new value is the one case a one-line counter cannot
+turn into a merge conflict. Recorded here rather than in the marker's own
+comment because it is one observation, not yet a pattern.
 
 `research_team/application/effective.py` makes one bundle -- extraction --
 resolve per project, and W-C2 stopped there deliberately rather than for lack
@@ -3145,11 +3153,11 @@ need a decision this branch had no grounds to make:
   store at `ProjectGraphs` construction, and two projects disagreeing about a
   width against one store is `DimensionMismatchError` on the first write --
   a poison event, so the ingest that triggers it is unrecoverable rather than
-  retryable (`build_embedding_provider`'s docstring has the measurement). The
-  registry still declares these at project scope, which is now a small lie:
-  a project can set `embedding_model` through the API and nothing will read it.
-  Narrowing those two to `_DEPLOYMENT` is a separate, smaller change and should
-  probably be done first.
+  retryable (`build_embedding_provider`'s docstring has the measurement).
+  This branch first filed the follow-on -- the registry declared both keys at
+  project scope while every reader was process-wide -- and #345 landed it while
+  this was in flight: both are `_DEPLOYMENT` now. B182 is the general form of
+  that defect and is the entry to read, not this bullet.
 
 The scope chain is also project-only. `EffectiveSettings._chain` names no user
 and no tenant, because W-A owns identity and W-B owns tenancy and a chain that

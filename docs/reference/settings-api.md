@@ -441,8 +441,10 @@ endpoint is a call neither accepts.
 roles resolve through `config` as they always did. Embedding is the one with a
 structural reason rather than a scheduling one: `embedding_dimension` is baked
 into a vector store two projects share, so a per-project width is
-`DimensionMismatchError` on the first write. The other three are deferred with
-their seams named in `BACKLOG.md` B178.
+`DimensionMismatchError` on the first write -- which is why `embedding_model`
+and `embedding_dimension` are declared `_DEPLOYMENT` rather than at project
+scope. The other three are deferred with their seams named in `BACKLOG.md`
+B183; `BACKLOG.md` B182 is the general property they are instances of.
 
 **The headless path is unchanged.** A CLI run, and every test that names no
 project, resolves the environment and then the built-in default -- the same two

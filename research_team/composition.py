@@ -1616,6 +1616,15 @@ class Application:
             ("users", self.users.stop),
             ("interaction log", self.interaction_log.stop),
             ("interaction store", self._interaction_store.close),
+            # Both settings stores, as one step -- see `SettingsDeps.close`.
+            # New here as of W-C2 and not optional: until this branch the
+            # override table was opened only by a settings *route*, so almost
+            # no test ever opened it and the omission cost nothing. Resolution
+            # now happens at `open_graph`, which every attach reaches, so the
+            # connection is opened in nearly every test -- and `aiosqlite`'s
+            # worker thread is non-daemon, so leaking one per test is a
+            # process that runs the suite and then never exits.
+            ("settings", self.settings.close),
             ("service", self.service.close),
             # Unconditional, whether this client was built here or handed in
             # by a test: whoever built it, `Application` owns it for its
@@ -3396,6 +3405,13 @@ _PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
     ("users", "stop"),
     ("interaction_log", "stop"),
     ("interaction_store", "close"),
+    # In `close()`'s order, between the interaction store and the service.
+    # Holds two aiosqlite connections, both opened lazily -- so a partial build
+    # that raises before either is touched abandons nothing, and one that
+    # raises after `open_graph` ran abandons two non-daemon worker threads.
+    # `SettingsDeps.close` is a no-op on an unopened store, which is what makes
+    # it safe to list unconditionally.
+    ("settings_deps", "close"),
     ("service", "close"),
     ("graphs", "close_all"),
     # Last, and the one B100 is really about: `EventStoreSessionRepository`
