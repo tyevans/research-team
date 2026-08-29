@@ -14,7 +14,34 @@ import { ApiError, ContractError } from '@application/ports/errors.ts'
  * `ContractError` names the field and the endpoint instead.
  */
 export class HttpClient {
-  constructor(private readonly baseUrl: string = '') {}
+  constructor(
+    private readonly baseUrl: string = '',
+    /** Called once for the first 401 this client sees, and never again.
+     *
+     * A seam rather than a `location.assign` inline, so that a test can drive
+     * the behaviour and so that the transport still does exactly two things --
+     * the class docstring above is the contract, and "redirect the browser" is
+     * not one of them.
+     *
+     * **Why once.** A console page issues many requests in parallel, and a
+     * cookie that expired between two of them fails all of them. Without a
+     * latch every one of those would call the handler, which in production
+     * assigns `location` -- so the browser is told to navigate five or ten
+     * times in the same tick. Chromium tolerates that and Firefox has
+     * historically not; either way it is a navigation storm produced by one
+     * expiry.
+     *
+     * The 401 is *still thrown* after the handler runs. Swallowing it would
+     * leave every caller awaiting a promise that never settles, and a page
+     * that hangs with no error while a navigation may or may not happen is
+     * worse than an error box that is about to be replaced anyway.
+     */
+    private readonly onUnauthorized?: () => void,
+  ) {}
+
+  /** The latch for `onUnauthorized`. An instance field rather than a module
+   *  one, so two clients (a test's and the app's) cannot silence each other. */
+  private reportedUnauthorized = false
 
   // Generic over the *schema* rather than over a result type: several of these
   // shapes carry transforms, so their input and output types differ, and
@@ -106,6 +133,10 @@ export class HttpClient {
     const parsed = parseJson(raw)
 
     if (!response.ok) {
+      if (response.status === 401 && !this.reportedUnauthorized) {
+        this.reportedUnauthorized = true
+        this.onUnauthorized?.()
+      }
       throw new ApiError(detailOf(parsed, raw, response), response.status)
     }
 

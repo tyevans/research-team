@@ -187,6 +187,22 @@ const containerWith = (over: Record<string, unknown> = {}) =>
       summaries: vi.fn().mockResolvedValue({ healthy: true, following: true, failedEvents: 0 }),
       rebuildSummaries: vi.fn(),
     },
+    // The default is an instance with identity switched off, which is
+    // `AGENT_AUTH`'s own default and therefore the state every other test in
+    // this file is about. Present rather than omitted: this object ends in an
+    // `as unknown as AppContainer`, so a missing key is `undefined` at runtime
+    // and `container.auth.status()` would throw inside a query -- caught by
+    // React Query, rendering identically, and leaving every test here passing
+    // against a console whose auth wiring was broken. `auth.test.tsx` is where
+    // the wiring itself is exercised.
+    auth: {
+      status: vi
+        .fn()
+        .mockResolvedValue({ authRequired: false, authenticated: false, configured: false }),
+      me: vi.fn(),
+      loginHref: vi.fn().mockReturnValue('/auth/login'),
+      logoutHref: vi.fn().mockReturnValue('/auth/logout'),
+    },
     ...over,
   }) as unknown as AppContainer
 

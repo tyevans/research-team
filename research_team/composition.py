@@ -152,6 +152,7 @@ from research_team.infrastructure.agent.topic_tools import (
     RepositoryTopics,
     build_topic_tools,
 )
+from research_team.infrastructure.identity import EventStoreUserRecorder
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.blurb_writer import ModelBlurbWriter
 from research_team.infrastructure.knowledge.catalog_recorder import (
@@ -230,6 +231,7 @@ from research_team.infrastructure.persistence.read_models import (
 )
 from research_team.infrastructure.persistence.tenants import TenantRunner
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
+from research_team.infrastructure.persistence.users import UserRunner
 from research_team.infrastructure.settings import (
     HttpProviderProbe,
     ModelProfileStore,
@@ -1016,6 +1018,23 @@ class Application:
     `socratic` above reads *through* this when the live registry has dropped a
     dialogue, so this is not only the history surface but the whole of
     resumption. The two must never be collapsed into one object."""
+    users: UserRunner
+    """Keeps the `users` mirror following the log. Idle until `start()`.
+
+    A field for `asks`'s reason and one more: `user_recorder` below reads
+    *through* this to decide whether the IdP's claims have changed since the
+    last sign-in, so the read side and the write side are two halves of one
+    channel and must be the same object. Two instances would each open their
+    own connection, and the recorder would compare fresh claims against a view
+    of the table nothing was updating -- appending a `UserProfileChanged` on
+    every sign-in, forever, and never noticing."""
+    user_recorder: EventStoreUserRecorder
+    """Appends `UserSignedIn`/`UserProfileChanged` when a sign-in completes.
+
+    A field rather than something the web layer builds, because it needs the
+    application's own event store and publisher; a recorder built at the call
+    site would append to one store while `users` above followed another, which
+    is the failure `catalog_features` and `topic_repository` both shipped."""
     authoring_runs: AggregateRepository[CourseAuthoringRun]
     """The write side of course-authoring runs: what a run wrote, and where.
 
@@ -1398,6 +1417,16 @@ class Application:
         await self.asks.start()
         await self.authoring.start()
         await self.dialogues.start()
+        # Started with the rest rather than lazily on first sign-in: a
+        # projection that only starts when somebody logs in is a projection
+        # whose absence is invisible on every instance where nobody has yet.
+        # It is also the quietest of these to have missing -- the callback
+        # still appends, still sets a cookie, and still signs the person in;
+        # only `/api/me` comes back describing a stranger. Started
+        # unconditionally even with `AGENT_AUTH=off`, so that turning the flag
+        # on does not need a restart to have a read model behind it, and so
+        # that the two states of the flag differ in one place only.
+        await self.users.start()
         await self.interaction_log.start()
         await self.tenants.start()
         if not config.authorization_enabled():
@@ -1583,6 +1612,7 @@ class Application:
             ("asks", self.asks.stop),
             ("authoring", self.authoring.stop),
             ("dialogues", self.dialogues.stop),
+            ("users", self.users.stop),
             ("interaction log", self.interaction_log.stop),
             ("interaction store", self._interaction_store.close),
             ("service", self.service.close),
@@ -1988,6 +2018,26 @@ def _build_application(
     dialogues = SocraticDialogueRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
+    # Built here with its neighbours for the reason stated above `topics`, and
+    # over `repository.store`/`.publisher` rather than a second store: a
+    # recorder appending through one store while a projection follows another
+    # is the shape that has made three read models in this file silently
+    # empty. The only writer of `UserSignedIn` is `user_recorder` below, built
+    # over the same pair.
+    users = UserRunner(repository.store, resolved_path, repository.publisher, resolved_tracer)
+    # The write half beside the read half, and the one production adapter of
+    # its (implicit) port -- so, per CLAUDE.md's co-mention section, the test
+    # that matters is the one driving both ends over real data rather than a
+    # unit test on either.
+    # `tests/integration/test_a_sign_in_reaches_the_user_read_model.py` is it:
+    # it appends through this recorder and asserts the *row*, never that
+    # nothing threw.
+    #
+    # Handed the runner rather than its store: `rebuild()` closes the store
+    # and opens another, and a recorder holding the first would compare new
+    # claims against a closed connection -- silently deciding that nothing had
+    # changed, because a failed read is indistinguishable from "no row yet".
+    user_recorder = EventStoreUserRecorder(repository.store, repository.publisher, users)
     # The tenth, built here with the other nine and for the same reason, with
     # the same failure mode as the ask's and a longer-lived consequence: an
     # authoring run appends whether or not anything is following, so a build
@@ -3180,6 +3230,8 @@ def _build_application(
         authoring=authoring,
         socratic=socratic_service,
         dialogues=dialogues,
+        users=users,
+        user_recorder=user_recorder,
         interaction_log=interaction_log,
         interaction_recorder=interaction_recorder,
         _interaction_store=interaction_store,

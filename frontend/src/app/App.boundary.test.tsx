@@ -39,6 +39,21 @@ const container = () =>
     sessions: { list: vi.fn().mockResolvedValue([]), tree: vi.fn().mockResolvedValue([]) },
     projects: { list: vi.fn().mockResolvedValue([]) },
     workers: { all: vi.fn().mockResolvedValue([]) },
+    // Identity switched off, which is `AGENT_AUTH`'s default and the state
+    // this file is about. Present rather than omitted for the reason
+    // `App.test.tsx` states beside its own copy: this object ends in an `as
+    // unknown as AppContainer`, so a missing key is `undefined` at runtime and
+    // `App`'s auth gate would call `.status()` on it -- a `TypeError` inside a
+    // query rather than a compile error, caught by React Query and therefore
+    // invisible except as a test that becomes timing-sensitive.
+    auth: {
+      status: vi
+        .fn()
+        .mockResolvedValue({ authRequired: false, authenticated: false, configured: false }),
+      me: vi.fn(),
+      loginHref: vi.fn().mockReturnValue('/auth/login'),
+      logoutHref: vi.fn().mockReturnValue('/auth/logout'),
+    },
   }) as unknown as AppContainer
 
 beforeEach(() => {

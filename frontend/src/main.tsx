@@ -14,7 +14,26 @@ import './styles/index.css'
  *
  * Everything above this file takes its dependencies as arguments; this is where
  * the arguments are chosen. */
-const container = createContainer()
+/** Reload, rather than navigate to a login route.
+ *
+ * There is no client-side login route: the sign-in decision is made from
+ * `/api/auth/status` on the first render, so a full reload re-asks that
+ * question and renders `LoginScreen` if the answer has changed. A client-side
+ * redirect would need a second copy of that logic, and the two would disagree
+ * the first time either moved.
+ *
+ * This fires when a session expires *while a tab is open*, which is the only
+ * case the first render cannot cover. `HttpClient` latches it, so a page whose
+ * ten in-flight requests all 401 together reloads once.
+ *
+ * `location.reload()` and not `location.assign('/')`: reloading keeps the
+ * hash, so a person is returned to the page they were reading rather than to
+ * the landing page -- and `/auth/login` carries `next` from there, so the
+ * round trip through the identity provider ends where it started.
+ */
+const container = createContainer('', () => {
+  window.location.reload()
+})
 
 const queryClient = new QueryClient({
   defaultOptions: {

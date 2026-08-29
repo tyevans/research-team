@@ -1,5 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+
+import { useAuthStatus, useCurrentUser } from '@application/auth/use-auth.ts'
+import { LoginScreen } from '@presentation/auth/LoginScreen.tsx'
+import { AccountMenu } from '@presentation/shell/AccountMenu.tsx'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { queryKeys } from '@application/queries/keys.ts'
@@ -36,6 +40,24 @@ import { useContainer } from './container-context.tsx'
 import { ErrorBoundary, LoggedErrorBoundary } from './ErrorBoundary.tsx'
 import { InteractionLogProvider, useInteractionLog } from './interaction-log-provider.tsx'
 
+/** The account menu, or nothing.
+ *
+ * Its own component so that `useCurrentUser` -- which is a request -- is not
+ * called on every instance that has no identity provider. `enabled` gates it
+ * on the status query having said identity is configured, so a build with auth
+ * off issues no `/api/me` at all.
+ *
+ * A 401 resolves to `null` rather than throwing (see `useCurrentUser`), so a
+ * signed-out console renders nothing here instead of an error box in its
+ * chrome. */
+const AccountSlot = () => {
+  const container = useContainer()
+  const status = useAuthStatus()
+  const person = useCurrentUser({ enabled: status.data?.configured === true })
+  if (!person.data) return null
+  return <AccountMenu person={person.data} logoutHref={container.auth.logoutHref()} />
+}
+
 /** Two boundaries, not one, and the split is the whole design.
  *
  * The outer one catches a throw from `StreamProvider` or from
@@ -49,14 +71,64 @@ import { InteractionLogProvider, useInteractionLog } from './interaction-log-pro
  * every throw from the chrome and the routed view, which is nearly all of
  * them, and does report. It is also the one whose "Try again" is useful: it
  * remounts only the page, leaving the stream connection and the emitter's
- * `(browser_session_id, seq)` pair intact. */
+ * `(browser_session_id, seq)` pair intact.
+ *
+ * `Authenticated` sits *inside* the root boundary and *outside* the stream, so
+ * a throw from the sign-in wall is caught rather than blanking the page, and
+ * the wall replaces the console without the stream's provider unmounting. With
+ * `AGENT_AUTH` off it renders its children on the first pass and this tree is
+ * what it was. */
 export const App = () => (
   <ErrorBoundary where="root">
     <StreamProvider>
-      <Console />
+      <Authenticated>
+        <Console />
+      </Authenticated>
     </StreamProvider>
   </ErrorBoundary>
 )
+
+/** The sign-in wall, or nothing at all.
+ *
+ * Wraps the console rather than living inside it, so that with
+ * `AGENT_AUTH=off` -- the default, and the state every other branch of the
+ * user-system plan is built against -- this component renders its children on
+ * the first pass and the console below is byte-identical to the one that
+ * existed before identity did.
+ *
+ * **While the status query is in flight it renders the console, not a
+ * spinner.** That is a deliberate trade and it is the wrong way round for a
+ * security control, which is exactly why it is safe to make here: the wall is
+ * cosmetic. The *server* refuses unauthenticated `/api/*`, so a console shown
+ * for the 30ms before the status arrives can read nothing. Blocking instead
+ * would put a blank screen in front of every page load of every instance with
+ * auth off, to no benefit -- and a failure of that one query would take the
+ * whole console down.
+ *
+ * The consequence, stated because it is visible: with auth required and no
+ * session, there is a brief flash of empty panes before `LoginScreen`
+ * replaces them. Removing it needs the answer inlined into `index.html` by the
+ * server, which is a bigger change than this workstream owns.
+ */
+const Authenticated = ({ children }: { children: ReactNode }) => {
+  const container = useContainer()
+  const status = useAuthStatus()
+
+  if (status.data?.authRequired && !status.data.authenticated) {
+    return (
+      <LoginScreen
+        configured={status.data.configured}
+        // The current location, so the round trip through the identity
+        // provider ends where it started. The server discards anything that is
+        // not a same-origin path, so this cannot become an open redirect
+        // however the hash is manipulated.
+        loginHref={container.auth.loginHref(window.location.pathname + window.location.hash)}
+        signupHref={container.auth.loginHref('/', { signup: true })}
+      />
+    )
+  }
+  return <>{children}</>
+}
 
 /** The view, as the log names it.
  *
@@ -247,6 +319,18 @@ const Console = () => {
                   do and this changes only how it looks -- the bar reads from
                   consequential to cosmetic. */}
               <ThemeControl />
+              {/* Right of the theme, at the far edge: the bar reads from "this
+                  page" inward to "this console" and then to "this reader", and
+                  identity is the outermost of those -- it is true of every page
+                  and every session, and it is the last thing you look at.
+
+                  Absent entirely when nobody is signed in, rather than showing
+                  a "sign in" button: with auth required the `Authenticated`
+                  wrapper above has already replaced the whole console, and
+                  with auth off there is nobody to describe. A control that
+                  said "signed out" on every page of an instance that has no
+                  identity provider would be an invitation to a 503. */}
+              <AccountSlot />
               <DriftBadge />
               <ConnectionBadge state={stream.connection} />
             </div>

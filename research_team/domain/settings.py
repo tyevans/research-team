@@ -691,6 +691,39 @@ ENVIRONMENT_ONLY: dict[str, str] = {
         "The key secrets are encrypted with. Storing it beside the ciphertext "
         "would make the encryption decorative."
     ),
+    # The five remaining identity variables, excused for one reason rather than
+    # five. It is stronger than AGENT_WEB_HOST's "bound before the first
+    # request": resolution walks project, then user, then tenant, and **a user
+    # scope cannot exist before authentication has decided who the user is.** A
+    # setting whose value decides how a person is identified cannot be resolved
+    # through a scope that identifies them. That is AGENT_DB's circularity with
+    # a different store.
+    #
+    # AGENT_AUTH is *not* here, and the split is worth stating because it looks
+    # inconsistent. It is declared above, as an enum, by W-B: what it governs
+    # there is which `Authorizer` adapter is wired, which is a deployment fact
+    # resolved once at startup. What it governs *here* is `AuthGate`, which runs
+    # before routing. Both readings are of the same startup-time value, so one
+    # declaration serves both -- and `config.auth_enabled` is where the enum's
+    # protection against a silently-unauthenticated typo is enforced for the
+    # environment layer, which the declaration alone does not reach.
+    "AGENT_OIDC_ISSUER": "Identity configuration, for AGENT_AUTH's circularity.",
+    "AGENT_OIDC_CLIENT_ID": "Identity configuration, for AGENT_AUTH's circularity.",
+    "AGENT_OIDC_CLIENT_SECRET": (
+        "Identity configuration, for AGENT_AUTH's circularity -- and a secret "
+        "whose store would be unreadable without it, per AGENT_SETTINGS_KEY."
+    ),
+    "AGENT_AUTH_PUBLIC_URL": (
+        "The origin the OIDC redirect URI is built from. Deliberately not "
+        "derived from a request (see `config.auth_public_url`), so there is no "
+        "request-scoped layer it could come from."
+    ),
+    "AGENT_SESSION_SECRET": (
+        "The key session cookies are signed with. Verified on every request "
+        "*before* a scope is known, which is AGENT_AUTH's circularity, and a "
+        "signing key beside the data it authenticates, which is "
+        "AGENT_SETTINGS_KEY's."
+    ),
 }
 
 

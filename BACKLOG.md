@@ -5213,12 +5213,27 @@ would make `LearningArea` -- a pure derivation of the graph -- depend on
 authoring output, and would mean `project_areas` could no longer be driven with
 a literal in a test, which is what `test_projection_is_deterministic` rests on.
 
-### B161. An authoring phase that fails twice still restarts the area from phase 1
+### B178. An authoring phase that fails twice still restarts the area from phase 1
 
-*Filed as B160 and renumbered before merge: #329 took B160 for the two
-quarantined browser tests while this branch was in flight. Three branches
-picked 160 independently on 2026-08-29, which is [[B116]]'s subject and the
-reason `tests/test_backlog_ids.py` exists.*
+*Filed as B160, renumbered to B161, and renumbered again to B175. #329 took
+B160 for the two quarantined browser tests while this branch was in flight, and
+the move to 161 then collided with the renumbering pass in #328, which had
+taken 161 half an hour earlier for the 122px keying entry. Both are on `main`
+and `tests/test_backlog_ids.py` has been failing there since they merged --
+this renumber is what makes it pass again, done from an unrelated branch
+because that test blocks every branch, not only the two that caused it.*
+
+*The later entry moves, per the test's own instruction: an older commit is
+likelier to be citing the older id. Renumbered to 178, which is one past the
+highest id in the file rather than into a gap -- a gap is where the next
+collision goes, and 175 was itself taken on the first attempt at this
+renumber.*
+
+*Three branches picked 160 independently on 2026-08-29, and now two picked 161.
+That is [[B116]]'s subject and the reason `tests/test_backlog_ids.py` exists --
+and it is now evidence that the test catching a collision after the fact is not
+enough on its own, since two branches can each be green before merge and red
+together after.*
 
 `CourseAuthor._phase` retries a refused phase once, in the same session, which
 is where the resumption story stops. A phase whose second attempt also fails

@@ -1034,3 +1034,107 @@ def blob_sweep_grace_seconds() -> float:
     reports before it deletes rather than running on a timer.
     """
     return _float("blob_sweep_grace")
+
+
+DEFAULT_OIDC_ISSUER = "http://localhost:8081"
+"""Where `docker-compose.yml`'s Zitadel answers, on the host.
+
+The default names the local development IdP rather than being empty, unlike
+every other integration in this module, because it is only ever read when
+`auth_enabled()` is true -- and the only way that becomes true without an
+issuer being chosen deliberately is somebody running the compose stack.
+Pointing it anywhere else would mean two variables to set instead of one.
+"""
+
+DEFAULT_AUTH_PUBLIC_URL = "http://localhost:8000"
+
+
+def auth_enabled() -> bool:
+    """Whether this instance requires a signed-in user.
+
+    **The same flag as `authorization_enabled` above, deliberately.** They are
+    two readings of one variable: that one decides which `Authorizer` adapter
+    is wired, this one decides whether `AuthGate` refuses an anonymous request.
+    Splitting them into two variables was the alternative and is worse in both
+    directions -- authentication on with authorization off is a sign-in wall
+    that protects nothing, and authorization on with authentication off is a
+    permission check against a person who does not exist. Neither is a
+    configuration anybody wants and both would be reachable.
+
+    So this delegates rather than parsing again. The earlier draft of this
+    function had its own `os.getenv` and its own strict word list; that was
+    written before `AGENT_AUTH` was declared, and keeping it would have meant
+    two readers of one variable able to disagree -- which is the failure the
+    settings registry exists to end.
+
+    The typo protection the strict reader was for is not lost: `AGENT_AUTH` is
+    declared as an **enum** over `("off", "on")`, so `SettingType.ENUM` refuses
+    `onn` at `spec.parse` with `auth: 'onn' is not one of off, on`. That matters
+    more here than anywhere else in this module, because the two directions of a
+    typo are not symmetric -- a spelling that silently turns authentication
+    *off* is an open server nobody notices, where one that raises at startup is
+    an outage somebody fixes in a second.
+
+    Off by default, and the default is load-bearing rather than cautious: the
+    console, the REPL and ninety-odd routes were written with no notion of a
+    person, so `off` has to mean the app behaves exactly as it did before
+    identity existed. `tests/interfaces/test_auth_gate.py` holds *both* states,
+    because a flag with only its enabled path tested is a flag whose default
+    nobody checked.
+    """
+    return authorization_enabled()
+
+
+def oidc_issuer() -> str:
+    """The OIDC issuer to discover `.well-known/openid-configuration` under.
+
+    Trailing slashes are stripped because an ID token's `iss` claim is checked
+    for *exact* string equality: a configured `http://localhost:8081/` fails
+    validation against a token that says `http://localhost:8081`, and the
+    error names the claim rather than the variable that caused it.
+    """
+    return os.getenv("AGENT_OIDC_ISSUER", DEFAULT_OIDC_ISSUER).strip().rstrip("/")
+
+
+def oidc_client_id() -> str:
+    return os.getenv("AGENT_OIDC_CLIENT_ID", "").strip()
+
+
+def oidc_client_secret() -> str:
+    """The confidential client's secret. Empty means treat this as public.
+
+    Empty is permitted rather than refused: PKCE is what actually binds the
+    authorization code to the browser that started the flow, and a public
+    client with PKCE is a supported -- if weaker -- configuration. The compose
+    stack provisions a confidential client and sets this, so the empty case is
+    for somebody pointing the app at an IdP they do not administer.
+    """
+    return os.getenv("AGENT_OIDC_CLIENT_SECRET", "").strip()
+
+
+def auth_public_url() -> str:
+    """The origin a browser reaches *this app* on, for building redirect URIs.
+
+    Not derived from the incoming request, deliberately. `request.base_url`
+    reflects whatever `Host` header arrived, so an attacker-chosen host would
+    put an attacker-chosen `redirect_uri` into the authorization request. The
+    IdP's allow-list is the backstop, but building the URL from configuration
+    means the app never *asks* for a redirect it did not intend. The cost is
+    one more variable to set behind a reverse proxy, which is stated in
+    `docs/how-to/running-the-whole-stack.md`.
+    """
+    return os.getenv("AGENT_AUTH_PUBLIC_URL", DEFAULT_AUTH_PUBLIC_URL).strip().rstrip("/")
+
+
+def session_secret() -> str:
+    """The key session cookies are signed with. Empty means "mint a fresh one".
+
+    An empty default rather than a hard-coded constant: a shipped default
+    secret is a signing key every deployment shares, which is the same as no
+    signature at all -- anyone could mint a cookie naming any subject.
+    `SessionSigner.from_config` mints a random key when this is empty, which
+    costs every restart its sessions (a redeploy signs everybody out), and
+    that is the right trade for a value whose absence must never be silently
+    insecure.
+    """
+    return os.getenv("AGENT_SESSION_SECRET", "").strip()

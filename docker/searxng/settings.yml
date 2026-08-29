@@ -1,0 +1,23 @@
+# SearXNG, configured for one consumer: this project's `fetch` tool.
+#
+# The whole file exists for one line. SearXNG's default `formats` is `[html]`,
+# and `infrastructure/knowledge/searxng.py` asks for JSON -- against a default
+# instance every search answers 403 with an HTML body, which surfaces as a
+# JSON parse error naming nothing about formats.
+use_default_settings: true
+
+server:
+  # Overridden by `SEARXNG_SECRET` in `docker-compose.yml`. Present anyway
+  # because `use_default_settings` still requires the key to exist, and a
+  # missing one is a startup crash rather than a warning.
+  secret_key: "research-team-local-development-only"
+  limiter: false
+  image_proxy: false
+
+search:
+  # `json` beside `html`, not instead of it: the HTML interface is how a
+  # person checks whether the engine itself is working when a search returns
+  # nothing, which is a question that comes up.
+  formats:
+    - html
+    - json

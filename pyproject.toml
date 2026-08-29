@@ -137,6 +137,32 @@ dependencies = [
     # walking is on by default, so a `.zip` or `.docx` stored as a medium would
     # now be walked where it previously fell to `BinaryHandler`.
     "readeverything[documents,images,remote-transcription,vision]>=0.3.0,<0.4",
+    # The OIDC client half of `AGENT_AUTH`. Hand-rolling an authorization-code
+    # flow is not hard until the parts that are: PKCE verifier derivation,
+    # `iss`/`aud`/`nonce`/`exp` checking against a discovered JWKS, and key
+    # rollover. Every one of those is a security control whose failure mode is
+    # "works fine, accepts forged tokens", which is the shape of bug a test
+    # written by whoever wrote the code does not catch.
+    #
+    # Capped below 2.0 rather than left open, and 2.0 is a real event rather
+    # than a hypothetical one: 1.7's `authlib.jose` emits an
+    # `AuthlibDeprecationWarning` saying in as many words that it is
+    # "compatible before version 2.0.0", so the major is where that module
+    # goes. This project does not import it -- see `joserfc` below -- but the
+    # cap is what makes that avoidance a decision rather than luck.
+    #
+    # Floor at 1.6 because that is where `joserfc` became the JOSE backend; on
+    # 1.5 the two would be independent implementations resolved side by side.
+    "authlib>=1.6,<2",
+    # Named rather than left to resolve through authlib, for the reason stated
+    # above `pyyaml`: `infrastructure/identity/oidc.py` imports it directly,
+    # and an undeclared dependency works right up until the day the package
+    # that happened to pull it in stops.
+    #
+    # Imported directly *instead of* `authlib.jose`, which is the same code
+    # one deprecation shim away -- authlib's own warning points here. So this
+    # is not a second JOSE library beside authlib's; it is authlib's, named.
+    "joserfc>=1.0,<2",
 ]
 
 [project.optional-dependencies]

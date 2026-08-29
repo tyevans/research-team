@@ -1,22 +1,71 @@
-# The durable backends, for running this project against something that
-# survives a restart. Nothing here is required: the default install stores the
-# graph in memory and the vectors in memory, needs no container, and the test
-# suite never starts one.
+# The whole stack: the durable backends, a search engine, an identity
+# provider, and the app itself.
 #
-#     docker compose up -d
+#     docker compose up -d          # everything
+#     docker compose up -d postgres neo4j    # just the durable backends
 #
-# then export the variables in the table below (README, "Durable backends") and
-# start the app as usual. The app is deliberately *not* a service here -- it
-# runs on the host against a local model endpoint, and putting it in a network
-# namespace of its own would put `AGENT_BASE_URL`'s `localhost` on the wrong
-# side of it.
+# Both are documented in `docs/how-to/running-the-whole-stack.md`, along with
+# the Zitadel admin credentials and what they are and are not for.
 #
-# This is not `docker-compose.test.yml`. That file exists for `pytest -m
-# integration`, binds the same servers on *different* ports (7688, 55432), and
-# its Neo4j is wiped per test. Two files rather than one profile because the
-# ports have to differ: an integration run deletes its tenant's rows, and doing
-# that to the database somebody is actually using is a bad afternoon. Both can
-# be up at once.
+# ## What changed, and why the old reasoning is not simply deleted
+#
+# This file used to hold two services and a header saying the app was
+# *deliberately* not one of them:
+#
+# > The app is deliberately *not* a service here -- it runs on the host against
+# > a local model endpoint, and putting it in a network namespace of its own
+# > would put `AGENT_BASE_URL`'s `localhost` on the wrong side of it.
+#
+# The conclusion is overridden; the problem it names is real and is solved
+# rather than ignored. The app service below uses `network_mode: host`, so
+# there is no network namespace of its own: `AGENT_BASE_URL=http://localhost:8080/v1/`
+# reaches the model endpoint on the host exactly as a host run does, and
+# `192.168.1.14:8080` on the LAN reaches it too.
+#
+# `network_mode: host` rather than `extra_hosts: host.docker.internal:host-gateway`,
+# and the difference is not stylistic. A gateway alias fixes the *model*
+# endpoint and breaks the *identity* one. Zitadel builds its discovery
+# document and its `iss` claim from `ZITADEL_EXTERNALDOMAIN`, and that value
+# has to be what the **browser** uses -- `localhost:8081`. An ID token
+# therefore says `iss: http://localhost:8081`, and `OidcClient` compares that
+# for exact equality against the issuer it discovered (deliberately: a
+# discovery document whose issuer disagrees with where it was fetched from is
+# the classic issuer-confusion setup). So the app has to reach Zitadel at the
+# *same* URL the browser does, and only host networking gives it that without
+# either weakening the check or editing `/etc/hosts` on the developer's
+# machine.
+#
+# What host networking costs, stated because it is a genuine narrowing:
+#
+# - **Linux only.** `network_mode: host` is a no-op on Docker Desktop for
+#   macOS and Windows, where the container still runs inside a VM. On those
+#   platforms, run the backends from this file and the app on the host
+#   (`uv run web.py`) -- the arrangement this file's previous header
+#   described, which remains correct there.
+# - The app ignores `ports:` and binds 8000 on the host directly, so a host
+#   process already on 8000 is a startup failure rather than a port conflict
+#   compose can report.
+# - It reaches every other service through its *published* port on
+#   `localhost`, not through compose DNS. That is why `postgres` and `neo4j`
+#   publish theirs and why SearXNG publishes on 8888 rather than its usual
+#   8080 -- 8080 is where the model endpoint lives on this box, and a silent
+#   collision there would look like the model being down.
+#
+# ## The console is built into the image
+#
+# `Dockerfile` has a Node stage, and it is not optional: `create_app` mounts
+# nothing when `research_team/interfaces/web/static` is absent and `/` answers
+# 503 naming the command. An image without it would start, serve the entire
+# API, and have no UI.
+#
+# ## This is still not `docker-compose.test.yml`
+#
+# That file exists for `pytest -m integration`, binds the same servers on
+# *different* ports (7688, 55432), and its Neo4j is wiped per test. Two files
+# rather than one profile because the ports have to differ: an integration run
+# deletes its tenant's rows, and doing that to the database somebody is
+# actually using is a bad afternoon. Both can be up at once, and this change
+# does not touch that file.
 services:
   # `pgvector/pgvector` rather than `postgres` plus a build step: the extension
   # is a C extension and has to be compiled against the server, so the stock
@@ -53,10 +102,225 @@ services:
       timeout: 5s
       retries: 30
 
+  # SearXNG, which `AGENT_SEARXNG_URL` points at. Off by default in `config.py`
+  # -- an unset variable means this install has no search -- so running this
+  # service is not enough on its own; the variable is set on `app` below and
+  # named in the how-to for a host run.
+  #
+  # Published on 8888, not SearXNG's usual 8080. That port is where the local
+  # model endpoint lives on this machine, and the app reaching a search engine
+  # when it meant to reach a model would fail as a parse error two layers
+  # away from the cause.
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      # SearXNG refuses to answer JSON unless the format is enabled, and the
+      # only way in is the settings file -- so one is written here rather than
+      # mounted, because a mounted file is one more thing to keep in step with
+      # an image that regenerates its own secret key on first run.
+      SEARXNG_BASE_URL: http://localhost:8888/
+      # A fixed key rather than a generated one: this instance is local, holds
+      # nothing, and a key that changes on every `up` invalidates every
+      # in-flight request when the container restarts.
+      SEARXNG_SECRET: research-team-local-development-only
+    ports: ["8888:8080"]
+    volumes:
+      - ./docker/searxng:/etc/searxng:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Zitadel's own database, separate from `postgres` above. Deliberately not
+  # shared: Zitadel runs its own migrations against the database it is given
+  # and expects to own it, and pointing it at the database that holds the
+  # project's vectors would put a foreign migration history in the middle of
+  # this project's data. It costs one more container and buys the ability to
+  # `docker compose down -v` one without the other.
+  zitadel-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: zitadel
+      POSTGRES_PASSWORD: zitadel
+      POSTGRES_DB: zitadel
+    volumes:
+      - zitadeldata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zitadel -d zitadel"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Pinned to v3, not `latest`, and the major is the decision. From v4 onward
+  # Zitadel's login UI is a *separate container* that has to sit behind a
+  # reverse proxy alongside the API -- the upstream compose example for it is
+  # a Traefik deployment with two dozen routing labels. v3 still serves its
+  # own login pages from one container, which is the entire difference between
+  # a four-service stack and a seven-service one for a development IdP nobody
+  # is deploying. Revisit when v3 leaves support, not before.
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:v3.4.15
+    # `root`, which upstream's own compose example also does. The image runs
+    # as an unprivileged user and a fresh named volume is owned by root, so
+    # writing the PAT fails with `open /machine/pat.txt: permission denied`
+    # -- and it fails *inside a migration*, so the container exits 1 with
+    # `setup failed` and the permission error is four lines up in a wall of
+    # migration logs. Measured here on the first bring-up, not reasoned.
+    user: "0"
+    # `start-from-init` runs the schema setup and the first-instance steps and
+    # then serves, in one process. `init` + `setup` + `start` as three services
+    # is the production shape and is three more things to order here.
+    command: 'start-from-init --masterkey "MasterkeyNeedsToHave32Characters" --tlsMode disabled'
+    environment:
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-db
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+
+      # The domain and port **the browser uses**, which is what ends up in the
+      # discovery document and in every `iss` claim. Setting these to the
+      # compose service name would produce tokens the browser's own origin
+      # could never match -- see this file's header on why that forces the
+      # app onto host networking.
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: 8081
+      ZITADEL_EXTERNALSECURE: false
+      ZITADEL_TLS_ENABLED: false
+
+      ZITADEL_FIRSTINSTANCE_INSTANCENAME: research-team
+      ZITADEL_FIRSTINSTANCE_ORG_NAME: research-team
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: admin@research-team.localhost
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: Password1!
+      # No forced password change on first login. That prompt is correct for
+      # anything real and is pure friction for a stack whose credentials are
+      # printed in a how-to document -- and it appears *inside* the OIDC flow,
+      # so leaving it on means the first sign-in of every fresh stack lands on
+      # a screen the app's own tests never see.
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: false
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_EMAIL_ADDRESS: admin@research-team.localhost
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_EMAIL_VERIFIED: true
+
+      # The machine user whose PAT the bootstrap container uses. This is the
+      # only declarative way to get an API credential out of a fresh Zitadel;
+      # everything past an organisation has to be created through the API.
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: bootstrap
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: compose bootstrap
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2099-01-01T00:00:00Z"
+      ZITADEL_FIRSTINSTANCE_PATPATH: /machine/pat.txt
+    ports: ["8081:8080"]
+    volumes:
+      - machinekey:/machine
+    depends_on:
+      zitadel-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 20s
+
+  # Creates the project and the OIDC client, and writes the credentials where
+  # the app can read them. See `docker/bootstrap-zitadel.sh` for why this
+  # cannot be declarative: Zitadel mints the client id and secret, so neither
+  # can be written into this file.
+  #
+  # `alpine` plus two packages rather than an image with curl and jq already
+  # in it: the alternatives are either much larger or unpinnable, and this
+  # container runs for a couple of seconds once.
+  zitadel-bootstrap:
+    image: alpine:3.21
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "apk add --no-cache curl jq >/dev/null && exec /bootstrap-zitadel.sh"
+    environment:
+      ZITADEL_API: http://zitadel:8080
+      ZITADEL_HOST_HEADER: localhost:8081
+      APP_BASE_URL: http://localhost:8000
+    volumes:
+      - ./docker/bootstrap-zitadel.sh:/bootstrap-zitadel.sh:ro
+      - machinekey:/machine:ro
+      - bootstrap:/bootstrap
+    depends_on:
+      zitadel:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # See this file's header. The short version: the app has to reach both the
+    # model endpoint on the host and Zitadel at the *same* URL the browser
+    # uses, and only host networking gives it both.
+    network_mode: host
+    environment:
+      # Identity, on. This is the one place in the repository where
+      # `AGENT_AUTH` is anything but off, and it is on here because a stack
+      # that starts an IdP and then does not use it is a stack nobody would
+      # notice was broken.
+      AGENT_AUTH: "on"
+      AGENT_OIDC_ISSUER: http://localhost:8081
+      AGENT_AUTH_PUBLIC_URL: http://localhost:8000
+      # Fixed, so a restart does not sign everybody out. Local development
+      # only -- `config.session_secret`'s docstring says why a shared default
+      # secret in anything real is the same as no signature at all.
+      AGENT_SESSION_SECRET: local-development-session-secret
+      # `AGENT_OIDC_CLIENT_ID`/`_SECRET` are deliberately absent: they do not
+      # exist until `zitadel-bootstrap` has run, and the entrypoint sources
+      # them from the shared volume. Setting them here to a placeholder would
+      # stop the entrypoint reading the real ones -- see
+      # `docker/app-entrypoint.sh`, which only reads the file when the
+      # variables are unset.
+
+      AGENT_SEARXNG_URL: http://localhost:8888
+      # Every backend by its *published* port on the host, because host
+      # networking means compose DNS is not available here. These match the
+      # `ports:` above; changing one without the other is a connection refused
+      # naming the port and not the file.
+      AGENT_GRAPH_STORE: neo4j
+      AGENT_NEO4J_URI: bolt://localhost:7687
+      AGENT_NEO4J_USER: neo4j
+      AGENT_NEO4J_PASSWORD: research
+      AGENT_VECTOR_STORE: pgvector
+      AGENT_PGVECTOR_DSN: postgresql://research:research@localhost:5432/research_team
+      # Left pointing at the host's own model endpoint, unchanged from a host
+      # run -- which is the entire reason for `network_mode: host`. Point it
+      # at `http://192.168.1.14:8080/v1/` for the LAN endpoint instead.
+      AGENT_BASE_URL: http://localhost:8080/v1/
+    volumes:
+      - ./docker/app-entrypoint.sh:/usr/local/bin/app-entrypoint.sh:ro
+      - bootstrap:/bootstrap:ro
+      # The event log and the blobs, on a named volume for `pgdata`'s reason:
+      # `down` keeps them and `down -v` is the deliberate way to lose them.
+      - appdata:/root/.research-team
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      zitadel-bootstrap:
+        condition: service_completed_successfully
+
 # Named volumes, so `docker compose down` keeps the data and `down -v` is the
-# deliberate way to lose it. The whole point of these two services is that they
+# deliberate way to lose it. The whole point of these services is that they
 # outlive the process; anonymous volumes would make "restart the containers"
 # silently equivalent to the in-memory default they replace.
 volumes:
   pgdata:
   neo4jdata:
+  zitadeldata:
+  appdata:
+  #: Where Zitadel writes the bootstrap machine user's PAT, and the only way
+  #: an API credential leaves a fresh instance.
+  machinekey:
+  #: Where the bootstrap writes the OIDC client id and secret for the app's
+  #: entrypoint to read. Two volumes rather than one because the app has no
+  #: business being able to read an IAM_OWNER token.
+  bootstrap:
