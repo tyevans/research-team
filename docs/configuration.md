@@ -236,6 +236,7 @@ in `ENVIRONMENT_ONLY`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `AGENT_OIDC_ISSUER` | `http://localhost:8081` | The issuer to discover `.well-known/openid-configuration` under. Compared for **exact** string equality against every ID token's `iss` |
+| `AGENT_OIDC_SCOPES` | *(the default set)* | Space-separated scopes, **replacing** the default `openid profile email urn:zitadel:iam:user:resourceowner`. The last of those is Zitadel-specific and is what carries the organisation id into `tenant_id`; an issuer that answers `invalid_scope` rather than ignoring an unknown scope needs this set |
 | `AGENT_OIDC_CLIENT_ID` | *(unset)* | This app's OIDC client. Unset means no provider is configured: `/auth/login` answers 503 and the login screen says so rather than offering a button that fails |
 | `AGENT_OIDC_CLIENT_SECRET` | *(unset)* | The confidential client's secret. Empty is permitted and means the client is treated as public -- PKCE is what binds the code to the browser either way |
 | `AGENT_AUTH_PUBLIC_URL` | `http://localhost:8000` | The origin a browser reaches *this app* on, used to build the OIDC redirect URI. Not derived from the request's `Host` header, deliberately: that would let an attacker-chosen host into the authorization request |

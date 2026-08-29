@@ -111,6 +111,64 @@ Revisit when v3 leaves support, not before. The app itself is version-agnostic:
 it discovers everything from `.well-known/openid-configuration` and would work
 against v4 or against a Zitadel you do not run.
 
+## What the first sign-in actually looks like
+
+Walked end to end on 2026-08-29 against this stack, so this is what happens
+rather than what should:
+
+1. `http://localhost:8000` shows the sign-in screen.
+2. **Sign in** goes to Zitadel's login. Enter the login name, then the password.
+3. **Zitadel asks you to set up 2-factor authentication.** Press **Skip**. It
+   asks once per account and is not something this project configures; there is
+   no way to pre-skip it from `FirstInstance`.
+4. You land back on `http://localhost:8000` with the console and your name in
+   the top right.
+
+Signing out returns you to Zitadel's "Logged Out" page rather than to the app,
+because the app hands off to the issuer's `end_session_endpoint`. That is
+deliberate — without it, signing out and clicking sign-in again goes straight
+back in with no password prompt, because only the app's cookie was cleared.
+
+## Things that go wrong, and what they actually look like
+
+All four were hit while building this, and none of them says what it means.
+
+**Zitadel exits 1 with `setup failed`, and the container never becomes
+healthy.** The real error is several lines up in `docker compose logs zitadel`,
+buried in migration output: `open /machine/pat.txt: permission denied`. The
+image runs as an unprivileged user and a fresh named volume is owned by root,
+so it cannot write the bootstrap PAT — and it fails *inside a migration*, which
+is why the message is nowhere near the top. `user: "0"` on the service is the
+fix and is already there; this is what its removal would look like.
+
+**`zitadel-bootstrap` waits two minutes and gives up on `/machine/pat.txt`.**
+Zitadel writes that file only during first-instance setup, so a Zitadel that
+came up against a database it had already initialised never writes it. Start
+over (below) — this is local development data.
+
+**Sign-in fails with `invalid_client`.** The app is using a client id or secret
+that no longer matches. Run `docker compose up zitadel-bootstrap` to rewrite
+them, then `docker compose restart app`.
+
+**A 404 from the management API while editing the bootstrap script.** Two
+different mistakes produce the identical `{"code":5,"message":"Not Found"}`:
+the regenerate-secret path is `_generate_client_secret`, *not*
+`_regenerate_clientsecret` as the `RegenerateOIDCClientSecret` RPC name
+suggests; and it takes the **app id**, not the client id. Zitadel returns both
+and they are different numbers of the same shape. The path came from
+`proto/zitadel/management.proto` at the pinned tag rather than from guessing.
+
+**Sign-in succeeds and the account menu shows a long number.** That is a thin
+profile: the ID token carried `sub` and nothing else. `OidcClient` falls back to
+the userinfo endpoint for display claims, so this should not happen against
+this stack — if it does, the userinfo request is failing, and the app
+deliberately treats that as cosmetic rather than as a failed sign-in.
+
+**`tenant_id` is empty.** The `urn:zitadel:iam:user:resourceowner` scope is what
+carries the organisation id, and it is in the default scope set. If
+`AGENT_OIDC_SCOPES` has been set, it *replaces* that default — add the scope
+back or W-B's tenancy work has nothing to key on.
+
 ## What must not survive into anything real
 
 Four things, each of which is correct here and dangerous elsewhere:

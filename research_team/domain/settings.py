@@ -708,6 +708,7 @@ ENVIRONMENT_ONLY: dict[str, str] = {
     # protection against a silently-unauthenticated typo is enforced for the
     # environment layer, which the declaration alone does not reach.
     "AGENT_OIDC_ISSUER": "Identity configuration, for AGENT_AUTH's circularity.",
+    "AGENT_OIDC_SCOPES": "Identity configuration, for AGENT_AUTH's circularity.",
     "AGENT_OIDC_CLIENT_ID": "Identity configuration, for AGENT_AUTH's circularity.",
     "AGENT_OIDC_CLIENT_SECRET": (
         "Identity configuration, for AGENT_AUTH's circularity -- and a secret "

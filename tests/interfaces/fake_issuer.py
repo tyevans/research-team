@@ -58,8 +58,18 @@ class FakeIssuer:
                 Route("/jwks", self._jwks),
                 Route("/token", self._token, methods=["POST"]),
                 Route("/authorize", self._authorize),
+                Route("/userinfo", self._userinfo),
             ]
         )
+        self.userinfo: dict | None = None
+        """What `/userinfo` answers, or `None` for a 404.
+
+        `None` by default so the endpoint has to be switched on per test: the
+        whole point of the fallback is that it fires only when the ID token is
+        short of claims, and a fake that always answered would hide a build
+        that called it every time.
+        """
+        self.userinfo_calls = 0
 
     def sign_id_token(
         self,
@@ -98,6 +108,7 @@ class FakeIssuer:
                 "token_endpoint": f"{self.issuer}/token",
                 "jwks_uri": f"{self.issuer}/jwks",
                 "end_session_endpoint": f"{self.issuer}/logout",
+                "userinfo_endpoint": f"{self.issuer}/userinfo",
             }
         )
 
@@ -118,6 +129,12 @@ class FakeIssuer:
                 "id_token": self.next_id_token,
             }
         )
+
+    async def _userinfo(self, request):
+        self.userinfo_calls += 1
+        if self.userinfo is None:
+            return JSONResponse({"error": "not configured"}, status_code=404)
+        return JSONResponse(self.userinfo)
 
     async def _authorize(self, request):
         # Never reached: the tests drive `/auth/callback` directly rather than

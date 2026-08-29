@@ -100,6 +100,10 @@ def main() -> None:
                 issuer=config.oidc_issuer(),
                 client_id=config.oidc_client_id(),
                 client_secret=config.oidc_client_secret(),
+                # Only when set. An empty `AGENT_OIDC_SCOPES` must leave the
+                # default in place rather than asking for no scopes at all,
+                # which an issuer answers by refusing the request.
+                **({"scopes": config.oidc_scopes()} if config.oidc_scopes() else {}),
             )
             if config.oidc_client_id()
             else None

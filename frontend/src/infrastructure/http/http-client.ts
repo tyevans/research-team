@@ -25,11 +25,15 @@ export class HttpClient {
      *
      * **Why once.** A console page issues many requests in parallel, and a
      * cookie that expired between two of them fails all of them. Without a
-     * latch every one of those would call the handler, which in production
-     * assigns `location` -- so the browser is told to navigate five or ten
-     * times in the same tick. Chromium tolerates that and Firefox has
-     * historically not; either way it is a navigation storm produced by one
-     * expiry.
+     * debounce every one of those would call the handler five or ten times in
+     * the same tick, for one expiry.
+     *
+     * **A debounce and not a permanent latch, which is what this was.** A
+     * latch fires once for the lifetime of the client, which was fine while
+     * the handler reloaded the page -- the page was being replaced, so there
+     * was no "later" to care about. The handler no longer navigates (see
+     * `main.tsx`), so the tab outlives the first report and a second expiry
+     * an hour later has to be able to fire again.
      *
      * The 401 is *still thrown* after the handler runs. Swallowing it would
      * leave every caller awaiting a promise that never settles, and a page
@@ -39,9 +43,14 @@ export class HttpClient {
     private readonly onUnauthorized?: () => void,
   ) {}
 
-  /** The latch for `onUnauthorized`. An instance field rather than a module
+  /** When `onUnauthorized` last fired. An instance field rather than a module
    *  one, so two clients (a test's and the app's) cannot silence each other. */
-  private reportedUnauthorized = false
+  private lastUnauthorizedReport = 0
+
+  /** Long enough to cover one page's burst of parallel requests, short enough
+   *  that a genuine second expiry is not swallowed. Five seconds is well past
+   *  any single render's fan-out and well under any session's lifetime. */
+  private static readonly UNAUTHORIZED_DEBOUNCE_MS = 5_000
 
   // Generic over the *schema* rather than over a result type: several of these
   // shapes carry transforms, so their input and output types differ, and
@@ -133,9 +142,12 @@ export class HttpClient {
     const parsed = parseJson(raw)
 
     if (!response.ok) {
-      if (response.status === 401 && !this.reportedUnauthorized) {
-        this.reportedUnauthorized = true
-        this.onUnauthorized?.()
+      if (response.status === 401) {
+        const now = Date.now()
+        if (now - this.lastUnauthorizedReport > HttpClient.UNAUTHORIZED_DEBOUNCE_MS) {
+          this.lastUnauthorizedReport = now
+          this.onUnauthorized?.()
+        }
       }
       throw new ApiError(detailOf(parsed, raw, response), response.status)
     }

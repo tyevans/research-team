@@ -7,6 +7,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import { createContainer } from '@app/container.ts'
 import { notify } from '@application/notifications/toast-store.ts'
 import { errorMessage } from '@application/ports/errors.ts'
+import { queryKeys } from '@application/queries/keys.ts'
 
 import './styles/index.css'
 
@@ -14,27 +15,6 @@ import './styles/index.css'
  *
  * Everything above this file takes its dependencies as arguments; this is where
  * the arguments are chosen. */
-/** Reload, rather than navigate to a login route.
- *
- * There is no client-side login route: the sign-in decision is made from
- * `/api/auth/status` on the first render, so a full reload re-asks that
- * question and renders `LoginScreen` if the answer has changed. A client-side
- * redirect would need a second copy of that logic, and the two would disagree
- * the first time either moved.
- *
- * This fires when a session expires *while a tab is open*, which is the only
- * case the first render cannot cover. `HttpClient` latches it, so a page whose
- * ten in-flight requests all 401 together reloads once.
- *
- * `location.reload()` and not `location.assign('/')`: reloading keeps the
- * hash, so a person is returned to the page they were reading rather than to
- * the landing page -- and `/auth/login` carries `next` from there, so the
- * round trip through the identity provider ends where it started.
- */
-const container = createContainer('', () => {
-  window.location.reload()
-})
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -46,6 +26,48 @@ const queryClient = new QueryClient({
       retry: 1,
     },
   },
+})
+
+/** Re-ask "is anybody signed in", in place. Do not navigate.
+ *
+ * **This reloaded the page, and that shipped an infinite reload loop.**
+ * Measured on 2026-08-29 by pointing a browser at a live Zitadel with
+ * `AGENT_AUTH=on`: **816 page loads and 6295 401s**, and the login screen
+ * never rendered once.
+ *
+ * The mechanism is worth writing down, because every gate was green through
+ * it. `Authenticated` deliberately renders the console while the status query
+ * is in flight — a blank screen on every load of every instance with auth off
+ * is not worth paying — so a signed-out first render fires the console's
+ * ordinary requests (`/api/sessions`, `/api/tree`, `/api/stream`) and every
+ * one of them 401s *before* `/api/auth/status` has answered. The reload then
+ * threw away the in-flight status query and started the same race again,
+ * forever.
+ *
+ * The comment that stood here reasoned that a reload "re-asks that question
+ * and renders `LoginScreen` if the answer has changed". The answer never
+ * changes; it never arrives. That is the same loop `auth.py` refuses for the
+ * callback — "a misconfiguration becomes an infinite loop between two
+ * endpoints that each think the other is at fault" — rebuilt one layer up, by
+ * the same person, in the same change.
+ *
+ * Invalidating has no navigation in it, so there is no race to lose: the
+ * status query refetches, `Authenticated` re-renders, and the wall appears. It
+ * is also strictly better for the case the reload was written for — a session
+ * expiring while a tab is open now keeps its route and its scroll rather than
+ * reloading underneath the reader.
+ *
+ * `currentUser` goes with it because the account menu is the other thing a 401
+ * makes stale: leaving it cached would show a signed-in person's name in the
+ * chrome of a console that has just put up a sign-in wall.
+ *
+ * Nothing here is a *security* control — the server is what refuses the
+ * request. This only decides what the reader is shown afterwards, which is why
+ * it is safe for it to be best-effort and debounced.
+ */
+const container = createContainer('', () => {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.authStatus() })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser() })
 })
 
 // A failure nobody handled is still worth telling somebody about; silently

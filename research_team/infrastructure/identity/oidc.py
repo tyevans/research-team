@@ -34,12 +34,27 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from joserfc import jwt
 from joserfc.jwk import KeySet
 
-SCOPES = "openid profile email"
+SCOPES = "openid profile email urn:zitadel:iam:user:resourceowner"
 """What the app asks for, and the reason it is this short.
 
 `openid` is mandatory. `profile` carries `name`/`preferred_username`/`picture`,
 which is the whole of the account menu. `email` carries the address, which is
 how a person recognises their own account when they have two.
+
+`urn:zitadel:iam:user:resourceowner` is the one non-standard entry, and it is
+here because **`tenant_id` was empty without it** -- measured by signing in to
+a live Zitadel on 2026-08-29, where neither the ID token nor userinfo carried
+`urn:zitadel:iam:user:resourceowner:id` until this scope was asked for. That
+field is the whole seam W-B's tenancy work keys on, so shipping without it
+would have handed W-B a column that is always the empty string.
+
+It is issuer-specific, which is a real cost rather than a tidy one. The spec
+lets an authorization server ignore a scope it does not recognise, and most do;
+an issuer that answers `invalid_scope` instead would refuse every sign-in.
+`AGENT_OIDC_SCOPES` is the escape -- it replaces this string wholesale, so
+pointing the app at Okta or Auth0 is one environment variable rather than a
+patch. The default is set for the identity provider this repository actually
+ships a compose file for.
 
 Not asked for: `offline_access`. A refresh token would let this app act as the
 person while they are away from the browser, and nothing here has any use for
@@ -90,6 +105,14 @@ class DiscoveryDocument:
     consequence is worth being explicit about, because it is surprising --
     signing out of the app then clicking sign-in again goes straight back in
     without a password prompt, since the IdP's own session is untouched.
+    """
+
+    userinfo_endpoint: str | None = None
+    """Where to ask for the claims the ID token did not carry.
+
+    Optional because the spec makes it optional, and unread on any issuer whose
+    ID token is already complete -- see `_with_userinfo` for when it is called
+    and why what comes back is display-only.
     """
 
 
@@ -155,10 +178,12 @@ class OidcClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         discovery_ttl: float = 300.0,
+        scopes: str = SCOPES,
     ) -> None:
         self._issuer = issuer.rstrip("/")
         self._client_id = client_id
         self._client_secret = client_secret
+        self._scopes = scopes
         # A *transport*, not a client, and the difference is what makes the
         # tests real. The token exchange goes through authlib's own
         # `AsyncOAuth2Client`, which is an `httpx.AsyncClient` subclass it
@@ -209,6 +234,11 @@ class OidcClient:
                     if document.get("end_session_endpoint")
                     else None
                 ),
+                userinfo_endpoint=(
+                    str(document["userinfo_endpoint"])
+                    if document.get("userinfo_endpoint")
+                    else None
+                ),
             )
         except KeyError as error:
             raise OidcError(f"{url} is missing {error}, which OIDC requires") from error
@@ -246,7 +276,7 @@ class OidcClient:
             "response_type": "code",
             "client_id": self._client_id,
             "redirect_uri": redirect_uri,
-            "scope": SCOPES,
+            "scope": self._scopes,
             "state": state,
             "nonce": nonce,
             "code_challenge": challenge,
@@ -302,7 +332,67 @@ class OidcClient:
             # who authenticated.
             raise OidcError("the token response carried no id_token")
 
-        return await self._verified_claims(id_token, discovery=discovery, nonce=nonce)
+        claims = await self._verified_claims(id_token, discovery=discovery, nonce=nonce)
+        return await self._with_userinfo(claims, discovery, token.get("access_token"))
+
+    async def _with_userinfo(
+        self, claims: Claims, discovery: DiscoveryDocument, access_token: str | None
+    ) -> Claims:
+        """Fill in display claims the ID token did not carry.
+
+        **This exists because it shipped without it, and the account menu drew
+        a snowflake id.** Measured on 2026-08-29 by signing in to a live
+        Zitadel: the flow completed, the cookie was set, the `users` row was
+        written -- and `email`, `display_name` and `tenant_id` were all empty,
+        because Zitadel does not assert profile claims into an ID token unless
+        the application turns on `idTokenUserinfoAssertion`. That is not a
+        Zitadel quirk to work around. OIDC explicitly permits an ID token to
+        carry `sub` and little else and to leave the rest to this endpoint, so
+        any issuer may do it, and the fix belongs here rather than in the
+        bootstrap that configures one particular provider.
+
+        Called only when the token came up short, so a well-configured issuer
+        pays nothing. One request per *sign-in*, never per request -- the
+        mirror is what every page load reads afterwards.
+
+        **Display-only, and the subject is re-checked.** Nothing here can
+        change who the person is: `subject` comes from the verified ID token,
+        and a userinfo response naming a different `sub` is discarded whole
+        rather than merged. Without that check this would be a second,
+        *unverified* channel into the identity the rest of this module exists
+        to establish -- userinfo is a bearer-token response, not a signed
+        assertion, and the two must not be treated alike.
+
+        A failure here is not a failed sign-in. An issuer that refuses userinfo
+        leaves a person signed in under a thin profile, which the account menu
+        already renders -- `AccountMenu`'s `NothingButASubject` story is
+        exactly that case. Raising would turn a cosmetic gap into a login
+        outage.
+        """
+        if claims.email or claims.display_name:
+            return claims
+        if not access_token or not discovery.userinfo_endpoint:
+            return claims
+        try:
+            response = await self._http.get(
+                discovery.userinfo_endpoint,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            response.raise_for_status()
+            info = response.json()
+        except Exception:  # noqa: BLE001 - cosmetic, not fatal; see the docstring
+            return claims
+        if str(info.get("sub", "")) != claims.subject:
+            return claims
+        return Claims(
+            subject=claims.subject,
+            tenant_id=(
+                str(info.get("urn:zitadel:iam:user:resourceowner:id", "")) or claims.tenant_id
+            ),
+            email=str(info.get("email", "")) or claims.email,
+            display_name=_display_name(info) or claims.display_name,
+            avatar_url=str(info.get("picture", "")) or claims.avatar_url,
+        )
 
     async def _verified_claims(
         self, id_token: str, *, discovery: DiscoveryDocument, nonce: str
