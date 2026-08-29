@@ -275,6 +275,67 @@ default in-memory configuration. The fix is a `finally` or a small ordered
 teardown that runs every step regardless — worth doing the next time that
 function is touched, not on its own.
 
+### B179. A resource added to `close()` and not to `_PARTIAL_BUILD_RESOURCES` is a silent leak, and this rebase fell into it
+
+`research_team/composition.py`. B10 and B100 left two teardown lists that must
+agree and have nothing tying them together: `Application.close`'s
+`_close_every_step(...)` steps, which are bound methods off an instance, and
+`_PARTIAL_BUILD_RESOURCES`, which is a tuple of *string* local names read out of
+the raising frame with `frame.f_locals.get`.
+
+**One direction is covered.** A rename inside `_build_application` stops a name
+matching, `f_locals.get` returns `None`, and the resource is quietly dropped --
+so `test_every_partial_build_resource_is_a_local_of_the_build` parses the
+function and asserts every name in the tuple is assigned in it. That works:
+proved red on 2026-08-29 by renaming one entry to `("tenant_runner", "stop")`,
+rather than trusted from the comment above the tuple.
+
+**The other direction is not, and the tuple's own comment says so:** "a resource
+added to `Application.close` and not here is still a silent omission, because
+`close()` reads attributes off an instance and this reads names out of a frame,
+with no compiler between them."
+
+**That is not theoretical. It happened on 2026-08-29**, rebasing the W-B B1
+branch (PR #336) onto #328. B1 adds a `TenantRunner` and stops it in `close()`.
+#328 had rewritten `close()` into `_close_every_step`, so the `close()` half
+**conflicted** and was resolved; `_PARTIAL_BUILD_RESOURCES` did not conflict,
+because #328 wrote that list and B1 had never touched it. A partial build
+raising after the runner was constructed would have dropped it from the unwind.
+Caught by reading the diff. No test failed, and the symptom would have been a
+hung interpreter at exit -- B100's original symptom, restored by omission.
+
+It was harmless *this* time, and only by accident: a `TenantRunner` holds nothing
+until `start()`, so `stop()` on a partial build is a no-op. That is a fact about
+this week, not about the design.
+
+**The obvious fix is comparing the two lists mechanically, and it is feasible --
+measured, not estimated.** The link between them exists in the `Application(...)`
+call: its keywords map an attribute name to the local that filled it. So an AST
+pass over `_build_application` and `Application.close` derives
+`self.<attr>.<method>` -> `(<local>, <method>)` with no new bookkeeping.
+Prototyped on 2026-08-29 against the current file: 65 keywords mapped, 24
+`close()` steps read, and **exactly two** steps do not resolve to a declared
+entry.
+
+Both two are the documented deliberate asymmetries, which is the cost:
+
+- `("media http client", resolved_media_http_client.aclose)` -- excluded from the
+  tuple on purpose. `close()` owns the client because an `Application` exists; a
+  partial build has none, and the client may still be the caller's.
+- `("attached project", self.detach_project)` -- a method on `Application`, not a
+  resource with a local at all.
+
+So the fix is a real test plus a **two-entry exclusion set**, which is the same
+species of hand-maintained list this is trying to replace -- except two entries
+with written reasons rather than twenty-two names with none. Per CLAUDE.md's
+`PUBLIC_PATHS` rule, that set then needs its own staleness test: an exemption
+that outlives its reason exempts whatever is written next.
+
+Worth doing the next time `composition.py` is opened for something else. Two
+lists that must agree, one merge-conflicting and the other not, is a trap that
+fires precisely during a rebase -- which is when the person holding it has the
+least attention to spare for a list they did not edit.
+
 ### B11. The web UI's "last join wins" swaps tools under an open tab
 
 `research_team/interfaces/web/app.py`, the join route. The web app serves every
@@ -2198,9 +2259,11 @@ deleting one sidecar line erases a person from the graph without touching an
 event — and it is the only item on this list that becomes impossible the moment
 the first real transcript is ingested.
 
-### B161. The 122px hole cannot be reproduced, so nothing holds the keying
+### B180. The 122px hole cannot be reproduced, so nothing holds the keying
 
-_Renumbered from B54 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B54` still has two possible answers and always will -- what changed is that this file no longer adds to them._
+_Renumbered from B54 on 2026-08-29 (B116), then from B161 to B180 later the same day. The second move was not a mistake in the first: #325 and #328 each renumbered an entry into B161, in different halves of this file, so neither merge conflicted and `main` merged red -- `test_no_two_backlog_entries_share_an_id` fails on `129f64da`. This entry moves rather than the authoring one because #325 landed first and #328's sweep is the change that should have seen it. Neither id had an inbound reference; the `B161` hits under `docs/superpowers/` are redstring's B161, a different repository's backlog._
+
+_A `git log` search for `B54` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 **Both files this entry names are deleted, and the trigger with them (W-D,
 2026-08-29).** The landing page is a board now: `ProjectRows.tsx`,
