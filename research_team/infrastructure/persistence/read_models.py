@@ -20,7 +20,7 @@ back, and this is that something.
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid5
 
 import aiosqlite
@@ -1587,12 +1587,41 @@ class EntityDefinitionStore:
         entities, not drift the way a missing row is for `CorpusProjection`'s
         drop handler. Raising here would put routine graph activity in the
         DLQ for a store that was never asked to remember anything.
+
+        **One `UPDATE`, not a read-modify-write** (B74). The previous shape
+        read the row through `get`, set `stale` on the loaded object and saved
+        the whole thing back, which is a lost update between two writers: a
+        generator finishing a definition and calling `put` in the window
+        between this read and this write has its fresh text overwritten by the
+        stale copy this method is holding, and the row ends up carrying old
+        text marked stale rather than new text. That race is not theoretical
+        for this table -- B79 records the browser-edit-versus-agent-write
+        version of it on the same read model.
+
+        Written against the connection rather than through the repository
+        because the repository has no partial update: `save` is an upsert of
+        every column, which is the read-modify-write. The three things `save`
+        would have done are done here by hand -- `updated_at`, `version + 1`,
+        and skipping soft-deleted rows -- so a row that goes through this path
+        is indistinguishable from one that went through `save`. If that
+        bookkeeping drifts, the tell is a `version` that stops incrementing.
+
+        `project_id` is in the `WHERE` as well as in the id, for `get`'s
+        reason: the id already encodes the pair, so the extra clause can only
+        ever match, and it means a bug that computed the id under the wrong
+        project stales nothing instead of staling a stranger's row.
         """
-        row = await self.get(project_id, entity_id)
-        if row is None:
-            return
-        row.stale = True
-        await self._rows.save(row)
+        await self._connection.execute(
+            f"UPDATE {EntityDefinitionRow.table_name()} "  # nosec B608 - name from the model
+            "SET stale = 1, updated_at = ?, version = version + 1 "
+            "WHERE id = ? AND project_id = ? AND deleted_at IS NULL",
+            (
+                datetime.now(UTC).isoformat(),
+                str(EntityDefinitionRow.row_id(project_id, entity_id)),
+                str(project_id),
+            ),
+        )
+        await self._connection.commit()
 
     async def delete(self, project_id: UUID, entity_id: UUID) -> None:
         """Discard a cached definition outright -- for an entity that no
@@ -2161,10 +2190,24 @@ class OntologyStore:
         a projection reacting to every extraction in the log, and most
         documents have never been examined; raising here would put routine
         extraction in the DLQ.
+
+        One `UPDATE` over the source's classes rather than a load-mutate-save
+        per row, for `EntityDefinitionStore.mark_stale`'s reasons and with the
+        same hand-written `updated_at`/`version` bookkeeping -- read that
+        docstring for why the repository cannot do this. The loop here was
+        strictly worse than the single-row case it mirrors: it fetched *every*
+        class in the project to filter by source in Python, then committed once
+        per matching row, so a re-extraction of one document in a project with
+        two hundred classes was two hundred rows read and one transaction per
+        class staled.
         """
-        for row in await self._classes_for_source(project_id, source_id):
-            row.stale = True
-            await self._classes.save(row)
+        await self._connection.execute(
+            f"UPDATE {OntologyClassRow.table_name()} "  # nosec B608 - name from the model
+            "SET stale = 1, updated_at = ?, version = version + 1 "
+            "WHERE project_id = ? AND source_id = ? AND deleted_at IS NULL",
+            (datetime.now(UTC).isoformat(), str(project_id), source_id),
+        )
+        await self._connection.commit()
 
     async def close(self) -> None:
         await self._connection.close()

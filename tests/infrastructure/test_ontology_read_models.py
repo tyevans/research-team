@@ -171,6 +171,32 @@ async def test_staling_a_source_leaves_its_classes_readable(ontology, project_id
     assert row.name == "Difficulty"
 
 
+async def test_staling_one_source_leaves_another_source_alone(ontology, project_id):
+    """B74 replaced the load-mutate-save loop with one `UPDATE`, and the loop
+    filtered by source in Python where the statement filters in SQL. That moves
+    the scoping into a `WHERE` clause, so this is the assertion that clause has
+    to earn: a re-extraction of one document must not stale every class in the
+    project.
+
+    Red against an `UPDATE` scoped to `project_id` alone, which is the mistake
+    the rewrite makes if the source is dropped from the clause -- and nothing
+    else in this file would notice, because every other staling test has one
+    source in the project.
+    """
+    await ontology.replace_for_source(
+        project_id, "songs", [_difficulty()], model="m", generated_at="t"
+    )
+    await ontology.replace_for_source(
+        project_id, "poems", [_difficulty()], model="m", generated_at="t"
+    )
+
+    await ontology.mark_stale_for_source(project_id, "songs")
+
+    rows = await ontology.classes_for(project_id)
+    stale_by_source = {row.source_id: row.stale for row in rows}
+    assert stale_by_source == {"songs": True, "poems": False}
+
+
 async def test_staling_a_source_nobody_has_grouped_is_not_an_error(ontology, project_id):
     """Called from a projection reacting to every extraction in the log, and
     most documents have no classes. Raising here would put routine extraction
