@@ -577,7 +577,29 @@ meant to be the single source of) or timing out with a message that inspects
 the subscriber — both are real work for a diagnostic, not a defect. Recorded so
 whoever meets the timeout does not spend an afternoon looking at the read model.
 
-### B112. `apply_schema`'s widening path has never run against the two dialogue tables
+### B112. `apply_schema`'s widening path has never run against the two dialogue tables -- CLOSED 2026-08-29
+
+**The premise is gone, not merely satisfied.** This entry rests on both
+dialogue tables being *created whole* on a database that has never seen them,
+so `apply_schema`'s reconcile branch could never be entered. Measured on
+2026-08-29 against a `local_copy` of the real database with its checkpoints
+rebound rather than cleared (CLAUDE.md says why clearing defeats the test):
+`socratic_dialogues` holds **7 rows** and `socratic_turns` holds **5**. They
+are populated. The drop-and-recreate branch is no longer available to either,
+and `apply_schema` answers OK against that copy today.
+
+The check this entry said the next column-adder owes is now standing, in
+`tests/infrastructure/test_summary_store.py`: every declared field of both
+rows, one at a time, against a *populated* table.
+`test_the_dialogue_widening_registry_covers_every_declared_field` derives its
+coverage from `model_fields`, so a field added to or removed from either row
+fails at the name rather than silently going unmeasured -- read the assertion,
+not this paragraph.
+
+Two findings came out of that measurement and are filed separately as B175 and
+B176. Both are constraints on the dialogue model that were written down
+nowhere.
+
 
 `SocraticDialogueRow` and `SocraticTurnRow`
 (`research_team/infrastructure/persistence/read_models.py:3388`, `:3440`).
@@ -595,6 +617,51 @@ test by turning a resume into a rebuild. This is the highest-consequence item
 carried out of Plan 1: the failure mode is the one `CLAUDE.md` opens the
 read-model section with — every test green on a fresh database, every query 500
 on a real one.
+
+### B175. `socratic_turns` has no addable column, so every future field on it is a rebuild
+
+Measured 2026-08-29, closing out B112. All seven declared fields of
+`SocraticTurnRow` are required-with-no-default, so
+`generate_additive_migration` refuses every one of them -- and the table is now
+populated (5 rows in the real database), which takes the drop-and-recreate
+branch off the table too. **The next column added to `socratic_turns` is a
+`/rebuild`, not a deploy.**
+
+Not a defect, and deliberately not filed as one: a turn genuinely has no
+optional parts, and giving a field a default to make the migration easier
+would be inventing a value to write into rows that never had one. What is
+wrong is that the constraint was discoverable only by running the migration
+generator, which nobody does before adding a field.
+
+The standing measurement is
+`test_a_dialogue_column_widens_or_refuses_as_measured` in
+`tests/infrastructure/test_summary_store.py`, parametrised per field. Whoever
+extends the dialogue model meets it there.
+
+### B176. `Field(default_factory=list)` reads as required-with-no-default, so JSON list columns refuse widening
+
+Measured 2026-08-29, closing out B112. `observations` and `citations` both
+declare a default and both **refuse** to widen:
+`generate_additive_migration` sees `default_factory` as
+required-with-no-default, so they behave like required scalars rather than
+like `pending_prompt`, which widens.
+
+The hazard is that nothing at the declaration site suggests it. A field
+written `Field(default_factory=list)` reads as safe to add to a live table and
+is not, and this is precisely the shape CLAUDE.md's read-model section exists
+for: every test green on a fresh database, and the deploy that adds the field
+is a rebuild nobody planned for.
+
+Left rather than worked around. Rewriting the declarations to `default="[]"`
+would make the migration pass and is the wrong fix -- a JSON column whose
+default is a string is a second way to spell empty, and the store would then
+have two. The right fix, if there is one, is upstream in
+`generate_additive_migration`, which could ask the model for a rendered
+default rather than for the presence of a static one.
+
+`test_a_dialogue_column_widens_or_refuses_as_measured` pins the current
+behaviour per field, so an upstream bump that changes it fails here rather
+than in production.
 
 ### B113. A composed application built with `dialogues=None` hangs rather than failing
 
