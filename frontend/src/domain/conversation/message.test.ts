@@ -15,6 +15,8 @@ const message = (over: Partial<Message>): Message => ({
   role: 'assistant',
   content: '',
   toolCalls: [],
+  name: null,
+  artifact: null,
   isError: false,
   ...over,
 })

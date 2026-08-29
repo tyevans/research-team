@@ -43,6 +43,8 @@ const message = (role: MessageRole, content: string): Message => ({
   role,
   content,
   toolCalls: [],
+  name: null,
+  artifact: null,
   isError: false,
 })
 

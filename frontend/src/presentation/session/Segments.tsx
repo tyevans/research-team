@@ -16,6 +16,7 @@ import {
 import { Chip, Disclosure } from '../common/primitives.tsx'
 import { Markdown } from '../common/content.tsx'
 import { plural } from '../formatting/format.ts'
+import { ToolResult } from './shapes/ToolResult.tsx'
 
 export const Segments = ({
   segments,
@@ -166,10 +167,20 @@ const MessageBubble = ({
           <div className="msg-body">
             <Markdown source={text} />
           </div>
-        ) : (
-          <div className={clsx('msg-body', message.role === 'tool' && 'mono')}>
-            {message.role === 'tool' ? truncate(text, 4000) : text}
+        ) : message.role === 'tool' ? (
+          // A tool result is drawn from its artifact where it has one, and from
+          // this exact markup where it does not — which is every message
+          // written before artifacts existed, so the fallback is the common
+          // case on real history rather than an error path.
+          <div className="stream">
+            <ToolResult
+              message={message}
+              phase="settled"
+              fallback={<div className="msg-body mono">{truncate(text, 4000)}</div>}
+            />
           </div>
+        ) : (
+          <div className="msg-body">{text}</div>
         )
       ) : calls.length === 0 ? (
         <div className="msg-body mono">(no content)</div>

@@ -1,5 +1,5 @@
 import type { MessageId, SessionId } from '../shared/identifier.ts'
-import { callSummary, contentText, truncate } from '../conversation/message.ts'
+import { callSummary, contentText, truncate, type Message } from '../conversation/message.ts'
 
 export const ACTIVITY_SUMMARY_LIMIT = 160
 /** How wide a provisional bubble's call summary may get, in characters.
@@ -54,11 +54,7 @@ export const activityEntries = (buffer: ActivityBuffer): readonly ActivityEntry[
  * `payload.content`, which is always undefined. */
 export const activityBody = (entry: ActivityEntry): string => {
   if (entry.text) return entry.text
-  const payload = entry.payload
-  const data =
-    payload && typeof payload === 'object'
-      ? ((payload as Record<string, unknown>)['data'] as Record<string, unknown> | undefined)
-      : undefined
+  const data = entryData(entry)
   const calls = Array.isArray(data?.['tool_calls']) ? (data['tool_calls'] as unknown[]) : []
   if (calls.length > 0) {
     // The same "→ name(arg), name(arg)" shape the timeline uses for a
@@ -74,4 +70,39 @@ export const activityBody = (entry: ActivityEntry): string => {
     return truncate(`→ ${summaries.join(', ')}`, ACTIVITY_SUMMARY_LIMIT)
   }
   return contentText(data?.['content'])
+}
+
+/** The langchain payload's `data`, or `undefined`.
+ *
+ * A whole-message entry nests everything under `data` — the same nesting the
+ * timeline's summariser unwraps — so reading `payload.content` directly gets
+ * `undefined` every time, silently. One unwrapper rather than three. */
+const entryData = (entry: ActivityEntry): Record<string, unknown> | undefined => {
+  const payload = entry.payload
+  return payload && typeof payload === 'object'
+    ? ((payload as Record<string, unknown>)['data'] as Record<string, unknown> | undefined)
+    : undefined
+}
+
+/** A provisional entry as the message it is about to become.
+ *
+ * The stream renders `Message`s, and a provisional entry is the same langchain
+ * payload the committed message will be folded from — so converting here lets
+ * one component draw both, which is the property "phase is position" needs. If
+ * the two were drawn by different code they would drift, and the drift would
+ * be visible as every card in a turn changing at the instant it commits.
+ *
+ * `content` is the already-flattened fallback string rather than the raw
+ * value, so a bubble with no artifact renders exactly what it renders today. */
+export const activityMessage = (entry: ActivityEntry): Message => {
+  const data = entryData(entry)
+  const name = data?.['name']
+  return {
+    role: 'tool',
+    content: activityBody(entry),
+    toolCalls: [],
+    isError: data?.['status'] === 'error',
+    name: typeof name === 'string' ? name : null,
+    artifact: data?.['artifact'] ?? null,
+  }
 }

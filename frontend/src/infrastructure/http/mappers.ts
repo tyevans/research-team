@@ -123,6 +123,11 @@ export const toMessage = (raw: Dto<typeof dto.messageDto>): Message => ({
   content: raw.content,
   toolCalls: raw.tool_calls.map((call) => ({ name: call.name, args: call.args })),
   isError: raw.is_error,
+  name: raw.name,
+  // Carried through unparsed. A message from a database written before
+  // artifacts existed arrives with the key absent, which lands here as
+  // `undefined` and is the fallback path the stream is built around.
+  artifact: raw.artifact ?? null,
 })
 
 export const toWorkspaceFile = (raw: Dto<typeof dto.workspaceFileDto>): WorkspaceFile => ({

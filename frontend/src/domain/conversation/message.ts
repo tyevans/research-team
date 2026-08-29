@@ -10,6 +10,18 @@ export interface Message {
   readonly content: unknown
   readonly toolCalls: readonly ToolCall[]
   readonly isError: boolean
+  /** The tool that produced this message, on a tool result. This is what pairs
+   *  a result with its call in the stream; `null` on prose, and on any message
+   *  written before `message_view` stopped dropping the field. */
+  readonly name: string | null
+  /** The tool's structured second return value, unparsed.
+   *
+   * `unknown` rather than `Artifact | null` on purpose: this is the wire's
+   * value, and the one place allowed to decide whether it is a shape the
+   * console understands is `artifactOf`. Typing it as the union here would
+   * mean the mapper had to parse, and a mapper that can reject is a mapper
+   * that can lose a whole transcript to one malformed card. */
+  readonly artifact: unknown
 }
 
 export type MessageRole = 'user' | 'assistant' | 'tool'

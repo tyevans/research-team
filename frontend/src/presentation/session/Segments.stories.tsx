@@ -45,6 +45,8 @@ type Story = StoryObj
 const message = (over: Partial<Message> & { role: Message['role'] }): Message => ({
   content: '',
   toolCalls: [],
+  name: null,
+  artifact: null,
   isError: false,
   ...over,
 })

@@ -19,6 +19,7 @@
 @import './markdown.css';
 @import './diff.css';
 @import './conversation.css';
+@import './stream.css';
 @import './composer.css';
 @import './states.css';
 @import './responsive.css';

@@ -53,6 +53,8 @@ const MESSAGES: Message[] = Array.from({ length: 40 }, (_, i) => ({
   role: i % 2 === 0 ? 'user' : 'assistant',
   content: `turn ${String(i)} — a line of transcript long enough to occupy a row on its own`,
   toolCalls: [],
+  name: null,
+  artifact: null,
   isError: false,
 }))
 
