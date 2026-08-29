@@ -1,6 +1,17 @@
 """`HttpProviderProbe` against a real OpenAI-compatible server.
 
-Deselected by default; run with `-m integration`.
+Deselected by default. Two of the three run in CI's `integration` job; the one
+that lists models from the local model server is **also** marked `live`,
+because that is exactly what `live` means in `pyproject.toml` -- "hits the real
+model endpoint" -- and CI runs `-m "integration and not live"` against a box
+with Neo4j and Postgres and no LLM. Run it with `-m live`.
+
+The split is deliberate rather than a workaround. Mapping an httpx failure onto
+`UNREACHABLE`, and refusing Bedrock before anything is sent, are adapter
+behaviours that need no external model and so are worth running on every pull
+request; only the "does a real OpenAI-compatible server answer this url shape"
+assertion needs the endpoint. Marking the whole file `live` would have left CI
+checking none of it.
 
 `ProviderProbePort` has exactly one production adapter, which CLAUDE.md's
 "Events" section names as the shape that ships broken: a stub on one side and a
@@ -35,6 +46,7 @@ pytestmark = pytest.mark.integration
 LOCAL_ENDPOINT = "http://192.168.1.14:8080/v1/"
 
 
+@pytest.mark.live
 async def test_the_probe_lists_models_from_the_local_endpoint():
     """A real 200 with a real model name in it.
 
