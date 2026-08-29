@@ -6,11 +6,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
-import type { CourseRepository } from '@application/ports/repositories.ts'
+import type { CourseRepository, CurriculumRepository } from '@application/ports/repositories.ts'
 import type { CourseCandidate } from '@domain/knowledge/catalog.ts'
 import type { CourseDetail, CourseText } from '@domain/knowledge/course.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
+import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
+import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { CoursePage } from './CoursePage.tsx'
 
 const project = ProjectId('11111111-1111-1111-1111-111111111111')
@@ -112,19 +113,27 @@ const aRealized = (over: Partial<CourseDetail['course'] & object> = {}): CourseD
 
 const wrapperFor = (
   courses: CourseRepository,
+  curricula: Partial<CurriculumRepository> = {},
 ): (({ children }: { children: ReactNode }) => ReactElement) => {
-  const container = { courses } as unknown as AppContainer
+  const container = { courses, curricula } as unknown as AppContainer
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  // `OverlayHost`, because the take-over offer is a `Confirm`, which is a
+  // `Drawer`, which is an `Overlay` -- and `Overlay` renders `null` until a
+  // host's container ref is set. Without it the dialog is absent rather than
+  // broken, which reads in a failure exactly like a page that never offered
+  // it. The app has the host in `Shell`; a bare render does not.
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
-      <ContainerProvider container={container}>{children}</ContainerProvider>
+      <ContainerProvider container={container}>
+        <OverlayHost>{children}</OverlayHost>
+      </ContainerProvider>
     </QueryClientProvider>
   )
 }
 
-const show = (courses: CourseRepository) =>
+const show = (courses: CourseRepository, curricula: Partial<CurriculumRepository> = {}) =>
   render(<CoursePage projectId={project} slug="roman-succession" onBack={() => {}} />, {
-    wrapper: wrapperFor(courses),
+    wrapper: wrapperFor(courses, curricula),
   })
 
 describe('CoursePage', () => {
@@ -379,7 +388,7 @@ describe('CoursePage', () => {
     const user = userEvent.setup()
     const realize = vi
       .fn<CourseRepository['realize']>()
-      .mockResolvedValue({ realized: true, authoring: null, reason: null })
+      .mockResolvedValue({ realized: true, authoring: null, reason: null, heldBy: null })
     const courses = fakeCourses({
       course: vi.fn<CourseRepository['course']>().mockResolvedValue(aDetail()),
       realize,
@@ -389,5 +398,82 @@ describe('CoursePage', () => {
     await user.click(await screen.findByRole('button', { name: 'Make this course' }))
 
     expect(realize).toHaveBeenCalledWith(project, 'roman-succession')
+  })
+
+  /** The console's half of the holding-session defect.
+   *
+   * `realize` answers 202 whether or not a run started -- the decision is
+   * appended either way -- so a page that only watched for an error showed a
+   * realized course and never wrote one. Measured on the owner's database on
+   * 2026-08-29: three authoring runs failed ~30ms after their 202, all
+   * naming one chat session, and nothing on any surface said so.
+   *
+   * These would pass with the whole dialog deleted if they asserted only
+   * that `realize` was called, which is what the pre-existing test above
+   * does and why it could not catch this.
+   */
+  describe('when another session holds the project', () => {
+    const heldCourses = () =>
+      fakeCourses({
+        course: vi.fn<CourseRepository['course']>().mockResolvedValue(aDetail({ course: null })),
+        realize: vi.fn<CourseRepository['realize']>().mockResolvedValue({
+          realized: true,
+          authoring: null,
+          reason: 'this project is held by session 049ac30c-3c8f-4ff7-8908-6d0daebaede1',
+          heldBy: SessionId('049ac30c-3c8f-4ff7-8908-6d0daebaede1'),
+        }),
+      })
+
+    it('offers to take the lock, naming the holder', async () => {
+      const user = userEvent.setup()
+      show(heldCourses())
+
+      await user.click(await screen.findByRole('button', { name: 'Make this course' }))
+
+      expect(await screen.findByText(/another session has this project/i)).toBeInTheDocument()
+      expect(screen.getByText(/049ac30c/)).toBeInTheDocument()
+    })
+
+    it('authors the one area with take-over when the offer is accepted', async () => {
+      const user = userEvent.setup()
+      const author = vi.fn().mockResolvedValue({})
+      show(heldCourses(), { author })
+
+      await user.click(await screen.findByRole('button', { name: 'Make this course' }))
+      await user.click(await screen.findByRole('button', { name: 'Take it and write the course' }))
+
+      expect(author).toHaveBeenCalledWith(project, { area: 'roman-succession', takeOver: true })
+    })
+
+    it('keeps the offer open and says why when the holder is mid-turn', async () => {
+      const user = userEvent.setup()
+      const author = vi
+        .fn()
+        .mockRejectedValue(new Error('the holding session has a turn running; cancel it first'))
+      show(heldCourses(), { author })
+
+      await user.click(await screen.findByRole('button', { name: 'Make this course' }))
+      await user.click(await screen.findByRole('button', { name: 'Take it and write the course' }))
+
+      expect(await screen.findByText(/turn running/)).toBeInTheDocument()
+      // Still open: a dialog that closed on the refusal would read as a
+      // take-over that worked.
+      expect(screen.getByText(/another session has this project/i)).toBeInTheDocument()
+    })
+
+    it('does not offer the take-over when nothing holds the project', async () => {
+      const user = userEvent.setup()
+      const courses = fakeCourses({
+        course: vi.fn<CourseRepository['course']>().mockResolvedValue(aDetail({ course: null })),
+        realize: vi
+          .fn<CourseRepository['realize']>()
+          .mockResolvedValue({ realized: true, authoring: null, reason: null, heldBy: null }),
+      })
+      show(courses)
+
+      await user.click(await screen.findByRole('button', { name: 'Make this course' }))
+
+      expect(screen.queryByText(/another session has this project/i)).not.toBeInTheDocument()
+    })
   })
 })

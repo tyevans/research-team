@@ -26,6 +26,7 @@ from redstring import Entity, ExtractionMethod, Provenance, Relationship
 from research_team.application import SummaryProjects, WorkerRoster
 from research_team.application.curriculum import CurriculumService
 from research_team.composition import build_application
+from research_team.domain.session import SessionPurpose
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.extraction import ExtractionActivity
@@ -580,3 +581,76 @@ async def test_re_embedding_an_unwired_build_says_so(app_and_client):
         response = await client.post(f"/api/projects/{project_id}/embeddings")
 
     assert response.status_code == 503
+
+
+async def test_authoring_a_held_project_is_refused_by_name(app_and_client):
+    """Refused here, where the caller can read it, rather than 30ms later in
+    a background task nothing renders.
+
+    The holder is in the detail because the console's next call is this same
+    route with `take_over`, and an offer to take a lock has to be able to say
+    whose it is.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    holder = await application.service.start_in_project(UUID(project_id), SessionPurpose.CHAT)
+
+    response = await client.post(f"/api/projects/{project_id}/curriculum/author", json={})
+
+    assert response.status_code == 409
+    assert str(holder) in response.json()["detail"]
+    assert app_and_client.author.asked == []
+
+
+async def test_take_over_releases_the_holder_and_authors(app_and_client):
+    """The console's "take the lock?" answered yes.
+
+    Asserts the *release*, not merely the 202: a build that accepted the flag
+    and ignored it would answer 202 here and then fail every target in the
+    background, which is the exact silence this whole change is about.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    await application.service.start_in_project(UUID(project_id), SessionPurpose.CHAT)
+
+    response = await client.post(
+        f"/api/projects/{project_id}/curriculum/author", json={"take_over": True}
+    )
+
+    assert response.status_code == 202
+    state = await application.service.project_state(UUID(project_id))
+    assert state.active_session_id is None
+    await app_and_client.authoring.wait(UUID(project_id))
+    assert app_and_client.author.asked != []
+
+
+async def test_take_over_refuses_a_holder_that_is_mid_turn(app_and_client):
+    """`release_project` advances the tip to `session.version`, so releasing a
+    session still writing detaches everything it writes next -- the bug
+    `_catch_up_tip` exists to repair. Same refusal `join_project`'s own
+    take-over makes, and it has to be repeated here because this route does
+    not go through that one.
+    """
+    application, client = app_and_client.application, app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(application, project_id)
+    holder = await application.service.start_in_project(UUID(project_id), SessionPurpose.CHAT)
+    # A turn that will not finish, registered where `is_running` reads. Not a
+    # real turn: this test is about the refusal, and driving a model to get a
+    # task into that dict would make the assertion depend on how long a fake
+    # model takes to answer.
+    gate = asyncio.Event()
+    application.turns._running[holder] = asyncio.ensure_future(gate.wait())
+
+    response = await client.post(
+        f"/api/projects/{project_id}/curriculum/author", json={"take_over": True}
+    )
+
+    assert response.status_code == 409
+    assert "turn running" in response.json()["detail"]
+    state = await application.service.project_state(UUID(project_id))
+    assert state.active_session_id == holder
+
+    gate.set()

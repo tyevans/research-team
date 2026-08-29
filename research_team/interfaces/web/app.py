@@ -815,10 +815,18 @@ class NewAuthoring(BaseModel):
     fixed cost; a request for forty lessons is four turns asked to produce
     forty files, which no local model does well and which nobody reads. Twelve
     is where a unit stops being a unit.
+
+    `take_over` releases whoever is holding the project first. Off by default
+    and spelled the same as `join_project`'s flag, deliberately: a take-over
+    ends somebody else's session, and the one thing
+    `docs/design/the-holding-session-goes-backstage.md` §1 forbids is a
+    console that resolves the lock silently on a person's behalf. The console
+    asks first; this is what it sends when the answer is yes.
     """
 
     area: str | None = None
     lessons: int = Field(default=3, ge=1, le=12)
+    take_over: bool = False
 
 
 class NewDispatch(BaseModel):
@@ -3777,6 +3785,49 @@ def create_app(
 
         return _one
 
+    async def _authoring_holder(project_id: UUID) -> UUID | None:
+        """Who holds this project, asked because authoring is about to need it.
+
+        `CourseAuthor.author_area` opens with `start_in_project`, and
+        `JoinProject`'s precondition is `active_session_id is None` -- so a
+        project somebody has open in chat refuses every authoring run. That
+        refusal used to happen inside the background task, ~30ms after a 202
+        the caller read as "it started": measured on the owner's database on
+        2026-08-29, three `CourseAuthoringFailed` events in half an hour, all
+        `project is held by session 049ac30c`, a `purpose: chat` session that
+        had done nothing since it joined 20 minutes earlier. Nothing on any
+        surface said so; the course page simply stayed unauthored forever.
+
+        Asked *before* starting, so the answer can be handed to the caller as
+        a name rather than left as a silence. Advisory rather than a lock --
+        a holder can arrive between this read and `start_in_project` -- and
+        that is fine: the background refusal is still there underneath, this
+        only makes the ordinary case sayable.
+        """
+        state = await service.project_state(project_id)
+        return state.active_session_id
+
+    async def _take_over_for_authoring(project_id: UUID) -> None:
+        """Release whoever holds this project so an authoring run can join.
+
+        The same two steps `join_project`'s `take_over` takes, and refused on
+        the same condition: a holder mid-turn is not released, because
+        `release_project` advances the tip to `session.version` and a turn
+        still running would write past it -- the detachment `_catch_up_tip`
+        exists to repair. `docs/design/the-holding-session-goes-backstage.md`
+        §1 is what this is careful about: holding is untouched, nothing joins
+        implicitly, and a take-over stays an explicit act a person asked for.
+        """
+        holder = await _authoring_holder(project_id)
+        if holder is None:
+            return
+        if turns.is_running(holder):
+            raise HTTPException(
+                status_code=409,
+                detail="the holding session has a turn running; cancel it first",
+            )
+        await service.release_project(holder)
+
     @app.post("/api/projects/{project_id}/catalog/{slug}/realize", status_code=202)
     async def realize_course(project_id: UUID, slug: str):
         """Record that a person has decided this cluster is a course, then
@@ -3833,19 +3884,42 @@ def create_app(
 
         authoring_frame: dict[str, Any] | None = None
         reason: str | None = None
+        held_by: UUID | None = None
         if authoring is None or course_author is None:
             reason = "course authoring is not configured"
         else:
-            subject = (await service.project_state(project_id)).name or str(project_id)
-            _one = _author_one_target(project_id, built, built.by_slug, subject)
-            try:
-                authoring_frame = await authoring.start(project_id, [slug], _one, kind="area")
-            except RunAlreadyActive as error:
-                reason = str(error)
+            # Asked before starting rather than after failing -- see
+            # `_authoring_holder`. No `take_over` flag on *this* route: the
+            # realization is already appended by the time we get here and a
+            # second click answers 409, so the retry has to be a different
+            # call anyway. `POST /curriculum/author` with `take_over` is that
+            # call, and putting the take-over on one route rather than two
+            # keeps the release of somebody else's session in one place.
+            held_by = await _authoring_holder(project_id)
+            if held_by is not None:
+                reason = f"this project is held by session {held_by}"
+            else:
+                subject = (await service.project_state(project_id)).name or str(project_id)
+                _one = _author_one_target(project_id, built, built.by_slug, subject)
+                try:
+                    authoring_frame = await authoring.start(
+                        project_id, [slug], _one, kind="area"
+                    )
+                except RunAlreadyActive as error:
+                    reason = str(error)
 
         return JSONResponse(
             status_code=202,
-            content={"realized": True, "authoring": authoring_frame, "reason": reason},
+            content={
+                "realized": True,
+                "authoring": authoring_frame,
+                "reason": reason,
+                # Named, not merely counted: the console's whole offer is
+                # "held by <this session> -- take it?", and a reason string
+                # the client has to parse a UUID out of is the version of
+                # that offer which breaks the first time the wording changes.
+                "heldBy": None if held_by is None else str(held_by),
+            },
         )
 
     @app.post("/api/projects/{project_id}/catalog/{slug}/abandon")
@@ -4080,6 +4154,28 @@ def create_app(
         if course_author is None or authoring is None:
             raise HTTPException(status_code=503, detail="course authoring is not configured")
         await _require_project(project_id)
+
+        # Before the curriculum is folded, because a run that cannot join the
+        # project is refused whatever the curriculum says, and folding it
+        # first would spend that work on the way to a 409.
+        if body.take_over:
+            await _take_over_for_authoring(project_id)
+        else:
+            holder = await _authoring_holder(project_id)
+            if holder is not None:
+                # 409 naming the holder, not a 202 that dies in the
+                # background 30ms later -- see `_authoring_holder` for what
+                # that silence measured. The client's next call is this same
+                # route with `take_over`, so the refusal names the flag
+                # rather than only the problem.
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"this project is held by session {holder}; "
+                        "retry with take_over to release it"
+                    ),
+                )
+
         built = await _curriculum(project_id)
 
         if body.area:

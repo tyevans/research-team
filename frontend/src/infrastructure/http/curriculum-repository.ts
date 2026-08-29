@@ -61,11 +61,16 @@ export class HttpCurriculumRepository implements CurriculumRepository {
     )
   }
 
-  async author(projectId: ProjectId, request: { area?: string; lessons?: number }) {
+  async author(
+    projectId: ProjectId,
+    request: { area?: string; lessons?: number; takeOver?: boolean },
+  ) {
     return toAuthoringRun(
       await this.http.post(
         `/api/projects/${seg(projectId)}/curriculum/author`,
-        request,
+        // `take_over` rather than `takeOver` on the wire: the route reads a
+        // pydantic model whose field is snake_case, matching `join`'s flag.
+        { area: request.area, lessons: request.lessons, take_over: request.takeOver ?? false },
         dto.authoringFrameDto,
       ),
     )
