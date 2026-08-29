@@ -53,6 +53,26 @@ describe('EntityList', () => {
     expect(names[names.length - 1]).toBe('magic')
   })
 
+  it('caps the unlinked group too, rather than letting it run', () => {
+    // The half of the new rule no other test reaches. `entityList` has one
+    // orphan and `crowded` hides its two behind a truncated linked group, so
+    // both are green whether the unlinked group is capped at five or not
+    // capped at all -- which is the case that matters, since a query matching
+    // forty orphans is exactly when burying the reply would cost something.
+    const orphanage = {
+      ...entityList,
+      entities: Array.from({ length: 8 }, (_, index) => ({
+        entity_id: `o${index}`,
+        name: `orphan ${index}`,
+        entity_type: 'concept',
+        relationship_count: 0,
+      })),
+    }
+    render(<EntityList artifact={orphanage} phase="settled" />)
+    expect(screen.getAllByTestId('entity')).toHaveLength(5)
+    expect(screen.getByRole('button', { name: /3 unlinked/ })).toBeInTheDocument()
+  })
+
   it('counts the hidden linked and hidden unlinked separately', () => {
     const crowded = {
       ...tenEntities,

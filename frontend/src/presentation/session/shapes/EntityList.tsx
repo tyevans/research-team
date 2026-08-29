@@ -28,13 +28,30 @@ export const EntityList = ({ artifact, phase, tool }: ShapeProps<EntityListArtif
   const unlinked = artifact.entities.filter((e) => e.relationship_count <= 0).sort(byCount)
   const max = linked[0]?.relationship_count ?? 0
 
-  // The cap is on the card, not on either group, and linked entities take the
-  // room first: a result whose interesting half is at the bottom has spent its
-  // five lines on the half nobody asked about.
+  // **The cap is on the linked group, and the unlinked group appears only once
+  // nothing linked is hidden.** It used to be one budget of five spent by the
+  // linked entities first, which reads as obviously right and starves the half
+  // the card exists to surface: five linked entities and one unlinked is the
+  // ordinary shape of a `graph_search` result, and it left `CAP - 5 = 0` lines
+  // for the orphan — so the most actionable row on the card was the one it
+  // never drew. Three tests said six rows, the docstring above calls the
+  // orphan the most actionable fact this tool returns, and the shipped
+  // arithmetic agreed with neither.
+  //
+  // The rule that replaces it is a statement about the reader rather than
+  // about height: someone who has not yet seen every *connected* entity is not
+  // helped by the unconnected ones, and someone who has seen them all has
+  // nothing better left to look at. So a truncated linked group hides the
+  // unlinked entirely and says so on the expander, and a complete one lets
+  // them through — capped at `CAP` themselves, so a query matching forty
+  // orphans still cannot bury the reply.
+  //
+  // The cost, since it is real: the card is now up to ten rows rather than
+  // five. That is the trade the old arithmetic was making silently in the
+  // other direction.
   const shownLinked = expanded ? linked : linked.slice(0, CAP)
-  const shownUnlinked = expanded
-    ? unlinked
-    : unlinked.slice(0, Math.max(0, CAP - shownLinked.length))
+  const hidLinked = linked.length > shownLinked.length
+  const shownUnlinked = expanded ? unlinked : hidLinked ? [] : unlinked.slice(0, CAP)
   const moreLinked = linked.length - shownLinked.length
   const moreUnlinked = unlinked.length - shownUnlinked.length
 
