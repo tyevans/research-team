@@ -5623,30 +5623,35 @@ surface's model form. Every other consumer of every setting in the registry
 reaches it through `research_team/infrastructure/config.py`, which reads
 `os.environ` and has no scope at all.
 
-So the honest statement of the state on 2026-08-29 is stronger than "two
-settings were mis-scoped": **twenty-six of the twenty-eight remaining
-project-scoped settings are stored, resolved and displayed per project, and
-none of them changes what the process does.** The scope machinery is complete
-and the consumption half is not wired.
+**So state the condition, not a count.** A setting is consumed at project
+scope when something reads it through a *scope chain*; it is not when its only
+reader is `config.<key>()`. Every remaining project-scoped setting was in the
+second position when this was written, and the count is deliberately not
+recorded here, because it is a moving number rather than a fact about the
+system: W-C2's #340 was in flight the same day and wires the extraction family
+-- `extraction_model` and its `model` fallback, `base_url`, `api_key`,
+`extraction_thinking`, `extraction_concurrency`, `extraction_chunk_size`,
+`consolidation_batch`, `knowledge_domain` -- to resolve per project through a
+snapshot keyed on the project id. Any number written down here goes stale the
+hour that merges, and a stale number in a backlog entry is read as a
+measurement.
 
-The audit, key by key, all in the same position -- read only through
-`config.<key>()`, process-wide:
+The test for any one key is one grep: find its reader. If the reader is a
+module-level function in `research_team/infrastructure/config.py` reading
+`os.environ`, the project-scope declaration is decoration. The keys still in
+that position after #340 are the model-and-endpoint remainder (`curation_model`,
+`vision_model`, `embedding_base_url`, `embedding_api_key`), the transcriber and
+perception pair, the whole `context` family, `authoring_rounds`,
+`catalog_sweep_concurrency`, and the two `searxng` keys.
 
-`model`, `base_url`, `api_key`, `curation_model`, `extraction_model`,
-`vision_model`, `embedding_base_url`, `embedding_api_key`, `transcriber_url`,
-`transcriber_model`, `context`, `context_trigger`, `context_keep_messages`,
-`context_keep_results`, `context_clear_over`, `authoring_rounds`,
-`knowledge_domain`, `extraction_concurrency`, `extraction_chunk_size`,
-`extraction_thinking`, `consolidation_batch`, `catalog_sweep_concurrency`,
-`searxng_url`, `searxng_results`, `perception_max_chars`.
-
-Those are **not** the same defect as the embedding pair, and should not be
-narrowed. A per-project chat model, extraction concurrency or knowledge domain
-is meaningful; it is simply not read yet. The embedding pair is different in
-kind: a per-project answer for it is not merely unread but *incoherent*,
-because the store the width configures is one object two projects share, and
-disagreeing widths raise `DimensionMismatchError` on the first write -- a
-poison event rather than a graceful loss.
+None of those are the same defect as the embedding pair, and none should be
+narrowed. A per-project chat model, context window or knowledge domain is
+**meaningful and merely unwired** -- work W-C2 should finish, and narrowing
+them would foreclose it. The embedding pair is different in kind: a
+per-project answer for it is not unread but **incoherent**, because the store
+the width configures is one object two projects share, so disagreement raises
+`DimensionMismatchError` on the first write -- a poison event rather than a
+lost preference.
 
 **What would make this a test rather than an entry.** A consumer that takes a
 scope chain. Once request-scoped resolution exists, the population is
@@ -5655,7 +5660,7 @@ its own: walk the tree for the reader each key is fetched through, and require
 a key declared at `Scope.PROJECT` to be reached by something that was handed a
 project. Until then the only available test is the hand-written pair in
 `test_the_embedding_pair_is_not_offered_on_a_project_form`, which pins two keys
-and says nothing about the twenty-six.
+and says nothing about the rest.
 
 The shape is CLAUDE.md's "two structures that must agree, in two places the
 merge cannot compare", with the second structure missing rather than
