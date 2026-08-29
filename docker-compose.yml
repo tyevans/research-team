@@ -1,5 +1,5 @@
 # The whole stack: the durable backends, a search engine, an identity
-# provider, and the app itself.
+# provider, a mail catcher, and the app itself.
 #
 #     docker compose up -d          # everything
 #     docker compose up -d postgres neo4j    # just the durable backends
@@ -132,6 +132,47 @@ services:
       timeout: 5s
       retries: 30
 
+  # Where every mail Zitadel sends goes, because otherwise it goes nowhere and
+  # says so nowhere. Zitadel emails an activation link on registration, and an
+  # instance with no SMTP provider logs the failure and answers the browser as
+  # though the account were made -- so the *only* symptom of the missing piece
+  # is a new account that can never finish signing up.
+  #
+  # Mailpit rather than MailHog. MailHog is the name everyone reaches for and
+  # has had no functional commit since 2022; Mailpit is its drop-in successor,
+  # same default ports (1025 SMTP, 8025 UI) and same API shape. Checked
+  # 2026-08-29.
+  #
+  # No environment. Mailpit with nothing set accepts unauthenticated plaintext
+  # SMTP on 1025, and Zitadel is configured below never to offer AUTH, so the
+  # `MP_SMTP_AUTH_*` variables have nothing to do. They were tried first and
+  # are worth naming because the route to them is well signposted: give
+  # Zitadel an SMTP username and it starts offering AUTH, Mailpit answers
+  # `502 Command not implemented`, and the obvious fix is to turn AUTH on at
+  # the catcher. The real fix is to not send a username -- see the SMTP block
+  # on `zitadel` below, where the asymmetry that makes that work is written
+  # down.
+  #
+  # Nothing is persisted. `MP_DATABASE` would keep the mailbox across a
+  # restart, and a mailbox that outlives the stack is a trap: the activation
+  # link in yesterday's mail points at a user id that `down -v` deleted.
+  mailpit:
+    image: axllent/mailpit:v1.31.0
+    # Only the UI is published. SMTP stays on the compose network, where the
+    # one thing that sends mail already lives -- Zitadel reaches `mailpit:1025`
+    # by compose DNS, and nothing on the host needs to. Publishing 1025 as
+    # well was tried and is a startup failure on this machine: something else
+    # already holds it (`bind host port 0.0.0.0:1025: address already in use`,
+    # measured 2026-08-29), which is the SearXNG-on-8888 lesson again -- a
+    # published port is a claim on the developer's machine, so do not make one
+    # nothing needs.
+    ports: ["8025:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   # Zitadel's own database, separate from `postgres` above. Deliberately not
   # shared: Zitadel runs its own migrations against the database it is given
   # and expects to own it, and pointing it at the database that holds the
@@ -213,11 +254,62 @@ services:
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: compose bootstrap
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2099-01-01T00:00:00Z"
       ZITADEL_FIRSTINSTANCE_PATPATH: /machine/pat.txt
+
+      # SMTP, pointed at the catcher above. Three things about these names are
+      # worth knowing before editing them, all of which cost time to discover:
+      #
+      # - They are `DEFAULTINSTANCE`, not `FIRSTINSTANCE`. There is no
+      #   `FirstInstance.SMTPConfiguration` in v3.4.15's `steps.yaml` at all;
+      #   SMTP is settable only under `DefaultInstance`, which is why these
+      #   sit apart from every other first-instance variable above them.
+      # - The doubled `SMTP` in `..._SMTP_HOST` is not a typo. `defaults.yaml`
+      #   nests an `SMTP:` block inside `SMTPConfiguration:`, so host, user and
+      #   password carry the second segment and `TLS`, `FROM` and `FROMNAME`
+      #   do not. A variable spelled with the wrong number of `SMTP`s is
+      #   ignored in silence.
+      # - The host **must** carry a port. A bare hostname is refused inside a
+      #   migration, so the container exits 1 on `setup failed` with
+      #   `INST-mruNY Errors.Invalid.Argument` and nothing naming SMTP.
+      #
+      # And the part that will catch somebody: **this is applied when the
+      # instance is created and never again.** Adding these to a stack that
+      # has already run leaves the instance with no mail provider, exactly as
+      # before, with no error anywhere. See the how-to for the wipe.
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_HOST: mailpit:1025
+      # An empty user and a **non-empty** password, which looks backwards and is
+      # the configuration that works. The two fields are read by two different
+      # pieces of Zitadel and neither is doing what its name suggests:
+      #
+      # - The notifier refuses to build an email channel when the stored
+      #   password is NULL -- `config_email.go` returns `QUERY-Wrs3gw
+      #   Errors.SMTPConfig.NotFound` before it looks at anything else. An
+      #   empty password is stored as NULL (`command/smtp.go` only encrypts a
+      #   non-empty one), so a provider with no password is invisible to the
+      #   one component that sends mail while `GET /admin/v1/smtp` still
+      #   reports it `SMTP_CONFIG_ACTIVE`. The password is never checked by
+      #   anything; it only has to exist.
+      # - Whether AUTH is offered at all is `User != "" && Password != ""`
+      #   (`channels/smtp/config.go`). Leaving the user empty is what keeps
+      #   Zitadel from issuing an AUTH command Mailpit does not implement.
+      #
+      # Measured 2026-08-29 against a throwaway first-run stack: with exactly
+      # these values and a Mailpit with no environment at all, a password-reset
+      # mail arrives in the catcher.
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_USER: ""
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_SMTP_PASSWORD: unused-but-must-not-be-empty
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_TLS: "false"
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROM: noreply@research-team.localhost
+      ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_FROMNAME: research-team
     ports: ["8081:8080"]
     volumes:
       - machinekey:/machine
     depends_on:
       zitadel-db:
+        condition: service_healthy
+      # Ordering only. Zitadel does not dial SMTP during setup -- it records
+      # the provider and activates it -- so a late catcher would not fail the
+      # bring-up; it would just drop whatever was sent before it was listening.
+      mailpit:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/app/zitadel", "ready"]
