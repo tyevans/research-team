@@ -20,6 +20,8 @@ import type {
   WholeGraph,
 } from '@domain/knowledge/graph.ts'
 import type { OntologyClass } from '@domain/knowledge/ontology.ts'
+import type { Scope, SettingsSchema } from '@domain/settings/spec.ts'
+import type { ResolvedSettings, ScopeRef } from '@domain/settings/layer.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Curriculum, LearningArea, LearningPath } from '@domain/knowledge/curriculum.ts'
 import type { Catalog } from '@domain/knowledge/catalog.ts'
@@ -535,6 +537,51 @@ export interface DefinitionsRepository {
    *  `Definition`'s own docstring -- so a caller does not need a catch
    *  block to tell an undefinable entity from a network failure. */
   definition(projectId: ProjectId, entityId: string): Promise<Definition>
+}
+
+/** The settings surface, as four calls.
+ *
+ * `PUT` and `DELETE` are separate methods rather than one `set(key, value |
+ * null)`, because their failures are different questions. A `PUT` fails with
+ * 422 and a sentence to render beside the field; a `DELETE` fails with **404
+ * when nothing was set**, which the contract makes deliberate — clearing a key
+ * that was never set is almost always a misspelling, and a silent 204 is how
+ * the misspelling survives. A single method would have to flatten those into
+ * one error type at exactly the seam where they diverge.
+ */
+export interface SettingsRepository {
+  /** The declarations. Static, needs no scope and no credentials, and answers
+   *  on a build with nothing else wired — so it is cacheable forever. */
+  schema(): Promise<SettingsSchema>
+
+  /** Resolution over a chain, reporting which layer answered each key.
+   *
+   * The chain is passed as scope refs rather than a single scope, because the
+   * page makes this call **twice**: once with the scope it is editing, and
+   * once with that scope *omitted*, which is the only correct answer to "what
+   * would this fall back to if I cleared the override". The alternative —
+   * reading the schema's `default` — is wrong whenever a middle layer answers,
+   * which is the whole reason the feature exists, and is `null` for every
+   * secret by contract, so it cannot answer the one case that frightens
+   * people. An empty chain is a real request and resolves to environment and
+   * default alone. */
+  resolved(chain: readonly ScopeRef[]): Promise<ResolvedSettings>
+
+  /** Write one override. `value` is a string whatever the setting's type: a
+   *  form posts strings, and one server-side parser is what keeps the HTTP
+   *  layer and the environment layer agreeing about what `"on"` means.
+   *
+   *  Throws `ApiError` with 422 for an unknown key, a refused value, a scope
+   *  the declaration forbids, or a secret with no `AGENT_SETTINGS_KEY`. */
+  put(scope: Scope, scopeId: string, key: string, value: string): Promise<void>
+
+  /** Remove one override.
+   *
+   * `true` when something was removed, `false` when there was nothing to
+   * remove — the 404 the contract specifies, turned into an outcome here
+   * rather than thrown, because it is the answer to a question the UI asked
+   * and not a failure of the request. Every other status still throws. */
+  clear(scope: Scope, scopeId: string, key: string): Promise<boolean>
 }
 
 export interface OntologyRepository {

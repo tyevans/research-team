@@ -59,11 +59,16 @@
 }
 /* Sized for a workflow label -- longer than a project name, and it must not
    push the button off its row. That picker is gone with the workflow system,
-   and the cap is inert rather than wrong: the one surviving `select.input`
-   is `GraphPane`'s entity-type menu, which overrides it inline at 40%.
-   Kept because removing it and that inline override together is a width
-   measurement in a browser, not a comment sweep -- and `GraphPane`'s comment
-   already says the inline style goes when this rule does. */
+   and the cap was inert for a while: `GraphPane`'s entity-type menu was the
+   only `select.input` left and overrides it inline at 40%.
+
+   **It is load-bearing again as of the settings page**, whose `enum` control
+   is a `select.input` carrying no width of its own -- a `log_level` or a
+   `dating_mode` menu is a few characters wide and would otherwise stretch to
+   its flex row. So the rule now has a caller it actually constrains, and
+   removing it is a width measurement in a browser rather than a comment
+   sweep. `GraphPane`'s own comment says its inline style goes when this rule
+   does; that pairing is unchanged, there is simply a third party now. */
 select.input {
   max-width: 22rem;
 }

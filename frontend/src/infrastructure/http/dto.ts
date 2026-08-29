@@ -1299,3 +1299,80 @@ export const interactionSummaryDto = z.object({
   friction: frictionSummaryDto,
   approvals: approvalSummaryDto,
 })
+
+/* --- settings -----------------------------------------------------------
+ *
+ * `settings.py`'s `_spec_view` and `_resolved_view`, field for field. The two
+ * unions are spelled out rather than left as `z.string()` because the contract
+ * states both sets are closed: an unrecognised sixth `type` or sixth `layer`
+ * is a backend this build genuinely cannot render, and a `ContractError`
+ * naming the field beats an input that quietly draws a boolean as a text box.
+ */
+
+export const settingTypeDto = z.enum(['string', 'integer', 'number', 'boolean', 'enum'])
+export const scopeDto = z.enum(['project', 'user', 'tenant'])
+export const layerDto = z.enum(['project', 'user', 'tenant', 'environment', 'default'])
+
+/** A setting's value on the wire. `null` is a real answer rather than an
+ *  absence — every secret reports it — so this is a union and not a
+ *  `maybe()`. */
+const settingValueDto = z.union([z.string(), z.number(), z.boolean(), z.null()])
+
+export const settingSpecDto = z.object({
+  key: z.string(),
+  env_var: z.string(),
+  type: settingTypeDto,
+  label: z.string(),
+  description: z.string().default(''),
+  group: z.string(),
+  secret: z.boolean(),
+  default: settingValueDto.default(null),
+  choices: z.array(z.string()).default([]),
+  minimum: maybe(z.number()),
+  maximum: maybe(z.number()),
+  required_when: maybe(z.string()),
+  scopes: z.array(scopeDto).default([]),
+})
+
+export const settingsSchemaDto = z.object({
+  groups: z
+    .array(z.object({ name: z.string(), settings: z.array(settingSpecDto).default([]) }))
+    .default([]),
+  scopes: z.array(scopeDto).default([]),
+  roles: z.array(z.object({ role: z.string(), setting_key: z.string() })).default([]),
+})
+
+export const maskedSecretDto = z.object({
+  present: z.boolean(),
+  last_four: maybe(z.string()),
+  display: z.string(),
+})
+
+export const resolvedSettingDto = z.object({
+  key: z.string(),
+  value: settingValueDto.default(null),
+  layer: layerDto,
+  scope_id: maybe(z.string()),
+  secret: z.boolean().default(false),
+  /** Absent for every non-secret rather than null — `_resolved_view` adds the
+   *  key only when a mask exists — so this tolerates the key missing. */
+  masked: maskedSecretDto.nullish().transform((v) => v ?? null),
+})
+
+export const resolvedSettingsDto = z.object({
+  scope_chain: z.array(z.object({ scope: scopeDto, scope_id: z.string() })).default([]),
+  settings: z.array(resolvedSettingDto).default([]),
+})
+
+export const settingWriteDto = z.object({
+  scope: scopeDto,
+  scope_id: z.string(),
+  key: z.string(),
+  stored: z.boolean().default(true),
+})
+
+/** A 204 with no body. `HttpClient` parses an empty body to `null`, so this
+ *  accepts anything rather than describing a shape that does not exist —
+ *  `z.null()` would turn the route's own success into a `ContractError` the
+ *  day a proxy puts a body on it. */
+export const noContentDto = z.unknown()

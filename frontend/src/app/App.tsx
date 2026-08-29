@@ -14,10 +14,12 @@ import {
   homeHref,
   interactionsHref,
   projectHref,
+  settingsHref,
   type Route,
 } from '@presentation/routing/routes.ts'
 import { navigate, useRoute, useSeekSeconds } from '@presentation/routing/use-route.ts'
 import { InteractionsView } from '@presentation/interactions/InteractionsView.tsx'
+import { SettingsPage } from '@presentation/settings/SettingsPage.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
 import { AutonomyLock } from '@presentation/shell/AutonomyLock.tsx'
@@ -90,6 +92,10 @@ export const viewNameOf = (route: Route): string => {
   // person looking at this was looking at this". Excluding it would mean the
   // one view whose numbers are known to be wrong is the one nobody can check.
   if (route.name === 'interactions') return 'interactions'
+  // Scope, not scope id: the dwell rows are for reading how people use the
+  // console, and one view name per project would make the settings page
+  // unreadable in a count of views the moment there is more than one project.
+  if (route.name === 'settings') return `settings/${route.scope}`
   if (route.name !== 'project') return 'home'
   return `project/${route.selection?.facet ?? DEFAULT_MATERIAL}`
 }
@@ -161,6 +167,18 @@ const Console = () => {
             <a className="btn btn-ghost btn-sm" href={interactionsHref()}>
               log
             </a>
+            {/* Only on a project page, and carrying that project's id — the
+                only entry point there is today, because the project scope is
+                the only one W-C1 ships. The user and tenant scopes are
+                reachable by URL and get their control from W-A's account menu;
+                putting a scope picker here first would be a control for two
+                destinations that answer 200 with an empty resolution until
+                identity exists. */}
+            {route.name === 'project' ? (
+              <a className="btn btn-ghost btn-sm" href={settingsHref('project', route.id)}>
+                settings
+              </a>
+            ) : null}
             <Breadcrumbs
               route={route}
               session={route.name === 'session' ? head : null}
@@ -332,6 +350,12 @@ const CurrentView = ({
   // for every route it does not recognise. A view added after that line is a
   // view nobody reaches.
   if (route.name === 'interactions') return <InteractionsView />
+  // Above the `!== 'project'` fallthrough for the same reason `interactions`
+  // is: that line answers `TreeView` for everything it does not recognise, so
+  // a view added below it is a view nobody reaches.
+  if (route.name === 'settings') {
+    return <SettingsPage scope={route.scope} scopeId={route.scopeId} group={route.group} />
+  }
   if (route.name !== 'project') return <TreeView />
 
   const { id, selection } = route

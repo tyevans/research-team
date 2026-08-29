@@ -271,6 +271,31 @@ export const queryKeys = {
       ['interactions', 'summary', filterKey(filters)] as const,
   },
 
+  /** The settings surface. A namespace for `interactions`' reason: one prefix
+   *  means one invalidation after a write, and a write to any key changes the
+   *  resolution of exactly one scope's page.
+   *
+   * `resolved` is keyed by the **whole chain**, and that is the load-bearing
+   * part rather than tidiness. The page issues two resolutions -- one with its
+   * scope and one with its scope omitted, which is where the fallback line
+   * comes from -- and those are two different answers over the same route. A
+   * key on the scope alone would serve one under the other, and the symptom
+   * would be a row claiming it falls back to its own current value. Flattened
+   * to a sorted list of pairs so two structurally equal chains built in
+   * different orders hash the same, matching `filterKey`'s reasoning. */
+  settings: {
+    all: () => ['settings'] as const,
+    /** Unparameterised: the schema is static, needs no scope, and is cached
+     *  with `staleTime: Infinity`. */
+    schema: () => ['settings', 'schema'] as const,
+    resolved: (chain: readonly { scope: string; scopeId: string }[]) =>
+      [
+        'settings',
+        'resolved',
+        [...chain].sort((a, b) => a.scope.localeCompare(b.scope)).map((r) => [r.scope, r.scopeId]),
+      ] as const,
+  },
+
   file: (session: SessionId, path: FilePath, at: ScrubPoint) =>
     ['file', session, path.value, ScrubPoint.toNullable(at)] as const,
   fileHistory: (session: SessionId, path: FilePath) =>
