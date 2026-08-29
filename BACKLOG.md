@@ -588,6 +588,42 @@ Found on 2026-08-23 while writing Storybook coverage for the console's
 highest-traffic components (#245, #248). Each of these is a real gap that was
 deliberately not closed on the spot, with the reason.
 
+### B160. Two browser tests were red on `main`, and the CI job found them in one run
+
+Filed 2026-08-29, from the first run of the new `browser` job (B140). Both
+predate it; neither is caused by it. They are quarantined in
+`frontend/package.json`'s `test:browser:ci` so the job can protect the other 44
+files, and that list should be emptied rather than grown.
+
+**`src/styles/base-layer.browser.test.tsx` never ran at all.** It imports
+`render` from `@testing-library/react`, which in the browser project fails the
+whole file at import with "Vitest failed to find the current suite" -- a
+message that names nothing about the import, and which the reporter counts as a
+failed *suite* rather than a failed test. So the sweep written to prove that
+#313's `@layer base` fix reached the rest of `tokens.css` has been asserting
+nothing since the day it landed.
+
+Worse, and this is the part that wants a person: switching it to
+`vitest-browser-react`'s `render` makes the file run, and **all three
+assertions fail for real**. `box-content` computes `border-box`; `text-accent`
+on a bare `<a>` computes `rgb(215, 222, 231)` (`--fg`) rather than the accent.
+Measured 2026-08-29. That is the same defect CLAUDE.md records three times
+already -- an unlayered rule in `tokens.css` beating a layered utility -- and it
+is either unfixed or regressed. The rewrite is not committed here: guessing at
+which rules should move into `@layer base` is the owner's call, and a wrong
+guess is invisible for the same reason the original was.
+
+**`src/presentation/curriculum/course-card-sizing.browser.test.tsx` fails on
+the aspect ratio**: the art measures 10.63:1 against a declared 3:2, on the
+`highlight` size. Its own docstring says it was proved red at ratio 0 by
+deleting `CARD_ART`'s `highlight` entry, so this is a third state neither the
+test nor its author has seen. The catalog was reworked twice since (`785f296c`,
+`b3f358c0`), and one of those is the likely cause.
+
+Both are exactly what B140 predicted: a red suite, green gates, and nobody
+finding out until somebody ran it by hand. The difference is that this time it
+took one CI run rather than four merges and a fortnight.
+
 ### B146. The interaction log's browser-to-store seam has no standing test
 
 **Closed 2026-08-29.** The seam is now a committed file neither side writes by

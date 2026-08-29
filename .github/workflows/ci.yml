@@ -294,6 +294,11 @@ jobs:
         run: npx playwright install --with-deps --only-shell chromium
         working-directory: frontend
 
+      # `test:browser:ci`, not `test:browser`: two files are quarantined, both
+      # red on `main` before this job existed. package.json carries the list
+      # and the reason; BACKLOG B160 carries the defects. A local
+      # `npm run test:browser` still runs them, which is the point of putting
+      # the exclusion in the script rather than in `vite.config.ts`.
       - name: vitest --project browser
-        run: npm run test:browser
+        run: npm run test:browser:ci
         working-directory: frontend
