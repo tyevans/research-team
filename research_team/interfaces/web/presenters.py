@@ -33,6 +33,7 @@ from research_team.application.graph_read import (
     GraphRelationship,
     Neighborhood,
 )
+from research_team.application.project_summaries import ProjectSummary
 from research_team.application.timeline_read import Timeline, TimelineBand
 from research_team.application.topic_read import TopicDetail, TopicView
 from research_team.application.usages import Usage
@@ -409,8 +410,24 @@ def project_view(
     *,
     active_session_id: UUID | None = None,
     tip_at_event: int = 0,
+    summary: ProjectSummary | None = None,
 ) -> dict[str, Any]:
     """One row of `/api/projects`: enough to list, join, and see who holds it.
+
+    **`summary` is the column the listing has and the detail does not**, which
+    inverts the split this function's own history is about: it was folded into
+    `project_detail_view` when the detail grew `reading_head_session_id`, and
+    it comes apart the other way now. The asymmetry is the same shape both
+    times — a field belongs on the route that has a reader for it. A project
+    *page* has the project in front of it and needs no summary of itself; an
+    index has six rows and nothing else to tell them apart.
+
+    It defaults to `None` rather than being required so that the two callers
+    that mint a row for a project which cannot yet have any history — the
+    create endpoint, and the tests that build one by hand — do not have to
+    manufacture an empty summary to say "nothing". `project_summary_view`
+    turns that into zeros; see its docstring for why the zeros are written
+    there and not in the reader.
 
     The holder is part of the row because it decides what the row can offer. A
     list that cannot see it has only one button to show -- join -- and no way
@@ -433,7 +450,45 @@ def project_view(
         tip_at_event=tip_at_event,
     )
     del row["reading_head_session_id"]
+    row["summary"] = project_summary_view(summary)
     return row
+
+
+def project_summary_view(summary: ProjectSummary | None) -> dict[str, Any]:
+    """A project's pipeline position, as a listing row carries it.
+
+    **The zeros are supplied here rather than by the reader**, which is the
+    one decision in this function. `ProjectSummaries.all` answers only the
+    projects that have something to summarise, so a project created a minute
+    ago is simply absent from it — and `None` here means exactly that. Filling
+    it with zeros is correct *for a listing* and would be wrong for a caller
+    that needed to tell "nothing yet" from "not measured"; putting the fill
+    in the presenter keeps that judgement in the one place the response shape
+    is decided, instead of hiding it in a SQL adapter three layers down.
+
+    Always present on the row, never omitted when empty. An optional object
+    would make every consumer write the same `?? 0` fallback, and the console
+    has shipped a silently-absent field read as a zero before.
+    """
+    if summary is None:
+        return {
+            "topics": 0,
+            "topics_open": 0,
+            "sources": 0,
+            "extracted": 0,
+            "courses": 0,
+            "sessions": 0,
+            "last_activity": None,
+        }
+    return {
+        "topics": summary.topics,
+        "topics_open": summary.topics_open,
+        "sources": summary.sources,
+        "extracted": summary.extracted,
+        "courses": summary.courses,
+        "sessions": summary.sessions,
+        "last_activity": summary.last_activity,
+    }
 
 
 def feed_event(session_id: UUID, event: DomainEvent, index: int | None) -> dict[str, Any]:

@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
 
+import aiosqlite
+
 # Imported for its side effect as much as its names: redstring registers its
 # event types at import time, and the session store may hold them -- the
 # `Document` and `Consolidation` streams live in the same SQLite file as
@@ -87,6 +89,7 @@ from research_team.application.ontology_discovery import (
     OntologyDiscoveryService,
 )
 from research_team.application.perception import MediaPerceiver, PerceptionPort
+from research_team.application.project_summaries import ProjectSummary
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
 from research_team.application.topic_dispatch import TopicDispatcher
@@ -198,6 +201,9 @@ from research_team.infrastructure.persistence.event_store import (
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
+from research_team.infrastructure.persistence.project_summaries import (
+    SqliteProjectSummaries,
+)
 from research_team.infrastructure.persistence.read_models import (
     ArtRow,
     ArtStore,
@@ -516,6 +522,49 @@ class _LazyArtStore:
     async def close(self) -> None:
         if self._store is not None:
             await self._store.close()
+
+
+class _LazyProjectSummaries:
+    """`ProjectSummaries`, over a connection opened on first use.
+
+    `_LazyArtStore`'s shape, and the same reason for it: `build_application`
+    is synchronous because `web.py` calls it before uvicorn has a loop, and an
+    aiosqlite connection made on one loop cannot be used from another.
+
+    **This one mirrors a `Protocol` rather than a concrete class**, which is
+    the distinction `_LazyArtStore`'s docstring draws after forwarding an
+    incomplete surface into production: `ProjectSummaries` declares exactly one
+    method, so a method added to the adapter and not forwarded here is a method
+    nothing is allowed to call through this type. There is no second surface to
+    drift from.
+
+    It opens its own connection rather than borrowing one of the runners',
+    which costs a file handle and buys the thing this reader most needs to be:
+    ignorant of the runners entirely. Every table it reads is owned by a
+    different runner, so borrowing would mean choosing one of four to depend
+    on, and the reader would then answer only while that one happened to be
+    wired.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._connection: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()
+
+    async def _opened(self) -> SqliteProjectSummaries:
+        if self._connection is None:
+            async with self._lock:
+                if self._connection is None:
+                    self._connection = await aiosqlite.connect(self._db_path)
+        return SqliteProjectSummaries(self._connection)
+
+    async def all(self) -> dict[UUID, ProjectSummary]:
+        reader = await self._opened()
+        return await reader.all()
+
+    async def close(self) -> None:
+        if self._connection is not None:
+            await self._connection.close()
 
 
 class _LazyCandidateArtStore:
@@ -1074,6 +1123,15 @@ class Application:
     `extraction_model` `blurbs`/`outlines` use; no second model
     configuration, matching `outline_writer`'s own comment on why."""
 
+    project_summaries: _LazyProjectSummaries
+    """Every project's pipeline position, in one read for the whole listing.
+
+    Public rather than private, unlike the three lazy wrappers above it:
+    those exist so `close()` can reach a connection some *other* field opened
+    lazily, where this one is itself what `create_app` is handed
+    (`project_summaries=application.project_summaries` in `web.py`). It is the
+    field a route reads through."""
+
     _candidate_art_store: _LazyCandidateArtStore
     """The candidate-to-art assignment table `art_matcher`/`art_sweep` read
     and write through `LibraryArtProvider`. Private for `_blurb_cache`'s
@@ -1481,6 +1539,7 @@ class Application:
             ("outline cache", self._outline_cache.close),
             ("art store", self.art_store.close),
             ("candidate art store", self._candidate_art_store.close),
+            ("project summaries", self.project_summaries.close),
             ("media proposals", self.media_proposals.stop),
             ("asks", self.asks.stop),
             ("authoring", self.authoring.stop),
@@ -2808,6 +2867,7 @@ def _build_application(
     # every other cache in this function reads, so a piece of art assigned
     # by one request is visible to the very next one.
     art_store = _LazyArtStore(resolved_path)
+    project_summaries = _LazyProjectSummaries(resolved_path)
     candidate_art_store = _LazyCandidateArtStore(resolved_path)
     art_matcher = LibraryArtProvider(
         art_store=art_store,
@@ -3073,6 +3133,7 @@ def _build_application(
         art_store=art_store,
         art_generator=art_generator,
         art_matcher=art_matcher,
+        project_summaries=project_summaries,
         _candidate_art_store=candidate_art_store,
         art_sweep=art_sweep,
         art_reroll=art_reroll,
@@ -3136,6 +3197,7 @@ _PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
     ("outline_cache", "close"),
     ("art_store", "close"),
     ("candidate_art_store", "close"),
+    ("project_summaries", "close"),
     ("media_proposals", "stop"),
     ("asks", "stop"),
     ("authoring", "stop"),

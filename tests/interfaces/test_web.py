@@ -1464,12 +1464,30 @@ async def test_list_projects_starts_empty_then_shows_a_created_one(client):
     listed = (await client.get("/api/projects")).json()
     # A fresh project is held by nobody and has no tip: exactly the state a
     # row needs to offer "open" rather than a join that would be rejected.
+    #
+    # **The summary is all zeros rather than absent, and that is the claim.**
+    # `ProjectSummaries.all` answers only the projects it has rows for, so a
+    # project created a second ago is missing from it entirely and
+    # `project_view` is handed `None`. This asserts the whole body, so it is
+    # what would fail if that `None` ever started omitting the object instead
+    # of filling it -- which would make every consumer write the same `?? 0`
+    # fallback, and this console has shipped a silently-absent field read as a
+    # zero before.
     assert listed == [
         {
             "id": created["id"],
             "name": "atlas",
             "active_session_id": None,
             "tip_at_event": 0,
+            "summary": {
+                "topics": 0,
+                "topics_open": 0,
+                "sources": 0,
+                "extracted": 0,
+                "courses": 0,
+                "sessions": 0,
+                "last_activity": None,
+            },
         }
     ]
 

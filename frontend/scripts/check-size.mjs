@@ -173,6 +173,49 @@ const BUDGET_KB = {
   // still live on the slide -- from a pure segmenter over the parse that was
   // already on the wire. No new dependency, no new stylesheet, no new event, and
   // nothing added to the payload.
+  // 112 -> 120: the index redesigned as a project board, raised concurrently
+  // with the two above and **kept as history rather than as the live number**.
+  //
+  // **The interesting measurement was the baseline, not the delta.** Before
+  // any of today's three raises, `main` measured **112.0 kB against 112** --
+  // exactly on the line with no slack at all, so the next frontend change of
+  // any size was going to trip this gate whatever it was. The board measured
+  // **112.4 kB**, a 0.4 kB delta, and was merely one of the changes that
+  // arrived first. Measured by building the parent commit with the branch's
+  // own files removed rather than by subtracting -- an orphaned module is
+  // tree-shaken but a restored one is not, and the first attempt read 112.3
+  // because four of the branch's files were still on disk.
+  //
+  // What the 0.4 kB bought, net of a large deletion: the index stopped being
+  // six identical rows. `ProjectCard`, `ProjectList`, `ProjectRows`, the
+  // `useProjectActivity` hook, four `landing.ts` exports and a whole
+  // stylesheet came *out* -- 2,750 deleted lines against 1,924 added -- and
+  // what went in is a board drawing each project's position in the pipeline:
+  // three peer-scaled tracks, a two-tone corpus bar whose amber tail is
+  // ingest extraction has not caught up with, a sort control, and a first-run
+  // page that teaches the four stages. The redesign very nearly paid for
+  // itself in bytes, which is why the delta is 0.4 rather than the ~1 kB the
+  // last four features each cost.
+  //
+  // **Three branches raised the same 112 within hours -- the 80 -> 84 /
+  // 80 -> 96 collision again, with one more arm.** The error boundary
+  // measured 112.9, the board 112.4, and the deck 116.2, each taken with the
+  // other two absent. **None of those three describes this tree**, and adding
+  // the deltas would be a guess rather than a reading. So the rule the older
+  // note set is followed: keep the highest, never the sum. 124 stands.
+  //
+  // Rebased onto all three and re-measured on 2026-08-29: **117.3 kB**. That
+  // is the first number in this paragraph taken against a tree that holds all
+  // of them, and it is what the ~7 kB of headroom above is headroom over.
+  //
+  // **They very nearly did compound this time, and that is worth recording
+  // because the older note says the opposite happened before.** 112.0 plus
+  // the three deltas (0.9 + 0.4 + 3.3) predicts 116.6 against a measured
+  // 117.3. So the sum was a decent estimate here where it was a bad one for
+  // the 80 -> 84 / 80 -> 96 pair, whose deltas did not compound at all. The
+  // rule that survives both is not "deltas compound" or "deltas don't" -- it
+  // is that you cannot know which without building the merged tree, so keep
+  // the highest and re-measure.
   app: 124, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering

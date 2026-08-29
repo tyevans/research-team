@@ -1,4 +1,3 @@
-import type { ProjectRollup } from '../project/landing.ts'
 import type { Project } from '../project/project.ts'
 import type { TopicDetail, TopicView } from '../research/topic.ts'
 import type { SessionSummary } from '../session/session.ts'
@@ -42,9 +41,6 @@ export const projectHeadOf = (project: Project): EntityHead => ({
   id: project.id,
   label: project.name,
 })
-
-export const projectRollupHeadOf = (rollup: ProjectRollup): EntityHead =>
-  projectHeadOf(rollup.project)
 
 /** A session has no name, and inventing one would be worse than admitting it:
  *  `EntityRef` renders the short id in monospace when the label is null, which

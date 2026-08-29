@@ -42,4 +42,59 @@ export interface ProjectDetail extends Project {
   readonly readingHeadSessionId: SessionId | null
 }
 
+/** A project's position in the pipeline the system actually runs.
+ *
+ * The four stages are in dependency order and that ordering is the model,
+ * not a presentation choice: seeding opens **topics**, investigating a topic
+ * fetches **sources** into the corpus, extraction folds a source into the
+ * graph (**extracted**), and the catalog realizes **courses** out of the
+ * graph. Each stage consumes the one before it, so the four numbers read as a
+ * position rather than as four unrelated totals.
+ *
+ * Every field is server-computed. None of it can be derived in the browser:
+ * the counts live in four read models the console never fetches, and the
+ * previous index's attempt to say something about a project from the session
+ * list alone is exactly what produced "11 sessions, 30 files" — two numbers
+ * about sessions standing in for everything a project is.
+ */
+export interface ProjectSummary {
+  readonly topics: number
+  /** Of `topics`, the ones opened and not yet investigated.
+   *
+   * The only number here that goes **down** as work happens, which is why it
+   * is drawn differently from the rest: the other three accumulate, so a big
+   * number is progress, and a big number here is a backlog. */
+  readonly topicsOpen: number
+  readonly sources: number
+  /** Of `sources`, the ones folded into the knowledge graph.
+   *
+   * Never greater than `sources`. The *gap* is the point — ingest that has
+   * happened with extraction not following it is a real and common state, and
+   * it is the one thing on this page a reader can act on immediately. */
+  readonly extracted: number
+  readonly courses: number
+  readonly sessions: number
+  /** When this project was last *touched*, ISO, or null.
+   *
+   * The newest `updated_at` across its sessions, so it moves on every turn.
+   * The landing page used to derive this from the newest session **start**,
+   * and `landing.ts` carried a comment warning that a row "must not claim it
+   * is" the last activity. Measured against a copy of the real database on
+   * 2026-08-29: the two disagreed by up to 1h24m on a live project. */
+  readonly lastActivity: string | null
+}
+
+/** A project as the index lists it: identity, holder, and its pipeline.
+ *
+ * Separate from `Project` rather than a field on it, mirroring the server
+ * exactly: `GET /api/projects` carries a summary and `GET /api/projects/{id}`
+ * does not. The asymmetry is the same one `ProjectDetail` makes in the other
+ * direction, and for the same reason — a field belongs on the route that has
+ * a reader for it. A project *page* has the project in front of it; an index
+ * has six rows and nothing else to tell them apart.
+ */
+export interface ProjectListing extends Project {
+  readonly summary: ProjectSummary
+}
+
 export const isHeld = (project: Project): boolean => project.activeSessionId !== null

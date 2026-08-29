@@ -82,6 +82,26 @@ const containerWith = (over: Record<string, unknown> = {}) =>
           name: 'atlas',
           activeSessionId: HOLDER,
           tipAtEvent: 0,
+          // The listing's pipeline counts. **Required, not optional**, which
+          // is why they are spelled out on a fixture that is otherwise about
+          // the shell: the index scales its bars across the whole board, so
+          // `scaleOf` reads `summary` on every row before anything is drawn
+          // and a row without one throws rather than degrading.
+          //
+          // The server always sends it — `project_summary_view` fills zeros
+          // rather than omitting the object, and `projectRowDto` defaults it
+          // besides — so a fixture without one describes a response that
+          // cannot occur. This container is cast to `Container`, so nothing
+          // typechecked the omission.
+          summary: {
+            topics: 0,
+            topicsOpen: 0,
+            sources: 0,
+            extracted: 0,
+            courses: 0,
+            sessions: 0,
+            lastActivity: '2026-08-09T09:00:00Z',
+          },
         },
       ]),
       create: vi.fn(),
