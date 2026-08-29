@@ -2202,6 +2202,23 @@ the first real transcript is ingested.
 
 _Renumbered from B54 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B54` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
+**Both files this entry names are deleted, and the trigger with them (W-D,
+2026-08-29).** The landing page is a board now: `ProjectRows.tsx`,
+`ProjectRows.browser.test.tsx` and the recency headings are gone, and with no
+headings there is no row that can shift down by one and inherit another's
+cached height -- which is the whole of the incident below. The board keys by
+project id through `VirtualList`'s `getKey`, so the fix is still in force, and
+every row is now one height, so there is far less for a stale measurement to
+bite on.
+
+**This does not close the entry.** `VirtualList` still has a second caller
+(`DocumentBrowser`), the keying invariant is still held only by an assertion on
+the keys rather than on the symptom, and the two candidate explanations below
+are still unresolved. What changed is that the cheapest place to try the
+scrolling experiment no longer exists, so whoever picks this up starts from
+`VirtualList` itself rather than from the landing page. Read the paragraphs
+below as history of a page that is gone.
+
 `itemKey` in `frontend/src/presentation/tree/ProjectRows.tsx` records a real
 incident: when the projects query answered and every row shifted down by a
 heading, a project row's measured 155px stayed cached against the 33px heading
