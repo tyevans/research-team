@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from redstring import DocumentExtracted, EntitiesMerged
 from redstring.domain.entity import Entity
 from redstring.domain.provenance import ExtractionMethod, Provenance
@@ -80,10 +79,28 @@ def _row(project_id, entity_id) -> EntityDefinitionRow:
 
 
 @pytest.fixture
-def store() -> EntityDefinitionStore:
-    connection = None  # never opened -- see the note on `rows` below.
-    rows = InMemoryReadModelRepository(EntityDefinitionRow)
-    return EntityDefinitionStore(connection, rows)
+async def store(db_path) -> EntityDefinitionStore:
+    """A real SQLite store, where this fixture used to pass `connection=None`
+    and an `InMemoryReadModelRepository`.
+
+    The swap was forced, and the way it was forced is the interesting part.
+    B74 rewrote `mark_stale` as a single `UPDATE` against the connection --
+    the previous read-modify-write went through the repository, which the
+    in-memory one satisfied, so the fixture had never needed a connection.
+    It broke with `AttributeError: 'NoneType' object has no attribute
+    'execute'` on eleven tests, and *that is the fixture working correctly*:
+    it named the seam that had changed instead of quietly agreeing with the
+    new code.
+
+    Worth keeping in mind next time this is tempting to fake again. Every test
+    below asserts on a row, and a row read back out of SQLite is the claim
+    these tests are actually making -- the in-memory repository could not have
+    told a `stale` column that was never written from one written as the
+    string "True".
+    """
+    opened = await EntityDefinitionStore.open(db_path)
+    yield opened
+    await opened.close()
 
 
 @pytest.fixture

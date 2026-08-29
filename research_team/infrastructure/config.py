@@ -170,7 +170,25 @@ DEFAULT_CONSOLIDATION_BATCH = _builtin_int("consolidation_batch")
 #: to buy 1.1% on this endpoint. See `catalog_sweep_concurrency` for the curve.
 DEFAULT_CATALOG_SWEEP_CONCURRENCY = _builtin_int("catalog_sweep_concurrency")
 
+#: The one value of `AGENT_VECTOR_STORE` that means "do not embed". Named
+#: because those comparison sites are the whole definition of "are embeddings
+#: on", and a second value meaning off would otherwise have to be found by
+#: grepping for a string literal.
+#:
+#: Written out rather than taken as `VECTOR_STORES[0]`: an index is a claim
+#: about the declaration's *order*, which nothing in `domain/settings.py`
+#: promises and no reader of that file would think to preserve. The assertion
+#: below is the derivation instead -- it costs nothing at import and turns a
+#: rename of the choice into an immediate, named failure rather than a silent
+#: `vector_kind != "none"` that is true forever and embeds when asked not to.
+NO_VECTOR_STORE = "none"
+
 VECTOR_STORES = _choices("vector_store")
+assert NO_VECTOR_STORE in VECTOR_STORES, (
+    f"{NO_VECTOR_STORE!r} is no longer a declared AGENT_VECTOR_STORE choice; "
+    "whatever replaced it is what turns embeddings off, and every comparison "
+    "against NO_VECTOR_STORE now means the opposite of what it says"
+)
 #: On, since the third scoring feature is what lets consolidation merge a
 #: cross-document duplicate on evidence rather than on an overridden threshold.
 #: See `vector_store` for what it costs and how it degrades.
@@ -763,11 +781,6 @@ def extraction_model() -> str:
     changes which name that client sends, and nothing about how it sends it.
     """
     return _optional("extraction_model") or model_name()
-
-
-def embeddings_enabled() -> bool:
-    """Whether anything should embed. A convenience over `vector_store`, not a knob."""
-    return vector_store() != "none"
 
 
 def embedding_model() -> str:

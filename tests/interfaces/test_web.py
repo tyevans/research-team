@@ -2860,29 +2860,6 @@ async def join_session(client, project_id: UUID) -> UUID:
     return UUID(response.json()["id"])
 
 
-async def test_workers_lists_an_idle_member_session(client):
-    """A project with a session attached and nothing running.
-
-    The 200-with-empty-workers case matters as much as the busy one: the panel
-    must be able to say "attached, nothing running" without an error.
-    """
-    project_id = await make_project(client)
-    session_id = await join_session(client, project_id)
-
-    response = await client.get(f"/api/projects/{project_id}/workers")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["project_id"] == str(project_id)
-    assert body["workers"] == []
-    assert body["idle_session_ids"] == [str(session_id)]
-
-
-async def test_workers_404s_on_an_unknown_project(client):
-    response = await client.get(f"/api/projects/{uuid4()}/workers")
-    assert response.status_code == 404
-
-
 async def test_all_workers_is_empty_while_nothing_anywhere_is_running(client):
     """The ordinary answer, and the one the widget gets on almost every page.
 
@@ -2930,17 +2907,6 @@ async def test_all_workers_is_404_when_the_roster_is_not_wired(client_without_wo
     assert response.status_code == 404
 
 
-async def test_workers_is_404_when_the_roster_is_not_wired(client_without_workers):
-    """A build with no roster says so, rather than reporting an empty project.
-
-    200 with an empty list would tell a browser that nothing is running,
-    which is a different claim from "this build cannot tell you".
-    """
-    project_id = await make_project(client_without_workers)
-    response = await client_without_workers.get(f"/api/projects/{project_id}/workers")
-    assert response.status_code == 404
-
-
 # ---------------- extraction ----------------
 
 
@@ -2973,16 +2939,21 @@ async def test_extraction_catch_up_shows_the_running_ingest(client, extraction):
 
 
 async def test_the_roster_shows_a_running_extraction(client, extraction):
-    """The roster and the pane read one buffer, so they cannot disagree."""
+    """The roster and the pane read one buffer, so they cannot disagree.
+
+    Asked through `/api/workers` because the per-project route it used to use
+    was deleted unused; the buffer being folded is the same one either way.
+    """
     project_id = await make_project(client)
     extraction.reporter(project_id)(
         ExtractionNote(source_id="notes", stage="consolidating", index=3, total=9)
     )
 
-    body = (await client.get(f"/api/projects/{project_id}/workers")).json()
+    body = (await client.get("/api/workers")).json()
 
-    assert [worker["kind"] for worker in body["workers"]] == ["extraction"]
-    assert body["workers"][0]["detail"] == "consolidating 3/9"
+    assert [row["project_id"] for row in body] == [str(project_id)]
+    assert [worker["kind"] for worker in body[0]["workers"]] == ["extraction"]
+    assert body[0]["workers"][0]["detail"] == "consolidating 3/9"
 
 
 async def test_extraction_frames_ride_the_stream_without_an_id(repository):

@@ -4406,39 +4406,22 @@ def create_app(
 
         For a reader who is not looking at a project: the console's agent
         widget sits on every page and its collapsed state is a count across all
-        of them, which the per-project route below cannot answer without one
-        request per project on every page load.
+        of them, which a per-project route cannot answer without one request
+        per project on every page load. There used to be such a route
+        (`GET /api/projects/{project_id}/workers`); it was deleted unused.
 
         Only projects with something running are returned, and the empty list
         is the ordinary answer. That is not a shortcut for the client's benefit
         -- it is what makes this cheap, because `everywhere` folds only the
         projects its supervisors named rather than every project that exists.
 
-        404 when no roster is wired, matching the per-project route exactly: a
-        200 with an empty list would tell a browser that nothing is running,
-        which is a different claim from "this build cannot tell you".
+        404 when no roster is wired: a 200 with an empty list would tell a
+        browser that nothing is running, which is a different claim from
+        "this build cannot tell you".
         """
         if workers is None:
             raise HTTPException(status_code=404, detail="the worker roster is not enabled")
         return [roster_view(roster) for roster in await workers.everywhere()]
-
-    @app.get("/api/projects/{project_id}/workers")
-    async def get_workers(project_id: UUID):
-        """Everything in flight on this project, right now.
-
-        Polled rather than pushed, and cheap enough to be: two process-local
-        dicts and one fold. What it sets the latency of is "a new worker
-        appeared" -- everything *inside* a worker arrives over the live feed,
-        which is where a person's attention actually is.
-
-        404 when no roster is wired, matching `/api/workers` above. A 200
-        with an empty list would tell a browser that nothing is running,
-        which is a different claim from "this build cannot tell you".
-        """
-        if workers is None:
-            raise HTTPException(status_code=404, detail="the worker roster is not enabled")
-        await _require_project(project_id)
-        return roster_view(await workers.on(project_id))
 
     @app.get("/api/projects/{project_id}/extraction")
     async def get_extraction(project_id: UUID):

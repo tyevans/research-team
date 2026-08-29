@@ -196,3 +196,28 @@ def test_composition_root_is_the_only_place_that_wires_adapters() -> None:
             source = module.read_text()
             named = {name for name in wiring if name in source}
             assert not named, f"{module.relative_to(PACKAGE)} names adapters: {named}"
+
+
+def test_the_removed_workflows_package_does_not_come_back_as_a_directory() -> None:
+    """An empty `research_team/workflows/` is importable, and was.
+
+    B147 deleted the workflow system's sources on 2026-08-27 and left the
+    compiled bytecode behind in `research_team/workflows/__pycache__/`. That
+    is gitignored, so it survives every checkout, every branch switch and
+    every `git clean` that spares ignored files, and CI -- which starts from
+    a clean tree -- cannot see it at all. This test can, which is the only
+    reason it is worth its two lines: it fails on a developer's machine and
+    nowhere else.
+
+    Measured on 2026-08-29 rather than reasoned, because the obvious fear is
+    the wrong one: `research_team.workflows.ubd` is **not** importable from
+    bytecode under `__pycache__` (sourceless import wants the `.pyc` at the
+    source's own path). What *is* importable is `research_team.workflows`
+    itself, as an empty namespace package, because the directory exists. So
+    the guard is over the directory, not over the modules.
+    """
+    assert not (PACKAGE / "workflows").exists(), (
+        "research_team/workflows/ is back, or its orphaned __pycache__ was "
+        "never cleaned; the package was deleted with B147 and an empty "
+        "directory still imports as a namespace package"
+    )

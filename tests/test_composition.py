@@ -230,6 +230,92 @@ async def test_a_raise_late_in_build_application_never_constructs_the_media_clie
     assert built == []
 
 
+async def test_a_partial_build_closes_what_it_already_opened(monkeypatch):
+    """B100. A raise inside `build_application` used to abandon the SQLite
+    event store, the blob store and every projection runner built above it.
+
+    The event store is the one that matters and is why this is not merely
+    tidiness: B5 measured that its aiosqlite worker thread is **non-daemon**,
+    so a process that abandons one parks in `threading._shutdown` waiting for
+    a thread that will never finish. A misconfiguration that should have
+    raised a readable error hangs instead, and the hang names nothing.
+
+    Red against the pre-fix build: `WorkerRoster` is constructed late, so
+    everything in `_PARTIAL_BUILD_RESOURCES` exists by the time it raises, and
+    nothing closed any of it.
+
+    The `sleep(0)` is not slop. With a loop already running the teardown is
+    *scheduled*, not awaited -- `build_application` is synchronous and has no
+    `await` on its raise path -- so it completes only after control returns to
+    the loop, which is what the yield here is. That timing is the documented
+    cost of the fix rather than an accident, and a test that did not yield
+    would be asserting the wrong thing about it.
+    """
+    import asyncio
+
+    from research_team import composition
+    from research_team.composition import EventStoreSessionRepository
+
+    closed = []
+    real_close = EventStoreSessionRepository.close
+
+    async def _tracking_close(self):
+        closed.append(self)
+        await real_close(self)
+
+    monkeypatch.setattr(EventStoreSessionRepository, "close", _tracking_close)
+
+    class _Boom(Exception):
+        pass
+
+    def _raise(*args, **kwargs):
+        raise _Boom("WorkerRoster refuses to build")
+
+    monkeypatch.setattr(composition, "WorkerRoster", _raise)
+
+    with pytest.raises(_Boom):
+        composition.build_application()
+
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert closed, "the event store was left open by a partial build"
+
+
+async def test_a_teardown_step_that_raises_does_not_skip_the_steps_after_it(monkeypatch):
+    """B10, in the shape it actually bites. `Application.close` was a straight
+    run of `await`s, so the first one to raise skipped everything below it --
+    and the two things furthest down are `detach_project`, which releases the
+    Neo4j driver, and `graphs.close_all()`, which releases every graph store
+    the instance opened. The shutdown path leaked most in exactly the case
+    where something had already gone wrong.
+
+    Red against that: with `summaries.stop` raising, `detach_project` was
+    never reached. It now runs, and the failure is re-raised as a group rather
+    than swallowed -- a `close()` that hides a broken teardown is the same
+    silence with fewer leaks.
+    """
+    from research_team.composition import _close_every_step
+
+    ran = []
+
+    async def _ok(name):
+        ran.append(name)
+
+    async def _boom():
+        ran.append("boom")
+        raise RuntimeError("stop refused")
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        await _close_every_step(
+            ("first", lambda: _ok("first")),
+            ("summaries", _boom),
+            ("detach", lambda: _ok("detach")),
+        )
+
+    assert ran == ["first", "boom", "detach"]
+    assert "summaries" in str(caught.value.exceptions[0].__notes__)
+
+
 async def test_the_course_projection_is_registered(build_application):
     """Not 'the app starts'. An event no projection handles counts as applied,
     so a build with CourseProjection missing starts cleanly, answers every
@@ -360,3 +446,44 @@ def test_the_lazy_art_store_forwards_every_method_the_real_one_has():
     missing = surface(ArtStore) - surface(_LazyArtStore)
 
     assert missing == set(), f"_LazyArtStore does not forward: {sorted(missing)}"
+
+
+def test_every_partial_build_resource_is_a_local_of_the_build() -> None:
+    """`_PARTIAL_BUILD_RESOURCES` names another function's local variables, and
+    Python ties it to them in no way at all.
+
+    Rename `corpus` inside `_build_application` and the entry stops matching,
+    `frame.f_locals.get` returns `None`, that resource is dropped from the
+    teardown, and the build raises exactly as it did before. B100's leak comes
+    back silently, looking identical to the leak the wrapper exists to prevent
+    -- and it comes back during a refactor, which is when nobody is reading the
+    comment above the tuple.
+
+    Static, over the function's own AST, so it costs nothing and cannot be
+    fooled by which branch a particular build took: a name is checked against
+    every assignment in the body, not against the locals of one run.
+
+    What it does not cover, stated because the asymmetry is easy to misread as
+    coverage: a resource added to `Application.close` and *not* to the tuple.
+    That direction has no static handle -- `close()` reads attributes off an
+    instance -- and stays a silent omission.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from research_team.composition import _PARTIAL_BUILD_RESOURCES, _build_application
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_build_application)))
+    assigned = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+
+    missing = sorted(name for name, _ in _PARTIAL_BUILD_RESOURCES if name not in assigned)
+    assert not missing, (
+        f"_PARTIAL_BUILD_RESOURCES names locals that _build_application does not "
+        f"assign: {missing}. Each one is silently dropped from the partial-build "
+        "teardown -- the B100 leak, back, with nothing raising."
+    )

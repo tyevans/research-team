@@ -169,3 +169,91 @@ async def test_a_database_written_before_definitions_existed_gains_the_table(db_
         assert await store.get(uuid4(), uuid4()) is None  # not a raise
     finally:
         await store.close()
+
+
+async def test_staling_keeps_the_repository_bookkeeping_a_save_would_have_done(db_path):
+    """B74 replaced `mark_stale`'s read-modify-write with a hand-written
+    `UPDATE`, and this is the bill for that: `save` maintains `updated_at` and
+    `version` and skips soft-deleted rows, and a statement written by hand can
+    silently stop doing any of the three. A row staled through this path has to
+    be indistinguishable from one staled through `save`, or optimistic locking
+    quietly stops counting.
+
+    **This is not a test of the lost update B74 is about, and no test here is.**
+    That property -- a `put` landing between the old code's read and its write
+    keeping its text -- needs two writers inside one call, and every way of
+    forcing that in this harness measures the harness: re-entering the store's
+    own `aiosqlite.Connection` deadlocks its worker thread, and a second
+    connection meets `database is locked` under *both* implementations, because
+    the competing write is injected mid-statement either way. Tried both on
+    2026-08-29 and rejected both. What is left is the reasoning -- an `UPDATE`
+    naming one column cannot revert a column it does not name -- plus this test
+    of the part that is observable.
+    """
+    project_id, entity_id = uuid4(), uuid4()
+    store = await EntityDefinitionStore.open(db_path)
+    await store.put(_row(project_id, entity_id, text="first"))
+
+    before = await _bookkeeping(store, project_id, entity_id)
+    await store.mark_stale(project_id, entity_id)
+    after = await _bookkeeping(store, project_id, entity_id)
+
+    row = await store.get(project_id, entity_id)
+    assert row is not None
+    assert row.stale is True
+    assert row.text == "first", "staling must not touch a column it was not asked about"
+    assert after["version"] == before["version"] + 1
+    assert after["updated_at"] > before["updated_at"]
+    await store.close()
+
+
+async def test_staling_an_entity_nobody_has_a_definition_for_is_a_no_op(db_path):
+    """The ordinary case, and the one the invalidation projection is in most of
+    the time -- most entities have never had a definition generated. It has to
+    not raise, or routine graph activity lands in the DLQ.
+
+    Would pass with the change reverted: the old read-modify-write returned
+    early on a missing row. Kept because the `UPDATE` reaches the same answer a
+    different way -- zero rows matched -- and nothing else asserts it.
+    """
+    store = await EntityDefinitionStore.open(db_path)
+    await store.mark_stale(uuid4(), uuid4())
+    await store.close()
+
+
+async def test_staling_under_the_wrong_project_leaves_the_row_alone(db_path):
+    """`project_id` is in the `WHERE` as well as inside the row id.
+
+    **It would pass with that clause deleted**, and saying so is the point.
+    The pair is baked into `row_id`, so a call under the wrong project computes
+    an id that matches no row and stales nothing whether or not `project_id` is
+    in the `WHERE`. There is no input reachable through this class that
+    separates the two. The clause is defence against a caller that reaches the
+    table by some other route -- `get` carries the identical check for the
+    identical unreachable reason -- and this test records the behaviour rather
+    than proving the clause earns its keep.
+    """
+    project_id, entity_id = uuid4(), uuid4()
+    store = await EntityDefinitionStore.open(db_path)
+    await store.put(_row(project_id, entity_id))
+
+    await store.mark_stale(uuid4(), entity_id)
+
+    row = await store.get(project_id, entity_id)
+    assert row is not None
+    assert row.stale is False
+    await store.close()
+
+
+async def _bookkeeping(store, project_id, entity_id) -> dict:
+    """`version` and `updated_at` are the repository's own columns; the model
+    does not carry them, so they are read straight out of the table."""
+    cursor = await store._connection.execute(
+        f"SELECT version, updated_at FROM {EntityDefinitionRow.table_name()} WHERE id = ?",
+        (str(EntityDefinitionRow.row_id(project_id, entity_id)),),
+    )
+    try:
+        version, updated_at = await cursor.fetchone()
+        return {"version": version, "updated_at": updated_at}
+    finally:
+        await cursor.close()
