@@ -266,3 +266,40 @@
  * dressing a surface that outlives it. Deleting `course.css` with the course
  * view would have unstyled a control still on screen, with no test failing and
  * no error raised. */
+
+/* --- the catalog card's art ------------------------------------------- *
+ *
+ * The one property of `CourseCard` a test asserts, and the one that stops a
+ * shelf of twelve generated pictures having twelve different title baselines:
+ * a *fixed aspect* per size, with `object-cover` inside it, rather than a fixed
+ * height.
+ *
+ * **A rule here rather than the `aspect-[3/2]` utility it was**, and the reason
+ * is a measurement rather than a preference. `course-card-sizing.browser.test.tsx`
+ * failed once in three local full-suite runs and again in CI, reporting the
+ * computed `aspect-ratio` as `auto`: the class present in the attribute and no
+ * rule anywhere. A fresh `npm run build` contains both `aspect-ratio:3/2` and
+ * `aspect-ratio:16/9`, so the utilities were right and it was the stylesheet
+ * *the browser suite is served* that was incomplete -- Tailwind's dev-time scan
+ * of `@source '../**\/*.tsx'` had not reached `CourseCard.tsx` when the setup
+ * file first requested the CSS, and a vitest browser page never sees the
+ * invalidation that follows.
+ *
+ * That failure mode is specific to an arbitrary-value utility whose only
+ * occurrence in the repository is one string in one component. It is not a
+ * reason to move utilities back into stylesheets generally, and this is not the
+ * start of one -- everything else about this card stays where it is. It is the
+ * reason for moving *this* one: a rule in a stylesheet cannot be
+ * half-generated, and the property is exactly the one a test has to be able to
+ * trust.
+ *
+ * What a test would fail on: delete either rule and the aspect case reports
+ * `auto`, which is the same reading the flake produced -- so the test can no
+ * longer tell those two apart, and that is the trade. It buys the reading being
+ * stable. */
+.crs-card-art {
+  aspect-ratio: 3 / 2;
+}
+.crs-card-hero .crs-card-art {
+  aspect-ratio: 16 / 9;
+}

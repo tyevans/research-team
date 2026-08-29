@@ -80,16 +80,25 @@ const CARD_WIDTH: Record<CardSize, string> = {
   filed: 'crs-card-filed w-[184px]',
 }
 
-/** A *fixed aspect* per size rather than a fixed height, which is what makes a
- *  shelf of cards line up: generated art arrives at whatever proportion the
- *  model gave it, and `object-cover` inside a ratio box is the only thing that
- *  makes twelve of them share a baseline. Asserted in the browser test, because
- *  jsdom has no aspect ratio. */
-const CARD_ART: Record<CardSize, string> = {
-  hero: 'aspect-[16/9]',
-  highlight: 'aspect-[3/2]',
-  filed: 'aspect-[3/2]',
-}
+/** The art's aspect ratio moved to `course.css` on 2026-08-29, and this note is
+ *  the reason rather than a redirection.
+ *
+ *  It was `aspect-[16/9]` / `aspect-[3/2]` here, and the browser test that
+ *  measures it failed once in three local full-suite runs and again in CI, with
+ *  the computed `aspect-ratio` reading `auto` -- the class in the attribute, no
+ *  rule anywhere. The production build has both rules
+ *  (`grep aspect-ratio` over a fresh `npm run build`), so the utilities are
+ *  correct and the *bundle the browser suite is served* is what was
+ *  incomplete: Tailwind's dev-time scan of `@source '../**\/*.tsx'` had not
+ *  reached this file when the stylesheet was first requested, and a vitest
+ *  browser page never picks up the invalidation.
+ *
+ *  So this is not a card bug and the fix is not to the card. An arbitrary-value
+ *  utility whose only occurrence in the repository is one string in one file is
+ *  the most fragile thing that scan can be asked for, and the ratio is the one
+ *  property of this component a test asserts. A rule in `course.css` cannot be
+ *  half-generated. The three size marker classes it keys off
+ *  (`crs-card-hero` and friends) already existed for the test to select on. */
 
 const CARD_TITLE: Record<CardSize, string> = {
   hero: 'text-xl',
@@ -124,7 +133,7 @@ export const CourseCard = ({
         <img
           src={candidate.art.url}
           alt={candidate.art.alt}
-          className={clsx('crs-card-art w-full object-cover', CARD_ART[size])}
+          className="crs-card-art w-full object-cover"
         />
         {/* The scrim. An arbitrary `linear-gradient` rather than Tailwind's
             `bg-gradient-to-t` + `from-*`: the stops here are alpha over

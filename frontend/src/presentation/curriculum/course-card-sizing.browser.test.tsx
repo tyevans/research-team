@@ -81,16 +81,20 @@ it('gives the art a declared aspect ratio rather than the image its own', async 
 
   // Two assertions on one fact, and the pair is deliberate. The measured box is
   // what a reader sees; the computed property is *why*, and it is the half that
-  // tells the two candidate causes apart when this goes red. B160 records this
-  // case failing at 10.63:1 on another machine, and a ratio that wide is a box
-  // whose height came from a broken image's alt text rather than from a rule --
-  // i.e. no `aspect-ratio` at all, which is what happens if Tailwind never
-  // generated the `aspect-[3/2]` utility. If that recurs, `aspectRatio` reads
-  // `auto` and says so, where the box measurement alone reports only a number.
+  // tells the two candidate causes apart when this goes red, and it earned its
+  // keep within the hour. B160 reports this case at 10.63:1 on another machine
+  // -- a ratio that wide being a box whose height came from a broken image's
+  // alt text rather than from a rule -- and the property came back `auto` in
+  // CI, which names the cause as "no rule at all" where the box measurement
+  // reports only a number.
   //
-  // Measured here on 2026-08-29 across three consecutive full-suite runs: 185
-  // tests green, green, and one failure of this case, with the file passing
-  // alone every time. That is the profile of a race, not of a wrong ratio.
+  // What that turned out to be is in `course.css`: the `aspect-[3/2]` utility
+  // this used to depend on is generated correctly in a production build and was
+  // absent from the stylesheet the browser suite is served, because Tailwind's
+  // dev-time scan had not reached `CourseCard.tsx` when the setup file
+  // requested the CSS. The ratio is a rule now. Three local full-suite runs
+  // before that change: green, green, and one failure of this case, with the
+  // file passing alone every time.
   const element = document.querySelector('.crs-card-art')!
   expect(getComputedStyle(element).aspectRatio).toBe('3 / 2')
 
