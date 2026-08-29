@@ -212,9 +212,40 @@ about them. **No route asks yet** — verified by grep on 2026-08-29: no
 permission marker appears anywhere under `research_team/interfaces/web/`. The
 slice that puts the marker on every route is what makes `on` meaningful.
 
-`AGENT_AUTH` also does not turn on sign-in. There is no sign-in. The gate that
-refuses an anonymous request is a separate, **unmerged** piece of work (#332),
-and this setting only decides which adapter answers a permission question.
+**`AGENT_AUTH` turns on sign-in as well, and that is one flag on purpose.** The
+same value decides which `Authorizer` adapter is wired *and* whether `AuthGate`
+refuses an anonymous request. Two variables were the alternative and are worse
+in both directions: authentication on with authorization off is a sign-in wall
+protecting nothing, and authorization on with authentication off is a
+permission check against a person who does not exist. Neither is a
+configuration anybody wants, and splitting the flag would make both reachable.
+
+So `on` means: unauthenticated `/api/*` answers 401, the console shows a
+sign-in screen, and the real permission checker is wired. `off` means the app
+behaves exactly as it did before identity existed -- no gate, no redirect, and
+a permissive authorizer -- which is what every configuration in this repository
+runs today. `tests/interfaces/test_auth_gate.py` holds both states, because a
+flag with only its enabled path tested is a flag whose default nobody checked.
+
+The identity half needs the five variables below to be useful. None of them is
+a declared setting: resolution walks project, then user, then tenant, and a
+*user* scope cannot exist before authentication has decided who the user is.
+That is `AGENT_DB`'s circularity with a different store, and it is why they are
+in `ENVIRONMENT_ONLY`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_OIDC_ISSUER` | `http://localhost:8081` | The issuer to discover `.well-known/openid-configuration` under. Compared for **exact** string equality against every ID token's `iss` |
+| `AGENT_OIDC_CLIENT_ID` | *(unset)* | This app's OIDC client. Unset means no provider is configured: `/auth/login` answers 503 and the login screen says so rather than offering a button that fails |
+| `AGENT_OIDC_CLIENT_SECRET` | *(unset)* | The confidential client's secret. Empty is permitted and means the client is treated as public -- PKCE is what binds the code to the browser either way |
+| `AGENT_AUTH_PUBLIC_URL` | `http://localhost:8000` | The origin a browser reaches *this app* on, used to build the OIDC redirect URI. Not derived from the request's `Host` header, deliberately: that would let an attacker-chosen host into the authorization request |
+| `AGENT_SESSION_SECRET` | *(unset)* | The key session cookies are signed with. Unset mints a random one per process, so a restart signs everybody out. Deliberate -- a shipped default signing key is the same as no signature, since anyone who knows it can mint a cookie naming any subject |
+
+`docker compose up -d` brings up a Zitadel that provisions itself and sets the
+two client variables for the app container without any clicking. See
+[running Zitadel locally](how-to/running-zitadel-locally.md) for the admin
+credentials, what the bootstrap does, and the four settings in that stack that
+must not survive into anything reachable from outside a laptop.
 
 `AGENT_ADMIN_SUBJECTS` is deployment scope only, for a stated reason: a tenant
 that could name its own instance admins could rebuild everyone else's corpus.
@@ -327,12 +358,18 @@ Both store defaults keep everything in this process, and neither needs a
 container. `docker-compose.yml` brings up the two servers that change that:
 
 ```bash
-docker compose up -d
+docker compose up -d postgres neo4j
 export AGENT_GRAPH_STORE=neo4j
 export AGENT_NEO4J_PASSWORD=research
 export AGENT_VECTOR_STORE=pgvector
 export AGENT_PGVECTOR_DSN=postgresql://research:research@localhost:5432/research_team
 ```
+
+Naming the two services is what selects them. A plain `docker compose up -d`
+now brings up the **whole stack** -- these two plus SearXNG, Zitadel and the
+app itself, with identity on -- which is
+[running the whole stack](how-to/running-the-whole-stack.md). The two commands
+are the same file; the difference is only what you ask it for.
 
 The remaining Neo4j and embedding variables already default to what the
 compose file serves. **Nothing needs to be run against the database first.**

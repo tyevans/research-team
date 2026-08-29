@@ -310,7 +310,9 @@ straight to whoever indexed the image, leaking IP and referrer. Set
 search on for anyone but yourself. Details and the measurement in
 `docs/configuration.md`.
 
-Durable backends need nothing beyond `docker compose up -d`; the schema is
+Durable backends need nothing beyond `docker compose up -d postgres neo4j`
+(plain `docker compose up -d` now starts the whole stack, app and identity
+provider included -- see `docs/how-to/running-the-whole-stack.md`); the schema is
 created on first project open. Both defaults keep everything in-process.
 
 ## REPL commands
