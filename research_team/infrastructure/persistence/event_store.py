@@ -35,6 +35,7 @@ from research_team.domain.research_run import ResearchRun
 from research_team.domain.socratic_dialogue import SocraticDialogue
 from research_team.domain.tenant import TENANT_AGGREGATE_TYPE
 from research_team.domain.topic import Topic
+from research_team.domain.user import USER_AGGREGATE_TYPE
 
 SNAPSHOT_THRESHOLD = 50
 
@@ -102,6 +103,7 @@ UNROUTED_AGGREGATE_TYPES = frozenset(
         COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
         CATALOG_AGGREGATE_TYPE,
         TENANT_AGGREGATE_TYPE,
+        USER_AGGREGATE_TYPE,
     }
 )
 """Aggregate types deliberately kept off the feed, and the other half of the guard.
@@ -233,6 +235,31 @@ becomes true the moment somebody writes the `tenant_change` presenter, so
 whoever does that in B5 must put the payload behind B6's per-connection filter
 in the same change -- a frame carrying a credential is a different question from
 a frame carrying a repaint, and only one of them is safe to ship early.
+
+`User` is off because the only writer is the OIDC callback, and a callback is
+a full-page navigation: the browser that would receive the frame is being
+replaced by a page load in the same instant, and every other tab in that
+browser is about to see the same person it already saw. `UserSignedIn` is
+appended on every sign-in, so routing it would put a frame on the connection
+of every open tab each time anybody signs in anywhere -- a repaint per
+sign-in, for a display name that has not moved.
+
+It is also off for the second reason `Tenant` above sets out and measured:
+there is no `_sse` branch and no presenter for these, so routing one now would
+not produce a live view -- it would put a blank row addressed to a session id
+that does not exist into every connected browser. That measurement was taken
+against `Tenant` and applies here unchanged; it is cited rather than re-taken.
+
+The revisit condition is `Tenant`'s members page, not a separate one. A pane
+listing who is in a tenant renders a *person* -- a name, an avatar -- so the
+change that gives `Tenant` a presenter and a `decodeFrame` case is the change
+that should ask whether a `UserProfileChanged` belongs on the same frame. Until
+then, moving this type alone would buy a repaint of nothing.
+
+The staleness this leaves, stated because it is real: a display name changed
+in Zitadel while a tab is open does not reach that tab's account menu until a
+reload. Nothing decides anything on a display name, so the cost is cosmetic
+and bounded by one page load.
 
 None of the others is a *correctness* argument, and if any grows a pane the
 answer is to move it into `FEED_AGGREGATE_TYPES` and give `_sse` a branch --

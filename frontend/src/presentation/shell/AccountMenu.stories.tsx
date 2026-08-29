@@ -1,8 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
 import type { Principal } from '@application/ports/repositories.ts'
-import { OverlayHost } from '@presentation/layout/OverlayHost.tsx'
-
 import { AccountMenu } from './AccountMenu.tsx'
 import { ThemeControl } from './ThemeControl.tsx'
 
@@ -23,8 +21,11 @@ import { ThemeControl } from './ThemeControl.tsx'
  *   will actually be in, since a locally provisioned Zitadel account has no
  *   picture.
  *
- * `OverlayHost` is supplied here because `Menu` portals into it and renders
- * nothing without one -- in the application that comes from `Shell`.
+ * No `OverlayHost` here, deliberately: `.storybook/preview.tsx` wraps every
+ * story in one. A per-story host is what `npm run deleted` forbids, and the
+ * rule is right -- the old convention held in one file out of seven, and the
+ * six that forgot rendered every trigger with no content and no error,
+ * because a portal with no host renders nothing and raises nothing.
  */
 const ADA: Principal = {
   subject: '388383938621546499',
@@ -43,11 +44,9 @@ const meta: Meta<typeof AccountMenu> = {
   args: { person: ADA, logoutHref: '/auth/logout' },
   decorators: [
     (Story) => (
-      <OverlayHost>
-        <div className="lay-chrome" style={{ justifyContent: 'flex-end' }}>
-          <Story />
-        </div>
-      </OverlayHost>
+      <div className="lay-chrome" style={{ justifyContent: 'flex-end' }}>
+        <Story />
+      </div>
     ),
   ],
 }

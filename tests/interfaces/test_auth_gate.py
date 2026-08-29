@@ -14,6 +14,7 @@ the "off" half. Only both together say what the flag means.
 import pytest
 from fastapi.testclient import TestClient
 
+from research_team.domain.settings import SettingError
 from research_team.infrastructure import config
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.auth import (
@@ -134,26 +135,42 @@ def test_the_flag_defaults_to_off():
     assert config.auth_enabled() is False
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("on", True),
-        ("1", True),
-        ("true", True),
-        ("yes", True),
-        ("off", False),
-        ("0", False),
-        ("false", False),
-        ("", False),
-        # The case a `bool(os.getenv(...))` implementation gets wrong, and the
-        # only reason this parametrisation is not decorative: "off" is a
-        # non-empty string and therefore truthy.
-        ("OFF", False),
-    ],
-)
-def test_the_flag_parses_words_and_not_truthiness(monkeypatch, value, expected):
+@pytest.mark.parametrize(("value", "expected"), [("on", True), ("off", False), ("", False)])
+def test_the_flag_accepts_exactly_two_words(monkeypatch, value, expected):
+    """`on`, `off`, and unset. Nothing else.
+
+    This list used to hold `1`/`true`/`yes` and their negatives, because the
+    reader was a word set of the kind every other flag in `config.py` uses.
+    `AGENT_AUTH` is declared as an **enum** now and those are refused -- see
+    the test below, which is the half that matters.
+    """
     monkeypatch.setenv("AGENT_AUTH", value)
     assert config.auth_enabled() is expected
+
+
+@pytest.mark.parametrize("refused", ["onn", "enabled", "yess", "0ff", "1", "true", "yes"])
+def test_a_value_that_is_neither_on_nor_off_is_refused(monkeypatch, refused):
+    """A typo must not read as "off".
+
+    The asymmetry is the point, and it is why this flag is an enum where every
+    other boolean in `config.py` is a forgiving word set: the two directions of
+    a mistake are not equivalent. A spelling that silently turns authentication
+    *off* is an open server nobody notices; one that raises at startup is an
+    outage somebody fixes in a second. For `AGENT_TRACING` the same typo costs a
+    missing span.
+
+    `0ff` is the case that earns the parametrisation: a typo of a value meaning
+    *off*, where a reader falling back to off gives the intended answer for the
+    wrong reason and this test is the only thing that would notice.
+
+    `1`, `true` and `yes` are here as a *contract* rather than as typos. They
+    are what every other flag in this module accepts, so somebody will write
+    one, and it must fail loudly rather than being guessed at -- which also
+    documents that this list changed deliberately when the enum landed.
+    """
+    monkeypatch.setenv("AGENT_AUTH", refused)
+    with pytest.raises(SettingError):
+        config.auth_enabled()
 
 
 def test_an_app_built_with_no_auth_argument_at_all_is_ungated():

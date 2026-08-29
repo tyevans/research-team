@@ -691,24 +691,22 @@ ENVIRONMENT_ONLY: dict[str, str] = {
         "The key secrets are encrypted with. Storing it beside the ciphertext "
         "would make the encryption decorative."
     ),
-    # The six identity variables, all excused for one reason rather than six.
-    # It is stronger than AGENT_WEB_HOST's "bound before the first request":
-    # resolution walks project, then user, then tenant, and **a user scope
-    # cannot exist before authentication has decided who the user is.** A
+    # The five remaining identity variables, excused for one reason rather than
+    # five. It is stronger than AGENT_WEB_HOST's "bound before the first
+    # request": resolution walks project, then user, then tenant, and **a user
+    # scope cannot exist before authentication has decided who the user is.** A
     # setting whose value decides how a person is identified cannot be resolved
     # through a scope that identifies them. That is AGENT_DB's circularity with
     # a different store.
     #
-    # AGENT_AUTH is the sharpest case: it is read once at `create_app` and
-    # governs a middleware, so a per-project override would mean one project
-    # requiring a sign-in and another not, on one process, decided after the
-    # gate that would have to know. The gate runs before routing and has no
-    # project.
-    "AGENT_AUTH": (
-        "Whether a sign-in is required. Read before routing, by a gate that has "
-        "no project or user to resolve a scope from -- and a setting that "
-        "decides who a user is cannot be resolved through the user scope."
-    ),
+    # AGENT_AUTH is *not* here, and the split is worth stating because it looks
+    # inconsistent. It is declared above, as an enum, by W-B: what it governs
+    # there is which `Authorizer` adapter is wired, which is a deployment fact
+    # resolved once at startup. What it governs *here* is `AuthGate`, which runs
+    # before routing. Both readings are of the same startup-time value, so one
+    # declaration serves both -- and `config.auth_enabled` is where the enum's
+    # protection against a silently-unauthenticated typo is enforced for the
+    # environment layer, which the declaration alone does not reach.
     "AGENT_OIDC_ISSUER": "Identity configuration, for AGENT_AUTH's circularity.",
     "AGENT_OIDC_CLIENT_ID": "Identity configuration, for AGENT_AUTH's circularity.",
     "AGENT_OIDC_CLIENT_SECRET": (

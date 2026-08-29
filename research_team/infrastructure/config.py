@@ -1050,28 +1050,39 @@ DEFAULT_AUTH_PUBLIC_URL = "http://localhost:8000"
 
 
 def auth_enabled() -> bool:
-    """Whether this instance requires a signed-in user. Off unless switched on.
+    """Whether this instance requires a signed-in user.
 
-    Off by default, and the default is load-bearing rather than cautious. The
-    console, the REPL and ninety-odd routes were all written with no notion of
-    a person, and turning identity on flips every one of them from "answer" to
-    "401 unless a cookie says otherwise". Shipping that as the default would
-    break every existing test, every other in-flight branch of the user-system
-    plan, and every running instance, on one commit.
+    **The same flag as `authorization_enabled` above, deliberately.** They are
+    two readings of one variable: that one decides which `Authorizer` adapter
+    is wired, this one decides whether `AuthGate` refuses an anonymous request.
+    Splitting them into two variables was the alternative and is worse in both
+    directions -- authentication on with authorization off is a sign-in wall
+    that protects nothing, and authorization on with authentication off is a
+    permission check against a person who does not exist. Neither is a
+    configuration anybody wants and both would be reachable.
 
-    So `off` means the app behaves exactly as it did before identity existed:
-    no gate, no redirect, and `/api/me` answering 401 because there is nobody
-    to describe. `on` means unauthenticated `/api/*` requests get 401 and the
-    console sends the browser to the IdP. `tests/interfaces/test_auth_gate.py`
-    holds *both* states -- a flag with only its enabled path tested is a flag
-    whose default nobody checked, and the default is the whole reason this
-    flag exists.
+    So this delegates rather than parsing again. The earlier draft of this
+    function had its own `os.getenv` and its own strict word list; that was
+    written before `AGENT_AUTH` was declared, and keeping it would have meant
+    two readers of one variable able to disagree -- which is the failure the
+    settings registry exists to end.
 
-    Follows `interaction_log_enabled`'s parsing rather than `bool(os.getenv)`:
-    `AGENT_AUTH=off` must mean off, and a bare truthiness test reads the
-    string "off" as true.
+    The typo protection the strict reader was for is not lost: `AGENT_AUTH` is
+    declared as an **enum** over `("off", "on")`, so `SettingType.ENUM` refuses
+    `onn` at `spec.parse` with `auth: 'onn' is not one of off, on`. That matters
+    more here than anywhere else in this module, because the two directions of a
+    typo are not symmetric -- a spelling that silently turns authentication
+    *off* is an open server nobody notices, where one that raises at startup is
+    an outage somebody fixes in a second.
+
+    Off by default, and the default is load-bearing rather than cautious: the
+    console, the REPL and ninety-odd routes were written with no notion of a
+    person, so `off` has to mean the app behaves exactly as it did before
+    identity existed. `tests/interfaces/test_auth_gate.py` holds *both* states,
+    because a flag with only its enabled path tested is a flag whose default
+    nobody checked.
     """
-    return os.getenv("AGENT_AUTH", "off").strip().lower() in {"1", "true", "yes", "on"}
+    return authorization_enabled()
 
 
 def oidc_issuer() -> str:
