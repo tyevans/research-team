@@ -29,6 +29,7 @@ from eventsource import ReadModel
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 
+from research_team.application.effective import SettingsRevision
 from research_team.application.settings import RoleSelection, StoredProfile
 from research_team.domain.settings import ModelProfile, ModelRole, Scope, ScopeRef
 from research_team.infrastructure.persistence.read_models import apply_schema
@@ -103,17 +104,28 @@ def _decoded(parameters: str) -> dict:
 class ModelProfileStore:
     """`ModelProfileStorePort` over SQLite. Two tables, one connection."""
 
-    def __init__(self, db_path: str, tracer=None) -> None:
+    def __init__(
+        self, db_path: str, tracer=None, revision: SettingsRevision | None = None
+    ) -> None:
         self._db_path = db_path
         self._tracer = tracer
         self._connection: aiosqlite.Connection | None = None
         self._profiles: ReadModelRepository | None = None
         self._roles: ReadModelRepository | None = None
         self._opening = asyncio.Lock()
+        #: The same counter the override table bumps, for the same reason --
+        #: see `SettingsStore.__init__`. Composition hands both stores one
+        #: instance, so selecting a profile invalidates a cached bundle that
+        #: was resolved from a setting, which is the case a per-table counter
+        #: would miss: a role's model can change without the override table
+        #: being touched at all.
+        self._revision = revision if revision is not None else SettingsRevision()
 
     @classmethod
-    async def open(cls, db_path: str, tracer=None) -> "ModelProfileStore":
-        store = cls(db_path, tracer)
+    async def open(
+        cls, db_path: str, tracer=None, revision: SettingsRevision | None = None
+    ) -> "ModelProfileStore":
+        store = cls(db_path, tracer, revision)
         await store._ensure()
         return store
 
@@ -187,6 +199,7 @@ class ModelProfileStore:
                 updated_at=datetime.now(UTC),
             )
         )
+        self._revision.bump()
 
     async def delete_profile(self, ref: ScopeRef, name: str) -> bool:
         rows, _ = await self._ensure()
@@ -194,6 +207,7 @@ class ModelProfileStore:
         if await rows.get(row_id) is None:
             return False
         await rows.delete(row_id)
+        self._revision.bump()
         return True
 
     async def selections(self, refs: Iterable[ScopeRef]) -> list[RoleSelection]:
@@ -231,6 +245,7 @@ class ModelProfileStore:
                 updated_at=datetime.now(UTC),
             )
         )
+        self._revision.bump()
 
     async def clear_selection(self, ref: ScopeRef, role: ModelRole) -> bool:
         _, roles = await self._ensure()
@@ -238,6 +253,7 @@ class ModelProfileStore:
         if await roles.get(row_id) is None:
             return False
         await roles.delete(row_id)
+        self._revision.bump()
         return True
 
     async def close(self) -> None:

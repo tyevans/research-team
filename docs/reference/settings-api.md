@@ -404,6 +404,54 @@ back to its setting.
   does not protect against a compromised host — anyone who can read the process
   environment can read the key.
 
+## Which settings actually take effect per project
+
+Storing an override and *reading* one are separate questions, and until this
+section existed the answer to the second was "none of them". A setting resolved
+correctly through every endpoint above and the run still used the process-wide
+value, because `research_team/infrastructure/config.py` answers for the process
+and a `config.extraction_model()` call has no project to answer for.
+
+`research_team/application/effective.py` is the consuming half. It resolves a
+*bundle* for a project id, caches it, and is invalidated by the store adapters
+themselves -- so a setting saved through `PUT` reaches the next run rather than
+the next restart.
+
+**Per project today.** Everything one knowledge extraction is configured by,
+resolved at `open_graph` and therefore covering every ingest, re-extraction and
+catalog sweep -- all of which run detached from any request:
+
+| setting | what it changes |
+|---|---|
+| `extraction_model` | the model the extraction client sends, and the label redstring stamps on the result |
+| `model` | the fallback the above uses when unset |
+| `base_url`, `api_key` | the endpoint and credential that client is built with |
+| `extraction_thinking` | whether `NO_THINKING` is sent |
+| `extraction_concurrency` | how many chunks are in flight |
+| `extraction_chunk_size` | the sliding window |
+| `consolidation_batch` | the consolidation batch size |
+| `knowledge_domain` | the schema extraction is prompted against |
+
+A model profile selected for `ModelRole.EXTRACTION` wins over all of the model
+fields at once -- its model, its `base_url` and the secret its `credential_key`
+names move together, because a profile's model name sent to another profile's
+endpoint is a call neither accepts.
+
+**Still process-wide, and why.** The research, curation, embedding and vision
+roles resolve through `config` as they always did. Embedding is the one with a
+structural reason rather than a scheduling one: `embedding_dimension` is baked
+into a vector store two projects share, so a per-project width is
+`DimensionMismatchError` on the first write -- which is why `embedding_model`
+and `embedding_dimension` are declared `_DEPLOYMENT` rather than at project
+scope. The other three are deferred with their seams named in `BACKLOG.md`
+B183; `BACKLOG.md` B182 is the general property they are instances of.
+
+**The headless path is unchanged.** A CLI run, and every test that names no
+project, resolves the environment and then the built-in default -- the same two
+layers `config.py` has always read, through the same registry. There is no
+branch choosing between two resolvers; an empty scope chain is the same walk
+with nothing above the environment.
+
 ## Environment-only variables
 
 Seven variables are deliberately **not** settings, each with its reason in
