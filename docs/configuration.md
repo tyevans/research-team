@@ -1,7 +1,7 @@
 # Configuration
 
 This system has one registry of settings and five layers that can answer for
-them. `research_team/domain/settings.py` declares 41 settings. The provider
+them. `research_team/domain/settings.py` declares 43 settings. The provider
 catalogue adds 20 more, one per provider credential. Each declaration carries
 the key, the environment variable, the type, the default, the validation and
 the scopes that may set it. Nothing in this file is written twice: the tables
@@ -42,6 +42,14 @@ disagreement. They also have **no authorization on them yet** — see the
 warning below.
 
 ## What the layers do not yet reach
+
+> **STATUS, 2026-08-29 — delete this whole section when the resolver is wired.**
+> W-C2 is doing that now. This section states what is *connected*, not how the
+> system is meant to work, so it expires rather than needing a rewrite. When
+> `config.py` reads through `SettingsResolver`, delete from this banner to the
+> end of the section, and delete the matching block in
+> [`docs/how-to/bringing-your-own-model.md`](how-to/bringing-your-own-model.md).
+> Nothing else in either file depends on it.
 
 **An override written at project, user or tenant scope does not change what
 the running agent does.** This is the most important thing to know before you
@@ -177,6 +185,39 @@ Every setting here is tenant-scoped only.
 | `AGENT_NEO4J_USER` | `neo4j` | tenant | The account to connect as |
 | `AGENT_NEO4J_PASSWORD` | *(unset)* | tenant | **Secret.** Required when the graph store is `neo4j`. No default: a store that comes up on `neo4j/neo4j` connects to somebody else's |
 | `AGENT_NEO4J_DATABASE` | *(unset)* | tenant | Which database on the server. Unset means the server's default |
+
+### Authorization
+
+| Variable | Default | Scope | Meaning |
+|---|---|---|---|
+| `AGENT_AUTH` | `off` | tenant | Whether permissions are enforced. `off` or `on` |
+| `AGENT_ADMIN_SUBJECTS` | *(empty)* | tenant | Comma-separated Zitadel subjects holding `instance.admin`: the rebuild and worker routes, which act across every tenant |
+
+**`AGENT_AUTH` is an enum, not a boolean, and that is the one choice here worth
+arguing.** `AGENT_AUTH=yes` would be `True` under a boolean type. The enum
+refuses it, and refusing it is right, because the two directions of a typo are
+not symmetric: a spelling that silently turns authorization *off* is a security
+incident nobody sees, and one that raises at startup is an outage somebody
+fixes in a second. Every value but `on` and `off` fails loudly.
+
+**`off` is not the absence of a checker.** It wires a permissive authorizer — a
+real one — so every route runs the same resolution path whether authorization
+is on or off. That is what keeps the off configuration from being a separate,
+untested code path. `off` is what a single-user local install runs, and it is
+what every configuration in this repository runs today.
+
+**Turning it `on` does not yet gate anything.** Tenants, memberships, roles and
+grants exist in the domain, and `RoleTableAuthorizer` will answer questions
+about them. **No route asks yet** — verified by grep on 2026-08-29: no
+permission marker appears anywhere under `research_team/interfaces/web/`. The
+slice that puts the marker on every route is what makes `on` meaningful.
+
+`AGENT_AUTH` also does not turn on sign-in. There is no sign-in. The gate that
+refuses an anonymous request is a separate, **unmerged** piece of work (#332),
+and this setting only decides which adapter answers a permission question.
+
+`AGENT_ADMIN_SUBJECTS` is deployment scope only, for a stated reason: a tenant
+that could name its own instance admins could rebuild everyone else's corpus.
 
 ### Search
 

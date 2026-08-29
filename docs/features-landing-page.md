@@ -12,6 +12,22 @@ Read-only survey; no production code was changed.
 > a survey that has been quietly corrected is less useful than one that says
 > when it was taken. **What is invalid:** every entry naming the workflow `<select>` on `NewProjectForm`, the workflow and stage columns on a project row, and the `GET /api/workflows` and `POST /api/projects/{id}/workflow` endpoints. `POST /api/projects` is now a single call rather than two.
 
+> **Historical again, 2026-08-29 (#331).** The page this surveys has been
+> replaced. Banner rather than rewrite, for the reason the banner above gives:
+> the body's whole claim is a dated read, and correcting entries in place would
+> leave a document asserting a provenance it no longer has. **What is now
+> invalid:** every entry describing a project *row* and its contents. The index
+> is a board — one row per project drawing the topics → sources → extraction →
+> courses pipeline, each stage's bar scaled to the board's maximum, plus search,
+> three sort orders and a first-run page. The session count, the file count, the
+> relative time and the session preview are all gone from the row, and the
+> recency headings are gone with the arrival of a sort control. Two of the
+> numbers this survey records were also **measurably wrong**: `fileCount` summed
+> per-session live-file counts, so a path two sessions touched was counted
+> twice, and `lastActivity` was the newest session *start*, up to 1h24m stale on
+> a live project. `last_activity` is now `MAX(updated_at)`; the other two were
+> dropped rather than fixed. See commit `1691e802` for the full argument.
+
 Scope: route `home` (`#/`), rendered by `TreeView`, plus the application shell
 that is present on this page (topbar, breadcrumbs, connection and drift badges,
 agent dock, toasts). Every claim below is taken from code. Where a comment and

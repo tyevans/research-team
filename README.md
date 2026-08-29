@@ -32,6 +32,28 @@ to any point (the workspace refolds — no fork, no write), per-file diffs of ea
 recorded edit, and the fork lineage as a tree. New events reach every open
 browser over SSE.
 
+**The console opens on a board.** One row per project, carrying the pipeline
+this system actually runs — topics → sources → extraction → courses, which is
+the real dependency order rather than an invented sequence. Each stage's bar is
+scaled to the *board's* maximum rather than to the project's own total, so
+three bars per row become three columns down the page and "which project has
+the most sources, which has barely started" is readable without digits. There
+is search, three sort orders, and a first-run page for an install with no
+projects yet.
+
+Sources and extraction share one track, because extraction is a subset of
+ingest: the filled part is what reached the graph, and the amber tail is what
+did not. That tail is the only thing on the page a reader can act on
+immediately, and the page it replaced could not express the state at all.
+
+The old index listed a session count, a file count, a relative time and the
+first message of one session. **Two of those were wrong**, which is worth
+knowing if you ever read a number off it: the file count summed *per-session*
+live-file counts, so a path two sessions touched was counted twice; and "last
+activity" was the newest session *start*, measured up to 1h24m stale on a live
+project. `last_activity` is now `MAX(updated_at)`. The other two were dropped
+rather than fixed — neither is a fact about a project.
+
 A project's third page asks it about what it gathered. The answer comes from
 that project's own material — its knowledge graph and the sources behind it —
 and the agent cites the documents it opened rather than the ones it found by
@@ -192,11 +214,13 @@ Keys can also be stored, encrypted at rest under `AGENT_SETTINGS_KEY`, and
 scoped to a project, a user or a tenant. **A stored key is never read back** —
 the API returns a mask showing the last four characters.
 
-**One limit to know before you build on it.** The scoped store is a working,
-tested surface with no consumer below it yet: the running process still reads
-the environment and the built-in default, and nothing else. Setting an override
-records a decision; setting the environment variable is what changes which
-model answers. [`docs/how-to/bringing-your-own-model.md`](docs/how-to/bringing-your-own-model.md)
+**One limit to know before you build on it** *(status, 2026-08-29 — being fixed
+now; delete this paragraph when the resolver is wired)*. The scoped store is a
+working, tested surface with no consumer below it yet: the running process
+still reads the environment and the built-in default, and nothing else. Setting
+an override records a decision; setting the environment variable is what
+changes which model answers.
+[`docs/how-to/bringing-your-own-model.md`](docs/how-to/bringing-your-own-model.md)
 walks through both halves.
 
 ## Configuration
@@ -210,8 +234,15 @@ project  →  user  →  tenant  →  environment  →  built-in default
 The environment used to be the only layer. It is now the fourth of five, and
 it is the deployment layer: one process reads one environment. Seven variables
 stay environment-only, because no scope can answer for them —
-[`docs/configuration.md`](docs/configuration.md) lists them with the reason
-attached to each.
+[`docs/configuration.md`](docs/configuration.md) lists all 43 settings, and
+gives the seven with the reason attached to each.
+
+**There is no sign-in, and nothing is access-controlled.** Tenants,
+memberships, roles and grants now exist in the domain, and `AGENT_AUTH=on`
+selects a real checker over them — but **no route asks it anything yet**, and
+`off` (the default, and what every configuration runs today) wires a permissive
+checker so that on and off share one code path rather than two. Keep
+`AGENT_WEB_HOST` on its `127.0.0.1` default until that changes.
 
 The variables a first run actually needs:
 

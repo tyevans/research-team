@@ -8,6 +8,13 @@ are copied from that run, not composed.
 
 ## Before you start: what works today, and what does not
 
+> **STATUS, 2026-08-29 — delete this whole section when the resolver is wired.**
+> W-C2 is doing that now. It states what is *connected*, not how the system is
+> meant to work, so it expires rather than needing a rewrite. When it goes,
+> section 5 stops being mandatory and becomes one of two ways to do the same
+> thing. Delete the matching section in
+> [`docs/configuration.md`](../configuration.md) at the same time.
+
 **Read this first, or you will configure something that has no effect.**
 
 The settings API stores your choice and reports it back correctly. **The
