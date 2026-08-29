@@ -67,13 +67,72 @@ export interface RoleBinding {
   readonly settingKey: string
 }
 
+/** A group whose endpoint can be dialled, and the three keys that dial it.
+ *
+ * The `group` is the server's too, and that is the point rather than an
+ * oversight: this directory holds no list of keys and no enum of groups, so
+ * the console cannot know on its own that `Models` is the group `base_url`
+ * lives in. Everything the connection test needs to know about a key arrives
+ * on the wire, which is the same argument the file opens with, applied to a
+ * feature that came later.
+ *
+ * Empty on a server that predates the feature, and a group with no connection
+ * simply renders no test -- which is what every group did before. */
+export interface Connection {
+  readonly role: string
+  readonly group: string
+  readonly modelKey: string
+  readonly baseUrlKey: string
+  readonly apiKeyKey: string
+}
+
+/** One provider in the catalogue, as far as a connection test needs it. */
+export interface Provider {
+  readonly id: string
+  readonly displayName: string
+  readonly baseUrl: string
+  readonly auth: string
+  readonly openaiCompatible: boolean
+  readonly notes: string
+}
+
+/** What a connection test found.
+ *
+ * `outcome` is a string rather than a union for the reason `dto.ts` gives: a
+ * fifth outcome added server-side should reach a reader as an unfamiliar word,
+ * not as a decode failure that hides the result. `ok` is what anything
+ * branches on.
+ *
+ * `models` is what the endpoint listed, capped server-side. It is the source
+ * of the model picker: a list that came back from the endpoint a moment ago is
+ * a better answer to "what can I type here" than anything this console could
+ * hold, and it is the reason the test and the picker are one flow rather than
+ * two features. */
+export interface ProbeResult {
+  readonly providerId: string
+  readonly outcome: string
+  readonly ok: boolean
+  readonly detail: string | null
+  readonly models: readonly string[]
+  readonly latencyMs: number | null
+}
+
 export interface SettingsSchema {
   /** In registry order, which the contract states is the order the form should
    *  render. The frontend sorts nothing. */
   readonly groups: readonly SettingGroup[]
   readonly scopes: readonly Scope[]
   readonly roles: readonly RoleBinding[]
+  readonly connections: readonly Connection[]
 }
+
+/** This group's connection, or `null` when it has none.
+ *
+ * A lookup rather than a field on `SettingGroup`, because the two arrive as
+ * separate lists and joining them at the mapper would put the server's
+ * `group` string into two shapes that could disagree. */
+export const connectionForGroup = (schema: SettingsSchema, group: string): Connection | null =>
+  schema.connections.find((c) => c.group === group) ?? null
 
 /** The groups a given scope may see, with the settings that scope may set, and
  *  no empty group.

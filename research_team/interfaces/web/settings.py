@@ -41,6 +41,7 @@ from research_team.application.settings import (
 )
 from research_team.domain.providers import PROVIDERS, Provider, UnknownProvider, provider_for
 from research_team.domain.settings import (
+    CONNECTIONS,
     PROVIDER_KEY_GROUP,
     RESOLUTION_ORDER,
     ROLE_MODEL_KEYS,
@@ -277,6 +278,23 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
             "roles": [
                 {"role": role.value, "setting_key": key}
                 for role, key in ROLE_MODEL_KEYS.items()
+            ],
+            # Which groups can be tested, and with which three keys. On the
+            # wire rather than recognised by the client, for the reason the
+            # note below gives about `provider_credential_group` and the
+            # stronger one `domain/settings/spec.ts` states: the console
+            # hand-writes no setting keys at all, so a form that knew "Models
+            # is tested with model/base_url/api_key" would be a second, private
+            # copy of the registry -- drifting on the commit that renames one.
+            "connections": [
+                {
+                    "role": connection.role.value,
+                    "group": connection.group,
+                    "model_key": connection.model_key,
+                    "base_url_key": connection.base_url_key,
+                    "api_key_key": connection.api_key_key,
+                }
+                for connection in CONNECTIONS
             ],
             # Named rather than left for the client to recognise by prefix.
             # W-C1 renders this group differently -- one row per provider a

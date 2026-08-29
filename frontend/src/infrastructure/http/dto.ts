@@ -1334,12 +1334,66 @@ export const settingSpecDto = z.object({
   scopes: z.array(scopeDto).default([]),
 })
 
+/** A group whose endpoint can be dialled, and the three keys that dial it.
+ *
+ * Every field is the server's, including `group`: the console hand-writes no
+ * setting keys (`domain/settings/spec.ts` says why), so "Models is tested with
+ * model/base_url/api_key" cannot be knowledge this side holds. */
+export const connectionDto = z.object({
+  role: z.string(),
+  group: z.string(),
+  model_key: z.string(),
+  base_url_key: z.string(),
+  api_key_key: z.string(),
+})
+
 export const settingsSchemaDto = z.object({
   groups: z
     .array(z.object({ name: z.string(), settings: z.array(settingSpecDto).default([]) }))
     .default([]),
   scopes: z.array(scopeDto).default([]),
   roles: z.array(z.object({ role: z.string(), setting_key: z.string() })).default([]),
+  /** Defaulted rather than required, so a console built from this commit still
+   *  runs against a server built before it -- the groups simply render with no
+   *  test button, which is what they did yesterday. */
+  connections: z.array(connectionDto).default([]),
+})
+
+/** One entry in the provider catalogue. Static data; carries no credential.
+ *
+ * A partial view of `_provider_view`: the console needs an id to post a test
+ * to, a name to show, and the catalogue's own `base_url` to offer as a
+ * starting point. `capabilities` and `credentials` belong to the profile
+ * editor, which is not this change. */
+export const providerDto = z.object({
+  id: z.string(),
+  display_name: z.string(),
+  base_url: z.string().default(''),
+  /** Whether a credential is needed at all. The local three (Ollama, LM
+   *  Studio, vLLM) are `none`, which is why the test row can offer a key field
+   *  only where one would be used. */
+  auth: z.string().default(''),
+  openai_compatible: z.boolean().default(false),
+  notes: z.string().default(''),
+})
+
+export const providersDto = z.object({ providers: z.array(providerDto).default([]) })
+
+/** What a connection test found.
+ *
+ * `outcome` is deliberately not an enum here. The server's own docstring says
+ * four outcomes exist "because 'we could not tell' and 'it said no' want
+ * different next steps", and a fifth added there should reach a reader as an
+ * unfamiliar word rather than as a `ContractError` that hides the whole
+ * result -- the outcome is prose for a human either way, and `ok` is the field
+ * anything branches on. */
+export const probeResultDto = z.object({
+  provider_id: z.string(),
+  outcome: z.string(),
+  ok: z.boolean(),
+  detail: maybe(z.string()),
+  models: z.array(z.string()).default([]),
+  latency_ms: maybe(z.number()),
 })
 
 export const maskedSecretDto = z.object({

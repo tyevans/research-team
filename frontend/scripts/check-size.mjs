@@ -244,7 +244,19 @@ const BUDGET_KB = {
   // and this edit will conflict with that. That is the intended outcome per
   // CLAUDE.md's merge-invisible-pair section: two branches rewriting one line
   // is a conflict a person resolves, rather than two silent raises.
-  app: 125, // our code: every component, store, mapper and stylesheet rule
+  // 128, from 125, for the settings page's connection test: a `ConnectionTest`
+  // component, the `CONNECTIONS` registry, the provider/probe DTOs and their
+  // zod schemas, and the datalist of models a probe returns. Measured on this
+  // tree on 2026-08-29 rather than estimated: **125.2 kB**, against a 125
+  // budget `main` had already spent down to 0.1 kB of headroom. So the raise
+  // is 2.8 kB for a 0.2 kB change, and the extra is deliberate -- a budget
+  // sitting 0.2 kB above the measurement stops the next branch on the merits
+  // of nothing, which is what the note above says happened here twice.
+  //
+  // What it buys: the only way to find a bad endpoint was to start a run and
+  // read the error out of a failed turn. The routes to ask directly have
+  // existed since the settings feature shipped and nothing called them.
+  app: 128, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.

@@ -1,11 +1,11 @@
 import { ApiError } from '@application/ports/errors.ts'
 import type { SettingsRepository } from '@application/ports/repositories.ts'
 import type { ResolvedSettings, ScopeRef } from '@domain/settings/layer.ts'
-import type { Scope, SettingsSchema } from '@domain/settings/spec.ts'
+import type { ProbeResult, Provider, Scope, SettingsSchema } from '@domain/settings/spec.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, seg } from './http-client.ts'
-import { toResolvedSettings, toSettingsSchema } from './mappers.ts'
+import { toProbeResult, toProvider, toResolvedSettings, toSettingsSchema } from './mappers.ts'
 
 /** `settings.py`'s four routes.
  *
@@ -38,6 +38,29 @@ export class HttpSettingsRepository implements SettingsRepository {
       dto.resolvedSettingsDto,
     )
     return toResolvedSettings(body)
+  }
+
+  async providers(): Promise<readonly Provider[]> {
+    const body = await this.http.get('/api/providers', dto.providersDto)
+    return body.providers.map(toProvider)
+  }
+
+  async testProvider(
+    providerId: string,
+    credentials: { apiKey: string | null; baseUrl: string | null },
+  ): Promise<ProbeResult> {
+    // `api_key` and `base_url` are sent as `null` rather than omitted when
+    // empty, which is what the route's own `ProbeRequest` defaults them to:
+    // `null` there means "use the catalogue's", and an empty string would
+    // mean "dial the empty endpoint" -- a distinction the form has to be able
+    // to express, because "test the provider's own default" is a real thing
+    // to ask for on a project that has overridden nothing.
+    const body = await this.http.post(
+      `/api/providers/${seg(providerId)}/test`,
+      { api_key: credentials.apiKey, base_url: credentials.baseUrl },
+      dto.probeResultDto,
+    )
+    return toProbeResult(body)
   }
 
   async put(scope: Scope, scopeId: string, key: string, value: string): Promise<void> {

@@ -22,6 +22,7 @@ import pytest
 from research_team.domain.settings import (
     BY_ENV,
     BY_KEY,
+    CONNECTIONS,
     ENVIRONMENT_ONLY,
     PROVIDER_KEY_GROUP,
     PROVIDER_KEY_PREFIX,
@@ -430,3 +431,52 @@ def test_every_role_names_a_declared_setting(role):
     """A role pointing at a key nothing declares is a role that raises the
     first time a settings page is opened."""
     assert ROLE_MODEL_KEYS[role] in BY_KEY
+
+
+# --- testable connections ---------------------------------------------------
+
+
+@pytest.mark.parametrize("connection", list(CONNECTIONS), ids=lambda c: c.role.value)
+def test_every_connection_names_declared_settings(connection):
+    """A connection pointing at a key nothing declares renders a Test button
+    that 422s, and the console cannot tell that from a refused credential.
+
+    Three keys checked rather than one: the model is the field a reader
+    notices, and the endpoint is the field the whole feature is for -- a
+    connection with a good model key and a typo'd `base_url_key` would test
+    the *default* endpoint and report it healthy while the configured one was
+    unreachable, which is precisely the confusion this is meant to end.
+    """
+    for key in (connection.model_key, connection.base_url_key, connection.api_key_key):
+        assert key in BY_KEY, f"{connection.role.value} names undeclared setting {key}"
+
+
+@pytest.mark.parametrize("connection", list(CONNECTIONS), ids=lambda c: c.role.value)
+def test_a_connection_sits_under_the_group_its_settings_are_in(connection):
+    """The console renders the test under `group`, and reads no key list of its
+    own -- so a `group` naming somewhere its settings are not puts the button
+    on a form that cannot show what it tested."""
+    assert BY_KEY[connection.model_key].group == connection.group
+    assert BY_KEY[connection.base_url_key].group == connection.group
+    assert BY_KEY[connection.api_key_key].group == connection.group
+
+
+def test_a_connections_model_key_is_the_one_its_role_resolves_from():
+    """Otherwise picking a model from the test's list writes a setting the role
+    does not read -- the same class of defect as two roles sharing one key, and
+    invisible in exactly the same way: the value saves, resolves, and is used
+    by nothing."""
+    for connection in CONNECTIONS:
+        assert connection.model_key == ROLE_MODEL_KEYS[connection.role]
+
+
+def test_no_two_connections_share_an_endpoint():
+    """Two connections over one endpoint are one connection tested twice.
+
+    It is also the case that would make the results contradict each other: the
+    same button under two groups, reporting one answer, with each group's
+    reader believing it was told about theirs.
+    """
+    endpoints = [connection.base_url_key for connection in CONNECTIONS]
+
+    assert len(set(endpoints)) == len(endpoints)

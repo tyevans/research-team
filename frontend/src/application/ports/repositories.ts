@@ -20,7 +20,7 @@ import type {
   WholeGraph,
 } from '@domain/knowledge/graph.ts'
 import type { OntologyClass } from '@domain/knowledge/ontology.ts'
-import type { Scope, SettingsSchema } from '@domain/settings/spec.ts'
+import type { ProbeResult, Provider, Scope, SettingsSchema } from '@domain/settings/spec.ts'
 import type { ResolvedSettings, ScopeRef } from '@domain/settings/layer.ts'
 import type { AuthoringRun, AuthoringStatus } from '@domain/knowledge/authoring.ts'
 import type { Curriculum, LearningArea, LearningPath } from '@domain/knowledge/curriculum.ts'
@@ -574,6 +574,26 @@ export interface SettingsRepository {
    *  Throws `ApiError` with 422 for an unknown key, a refused value, a scope
    *  the declaration forbids, or a secret with no `AGENT_SETTINGS_KEY`. */
   put(scope: Scope, scopeId: string, key: string, value: string): Promise<void>
+
+  /** The provider catalogue. Static, credential-free, cacheable forever --
+   *  the same shape as `schema()` and cached the same way. */
+  providers(): Promise<readonly Provider[]>
+
+  /** Ask a provider whether these credentials reach it, and what it serves.
+   *
+   * The key travels in the request and is used once; the route stores nothing
+   * and reads nothing back out of the store. A caller testing a key it has
+   * already saved sends it again, because a route that read a saved secret
+   * back would be a read path for a secret in all but name.
+   *
+   * Returns a `ProbeResult` for every outcome including failure -- an
+   * unreachable endpoint is an *answer*, not an exception. `ApiError` is
+   * reserved for the request itself going wrong: 404 for a provider the
+   * catalogue does not have, 503 for a build with no probe wired. */
+  testProvider(
+    providerId: string,
+    credentials: { apiKey: string | null; baseUrl: string | null },
+  ): Promise<ProbeResult>
 
   /** Remove one override.
    *
