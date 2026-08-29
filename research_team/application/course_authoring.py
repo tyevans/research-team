@@ -556,15 +556,25 @@ def path_overview_prompt(path: LearningPath, areas: dict[str, LearningArea]) -> 
 #: The original prompt is repeated in full rather than referred to. It is
 #: already in the conversation, so this is redundant on the happy path; it is
 #: not redundant in the case this exists for, where the phase spent its whole
-#: turn on tool calls and the instructions are twenty tool results back behind
-#: an `elide` placeholder.
+#: turn on tool calls and the instructions are twenty tool results back.
+#:
+#: **What it says about the elided results is deliberately hedged**, because
+#: this module cannot know which strategy the process runs under: `full`
+#: leaves every result whole, `elide` replaces the long ones with a
+#: placeholder that names itself, and `compact` summarises. Telling the model
+#: flatly that everything it read is still there would be false under two of
+#: the three -- and the failure it would cause is the specific one this whole
+#: change is about, a phase that does not re-read something it needed and
+#: writes the file thin or not at all.
 RETRY_PREFACE = (
     "That phase did not leave behind what the next one needs. The check over "
     "your files reported:\n\n    {reason}\n\n"
-    "Everything you read last turn is still above this message, and the files "
-    "you did write are still in the workspace -- this is not a fresh start and "
-    "you do not need to research the area again. Fix exactly what the line "
-    "above names. If you cannot ground a section as well as you would like, "
+    "Last turn is still above this message and the files you did write are "
+    "still in the workspace, so this is not a fresh start -- though the longer "
+    "tool results from it may have been cleared to save room, and a cleared "
+    "one says so where it sits. Fix exactly what the line above names, and "
+    "re-read only what you find cleared and actually need. If you cannot "
+    "ground a section as well as you would like, "
     "write it thinly and say so in the prose: a unit with a weak section is "
     "kept, and a phase that ends with nothing written is discarded whole "
     "along with the phases before it.\n\n"
