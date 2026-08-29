@@ -31,6 +31,16 @@ export class HttpClient {
     return this.request('PATCH', path, body ?? {}, schema)
   }
 
+  /** The settings write. Separate from `post` rather than folded into it
+   *  because the settings routes are the console's first idempotent
+   *  full-replacement writes — `PUT /api/settings/{scope}/{id}/{key}` may be
+   *  sent twice and means the same thing, which `POST` does not promise — and
+   *  a repository that reached for `post` there would be describing the route
+   *  wrongly to anyone reading it. */
+  put<S extends z.ZodTypeAny>(path: string, body: unknown, schema: S): Promise<z.output<S>> {
+    return this.request('PUT', path, body ?? {}, schema)
+  }
+
   delete<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.output<S>> {
     return this.request('DELETE', path, undefined, schema)
   }

@@ -2,6 +2,7 @@ import { EventIndex, isEventIndex } from '@domain/session/event-index.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
+import { isScope, type Scope } from '@domain/settings/spec.ts'
 
 /** The console's routes, as values rather than as strings.
  *
@@ -67,6 +68,30 @@ export type Route =
    * a time, which is what that page is, and this one narrows a stream by
    * several independent axes at once. */
   | { readonly name: 'interactions'; readonly filters: InteractionFilters }
+  /** One scope's settings.
+   *
+   * A top-level route rather than a facet on the project page, and the
+   * argument is the interaction log's own, one paragraph above: a facet forces
+   * a project id onto a view, and the first thing a reader of a *user*-scope
+   * settings page would have to do is pick a project to ignore. The same
+   * reasoning gives the same answer.
+   *
+   * `scope` and `scopeId` are both in the path because the page is one
+   * component parametrised by them -- `#/settings/project/<id>` and
+   * `#/settings/tenant/<id>` are the same screen over different data, not two
+   * screens. Only `project` is reachable today; the grammar admits the other
+   * two so that S5 is a component change rather than a routing one.
+   *
+   * `group` is optional so a link can land on a section. Optional rather than
+   * defaulted to the first group: "the settings page" and "the settings page
+   * scrolled to Extraction" are different things to send somebody, and
+   * defaulting would make the first unspellable. */
+  | {
+      readonly name: 'settings'
+      readonly scope: Scope
+      readonly scopeId: string
+      readonly group: string | null
+    }
 
 /** What kind of thing is selected on a project page.
  *
@@ -352,6 +377,15 @@ export const parseRoute = (hash: string): Route => {
     return { name: 'interactions', filters: parseInteractionFilters(query) }
   }
 
+  // `isScope` rather than any string: `#/settings/nonsense/1` is a typo or a
+  // dead link and falls through to `home` exactly as an unrecognised facet
+  // does. Accepting it would render a page whose every row was filtered out by
+  // `spec.scopes`, which reads as "this scope has no settings" -- a wrong
+  // answer rather than an absent one.
+  if (parts[0] === 'settings' && parts[1] && parts[2] && isScope(parts[1])) {
+    return { name: 'settings', scope: parts[1], scopeId: parts[2], group: parts[3] ?? null }
+  }
+
   if (parts[0] === 's' && parts[1]) {
     const { at, path } = parseSessionTail(parts.slice(2))
     return { name: 'session', id: SessionId(parts[1]), at, path }
@@ -420,6 +454,17 @@ const parseSelection = (segments: readonly string[]): Selection | null => {
 }
 
 export const homeHref = (): string => '#/'
+
+/** `#/settings/<scope>/<id>`, with an optional group segment.
+ *
+ * Every segment is encoded, for `seg`'s reason one layer down: a tenant id or
+ * a group name may hold a space or a slash, and forgetting on the last one is
+ * how a link becomes a route nobody can reproduce. For any route this builds,
+ * `parseRoute(settingsHref(...))` returns it back. */
+export const settingsHref = (scope: Scope, scopeId: string, group?: string | null): string => {
+  const tail = group ? `/${encodeURIComponent(group)}` : ''
+  return `#/settings/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}${tail}`
+}
 
 /** `#/i`, with the filters in the query part.
  *

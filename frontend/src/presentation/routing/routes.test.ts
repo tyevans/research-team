@@ -7,9 +7,12 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import { expandReferences } from '../../infrastructure/rendering/references.ts'
 
+import { SCOPES } from '@domain/settings/spec.ts'
+
 import {
   FACETS,
   INTERACTION_KINDS,
+  settingsHref,
   interactionsHref,
   NO_INTERACTION_FILTERS,
   parseRoute,
@@ -495,5 +498,57 @@ describe('the interaction log route', () => {
     // dropped from every URL that names it.
     const route = parseRoute(`#/i?kind=${kind}`)
     expect(route.name === 'interactions' && route.filters.kinds).toEqual([kind])
+  })
+})
+
+describe('the settings route', () => {
+  it.each(SCOPES)('round-trips %s scope, id and group', (scope) => {
+    // Parametrised over `SCOPES` rather than over `project` alone: only the
+    // project scope is reachable from a control today, and a grammar that
+    // silently stopped accepting `tenant` would not be noticed until S5 --
+    // where it would look like a component bug rather than a routing one.
+    const href = settingsHref(scope, 'id-1', 'Extraction')
+    expect(parseRoute(href)).toEqual({
+      name: 'settings',
+      scope,
+      scopeId: 'id-1',
+      group: 'Extraction',
+    })
+  })
+
+  it('leaves the group null when the link does not name one', () => {
+    // Null rather than defaulted to the first group: "the settings page" and
+    // "the settings page scrolled to Extraction" are different things to send
+    // somebody, and a default would make the first unspellable.
+    expect(parseRoute('#/settings/project/p1')).toEqual({
+      name: 'settings',
+      scope: 'project',
+      scopeId: 'p1',
+      group: null,
+    })
+  })
+
+  it('encodes and decodes a scope id and a group that hold separators', () => {
+    // A tenant id or a group name may hold a slash or a space, and an
+    // unencoded one folds into the next segment silently -- the same failure
+    // `splitQuery` above exists for, one segment along.
+    const href = settingsHref('tenant', 'acme/eu', 'Media & files')
+    expect(parseRoute(href)).toEqual({
+      name: 'settings',
+      scope: 'tenant',
+      scopeId: 'acme/eu',
+      group: 'Media & files',
+    })
+  })
+
+  it('falls back to home for an unrecognised scope, the way an unknown facet does', () => {
+    // Not "render the page with an unknown scope": every row would be filtered
+    // out by `spec.scopes`, which reads as "this scope has no settings" -- a
+    // wrong answer rather than an absent one.
+    expect(parseRoute('#/settings/nonsense/1')).toEqual({ name: 'home' })
+  })
+
+  it('falls back to home for a scope with no id', () => {
+    expect(parseRoute('#/settings/project')).toEqual({ name: 'home' })
   })
 })

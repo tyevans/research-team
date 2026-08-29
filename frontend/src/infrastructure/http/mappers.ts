@@ -33,6 +33,8 @@ import type {
   RealizedCourse,
 } from '@domain/knowledge/course.ts'
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
+import type { SettingSpec, SettingsSchema } from '@domain/settings/spec.ts'
+import type { ResolvedSetting, ResolvedSettings } from '@domain/settings/layer.ts'
 import type {
   ApprovalSummary,
   BrowserSession,
@@ -1009,4 +1011,54 @@ export const toInteractionSummary = (
   byView: raw.by_view.map(toViewDwell),
   friction: toFrictionSummary(raw.friction),
   approvals: toApprovalSummary(raw.approvals),
+})
+
+/* --- settings ----------------------------------------------------------- */
+
+export const toSettingSpec = (raw: Dto<typeof dto.settingSpecDto>): SettingSpec => ({
+  key: raw.key,
+  envVar: raw.env_var,
+  type: raw.type,
+  label: raw.label,
+  description: raw.description,
+  group: raw.group,
+  secret: raw.secret,
+  default: raw.default,
+  choices: raw.choices,
+  minimum: raw.minimum,
+  maximum: raw.maximum,
+  requiredWhen: raw.required_when,
+  scopes: raw.scopes,
+})
+
+/** Groups in the order they arrived. Deliberately no sort: the contract states
+ *  registry order *is* the order the form should render, and a sort here would
+ *  be the frontend forming a second opinion about it. */
+export const toSettingsSchema = (raw: Dto<typeof dto.settingsSchemaDto>): SettingsSchema => ({
+  groups: raw.groups.map((group) => ({
+    name: group.name,
+    settings: group.settings.map(toSettingSpec),
+  })),
+  scopes: raw.scopes,
+  roles: raw.roles.map((role) => ({ role: role.role, settingKey: role.setting_key })),
+})
+
+export const toResolvedSetting = (raw: Dto<typeof dto.resolvedSettingDto>): ResolvedSetting => ({
+  key: raw.key,
+  value: raw.value,
+  layer: raw.layer,
+  scopeId: raw.scope_id,
+  secret: raw.secret,
+  masked: raw.masked
+    ? {
+        present: raw.masked.present,
+        lastFour: raw.masked.last_four,
+        display: raw.masked.display,
+      }
+    : null,
+})
+
+export const toResolvedSettings = (raw: Dto<typeof dto.resolvedSettingsDto>): ResolvedSettings => ({
+  scopeChain: raw.scope_chain.map((ref) => ({ scope: ref.scope, scopeId: ref.scope_id })),
+  settings: raw.settings.map(toResolvedSetting),
 })
