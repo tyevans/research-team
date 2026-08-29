@@ -738,6 +738,68 @@ Found on 2026-08-23 while writing Storybook coverage for the console's
 highest-traffic components (#245, #248). Each of these is a real gap that was
 deliberately not closed on the spot, with the reason.
 
+### B182. The browser suite is sometimes served an incomplete stylesheet, and that is what B160 was
+
+Filed 2026-08-29, from emptying B160's quarantine and watching what happened.
+**This is the actual defect behind both files B160 quarantined.** Neither was
+broken.
+
+**What was measured**, on one quiet machine, one vitest process at a time, over
+a day:
+
+- `course-card-sizing`'s aspect case read `aspect-ratio: auto` with
+  `aspect-[3/2]` present in the class attribute -- in CI, and once in three
+  local full-suite runs, never alone.
+- The ratio was then moved out of the utility and into a plain `course.css`
+  rule. **It failed the same way again**, which is the observation that rules
+  out the narrow story. It is not about Tailwind's scan.
+- B160 records `base-layer` reading `--fg` for `text-accent`. Note what that
+  says: the *token* resolved, so `tokens.css` had applied and only the
+  utilities layer had not.
+- One run failed five cases across four files, two of them at *import*.
+- Two runs hung outright -- no output, ~1.5% CPU, killed at 20 and 35 minutes.
+  The CI `browser` job hung identically on a run whose four siblings finished,
+  which is what made a stalled job unreadable (`--log-failed` refuses to serve
+  logs for a run that never completes).
+- A fresh `npm run build` contains every rule involved, and
+  `npm run check:tailwind` passes over all 289 checked-family utilities.
+
+So the product is correct and the suite's own stylesheet is not. Each test file
+gets its own iframe and re-imports `index.css`, which is a chain of `@import`s
+served by one dev server; the failures are consistent with that sheet being
+applied **partially**, varying by which rules had been served when the first
+assertion ran.
+
+**What went in, and it is a pair rather than one change:**
+
+1. `vitest.setup.browser.ts` blocks until two probe rules resolve on a throwaway
+   element -- `markdown.css`'s `.md` padding and Tailwind's `opacity-0` -- one
+   from each of the two flavours of miss, and throws a named error naming this
+   entry if they do not arrive in 10s. A test file that would have measured an
+   unstyled page now fails at setup saying so.
+2. `fileParallelism: false` on the browser project in `vite.config.ts`.
+
+**Neither works alone, measured both ways.** With the probe and parallelism
+still on: one failure in three runs, so the sheet can regress *after* setup as
+the dev server re-serves it. Serialised without the probe: one failure in four.
+With both: four consecutive green runs at 48 files and 198 tests, and the hangs
+stop. Serialising costs 67s against 46s and drops `setup` from 26s to 2.2s,
+which is the contention showing in the numbers.
+
+**What is still not fixed**, and why this entry stays open: the seam. A sheet
+that is replaced mid-file is still a sheet that can be wrong at the moment an
+assertion runs, and the probe only guarantees the moment setup ended. The two
+real fixes are to serve this suite the *built* stylesheet -- a `npm run build`
+away, and the artefact the assertions are actually about -- or to hold the
+imported sheet immutable for the life of a file.
+
+**Why this matters more than the two tests it explains:** every assertion in
+`src/**/*.browser.test.tsx` is a computed style or a measurement, and this
+defect makes any of them read a value from a stylesheet that is not the one the
+application ships. A red here is currently ambiguous between "the CSS is wrong"
+and "the CSS was not there", which is the one distinction this suite exists to
+make.
+
 ### B160. Neither file reproduces, the quarantine is empty, and one of the two is a race
 
 **Quarantine emptied 2026-08-29.** `frontend/package.json`'s `test:browser:ci`
@@ -790,8 +852,14 @@ document, which nothing was traced to and which made a failure here impossible
 to attribute.
 
 **If this goes red in CI again, read the `aspectRatio` line before
-re-quarantining.** `auto` means the rule is missing, which now means somebody
-deleted it from `course.css`; a number means the card really is drawn wrong.
+re-quarantining, and then read B182.** `auto` means the rule was not there --
+and since the ratio is now a plain `course.css` rule that still reads `auto`
+sometimes, that is the suite being served an incomplete stylesheet, not the card.
+A *number* that is not 1.5 would be the card really drawn wrong, and nobody has
+seen one.
+
+**Superseded by B182**, which is the defect both of this entry's files were
+victims of.
 
 The original entry follows, because its account of what a red suite costs is
 right and is why the CI job exists.

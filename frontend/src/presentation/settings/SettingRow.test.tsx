@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Container } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import { ApiError } from '@application/ports/errors.ts'
 import type { SettingsRepository } from '@application/ports/repositories.ts'
@@ -14,6 +13,8 @@ import type { SettingSpec } from '@domain/settings/spec.ts'
 import { OverlayHost } from '../layout/OverlayHost.tsx'
 import { SettingRow } from './SettingRow.tsx'
 import { CanEditProvider } from './permissions.ts'
+
+import { buildContainer } from '../../test/container.ts'
 
 const CHAIN = [{ scope: 'project' as const, scopeId: 'p1' }]
 const BELOW: [] = []
@@ -58,7 +59,7 @@ const draw = (
   { settings, canEdit }: { settings?: SettingsRepository; canEdit?: (key: string) => boolean } = {},
 ) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const container = { settings: settings ?? settingsFake() } as unknown as Container
+  const container = buildContainer({ settings: settings ?? settingsFake() })
   return render(
     <QueryClientProvider client={client}>
       <ContainerProvider container={container}>

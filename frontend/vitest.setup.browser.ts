@@ -62,3 +62,64 @@ setProjectAnnotations(preview)
  * global and a leaked value would retheme every file that runs after them.
  */
 document.documentElement.setAttribute('data-theme', 'dark')
+
+/** Wait for the stylesheet to have actually arrived, before any test measures
+ *  anything against it.
+ *
+ * **This is the fix for the class of failure B182 describes, and it is what
+ * lets a suite about computed styles be trusted at all.** Each test file gets
+ * its own iframe and re-imports `index.css`, which is a chain of `@import`s
+ * served by one dev server. Sometimes the first assertion in a file runs
+ * against a sheet that is only partly applied -- and a partly-applied sheet is
+ * indistinguishable, to `getComputedStyle`, from a rule that is wrong.
+ *
+ * Measured on 2026-08-29: `aspect-ratio: auto` where a `course.css` rule
+ * declares `3 / 2`; `opacity: 1` where `opacity-0` is in the class attribute;
+ * `border-box` where `box-content` is; and `--fg` where `text-accent` is -- the
+ * last with the *token* resolving, so that time it was `@layer utilities` alone
+ * that was missing. Every one of those rules is present in `npm run build`.
+ *
+ * Two probes rather than one, because the failures come in both flavours: a
+ * rule from this repository's own stylesheets (`markdown.css`'s `.md`) and a
+ * rule from `@layer utilities` (Tailwind's `opacity-0`). Either can be the one
+ * that has not landed, and waiting on one would not see the other.
+ *
+ * It throws rather than continuing past the deadline, deliberately: a timeout
+ * means the sheet genuinely is not being served, and every assertion in the
+ * file that follows would be a confident measurement of an unstyled page. A
+ * named failure at setup is the readable form of that.
+ *
+ * What it does not do is make the seam correct. The sheet still arrives when it
+ * arrives, and a test running long after setup could in principle still meet a
+ * later `@import` mid-flight. B182 carries the two proper fixes -- serve the
+ * built stylesheet, or block on the sheet rather than on a probe of it. This is
+ * the cheap one, and it turns a wrong measurement into a wait.
+ */
+const probe = document.createElement('div')
+probe.className = 'md opacity-0'
+probe.setAttribute('aria-hidden', 'true')
+probe.style.position = 'fixed'
+document.body.appendChild(probe)
+
+/** `.md` sets `padding: 10px 14px 40px` and `opacity-0` sets `opacity: 0`.
+ *  Neither is a value a bare `<div>` takes from anything else in this tree. */
+const dressed = () => {
+  const style = getComputedStyle(probe)
+  return style.paddingTop === '10px' && style.opacity === '0'
+}
+
+const DEADLINE_MS = 10_000
+const startedAt = performance.now()
+while (!dressed()) {
+  if (performance.now() - startedAt > DEADLINE_MS) {
+    const style = getComputedStyle(probe)
+    throw new Error(
+      `vitest.setup.browser: index.css did not apply within ${DEADLINE_MS}ms ` +
+        `(padding-top ${style.paddingTop}, opacity ${style.opacity}). Every ` +
+        `assertion in this file would have measured an unstyled page. See B182.`,
+    )
+  }
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+}
+
+probe.remove()
