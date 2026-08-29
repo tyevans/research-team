@@ -136,6 +136,13 @@ DEFAULT_CONTEXT_KEEP_MESSAGES = _builtin_int("context_keep_messages")
 DEFAULT_CONTEXT_KEEP_RESULTS = _builtin_int("context_keep_results")
 DEFAULT_CONTEXT_CLEAR_OVER_CHARS = _builtin_int("context_clear_over")
 
+#: Model calls a parent authoring turn may make before its reading tools are
+#: withdrawn. `infrastructure/agent/research_budget.py` imports this name
+#: rather than repeating the number, and its module docstring carries the three
+#: live runs that fixed it at 6. Read through `_builtin_int` like every
+#: constant here, so the value has one home in `domain/settings.py`.
+DEFAULT_AUTHORING_ROUNDS = _builtin_int("authoring_rounds")
+
 DEFAULT_OTLP_ENDPOINT = _builtin_text("otlp_endpoint")
 DEFAULT_SERVICE_NAME = _builtin_text("service_name")
 
@@ -353,6 +360,31 @@ def context_clear_over_chars() -> int:
     because a partial result reads as a whole one.
     """
     return _int("context_clear_over")
+
+
+def authoring_research_rounds() -> int:
+    """How many model calls a parent authoring turn may make before its
+    reading tools are withdrawn.
+
+    Separate from the context-management knobs above, and the separation is
+    the point: those bound what a *turn* re-sends, and the failure this bounds
+    is inside one turn, where they never run. (Written as prose rather than as
+    the variable-name glob it wants to be, because
+    `test_every_environment_variable_config_reads_is_declared_or_excused`
+    scans this module's source for literals and reads a glob as an undeclared
+    setting -- which it did, and the failure message is clear enough that the
+    test earns the small awkwardness.) See
+    `infrastructure/agent/research_budget.py` for the three live runs that
+    fixed the default at 6, and for the log-derived number that preceded it and
+    was measured to do nothing.
+
+    Zero turns the budget off, for the same reason `AGENT_CONTEXT=full` exists:
+    a bound derived from one model's behaviour on one corpus should be
+    removable by whoever meets a corpus it is wrong about, without editing
+    code. That is why the declaration's `minimum` is 0 rather than 1 -- the
+    off switch is a value the README tells a person to write.
+    """
+    return _int("authoring_rounds")
 
 
 def tracing_enabled() -> bool:

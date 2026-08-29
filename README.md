@@ -135,6 +135,7 @@ Everything is an environment variable. The ones a first run actually needs:
 | `AGENT_WEB_HOST` / `AGENT_WEB_PORT` | `127.0.0.1` / `8000` | where the web UI binds |
 | `AGENT_SEARXNG_URL` | *(unset)* | SearXNG base URL; unset means no search tool exists |
 | `AGENT_CONTEXT` | `full` | `full`, `elide`, `compact` or `delegate` |
+| `AGENT_AUTHORING_ROUNDS` | `6` | model calls a course-authoring turn may make before its graph, corpus and web tools are withdrawn; `0` turns the bound off |
 | `AGENT_INTERACTION_LOG` | `on` | capture what the console user does; set `0`/`false`/`no`/`off` to disable |
 | `AGENT_INTERACTION_DB` | `~/.research-team/interactions.db` | SQLite file holding the interaction log |
 

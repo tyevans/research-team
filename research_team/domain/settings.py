@@ -392,6 +392,22 @@ SETTINGS: tuple[SettingSpec, ...] = (
         "Context",
         minimum=1,
     ),
+    _spec(
+        "AGENT_AUTHORING_ROUNDS",
+        SettingType.INTEGER,
+        6,
+        "Authoring research budget",
+        "Model calls a course-authoring turn may make before its graph, corpus "
+        "and web tools are withdrawn. 0 turns the bound off.",
+        "Context",
+        # `minimum=0` and no maximum, and both halves are claims with a caller
+        # behind them. 0 is the documented off switch, so it must be accepted;
+        # 1 would refuse the one value the README tells a person to write. And
+        # there is no ceiling because none is knowable -- the default of 6 came
+        # from three live runs against one corpus and one model, and a bound
+        # written here would refuse a larger corpus on no evidence at all.
+        minimum=0,
+    ),
     # --- knowledge and extraction ------------------------------------------
     _spec(
         "AGENT_KNOWLEDGE_DOMAIN",

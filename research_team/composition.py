@@ -130,6 +130,7 @@ from research_team.infrastructure.agent.knowledge_tools import (
 from research_team.infrastructure.agent.media_curation_adapter import build_curation_ports
 from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
 from research_team.infrastructure.agent.recall import PageMemo, Recall
+from research_team.infrastructure.agent.research_budget import ResearchBudget
 from research_team.infrastructure.agent.search import (
     SEARCH_PROMPT,
     SearchAttempts,
@@ -1689,6 +1690,12 @@ def build_application(
     # below only installs `SearchAttemptsMiddleware` when this is not `None`,
     # so a build with no SearXNG instance carries no middleware that resets a
     # counter for a tool it never registered.
+    # Read once here rather than inside `turn_middleware`, which runs on every
+    # turn: a knob re-read per turn is a knob that can change mid-run, and a
+    # phase 3 bounded differently from the phase 1 above it is the kind of
+    # thing nothing would ever report.
+    authoring_rounds = config.authoring_research_rounds()
+
     search_attempts: SearchAttempts | None = None
     searxng = config.searxng_url()
     if searxng is not None:
@@ -2048,6 +2055,19 @@ def build_application(
             *(
                 (SearchAttemptsMiddleware(search_attempts),)
                 if search_attempts is not None
+                else ()
+            ),
+            # Authoring only, and on the purpose rather than on anything about
+            # the turn -- `_subagents_for`'s reason exactly: a purpose is fixed
+            # when the session starts, where a course directory appears partway
+            # through phase 1 and would give phase 1 a different budget from
+            # phase 2. Built fresh here on every pass, which is what resets the
+            # count between phases; see `ResearchBudget` for why that is a
+            # property of the wiring rather than of the class.
+            *(
+                (ResearchBudget(rounds=authoring_rounds),)
+                if session.state.purpose is SessionPurpose.COURSE_AUTHORING
+                and authoring_rounds > 0
                 else ()
             ),
         )

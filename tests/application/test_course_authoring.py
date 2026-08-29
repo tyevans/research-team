@@ -24,6 +24,7 @@ from research_team.application.course_authoring import (
     AREAS_DIR,
     COMPONENT_GUIDE,
     PROMPT_ANCHORS,
+    RETRY_PREFACE,
     CourseAuthor,
     assessment_prompt,
     desired_results_prompt,
@@ -167,10 +168,23 @@ AREA = LearningArea(
 async def test_stage_two_is_written_from_stage_one():
     """The turn that makes backward design real.
 
-    Stage 2's prompt must contain Stage 1's *reply*, not merely a reference to
-    the file it wrote. A turn told to go and read the file will sometimes not,
-    and will then design assessments from the entity list -- forward design
-    with the file names of backward design.
+    Stages 2 and 3 must be handed Stage 1's understandings verbatim, not
+    merely a reference to the file holding them. A turn told to go and read
+    the file will sometimes not, and will then design assessments from the
+    entity list -- forward design with the file names of backward design.
+
+    **What is handed over is the file, and it used to be the reply.** That
+    changed on the branch that bounded a parent's research: on every run this
+    could be measured against, phase 1 finished with an empty reply, so "Stage
+    1 produced this" would have introduced nothing. The file is also the
+    artifact the later phases are supposed to stay faithful to -- a model that
+    wrote `unit.md` and then summarised it differently in prose left two Stage
+    1s with nothing choosing between them. `stage_one_text` is where the slice
+    at the Stage 2 heading is argued.
+
+    This test would pass against the old code too, on this fixture, because
+    `RecordingTurns` writes both -- which is why the assertion is on a string
+    only the *file* carries.
     """
     turns = RecordingTurns()
     author = CourseAuthor(FakeSessions(turns.files), turns)
@@ -178,8 +192,9 @@ async def test_stage_two_is_written_from_stage_one():
     await author.author_area(uuid4(), AREA, "Ancient Rome")
 
     assert len(turns.prompts) == 4
-    assert "REPLY-1" in turns.prompts[1]
-    assert "REPLY-1" in turns.prompts[2]
+    assert "## Enduring Understandings" in turns.prompts[1]
+    assert "## Enduring Understandings" in turns.prompts[2]
+    assert "REPLY-1" not in turns.prompts[1]
 
 
 @pytest.mark.asyncio
@@ -267,7 +282,14 @@ async def test_a_phase_that_wrote_nothing_fails_the_run():
         await author.author_area(uuid4(), AREA, "Rome")
 
     assert caught.value.phase == "stage_one"
-    assert len(turns.prompts) == 1, "the run continued past a failed phase"
+    # Two turns, not one: `_phase` retries a refused phase once in the same
+    # session. Both are phase 1 -- the assertion that matters is that the
+    # second is a *retry* and not phase 2, because "kept going anyway" and
+    # "tried again" produce the same count and only one of them is the bug
+    # this test has always been about.
+    assert len(turns.prompts) == 2, "the run continued past a failed phase"
+    assert turns.prompts[1].startswith(RETRY_PREFACE[:40])
+    assert "Stage 2" not in turns.prompts[1]
 
 
 @pytest.mark.asyncio
@@ -329,7 +351,10 @@ async def test_the_four_phases_run_in_order():
     # `desired_results_prompt` names `## Enduring Understandings` itself, so
     # the old assertion on the heading would now fail on correct output.
     assert "REPLY-" not in turns.prompts[0]
-    assert "REPLY-1" in turns.prompts[1]  # stage 2 given stage 1's reply
+    # Stage 2 is given Stage 1's *file*, not its reply -- see
+    # `test_stage_two_is_written_from_stage_one` for why that changed.
+    assert "REPLY-1" not in turns.prompts[1]
+    assert "## Enduring Understandings" in turns.prompts[1]
     assert unit_path in turns.prompts[2]  # stage 3 reads stage 2 off the file
     assert lesson_01 in turns.prompts[3]  # phase 4 named the lessons it expects, by path
 
