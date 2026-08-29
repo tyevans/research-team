@@ -22,29 +22,29 @@ export const TopicList = ({
   projectId,
   open = null,
   onOpen,
-  toolbar,
+  header,
 }: {
   projectId: ProjectId
-  /** Passed through to `TopicQueue`'s toolbar line. Threaded rather than
-   *  rendered here because the controls on it are the *project page's* --
-   *  `QueueHeader` lives under `presentation/project`, and a container in
-   *  `presentation/research` reaching up into it would point the dependency
-   *  between the two directories backwards. `ProjectView` owns both.
+  /** Rendered above the queue, in both fetch states as well as the loaded one.
+   *
+   * A slot rather than a component, because what goes here is the *project
+   * page's* -- `TopicsDrawer` lives under `presentation/project`, and a
+   * container in `presentation/research` reaching up into it would point the
+   * dependency between the two directories backwards.
    *
    *  **A function of the shown ids, and that signature is the safety
-   *  property.** The toolbar opens the drawer that holds "find sources for
-   *  every topic shown", whose whole guarantee is that the number on the
-   *  button and the number enqueued are the same by construction rather than
-   *  by two pieces of code agreeing. The ids handed here are the very array
-   *  the rows below are rendered from, so there is no second definition of
-   *  "shown" to drift from the first -- which is the reason the route refuses
-   *  an "all" and makes the client name every id (`dispatch_topics` in
-   *  `app.py`).
+   *  property.** The slot holds "find sources for every topic shown", whose
+   *  whole guarantee is that the number on the button and the number enqueued
+   *  are the same by construction rather than by two pieces of code agreeing.
+   *  The ids handed here are the very array the rows below are rendered from,
+   *  so there is no second definition of "shown" to drift from the first --
+   *  which is the reason the route refuses an "all" and makes the client name
+   *  every id (`dispatch_topics` in `app.py`).
    *
    *  It is `[]` in both fetch states below, and that is honest rather than
    *  convenient: a queue that has not loaded is showing nothing, and the
    *  control reads "Find sources for 0 topics" and will not press. */
-  toolbar?: (shownTopicIds: readonly TopicId[]) => ReactNode
+  header?: (shownTopicIds: readonly TopicId[]) => ReactNode
   /** Which topic is open, owned by the route. Defaulted so the queue can still
    *  be rendered outside a routed page -- see `useTopicQueue`. */
   open?: TopicId | null
@@ -56,24 +56,16 @@ export const TopicList = ({
     onOpen,
   )
 
-  // The toolbar outlives both fetch states, and that is not tidiness.
-  //
-  // It carries the only two inbound links to `#/p/<id>/ask` and
-  // `#/p/<id>/dialogue`, and both branches below return *instead of* the
-  // queue -- so threading it only into `TopicQueue` took both doors away for
-  // the length of every topic request, and away entirely on a project whose
-  // topic read fails. That is the one-way door this pane has now shipped
-  // twice, arriving a third time through a state rather than through a
-  // deletion. Caught by `App.test.tsx`, whose container has no `topics.list`
-  // at all and therefore renders the error branch.
-  //
-  // Duplicated placement rather than a shared wrapper: on the happy path it
-  // belongs *on the search box's line*, which only `TopicQueue` draws, and a
-  // wrapper that owned the line would have to own the search box with it.
+  // The header outlives both fetch states, and that is not tidiness: it holds
+  // the fan-out, whose control reports the scope it would act on, and a
+  // control that vanished while the queue loaded would have a reader
+  // concluding the drawer had nothing in it. Rendered identically in all
+  // three branches rather than only in the loaded one, which is why it is a
+  // slot and not something `TopicQueue` draws.
   if (query.isPending) {
     return (
       <>
-        <ToolbarLine>{toolbar?.([])}</ToolbarLine>
+        {header?.([])}
         <Loading what="topics" />
       </>
     )
@@ -82,7 +74,7 @@ export const TopicList = ({
   if (query.isError) {
     return (
       <>
-        <ToolbarLine>{toolbar?.([])}</ToolbarLine>
+        {header?.([])}
         <ErrorBox
           heading="Could not read this project's topics"
           message={query.error instanceof Error ? query.error.message : String(query.error)}
@@ -94,7 +86,14 @@ export const TopicList = ({
 
   return (
     <>
-      <TopicQueue {...queue} toolbar={toolbar?.(shownTopicIds)} />
+      {header?.(shownTopicIds)}
+      {/* The queue is the part that scrolls, so it is the part given the
+          slack: `flex-auto` with `min-h-0` under a column parent, rather than
+          `TopicQueue`'s own `h-full`, which would be 100% of a box the header
+          above it is also using. */}
+      <div className="flex min-h-0 flex-auto flex-col">
+        <TopicQueue {...queue} />
+      </div>
       {/* The wait is the same one the drawer needed and the reason has
           changed: `TopicManagePane` requires a `TopicDetail` to render at
           all, and while it was an overlay, opening on the click would have
@@ -116,10 +115,3 @@ export const TopicList = ({
     </>
   )
 }
-
-/** The toolbar with no search box beside it, for the two states that have no
- *  queue. Right-aligned so the controls sit where they sit on the line they
- *  normally share, rather than jumping to the left margin and back when the
- *  topics arrive. */
-const ToolbarLine = ({ children }: { children: ReactNode }) =>
-  children === undefined ? null : <div className="flex justify-end">{children}</div>

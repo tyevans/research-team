@@ -1,4 +1,4 @@
-import { AutonomyAllowAll } from '../project/queue/AutonomyAllowAll.tsx'
+import { AutonomyAllowAll } from '../project/topics/AutonomyAllowAll.tsx'
 import { Approvals } from '../session/Approvals.tsx'
 import { useApprovalFeed } from './use-approval-feed.ts'
 

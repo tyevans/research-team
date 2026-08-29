@@ -10,68 +10,77 @@ import { TopicsDrawer, TOPICS_HEADING } from './TopicsDrawer.tsx'
 const ASK = 'Ask this project'
 const DIALOGUE = 'Be asked about this project'
 
-/** The controls that act on the whole queue, as one line above it.
+/** Everything a project's topics are reached by, as three glyphs in the
+ *  console's chrome.
  *
- * It was four stacked bands: two full-width bordered links, a card for the
- * autonomous run, and a card for seeding. Roughly 320px of header above the
- * first topic in a 320px rail, which put the rows -- the only thing on this
- * page a person acts on repeatedly -- below the fold on a short viewport.
- * `docs/design/topic-actions-on-the-row.md` §1 measures it and §2 draws what
- * replaced it.
+ * **It was a rail, and the rail is gone.** QUEUE was a quarter-width sidebar
+ * on every project page, holding a search box, four filter tabs and the topic
+ * rows -- and it was there whether or not the reader had come to look at
+ * topics at all. `docs/design/topic-actions-on-the-row.md` §1 measures what
+ * the *header* above that list cost; what this change measures is the list
+ * itself, which took a quarter of every project page permanently in exchange
+ * for being useful on the visits that were about a question. The rows, the
+ * filter and the search box are in the drawer now, behind the same door as
+ * seeding; MATERIAL takes the whole surface.
  *
- * The four had nothing in common except that each was, at some point, the
- * newest thing added to the pane. The docstring this one replaces claimed they
- * were ordered by "how often does somebody touch this", and that ordering was
- * false in both directions: the two ask links leave the page and were first,
- * seeding is touched once per project and was last.
- *
- * **Both ask routes are still reachable, and that is not decoration.** The
- * previous docstring records this pane losing an inbound link twice -- once
- * when deleting `CourseView` and `ResearchView` took the last door to `#/p/
- * <id>/ask`, and again one plan later when `facet: 'dialogue'` shipped with
- * zero `projectHref` call sites. Both were one-way doors that nothing failed
- * on, because no test asserted a route was reachable. `App.test.tsx` holds
- * both links by accessible name, and `QueueHeader.test.tsx` holds the pair
- * against this component directly.
+ * **In the chrome rather than on the page, and that is what makes the rail
+ * removable.** These three are properties of the project rather than of the
+ * tab you happen to have open, which is the test `Shell.tsx` states for this
+ * slot -- and it is the test the two ask links have needed all along. This
+ * pane has lost an inbound link to `#/p/<id>/ask` twice and to `#/p/<id>/
+ * dialogue` once, both times because the one component drawing them stopped
+ * being rendered. In the chrome they are drawn on every project route,
+ * including the two (`ask`, `dialogue`) that `App.tsx` intercepts above
+ * `ProjectView` entirely -- so a reader can leave a dialogue by the same
+ * control they entered it with, which was not true before.
  *
  * **Every control carries its sentence twice.** A `Tooltip` for the mouse and
  * an `aria-label` with the same words, so a keyboard and a screen reader both
  * get it without the tooltip ever opening. An icon with only a tooltip is
  * S-D2, the unlabelled-icon defect this console already records, and
- * `AutonomyLock` is the worked example this follows.
- *
- * **Rendered inside the queue's own toolbar line, not above it.** It is handed
- * to `TopicList` as a node and lands beside the search box, which is why this
- * is a bare flex row with no border and no padding of its own -- the line it
- * sits on belongs to `TopicQueue`. Putting it back above would restore the
- * separate band this slice exists to remove.
+ * `AutonomyLock` -- which sits two controls to the right -- is the worked
+ * example this follows.
  */
-export const QueueHeader = ({
+export const TopicControls = ({
   projectId,
-  shownTopicIds,
+  openTopic,
+  onOpenTopic,
 }: {
   projectId: ProjectId
-  /** The topics the queue is currently showing, passed to the drawer's bulk
-   *  fan-out. Threaded down from `TopicList`, which is the only thing that
-   *  knows -- see its `toolbar` prop for why the ids travel rather than the
-   *  filter. */
-  shownTopicIds: readonly TopicId[]
+  /** Which topic the route has open, or `null`. **It also forces the drawer
+   *  open**, which is the whole reason it is threaded up here rather than left
+   *  inside the drawer: `#/p/<id>/topic/<tid>` is a link a person sends, and
+   *  the topic it names now lives behind a door. A route that opened nothing
+   *  visible would be the linkable-URL-that-renders-the-default-page defect
+   *  `use-topic-queue.ts` records against the old `useState`, arriving a second
+   *  time through a drawer instead of through state. */
+  openTopic: TopicId | null
+  onOpenTopic: (topicId: TopicId | null) => void
 }) => {
   const [open, setOpen] = useState(false)
 
+  // Either reason opens it. Closing has to answer both: `setOpen(false)` alone
+  // would leave a `topic` selection in the address bar re-opening the drawer on
+  // the next render, so the close clears the selection too.
+  const showing = open || openTopic !== null
+
   return (
     <>
-      <QueueToolbar
+      <TopicControlBar
         askHref={projectHref(projectId, { facet: 'ask', id: null })}
         dialogueHref={projectHref(projectId, { facet: 'dialogue', id: null })}
-        topicsOpen={open}
+        topicsOpen={showing}
         onOpenTopics={() => setOpen(true)}
       />
-      {open ? (
+      {showing ? (
         <TopicsDrawer
           projectId={projectId}
-          shownTopicIds={shownTopicIds}
-          onClose={() => setOpen(false)}
+          openTopic={openTopic}
+          onOpenTopic={onOpenTopic}
+          onClose={() => {
+            setOpen(false)
+            onOpenTopic(null)
+          }}
         />
       ) : null}
     </>
@@ -80,12 +89,12 @@ export const QueueHeader = ({
 
 /** The three controls, from props, so the arrangement has a story.
  *
- * Split from `QueueHeader` for the reason `TopicQueue` is split from
- * `TopicList`: the toolbar's whole content is a width question on a 294px
- * line, and a component that owns drawer state cannot be put in a workbench
- * without a container and an overlay host behind it. This one can.
+ * Split from `TopicControls` for the reason `TopicQueue` is split from
+ * `TopicList`: a component that owns drawer state cannot be put in a workbench
+ * without a container and an overlay host behind it. This one can, so the
+ * arrangement of three glyphs is something a story can show.
  */
-export const QueueToolbar = ({
+export const TopicControlBar = ({
   askHref,
   dialogueHref,
   topicsOpen,
@@ -98,9 +107,10 @@ export const QueueToolbar = ({
   topicsOpen: boolean
   onOpenTopics: () => void
 }) => (
-  // `flex-none` so the search box beside it takes the slack: three buttons at
-  // `.btn-ghost.btn-sm` are ~28px each, and a toolbar that shrank would clip a
-  // glyph before the field it shares the line with gave up a pixel.
+  // `flex-none` for the reason every other control in `.chrome-right` is:
+  // three buttons at `.btn-ghost.btn-sm` are ~28px each, and the breadcrumb to
+  // their left is the element that gives up width on a narrow viewport. A
+  // toolbar that shrank would clip a glyph instead.
   <div className="flex flex-none items-center gap-[2px]">
     <Tooltip asChild explanation={TOPICS_HEADING}>
       <button
@@ -130,8 +140,8 @@ export const QueueToolbar = ({
 
 /** Sliders rather than the `⚙` the design sketches. A gear at 12px is six
  * indistinguishable teeth, and the drawer this opens is not "settings" -- it
- * holds what *configures* the queue, which two adjustable rows say better than
- * a cog does.
+ * is the queue itself plus what configures it, which two adjustable rows say
+ * better than a cog does.
  */
 export const SlidersGlyph = () => (
   <Glyph>

@@ -3,13 +3,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { notify } from '@application/notifications/toast-store.ts'
 import { queryKeys } from '@application/queries/keys.ts'
+import { TopicId } from '@domain/shared/identifier.ts'
 import { createSessionStore, type SessionStore } from '@application/session/session-store.ts'
 import { AskView } from '@presentation/ask/AskView.tsx'
 import { DialogueView } from '@presentation/dialogue/DialogueView.tsx'
 import { Shell } from '@presentation/layout/Shell.tsx'
 import { DEFAULT_MATERIAL, ProjectView } from '@presentation/project/ProjectView.tsx'
-import { homeHref, interactionsHref, type Route } from '@presentation/routing/routes.ts'
-import { useRoute, useSeekSeconds } from '@presentation/routing/use-route.ts'
+import { TopicControls } from '@presentation/project/topics/TopicControls.tsx'
+import {
+  homeHref,
+  interactionsHref,
+  projectHref,
+  type Route,
+} from '@presentation/routing/routes.ts'
+import { navigate, useRoute, useSeekSeconds } from '@presentation/routing/use-route.ts'
 import { InteractionsView } from '@presentation/interactions/InteractionsView.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
@@ -157,6 +164,40 @@ const Console = () => {
                   when the work stops making sense -- so it stays at the edge where
                   it has always been rather than being pushed along. */}
               <AgentWidget />
+              {/* The project's own three verbs -- open the topics drawer, be
+                  asked, ask -- left of the two controls that are true of the
+                  whole console. The bar reads from "this page" outward, which
+                  is the same ordering `AutonomyLock` and `ThemeControl` argue
+                  between themselves below.
+
+                  In the chrome rather than on the page because these outlive
+                  the page: `ask` and `dialogue` are intercepted above
+                  `ProjectView` entirely, so a reader inside a dialogue had no
+                  control offering the other direction. `TopicControls` carries
+                  the two one-way doors this pane has actually shipped. */}
+              {route.name === 'project' ? (
+                <TopicControls
+                  projectId={route.id}
+                  openTopic={
+                    route.selection?.facet === 'topic' && route.selection.id !== null
+                      ? TopicId(route.selection.id)
+                      : null
+                  }
+                  onOpenTopic={(topicId) => {
+                    // Replaced rather than pushed, exactly as every selection
+                    // on the project page is: opening a topic is a glance down
+                    // a list, and forty glances in the back stack make the
+                    // back button useless.
+                    navigate(
+                      projectHref(
+                        route.id,
+                        topicId === null ? null : { facet: 'topic', id: topicId },
+                      ),
+                      { replace: true },
+                    )
+                  }}
+                />
+              ) : null}
               {/* Left of the connection badges, which is where the sentence
                   above puts it: those two describe the stream, this is a
                   setting the stream has nothing to do with. Beside them rather

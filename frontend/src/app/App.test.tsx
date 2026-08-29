@@ -283,25 +283,23 @@ it('opens a dialog, which needs the overlay host the shell mounts', async () => 
   expect(within(dialog).getByText(/cannot rejoin/)).toBeInTheDocument()
 })
 
-it('gives one project route a sidebar and a content region, not a choice of two pages', async () => {
+it('gives every project facet one page rather than a choice of two', async () => {
   // The merge, seen from the route: every project facet lands on the same page.
-  // Reverted, this fails on the first assertion -- there was no `Project
-  // regions` group, because there was no container, and `#/p/<id>/entity/e1`
+  // Reverted to the two-page build, this fails because `#/p/<id>/entity/e1`
   // reached a whole separate view whose heading said "Research".
   //
-  // **Two regions, where this said three until the sidebar slice.** HOLDER was
-  // a region and is now a tab inside MATERIAL, so "Holding session" is no
-  // longer a region name and asking for one would pass on a `tablist` label if
-  // this used a loose query. `region` is the strict one: it matches the
-  // `<section aria-label>` a `Pane` renders and nothing else.
+  // **It asked for two regions until this slice, and now asks for none.**
+  // HOLDER became a tab inside MATERIAL; QUEUE became a drawer in the chrome
+  // (`TopicControls` carries why). What is left is one content area, so the
+  // assertion is the tab strip that area is built around rather than a
+  // `Pane`'s `<section aria-label>`, and the negative half says the sidebar
+  // did not come back.
   window.location.hash = `#/p/${ATLAS}/entity/e1`
   renderApp()
 
-  expect(await screen.findByRole('group', { name: 'Project regions' })).toBeInTheDocument()
-  for (const region of ['Queue', 'Material']) {
-    expect(screen.getByRole('region', { name: region })).toBeInTheDocument()
-  }
-  expect(screen.queryByRole('region', { name: 'Holding session' })).toBeNull()
+  expect(await screen.findByRole('tablist', { name: 'Material' })).toBeInTheDocument()
+  expect(screen.queryByRole('group', { name: 'Project regions' })).toBeNull()
+  expect(screen.queryByRole('region', { name: 'Queue' })).toBeNull()
 })
 
 it('keeps ask a view of its own rather than a region', async () => {
@@ -650,7 +648,7 @@ it('puts a started dialogue in the URL, and finds its answers again after a remo
 it('mounts the interaction log over the application, not merely beside it', async () => {
   window.location.hash = `#/p/${ATLAS}/entity/e1`
   const { unmount } = renderApp()
-  await screen.findByRole('group', { name: 'Project regions' })
+  await screen.findByRole('tablist', { name: 'Material' })
 
   unmount()
   // The provider's teardown defers its final beacon by a microtask so a
@@ -676,10 +674,10 @@ it('records ProjectSwitched when the route moves from one project to another', a
   const OTHER = ProjectId('22222222-2222-2222-2222-222222222222')
   window.location.hash = `#/p/${ATLAS}`
   const { unmount } = renderApp()
-  await screen.findByRole('group', { name: 'Project regions' })
+  await screen.findByRole('tablist', { name: 'Material' })
 
   window.location.hash = `#/p/${OTHER}`
-  await screen.findByRole('group', { name: 'Project regions' })
+  await screen.findByRole('tablist', { name: 'Material' })
 
   unmount()
   await Promise.resolve()
@@ -704,7 +702,7 @@ it('records ProjectSwitched when the route moves from one project to another', a
 it('records ProjectSwitched with a null from_project_id for the first project the route names', async () => {
   window.location.hash = `#/p/${ATLAS}`
   const { unmount } = renderApp()
-  await screen.findByRole('group', { name: 'Project regions' })
+  await screen.findByRole('tablist', { name: 'Material' })
 
   unmount()
   await Promise.resolve()
@@ -728,10 +726,10 @@ it('records ProjectSwitched with a null from_project_id for the first project th
 it('records no second ProjectSwitched for a facet change inside the same project', async () => {
   window.location.hash = `#/p/${ATLAS}`
   const { unmount } = renderApp()
-  await screen.findByRole('group', { name: 'Project regions' })
+  await screen.findByRole('tablist', { name: 'Material' })
 
   window.location.hash = `#/p/${ATLAS}/entity/e1`
-  await screen.findByRole('group', { name: 'Project regions' })
+  await screen.findByRole('tablist', { name: 'Material' })
 
   unmount()
   await Promise.resolve()

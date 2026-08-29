@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
-import { AskGlyph, SlidersGlyph } from '../project/queue/QueueHeader.tsx'
+import { AskGlyph, SlidersGlyph } from '../project/topics/TopicControls.tsx'
 import { NarrowGlyph, PenGlyph, SearchGlyph } from '../research/TopicQueue.tsx'
 import { Glyph } from './Glyph.tsx'
 

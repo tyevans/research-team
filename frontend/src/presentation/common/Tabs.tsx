@@ -131,7 +131,8 @@ export const TabPanel = ({
    *  at any point — `forceMount` means "I will handle hiding", which suits its
    *  intended use (exit animations) and not the name. `workspace.css`'s
    *  `[role='tabpanel'][data-state='inactive']` is what handles it, and
-   *  `ProjectView.browser.test.tsx` claim 8 is what fails if that goes. */
+   *  Nothing measures this since `ProjectView.browser.test.tsx` was deleted
+   *  with the project page's split. */
   keepMounted?: boolean
 }) => (
   // Radix gives the panel `tabIndex={0}`, and it is kept rather than overridden
