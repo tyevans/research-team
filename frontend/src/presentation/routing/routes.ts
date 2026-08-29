@@ -287,6 +287,54 @@ export const parseSeekSeconds = (hash: string): number | null => {
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : null
 }
 
+/** Which lesson is being presented, and at which slide, or `null` for "the
+ *  document, not the deck".
+ *
+ * `?deck=<path>&slide=<n>` on whatever route is already showing, read
+ * independently of `useRoute` -- the same shape as `?t=` above, and the same
+ * argument, which `parseSeekSeconds`'s docstring makes: a query parameter that
+ * applies to one surface does not belong in the `Route` union, because every
+ * other route's reader would then have to guard a field that cannot apply to
+ * it. A deck opens over a course page today; it is a lesson file's second
+ * reading and could open over the workspace tomorrow without the grammar
+ * changing.
+ *
+ * Defensive in the way the rest of this parser is: a `deck=` with no path is
+ * not a deck, and a `slide=` that is absent, non-numeric or negative is slide
+ * zero rather than a `NaN` reaching an array index. An index past the end is
+ * *not* rejected here -- `clampSlide` handles it against the deck, which is
+ * the only thing that knows how long the lesson is. */
+export const parseDeck = (hash: string): { path: string; slide: number } | null => {
+  const { query } = splitQuery(hash)
+  if (query === null) return null
+  const params = new URLSearchParams(query)
+  const path = params.get('deck')
+  if (path === null || path === '') return null
+  const raw = Number(params.get('slide') ?? '')
+  const slide = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 0
+  return { path, slide }
+}
+
+/** The same hash with a deck opened on it, or closed.
+ *
+ * Built by rewriting the current hash rather than from a route, because the
+ * deck is a layer over whatever page is showing and closing it must land the
+ * reader exactly where they were -- including any other query the route
+ * carried. `slide` is omitted at zero, so the first slide has one spelling. */
+export const withDeck = (hash: string, deck: { path: string; slide: number } | null): string => {
+  const { path, query } = splitQuery(hash)
+  const params = new URLSearchParams(query ?? '')
+  params.delete('deck')
+  params.delete('slide')
+  if (deck !== null) {
+    params.set('deck', deck.path)
+    if (deck.slide > 0) params.set('slide', String(deck.slide))
+  }
+  const printed = params.toString()
+  const base = path.startsWith('#') ? path : `#${path}`
+  return printed === '' ? base : `${base}?${printed}`
+}
+
 export const parseRoute = (hash: string): Route => {
   const { path, query } = splitQuery(hash)
   const parts = path

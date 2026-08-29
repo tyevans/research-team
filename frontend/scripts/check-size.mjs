@@ -146,7 +146,34 @@ const BUDGET_KB = {
   // devtools and one showing the error with three ways out -- which is
   // exactly the trade this budget is meant to be argued in front of, rather
   // than shaving the fallback down to an apology to stay under a number.
-  app: 115, // our code: every component, store, mapper and stylesheet rule
+  //
+  // 115 -> 124: the lesson slideshow.
+  //
+  // **Measured twice, because only one of the two numbers is this change's.**
+  // On 2026-08-29 at `f5a98462`, in one worktree, built twice: with the deck
+  // reachable, **116.2 kB**; with the single `Deck` import removed from
+  // `CourseFile` so the whole surface shakes out, **112.9 kB**. So the deck
+  // costs **3.3 kB**.
+  //
+  // Both were taken before the `ErrorBoundary` raise above existed on this
+  // branch, so 112.9 is a base that predates it and the two are not additive in
+  // any way this note can claim -- the honest reading is that the deck adds 3.3
+  // kB to whatever the merged tree measures, and nobody has re-measured the
+  // merge. An earlier draft of this paragraph read 112.9 as "the base was
+  // already 0.9 kB over" and filed it as somebody else's overage; the rebase
+  // showed it was the `ErrorBoundary`, landing on `main` with its own raise.
+  // Kept as a correction rather than deleted, because the wrong reading is the
+  // one a future measurement here is most likely to repeat.
+  //
+  // 124 is ~8 kB of headroom over the last figure taken, on the standing
+  // position the notes above state rather than on necessity.
+  //
+  // What the 3.3 kB bought: every lesson this system has ever authored gained a
+  // second reading -- a keyboard-driven, deep-linkable deck with the widgets
+  // still live on the slide -- from a pure segmenter over the parse that was
+  // already on the wire. No new dependency, no new stylesheet, no new event, and
+  // nothing added to the payload.
+  app: 124, // our code: every component, store, mapper and stylesheet rule
   react: 66, // react + react-dom + scheduler
   text: 34, // marked, dompurify, jsdiff — markdown and diff rendering
   // 48, from 38, on the same instruction and the same reasoning as `app-`.

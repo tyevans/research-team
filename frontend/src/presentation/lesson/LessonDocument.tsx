@@ -32,7 +32,7 @@ import { TimelineWidget } from './TimelineWidget.tsx'
  *    block, a component with errors renders as its own source plus a panel
  *    naming the fields, and neither takes the rest of the document down.
  */
-const FILE_WITHHELD_EXPLANATION =
+export const FILE_WITHHELD_EXPLANATION =
   'The answer key was removed from this response and is graded on the server. ' +
   'The raw file is still readable from the source toggle, so this keeps answers ' +
   'off the page rather than out of reach.'
@@ -112,7 +112,18 @@ const RENDERERS: Readonly<
   explorer: ExplorerWidget,
 }
 
-const Component = ({
+/** One block, rendered through the registry above, with its kind label and its
+ *  "answers withheld" note.
+ *
+ * **Exported so the deck renders widgets through this exact path and not a
+ * second one.** A slideshow that rebuilt the registry would be the "one
+ * interaction contract implemented per-site drifts per-site" failure
+ * `component-system-spec.md` §2 is about, and it would drift where it is least
+ * visible: a widget added to `RENDERERS` would work in the document and render
+ * as an unknown fence in the deck. `deck-widgets.test.tsx` answers a quiz on a
+ * slide, which is what proves the two are one path rather than two that agree
+ * today. */
+export const Component = ({
   block,
   attempts,
   withheldExplanation,

@@ -1,6 +1,6 @@
 import { useHashLocation } from 'wouter/use-hash-location'
 
-import { parseRoute, parseSeekSeconds, type Route } from './routes.ts'
+import { parseDeck, parseRoute, parseSeekSeconds, type Route } from './routes.ts'
 
 /** The current route, and how to change it.
  *
@@ -24,6 +24,24 @@ export const useRoute = (): Route => {
 export const useSeekSeconds = (): number | null => {
   const [path] = useHashLocation()
   return parseSeekSeconds(path)
+}
+
+/** The deck open on the current hash, or `null`.
+ *
+ * Read off the hash rather than held in component state, which is the whole
+ * point: a slide is a linkable thing, so the reader's position is in the URL
+ * and a reload or a shared link lands on the same slide. See `parseDeck`.
+ *
+ * The full hash comes back with it, because both closing the deck and moving
+ * between slides mean rewriting *this* hash rather than rebuilding one from a
+ * route -- see `withDeck`, and see `parseRoute`'s note that a route printed
+ * from its parts would drop any other query it carried. */
+export const useDeck = (): {
+  deck: { path: string; slide: number } | null
+  hash: string
+} => {
+  const [path] = useHashLocation()
+  return { deck: parseDeck(path), hash: path }
 }
 
 /** Navigation as a plain function, for the handlers that are not components.
