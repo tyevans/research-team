@@ -12,7 +12,6 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 # Imported for its side effect as much as its names: redstring registers its
@@ -138,7 +137,6 @@ from research_team.infrastructure.agent.search import (
 )
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 from research_team.infrastructure.agent.socratic_agent import DeepAgentSocraticExecutor
-from research_team.infrastructure.agent.source_mount import mounted_sources
 from research_team.infrastructure.agent.topic_tools import (
     RepositoryTopics,
     build_topic_tools,
@@ -1871,8 +1869,7 @@ def build_application(
         project to have selected a preset, which reads as harmless and is not:
         it silently made both conditional on that selection, so a run on a
         project that had made none fetched with no corpus and saved nothing.
-        `turn_sources` keys off the same field for the same reason and states
-        it; a fetch is a fetch on the strength of the project alone.
+        A fetch is a fetch on the strength of the project alone.
         """
         grant = resolved_grants.get(session.aggregate_id)
         if grant is None:
@@ -2030,25 +2027,12 @@ def build_application(
         corpus, target_project_id, blob_store
     )
 
-    async def turn_sources(session: Session) -> dict[str, Any]:
-        """This turn's corpus mount, or nothing for a session outside a project.
-
-        Keyed off `project_id` alone: a session's sources are searchable on
-        the strength of the project it is attached to and nothing else, so
-        `grep` cannot answer differently for two projects holding the same
-        documents.
-        """
-        project_id = session.state.project_id
-        if project_id is None:
-            return {}
-        return await mounted_sources(corpus_readers(project_id))
-
     async def turn_subagents(session: Session) -> Sequence[dict]:
         """This turn's roster -- see `_subagents_for` for the choice it makes.
 
-        A thin `async def` around a pure function, matching how `turn_sources`
-        and `turn_tools` above are wired: the seam is async because the other
-        three providers are, not because anything here awaits.
+        A thin `async def` around a pure function, matching how `turn_tools`
+        above is wired: the seam is async because the other providers are, not
+        because anything here awaits.
         """
         return _subagents_for(session, subagents)
 
@@ -2060,7 +2044,6 @@ def build_application(
         approvals=approvals,
         middleware_provider=turn_middleware,
         tools_provider=turn_tools,
-        sources_provider=turn_sources,
         subagents_provider=turn_subagents,
         # The same registry `turn_tools` (via `granted_tools`) and `start_run`
         # (below) consult -- see `resolved_grants`'s own note for why there
@@ -2452,9 +2435,6 @@ def build_application(
             model=resolved_model,
             open_graph=open_graph,
             project_files=service.project_files,
-            project_sources=lambda target_project_id: mounted_sources(
-                corpus_readers(target_project_id)
-            ),
         ),
         conversations=ConversationRegistry(now=time.monotonic),
         now=time.monotonic,
@@ -2481,9 +2461,6 @@ def build_application(
             model=resolved_model,
             open_graph=open_graph,
             project_files=service.project_files,
-            project_sources=lambda target_project_id: mounted_sources(
-                corpus_readers(target_project_id)
-            ),
         ),
         dialogues=DialogueRegistry(now=time.monotonic),
         read_model=dialogues,

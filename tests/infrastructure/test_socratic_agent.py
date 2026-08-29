@@ -277,7 +277,6 @@ async def _respond(history=(), reply="It settled Arianism."):
         ),
         open_graph=lambda _project: _ready((None, project_tools)),
         project_files=lambda _project: _ready({"notes.md": "x"}),
-        project_sources=lambda _project: _ready({}),
     )
     reported: list[str] = []
     result = await executor.respond(

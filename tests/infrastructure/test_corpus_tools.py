@@ -19,6 +19,7 @@ from research_team.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     REFERENCE_SYNTAX_PROMPT,
+    SEARCH_SOURCES_TOOL,
     CorpusReadError,
     SourceListing,
     StoredDocument,
@@ -26,6 +27,7 @@ from research_team.application.corpus_read import (
 from research_team.domain import MediaRecord, TextRecord
 from research_team.infrastructure.agent.corpus_tools import (
     CORPUS_PROMPT,
+    MAX_PER_SOURCE,
     build_corpus_tools,
     format_listing,
 )
@@ -88,10 +90,11 @@ def test_the_reading_tools_are_not_gated() -> None:
     without reading them. A later change that gates them should fail here."""
     assert LIST_SOURCES_TOOL not in GATED_TOOLS
     assert READ_SOURCE_TOOL not in GATED_TOOLS
+    assert SEARCH_SOURCES_TOOL not in GATED_TOOLS
 
 
-def test_both_tools_are_built_under_their_declared_names() -> None:
-    assert set(_tools()) == {LIST_SOURCES_TOOL, READ_SOURCE_TOOL}
+def test_every_tool_is_built_under_its_declared_name() -> None:
+    assert set(_tools()) == {LIST_SOURCES_TOOL, SEARCH_SOURCES_TOOL, READ_SOURCE_TOOL}
 
 
 # --- list_sources -----------------------------------------------------------
@@ -338,4 +341,193 @@ def test_the_prompt_states_the_id_charset():
     explicitly because `fetch_media.py` mints ids containing one
     (`f"fetch:{digest}"`), and the frontend charset was widened to admit it."""
     assert "`:`" in REFERENCE_SYNTAX_PROMPT
+
+
+# --- search_sources ---------------------------------------------------------
+#
+# The assertion that matters throughout is the module's own: an offset a
+# response reports has to bound the text it reported beside it. It is sharper
+# here than for `read_source`, because a search result's offsets are what the
+# *next* call is made from -- a snippet whose span is a few characters off
+# sends every subsequent read to the wrong place, and the read succeeds.
+
+
+def _match_lines(text: str) -> list[tuple[str, int, int, str]]:
+    """Every `source_id@start-end | snippet` line, parsed back apart."""
+    parsed = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "@" not in stripped or " | " not in stripped:
+            continue
+        locator, _, snippet = stripped.partition(" | ")
+        source_id, _, span = locator.partition("@")
+        start, _, end = span.partition("-")
+        parsed.append((source_id, int(start), int(end), snippet))
+    return parsed
+
+
+async def test_a_search_reports_offsets_that_bound_the_snippet_beside_them() -> None:
+    """The whole reason this tool exists. Fails if the snippet is ever sliced
+    from anything but the span whose numbers are printed with it."""
+    body = "Alpha beta. " * 40 + "The aqueduct carried water. " + "Gamma delta. " * 40
+    tools = _tools(_document("s1", body))
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct"})
+    (source_id, start, end, snippet) = _match_lines(text)[0]
+    assert source_id == "s1"
+    assert " ".join(body[start:end].split()) == snippet
+    assert "aqueduct" in snippet
+
+
+async def test_a_search_spans_every_source_and_names_each_one() -> None:
+    """The failure this replaces: opening documents one at a time to find
+    which of them discusses something."""
+    tools = _tools(
+        _document("s1", "nothing of interest here"),
+        _document("s2", "the aqueduct at Segovia"),
+        _document("s3", "another aqueduct entirely"),
+    )
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct"})
+    assert {source for source, _, _, _ in _match_lines(text)} == {"s2", "s3"}
+    assert "s1" not in text
+
+
+async def test_a_search_offset_reads_back_as_the_same_text_through_read_source() -> None:
+    """The loop this change exists to close, end to end: search, then read at
+    the offsets the search returned, with no conversion in between. Fails if
+    either tool's offsets are relative to anything but the whole document."""
+    body = "x" * 3000 + "the aqueduct" + "y" * 3000
+    tools = _tools(_document("s1", body))
+    found = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct"})
+    _, start, end, _ = _match_lines(found)[0]
+    read = await tools[READ_SOURCE_TOOL].ainvoke(
+        {"source_id": "s1", "start": start, "end": end}
+    )
+    assert f"s1@{start}-{end}" in read
+    assert "aqueduct" in read
+
+
+async def test_a_search_can_be_scoped_to_one_source() -> None:
+    tools = _tools(_document("s1", "aqueduct"), _document("s2", "aqueduct"))
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct", "source_id": "s2"})
+    assert {source for source, _, _, _ in _match_lines(text)} == {"s2"}
+
+
+async def test_scoping_to_an_unknown_source_says_so_rather_than_searching_all() -> None:
+    """Silently searching the whole corpus would answer a question nobody
+    asked, and the answer would look right."""
+    tools = _tools(_document("s1", "aqueduct"))
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke(
+        {"pattern": "aqueduct", "source_id": "nope"}
+    )
+    assert "No source 'nope'" in text
+    assert not _match_lines(text)
+
+
+async def test_a_search_is_case_insensitive() -> None:
+    tools = _tools(_document("s1", "The Aqueduct"))
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct"})
+    assert _match_lines(text)
+
+
+async def test_no_match_says_so_and_names_the_pattern() -> None:
+    tools = _tools(_document("s1", "alpha"))
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct"})
+    assert "No match" in text
+    assert "aqueduct" in text
+
+
+async def test_an_invalid_pattern_explains_itself_instead_of_raising() -> None:
+    """A model writing a literal `(` is the common case, and a traceback
+    ends the turn where a sentence lets it try again."""
+    tools = _tools(_document("s1", "alpha (beta"))
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "("})
+    assert "not a valid regular expression" in text
+
+
+async def test_one_prolific_source_cannot_consume_the_whole_budget() -> None:
+    """Without the per-source cap a document holding the phrase everywhere
+    answers for the corpus, and the other sources holding it go unnamed --
+    the same miss-in-silence the mount was built to remove."""
+    tools = _tools(
+        _document("noisy", "aqueduct " * 200),
+        _document("quiet", "one aqueduct here"),
+    )
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct"})
+    lines = _match_lines(text)
+    assert sum(1 for source, _, _, _ in lines if source == "noisy") == MAX_PER_SOURCE
+    assert any(source == "quiet" for source, _, _, _ in lines)
+    assert "further match" in text
+
+
+async def test_a_storage_failure_while_searching_comes_back_as_prose() -> None:
+    tools = _tools(_document("s1", "aqueduct"), fails=True)
+    text = await tools[SEARCH_SOURCES_TOOL].ainvoke({"pattern": "aqueduct"})
+    assert "Could not" in text
+    assert "unavailable" in text
+
+
+# --- read_source(find=) -----------------------------------------------------
+
+
+async def test_find_opens_the_window_at_the_match() -> None:
+    """The call the agent in the report actually wanted: it knew the phrase
+    and not the offset, and had nothing to convert one into the other."""
+    body = "x" * 5000 + " the aqueduct carried water " + "y" * 5000
+    tools = _tools(_document("s1", body), max_chars=500)
+    text = await tools[READ_SOURCE_TOOL].ainvoke({"source_id": "s1", "find": "aqueduct"})
+    assert "aqueduct carried water" in text
+    start, end = _offsets(text.splitlines()[0])
+    assert body[start:end] in text
+    assert start <= body.index("aqueduct")
+
+
+async def test_find_reports_a_span_that_is_still_the_documents_own_offsets() -> None:
+    """A window opened at a match is a citation like any other. Fails if the
+    header is ever built from the match rather than from the returned span."""
+    body = "x" * 4000 + "aqueduct" + "y" * 4000
+    tools = _tools(_document("s1", body), max_chars=400)
+    text = await tools[READ_SOURCE_TOOL].ainvoke({"source_id": "s1", "find": "aqueduct"})
+    start, end = _offsets(text.splitlines()[0])
+    _, _, rest = text.partition("\n\n")
+    assert rest.split("\n\n[")[0] == body[start:end]
+
+
+async def test_find_searches_forward_from_start_so_a_second_match_is_reachable() -> None:
+    """Reading on from a match is otherwise impossible: `find` alone always
+    returns the first one, so a document with two would loop."""
+    body = "aqueduct" + "x" * 2000 + "aqueduct" + "y" * 100
+    tools = _tools(_document("s1", body), max_chars=300)
+    first = await tools[READ_SOURCE_TOOL].ainvoke({"source_id": "s1", "find": "aqueduct"})
+    assert _offsets(first.splitlines()[0])[0] == 0
+    second = await tools[READ_SOURCE_TOOL].ainvoke(
+        {"source_id": "s1", "find": "aqueduct", "start": 500}
+    )
+    assert _offsets(second.splitlines()[0])[0] >= 2008 - 200
+
+
+async def test_find_with_no_match_names_the_search_tool_rather_than_the_top() -> None:
+    """Returning character 0 would be a document the model did not ask for,
+    read as though it were the answer."""
+    tools = _tools(_document("s1", "alpha beta gamma"))
+    text = await tools[READ_SOURCE_TOOL].ainvoke({"source_id": "s1", "find": "aqueduct"})
+    assert "No match" in text
+    assert SEARCH_SOURCES_TOOL in text
+    assert "alpha beta gamma" not in text
+
+
+async def test_an_invalid_find_explains_itself_instead_of_raising() -> None:
+    tools = _tools(_document("s1", "alpha"))
+    text = await tools[READ_SOURCE_TOOL].ainvoke({"source_id": "s1", "find": "("})
+    assert "not a valid regular expression" in text
+
+
+def test_the_prompt_names_the_search_tool_and_denies_the_file_tools():
+    """The trap this change removes is a prompt that sends the model to
+    `grep`, whose line numbers address nothing `read_source` accepts. With the
+    mount gone `grep` no longer sees the corpus at all, and a prompt that did
+    not say so would leave the model searching a filesystem that answers
+    "found nothing" for every stored source."""
+    assert SEARCH_SOURCES_TOOL in CORPUS_PROMPT
+    assert "find=" in CORPUS_PROMPT
+    assert "never a stored source" in CORPUS_PROMPT
     assert "does not raise an error" in REFERENCE_SYNTAX_PROMPT
