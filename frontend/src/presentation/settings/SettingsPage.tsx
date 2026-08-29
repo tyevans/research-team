@@ -70,12 +70,22 @@ const SettingsBody = ({
   const [onlyOverridden, setOnlyOverridden] = useState(false)
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set(group ? [group] : []))
 
+  /** What this page's requests name. One entry, and that is a fact about
+   *  today rather than a simplification: the console has no identity endpoint,
+   *  so a project page cannot learn which user or tenant sits under it. When
+   *  W-A supplies them this becomes the fuller chain and nothing else here
+   *  changes. */
   const chain: readonly ScopeRef[] = useMemo(() => [{ scope, scopeId }], [scope, scopeId])
-  /** The same route with this scope omitted. At project scope today that is
-   *  the empty chain, which resolves to environment and default alone — a real
-   *  request, not a degenerate one. When W-A lands a user and a tenant this
-   *  becomes the chain minus one entry and nothing else changes. */
-  const below: readonly ScopeRef[] = useMemo(() => [], [])
+
+  /** The same route with *this* scope omitted -- where the fallback line comes
+   *  from. Derived from `chain` rather than written as `[]`, which it happens
+   *  to equal today for every scope because `chain` holds one entry. Written
+   *  as a filter so that the day `chain` grows, this stays correct instead of
+   *  silently resolving the wrong layer as the fallback. */
+  const below: readonly ScopeRef[] = useMemo(
+    () => chain.filter((ref) => ref.scope !== scope),
+    [chain, scope],
+  )
 
   const schema = useQuery({
     queryKey: queryKeys.settings.schema(),

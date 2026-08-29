@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
-import { RESOLUTION_ORDER, type Layer, type ResolvedSetting } from '@domain/settings/layer.ts'
+import { chainFrom, type Layer, type ResolvedSetting } from '@domain/settings/layer.ts'
+import type { Scope } from '@domain/settings/spec.ts'
 
 import { Popover } from '../common/Popover.tsx'
 
@@ -22,6 +23,7 @@ export const LayerChip = ({
   resolved,
   fallback,
   label,
+  scope,
 }: {
   resolved: ResolvedSetting
   /** The same key resolved with this scope omitted — what the value would fall
@@ -32,6 +34,9 @@ export const LayerChip = ({
    *  which setting it is explaining. "Where this value comes from" three times
    *  on one screen names nothing. */
   label: string
+  /** The scope this page edits. The chain shown is the chain this page's
+   *  requests actually walk, which starts here -- see `Chain`. */
+  scope: Scope
 }) => {
   const [open, setOpen] = useState(false)
 
@@ -57,7 +62,7 @@ export const LayerChip = ({
         </button>
       }
     >
-      <Chain resolved={resolved} fallback={fallback} />
+      <Chain resolved={resolved} fallback={fallback} scope={scope} />
     </Popover>
   )
 }
@@ -81,11 +86,19 @@ export const LayerChip = ({
 const Chain = ({
   resolved,
   fallback,
+  scope,
 }: {
   resolved: ResolvedSetting
   fallback: ResolvedSetting | undefined
+  scope: Scope
 }) => {
-  const answeredAt = RESOLUTION_ORDER.indexOf(resolved.layer)
+  // The chain *this page* walks, not all five layers. A tenant page's requests
+  // name only a tenant, so `project` and `user` are not in the chain at all and
+  // can never answer -- rendering them would claim they were consulted and
+  // found empty, which is a different and false statement. This is the S5 half
+  // of "the chain below is different": one derivation, no branch per scope.
+  const chain = chainFrom(scope)
+  const answeredAt = chain.indexOf(resolved.layer)
 
   return (
     <table className="w-full border-collapse text-xs">
@@ -93,7 +106,7 @@ const Chain = ({
         Resolution runs top to bottom and stops at the first layer holding a value.
       </caption>
       <tbody>
-        {RESOLUTION_ORDER.map((layer, index) => (
+        {chain.map((layer, index) => (
           <tr
             key={layer}
             className={index === answeredAt ? 'text-fg' : 'text-fg-faint'}

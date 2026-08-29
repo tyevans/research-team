@@ -213,7 +213,7 @@ export const SettingRow = ({
           )}
         </div>
 
-        <LayerChip resolved={resolved} fallback={fallback} label={spec.label} />
+        <LayerChip resolved={resolved} fallback={fallback} label={spec.label} scope={scope} />
 
         {/* Present only when this scope set it. `DELETE` answers 404 when
             there is no override, deliberately -- clearing a key that was never

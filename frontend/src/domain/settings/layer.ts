@@ -69,16 +69,26 @@ export interface ResolvedSettings {
 export const isOverriddenAt = (resolved: ResolvedSetting, scope: Scope, scopeId: string): boolean =>
   resolved.layer === scope && resolved.scopeId === scopeId
 
-/** The layers that can still answer once this scope stops answering.
+/** The layers a page editing `scope` actually walks, starting at that scope.
  *
- * A tenant page has only `environment` and `default` beneath it, so its
- * chain popover is shorter and its fallback line usually says "the built-in
- * default". Derived from `RESOLUTION_ORDER` rather than written out per scope,
- * which is what keeps the three scopes one component. */
-export const layersBelow = (scope: Scope): readonly Layer[] => {
-  const at = RESOLUTION_ORDER.indexOf(scope)
-  return RESOLUTION_ORDER.slice(at + 1)
-}
+ * A tenant page names only a tenant in its requests, so its resolution can be
+ * answered by `tenant`, `environment` or `default` and by nothing else --
+ * `project` and `user` are not in the chain and are not consulted. A project
+ * page walks all five.
+ *
+ * This is the whole of "the chain below is different", and it is a *value*
+ * rather than a component per scope: one `slice` of `RESOLUTION_ORDER`, which
+ * is why the three scopes stay one page. The alternative -- rendering all five
+ * layers everywhere and greying the ones that did not answer -- says
+ * "consulted and empty" about layers that were never consulted, which is a
+ * different and false claim, and the one a reader of a tenant page would be
+ * misled by. */
+export const chainFrom = (scope: Scope): readonly Layer[] =>
+  RESOLUTION_ORDER.slice(RESOLUTION_ORDER.indexOf(scope))
+
+/** The layers that can still answer once this scope stops answering -- the
+ *  tail of `chainFrom`. What a `Clear` on this page falls into. */
+export const layersBelow = (scope: Scope): readonly Layer[] => chainFrom(scope).slice(1)
 
 /** A resolution indexed by key, for the constant-time lookups the page does
  *  twice per row — once for the value and once for what it would fall back to. */
