@@ -3339,6 +3339,13 @@ _PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
     ("asks", "stop"),
     ("authoring", "stop"),
     ("dialogues", "stop"),
+    # `users` mirrors `close()`'s order, between `dialogues` and the interaction
+    # log. It was missing for one merge: #332 added the runner to `close()` and
+    # #341 added the test that compares the two lists, each branch green, and
+    # neither touching the half the other held -- the exact shape the CLAUDE.md
+    # section above describes, arriving between the two merges that were meant
+    # to close it.
+    ("users", "stop"),
     ("interaction_log", "stop"),
     ("interaction_store", "close"),
     ("service", "close"),
