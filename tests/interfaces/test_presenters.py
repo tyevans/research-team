@@ -41,6 +41,7 @@ from research_team.interfaces.web.presenters import (
     message_view,
     project_detail_view,
     project_view,
+    reading_head,
     source_view,
     summary_view,
     topic_documents_view,
@@ -403,19 +404,27 @@ def test_a_changed_autonomy_is_summarised_by_the_tool_and_its_new_level():
     assert "auto" in summary
 
 
-def test_the_project_detail_carries_identity_and_holder_and_nothing_else():
-    """What `GET /api/projects/{id}` owes its four consumers, and no more.
+def test_the_project_detail_carries_identity_holder_and_reading_head():
+    """What `GET /api/projects/{id}` owes its consumers, and no more.
 
-    The holder is the load-bearing half: the project page's transcript, its
-    composer and its Workspace tab all resolve off `active_session_id`. They
-    read it from `/course` until that route was removed, which answered 409 on
-    a project that ran no workflow. Asserted as a whole dict rather than key by
-    key, because the point of this presenter is what it does *not* carry.
+    The holder decides what the page can *do*; the reading head decides what
+    it can *show*. They are different questions and the detail answers both --
+    the project page's Workspace tab reads files through the reading head,
+    which has an answer whether or not anybody is holding, while the delete
+    and take-over verbs still need to know who holds it.
+
+    Asserted as a whole dict rather than key by key, because the point of this
+    presenter is what it does *not* carry.
     """
     session_id = uuid4()
+    tip = uuid4()
 
     view = project_detail_view(
-        AGGREGATE, "atlas", active_session_id=session_id, tip_at_event=7
+        AGGREGATE,
+        "atlas",
+        active_session_id=session_id,
+        tip_at_event=7,
+        reading_head_session_id=tip,
     )
 
     assert view == {
@@ -423,20 +432,102 @@ def test_the_project_detail_carries_identity_and_holder_and_nothing_else():
         "name": "atlas",
         "active_session_id": str(session_id),
         "tip_at_event": 7,
+        "reading_head_session_id": str(tip),
     }
 
 
-def test_the_listing_row_and_the_detail_are_one_answer():
-    """A field added to a project cannot reach one route and miss the other.
+def test_the_listing_row_is_the_detail_without_the_reading_head():
+    """The one column the detail has and the listing does not, pinned.
 
-    The two came apart only over `workflow` and `stage`; with those gone
-    `project_view` is an alias rather than a wrapper. Asserting the identity
-    rather than only that the dicts match, because two functions producing
-    equal output today is exactly the state they drifted out of before -- and
-    an alias cannot drift at all. This is the test to change, not delete, on
-    the day the listing earns a column the detail does not.
+    `project_view` was an *alias* of `project_detail_view` for two slices, and
+    the alias's docstring named the condition for undoing it: "the day a
+    listing earns a column a detail does not". It happened in the other
+    direction -- the detail earned one -- and the reason it is not on the
+    listing is `GET /api/projects`, which folds one aggregate per row.
+
+    The alias was protecting a real property: a field added for both must not
+    reach one route and miss the other. `project_view` therefore delegates and
+    deletes one key, and this test is that key and nothing else. It would fail
+    if either function grew a field the other did not.
     """
-    assert project_view is project_detail_view
+    session_id = uuid4()
+    kwargs = {"active_session_id": session_id, "tip_at_event": 7}
+
+    detail = project_detail_view(AGGREGATE, "atlas", **kwargs)
+    row = project_view(AGGREGATE, "atlas", **kwargs)
+
+    assert set(detail) - set(row) == {"reading_head_session_id"}
+    assert row == {key: value for key, value in detail.items() if key in row}
+
+
+@pytest.mark.parametrize(
+    ("state", "expected", "why"),
+    [
+        (
+            lambda holder, tip: ProjectState(
+                active_session_id=holder, tip_session_id=tip, tip_at_event=3
+            ),
+            lambda holder, tip: holder,
+            "a holder has work the tip does not know about yet",
+        ),
+        (
+            lambda holder, tip: ProjectState(
+                active_session_id=None, tip_session_id=tip, tip_at_event=3
+            ),
+            lambda holder, tip: tip,
+            "with nobody holding it, the tip session is the truth",
+        ),
+        (
+            lambda holder, tip: ProjectState(
+                active_session_id=None, tip_session_id=tip, tip_at_event=0
+            ),
+            lambda holder, tip: None,
+            "a tip at zero is a project nothing has been written in",
+        ),
+        (
+            lambda holder, tip: ProjectState(
+                active_session_id=None, tip_session_id=None, tip_at_event=0
+            ),
+            lambda holder, tip: None,
+            "a project that has never been joined has no stream to read",
+        ),
+    ],
+)
+def test_the_reading_head_resolves_a_session_whether_or_not_anybody_holds(
+    state, expected, why
+):
+    """The four branches, parametrised over the fact that distinguishes them.
+
+    The middle two are the whole reason this function exists: they are the
+    states in which `active_session_id` is `null` and the project still has
+    files, and a console that only knew the holder showed a reader nothing in
+    both. A test over one held project would pass against a function that
+    returned `state.active_session_id` unchanged.
+    """
+    holder, tip = uuid4(), uuid4()
+    assert reading_head(state(holder, tip)) == expected(holder, tip), why
+
+
+def test_the_reading_head_never_reports_a_scrub_offset():
+    """HEAD in every branch, and the signature is what enforces it.
+
+    `topic_documents_view` used to hand back `(session_id, tip_at_event)`, and
+    that pair made one response contradict itself: it listed a file written
+    after a release -- `project_files` folds to HEAD -- and then 404'd it
+    through the very reader route the offset was sent to feed (measured
+    2026-08-27). The offset is a fork point, not a statement about what a
+    project has.
+
+    Asserted on the *return type* rather than on a value, because a value test
+    would pass against a function that returned an offset nobody looked at.
+    A `UUID | None` cannot carry one.
+    """
+    head = reading_head(
+        ProjectState(active_session_id=None, tip_session_id=AGGREGATE, tip_at_event=7)
+    )
+
+    assert head == AGGREGATE
+    assert not isinstance(head, tuple)
 
 
 def test_a_session_summary_carries_its_project_so_rows_can_be_grouped():
@@ -627,9 +718,11 @@ def test_a_released_projects_documents_are_reported_at_head_not_the_tip_offset()
     one response listed a file and then handed the reader routes a point at
     which it does not exist.
 
-    Fails with the change reverted, on `at`, reporting `7` -- the offset the
+    Fails with the change reverted, on `at`: it reported `7` -- the offset the
     synthetic reproduction recorded on 2026-08-27, where `/topics/00-a/after.md`
-    was listed by HEAD and absent at 7.
+    was listed by HEAD and absent at 7 -- and then reported `None` for a slice.
+    The key is gone from the response entirely now, on both sides of the wire,
+    so the assertion is its absence rather than its value.
     """
     tip = uuid4()
     state = ProjectState(
@@ -645,7 +738,7 @@ def test_a_released_projects_documents_are_reported_at_head_not_the_tip_offset()
     view = topic_documents_view("/topics/00-a", files, state)
 
     assert view["session_id"] == str(tip)
-    assert view["at"] is None
+    assert "at" not in view
     assert [document["name"] for document in view["documents"]] == [
         "after.md",
         "before.md",
@@ -671,7 +764,7 @@ def test_a_held_project_still_reports_head():
     view = topic_documents_view("/topics/00-a", {"/topics/00-a/x.md": {}}, state)
 
     assert view["session_id"] == str(holder)
-    assert view["at"] is None
+    assert "at" not in view
 
 
 def test_a_project_nobody_has_joined_names_no_session():
@@ -684,5 +777,5 @@ def test_a_project_nobody_has_joined_names_no_session():
     view = topic_documents_view("/topics/00-a", {}, state)
 
     assert view["session_id"] is None
-    assert view["at"] is None
+    assert "at" not in view
     assert view["documents"] == []

@@ -44,8 +44,7 @@ it('puts the workspace in MATERIAL rather than beside the session it belongs to'
   expect(regionOf('file')).toBe<Region>('material')
 })
 
-/** HOLDER is gone, and `session` is a tab in MATERIAL rather than a region of
- *  its own.
+/** HOLDER is gone, and `session` no longer has a tab of its own either.
  *
  * **The regions are still named for questions, and this one is a genuine
  * reinterpretation rather than a tidy-up.** HOLDER answered "who is working on
@@ -59,9 +58,15 @@ it('puts the workspace in MATERIAL rather than beside the session it belongs to'
  *
  * Reverted, this is red twice over: `holder` is not assignable to `Region`, and
  * `regionOf('session')` answers `'holder'`. */
-it('puts the holding session in MATERIAL, where its tab is', () => {
+it('puts the session facet in MATERIAL, and gives it no tab of its own', () => {
   expect(regionOf('session')).toBe<Region>('material')
   expect(FACETS.filter((facet) => regionOf(facet) === 'material')).toContain('session')
+  // The half that is new. `session` survives as a *facet* -- `href` writes it
+  // for every scrub and every file open on this page -- and it has no trigger
+  // in the strip, so `materialTab` has to map it onto one or a scrub selects
+  // nothing. `ProjectView.test.tsx` cannot see `materialTab`; `App.test.tsx`
+  // renders the mapping.
+  expect(ids(MATERIAL_TABS)).not.toContain('session')
 })
 
 /** QUEUE is the questions this project still owes an answer to.
@@ -127,13 +132,13 @@ it('puts a topic in QUEUE and not in MATERIAL', () => {
  * than something more clever: the thing being defended is a pixel measurement
  * in another suite, and a cleverer proxy here would invite belief it cannot
  * support. */
-it('keeps the material strip at the nine tabs it declares', () => {
-  expect(MATERIAL_TABS).toHaveLength(9)
+it('keeps the material strip at the eight tabs it declares', () => {
+  expect(MATERIAL_TABS).toHaveLength(8)
 })
 
 const ids = (tabs: readonly { id: string }[]) => tabs.map((tab) => tab.id)
 
-const EVERYTHING = { hasSession: true }
+const EVERYTHING = { hasWorkspace: true }
 
 /** The default tab, asserted as a value rather than through a render.
  *
@@ -158,18 +163,24 @@ it('defaults to the catalog, which is a facet with no tab of its own', () => {
  *
  * The control for the tests below -- without it, "the Workspace is absent" is
  * satisfied by a filter that drops every tab. */
-it('offers the whole declared strip to a project something is holding', () => {
+it('offers the whole declared strip to a project with a workspace', () => {
   expect(visibleMaterialTabs(EVERYTHING, DEFAULT_MATERIAL)).toEqual(MATERIAL_TABS)
 })
 
-/** The workspace is the holding session's tree, so nothing holding the
- *  project means no tab.
+/** The one surviving condition, and its meaning changed with its data source.
  *
- * The one surviving condition. There were two, and `hasCourse` -- which hid
- * Artifacts and Findings on the 409 from a project running no workflow -- went
- * with the tabs it gated. */
-it('drops the Workspace when nothing holds the project', () => {
-  const shown = ids(visibleMaterialTabs({ hasSession: false }, DEFAULT_MATERIAL))
+ * It was `hasSession` -- is somebody holding this project -- and the tab was
+ * therefore absent for every project between sessions, all of which have
+ * files. It is `hasWorkspace` now: does the reading head resolve to a session
+ * to fold files out of. The gate was not widened; the cause was removed, and
+ * the condition followed its data source rather than leading it.
+ *
+ * What is left behind it is a project nothing has ever been written in, which
+ * genuinely has nothing to show. There were two conditions once, and
+ * `hasCourse` -- which hid Artifacts and Findings on the 409 from a project
+ * running no workflow -- went with the tabs it gated. */
+it('drops the Workspace only when the project has no reading head', () => {
+  const shown = ids(visibleMaterialTabs({ hasWorkspace: false }, DEFAULT_MATERIAL))
   expect(shown).not.toContain('file')
   // Everything else is unconditional, which is what makes the one condition
   // worth asserting rather than the absence.
@@ -184,12 +195,12 @@ it('drops the Workspace when nothing holds the project', () => {
  * and what the parametrisation bought is worth recording, because it is gone:
  * with three cases, "keeps the open tab" could not be satisfied by a special
  * case for whichever tab happened to be picked. With one it can. What still
- * separates the arm from `hasSession` being ignored altogether is the test
+ * separates the arm from `hasWorkspace` being ignored altogether is the test
  * above: `file` is absent when the route is open on anything else.
  *
  * Reverted -- that arm deleted -- this goes red. */
 it('keeps the Workspace tab when the route is open on it, condition or not', () => {
-  const shown = ids(visibleMaterialTabs({ hasSession: false }, 'file'))
+  const shown = ids(visibleMaterialTabs({ hasWorkspace: false }, 'file'))
   expect(shown).toContain('file')
   expect(shown).toEqual(ids(MATERIAL_TABS))
 })
@@ -202,6 +213,6 @@ it('keeps the Workspace tab when the route is open on it, condition or not', () 
  * one line: it pins the property against a future rewrite that builds the
  * list some other way. */
 it('filters the strip without reordering it', () => {
-  const shown = ids(visibleMaterialTabs({ hasSession: false }, DEFAULT_MATERIAL))
+  const shown = ids(visibleMaterialTabs({ hasWorkspace: false }, DEFAULT_MATERIAL))
   expect(shown).toEqual(ids(MATERIAL_TABS).filter((id) => id !== 'file'))
 })

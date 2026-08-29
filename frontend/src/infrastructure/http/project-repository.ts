@@ -14,14 +14,14 @@ import { ProjectId, SessionId } from '@domain/shared/identifier.ts'
 
 import * as dto from './dto.ts'
 import { HttpClient, query, seg } from './http-client.ts'
-import { toExtractionFrame, toProjectDetail, toRoster } from './mappers.ts'
+import { toExtractionFrame, toProject, toProjectDetail, toRoster } from './mappers.ts'
 
 export class HttpProjectRepository implements ProjectRepository {
   constructor(private readonly http: HttpClient) {}
 
   async list(): Promise<readonly Project[]> {
-    const rows = await this.http.get('/api/projects', z.array(dto.projectDetailDto))
-    return rows.map(toProjectDetail)
+    const rows = await this.http.get('/api/projects', z.array(dto.projectDto))
+    return rows.map(toProject)
   }
 
   async project(id: ProjectId): Promise<ProjectDetail> {

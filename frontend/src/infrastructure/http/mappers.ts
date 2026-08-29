@@ -47,7 +47,7 @@ import type {
   ViewDwell,
 } from '@domain/interaction/log.ts'
 import type { Message, MessageRole } from '@domain/conversation/message.ts'
-import type { ProjectDetail } from '@domain/project/project.ts'
+import type { Project, ProjectDetail } from '@domain/project/project.ts'
 import type {
   DocumentText,
   MediaSummary,
@@ -71,7 +71,6 @@ import type { ForkNode, SessionProjection, SessionSummary } from '@domain/sessio
 import type { TurnRange } from '@domain/session/turn.ts'
 import type { Roster } from '@domain/worker/worker.ts'
 import type { FileRevision, WorkspaceFile } from '@domain/workspace/workspace-file.ts'
-import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import {
   ApprovalId,
@@ -285,11 +284,21 @@ export const toApproval = (raw: Dto<typeof dto.approvalDto>): Approval => ({
   allowedDecisions: raw.allowed_decisions.filter(isKnownDecision),
 })
 
-export const toProjectDetail = (raw: Dto<typeof dto.projectDetailDto>): ProjectDetail => ({
+export const toProject = (raw: Dto<typeof dto.projectDto>): Project => ({
   id: ProjectId(raw.id),
   name: raw.name,
   activeSessionId: raw.active_session_id ? SessionId(raw.active_session_id) : null,
   tipAtEvent: raw.tip_at_event,
+})
+
+/** The row, plus the one field only the detail route answers.
+ *
+ * Built on `toProject` rather than repeating it: the two shapes came apart
+ * over `reading_head_session_id` and nothing else, and a second literal here
+ * is how they come apart over a field nobody meant to split. */
+export const toProjectDetail = (raw: Dto<typeof dto.projectDetailDto>): ProjectDetail => ({
+  ...toProject(raw),
+  readingHeadSessionId: raw.reading_head_session_id ? SessionId(raw.reading_head_session_id) : null,
 })
 
 /** An ISO-8601 timestamp as epoch milliseconds, or null.
@@ -447,9 +456,6 @@ export const toDispatch = (raw: Dto<typeof dto.dispatchFrameDto>): Dispatch => (
 export const toTopicDocuments = (raw: Dto<typeof dto.topicDocumentsDto>): TopicDocuments => ({
   directory: raw.directory,
   sessionId: raw.session_id ? SessionId(raw.session_id) : null,
-  // `fromNullable` is the whole reason `at` is not carried as a raw number:
-  // it is what keeps "HEAD" from being spelled as `null` in a tenth place.
-  at: ScrubPoint.fromNullable(raw.at),
   documents: raw.documents.map((document) => ({
     path: FilePath.of(document.path),
     name: document.name,

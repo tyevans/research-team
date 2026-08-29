@@ -10,7 +10,7 @@ import { titleCase } from '@domain/knowledge/title-case.ts'
 import { SessionId, type ProjectId } from '@domain/shared/identifier.ts'
 
 import { Button, ErrorBox, Loading } from '../common/primitives.tsx'
-import { projectHref, sessionSelection } from '../routing/routes.ts'
+import { sessionHref } from '../routing/routes.ts'
 import { CourseMembers } from './CourseMembers.tsx'
 import { CourseUnit } from './CourseUnit.tsx'
 
@@ -189,8 +189,17 @@ export const CoursePage = ({
             // sent into an agent transcript; the course itself is now below,
             // and this is what it is -- a link to the working session, for
             // somebody debugging how the text came out that way.
+            //
+            // `sessionHref` rather than a `session` selection on this page.
+            // It wrote `#/p/<id>/session/<sid>`, which opened the project's
+            // "Holding session" tab; that tab is gone, and a `session`
+            // selection now resolves to the Workspace -- so this link would
+            // have quietly become "open that session's files", which is not
+            // what "debugging how the text came out that way" means. The
+            // session route is the whole run: transcript, scrub and event
+            // log, which is exactly what this reader came for.
             <a
-              href={projectHref(projectId, sessionSelection(SessionId(course.authoredSessionId)))}
+              href={sessionHref(SessionId(course.authoredSessionId))}
               className="crs-course-session focus-visible:lay-ring-inward text-xs text-fg-faint no-underline hover:underline"
             >
               Open the authoring session

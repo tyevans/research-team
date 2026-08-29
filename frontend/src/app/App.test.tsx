@@ -9,6 +9,7 @@ import { ContainerProvider } from '@app/container-context.tsx'
 import type { DocumentRepository } from '@application/ports/repositories.ts'
 import { emptyExtractionQueue } from '@domain/research/extraction-queue.ts'
 import type { MediaSummary } from '@domain/research/document.ts'
+import { FilePath } from '@domain/shared/file-path.ts'
 import { ComponentId, ProjectId, SessionId, SourceId } from '@domain/shared/identifier.ts'
 import { InMemoryPreferenceStore } from '@infrastructure/storage/preference-store.ts'
 import { componentBlock } from '@presentation/ask/ask-fixtures.ts'
@@ -37,6 +38,9 @@ import { App, viewNameOf } from './App.tsx'
 
 const ATLAS = ProjectId('11111111-1111-1111-1111-111111111111')
 const HOLDER = SessionId('3f2a0000-0000-0000-0000-000000000000')
+/** The session a *released* project's files still fold out of -- its reading
+ *  head, which is not its holder because it has none. */
+const TIP = SessionId('7c4b0000-0000-0000-0000-000000000000')
 
 const NOW = Date.parse('2026-08-09T12:00:00Z')
 
@@ -165,6 +169,67 @@ const containerWith = (over: Record<string, unknown> = {}) =>
     },
     ...over,
   }) as unknown as AppContainer
+
+/** A project **nobody is holding** that nevertheless has files.
+ *
+ * The state the reading head exists for, and the one no fixture in this file
+ * could produce before it: `activeSessionId` is null -- nothing is driving the
+ * project -- and `readingHeadSessionId` names the tip session its filesystem
+ * folds out of. That is the ordinary resting state of every project between
+ * sessions, and until this slice the console showed it as a project with no
+ * workspace at all.
+ *
+ * `sessions.read` and `sessions.log` are stubbed because `SessionStore.open`
+ * calls both, and a workspace with no file in it would prove only that the tab
+ * exists -- which is the defect the tab was hidden for. One file, named, so
+ * the assertion can be that a reader sees it.
+ */
+const withWorkspace = () => {
+  const projection = {
+    id: TIP,
+    projectId: ATLAS,
+    holdsProject: false,
+    knowledgeAttached: null,
+    modelName: null,
+    systemPrompt: null,
+    turnIndex: 0,
+    failedTurns: 0,
+    forkedFrom: null,
+    forkedAt: null,
+    eventCount: 4,
+    compactedThrough: null,
+    compactionSummary: null,
+    at: null,
+    files: [{ path: FilePath.of('/notes.md'), size: 12, revisions: 1 }],
+    messages: [],
+  }
+  return containerWith({
+    projects: {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      project: vi.fn().mockResolvedValue({
+        id: ATLAS,
+        name: 'atlas',
+        activeSessionId: null,
+        tipAtEvent: 4,
+        readingHeadSessionId: TIP,
+      }),
+      join: vi.fn(),
+      delete: vi.fn().mockResolvedValue(undefined),
+    },
+    sessions: {
+      list: vi.fn().mockResolvedValue([]),
+      tree: vi.fn().mockResolvedValue([]),
+      read: vi.fn().mockResolvedValue(projection),
+      log: vi.fn().mockResolvedValue([]),
+    },
+    turns: { running: vi.fn().mockResolvedValue(null), send: vi.fn() },
+    workspace: {
+      readFile: vi.fn().mockResolvedValue({ content: '', truncated: false }),
+      history: vi.fn().mockResolvedValue([]),
+    },
+  })
+}
 
 const renderApp = (container: AppContainer = containerWith()) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
@@ -323,24 +388,74 @@ it('hands the selected entity to the graph, not just the view', async () => {
   await waitFor(() => expect(neighborhood).toHaveBeenCalledWith(ATLAS, 'e1'))
 })
 
-it('puts the holding session in the address bar under the session facet', async () => {
-  // Inherited from `puts a watched worker in the address bar under the session
-  // facet`, which drove `WorkerList`'s per-worker button. That button is gone
-  // with the roster: the dock opens a worker in a drawer and writes no URL, so
-  // the project page no longer turns "a worker is running" into an address.
-  //
-  // The facet is not gone and neither is its grammar — `ProjectView:411`, the
-  // tab below, and `CoursePage:193` all still write it. This follows the tab,
-  // which is the producer a reader on this page can reach. The old comment
-  // claiming this was the only test that sees the href written was already
-  // stale when it was inherited; `CoursePage` builds one too.
+/** **Every tab in the strip, clicked, in CI.** This is the coverage gap that
+ *  let a tab bounce its own readers to another tab for a whole slice.
+ *
+ * The defect: "Holding session" wrote `select(null)` on the argument that
+ * `null` lands back on that tab through `DEFAULT_MATERIAL`. The default moved
+ * to `catalog` (#286), the arm did not move with it, and clicking the tab
+ * navigated to Curriculum. Nothing caught it, and the reason was structural:
+ * the jsdom suite asserted the strip and the panels, and the only file that
+ * *clicked* a tab lived in the browser project, which CI does not run.
+ *
+ * Three things a click can be wrong about, and jsdom can judge all three: the
+ * address it writes, which trigger ends up selected, and which panel is on
+ * screen underneath. Nothing here is a measurement, so nothing here belongs in
+ * the browser suite.
+ *
+ * Parametrised over the rendered strip rather than over a list written here.
+ * A copy would be a second list to forget, and the tab this was written for is
+ * exactly the one somebody would forget to add. The tabs are read off the DOM
+ * for the same reason `visibleMaterialTabs` is filtered: which tabs a project
+ * is offered is the render's decision, and this asserts about the ones it made.
+ *
+ * Reverted -- `onValueChange`'s `area` arm deleted so Curriculum writes
+ * `#/p/<id>/area` -- the Curriculum case fails on the hash. */
+it('selects the tab a reader clicks, and lands them on its panel', async () => {
   const user = userEvent.setup()
   window.location.hash = `#/p/${ATLAS}`
-  renderApp()
+  renderApp(withWorkspace())
 
-  await user.click(await screen.findByRole('tab', { name: 'Holding session' }))
+  // Awaited before the strip is read: the Workspace tab is conditional on a
+  // query, so a strip read on the first paint is a strip missing a tab.
+  await screen.findByRole('tab', { name: 'Workspace' })
+  const labels = screen.getAllByRole('tab').map((tab) => tab.textContent)
+  expect(labels).toContain('Workspace')
+  expect(labels).not.toContain('Holding session')
 
-  expect(window.location.hash).toBe(`#/p/${ATLAS}/session/${HOLDER}`)
+  for (const label of labels) {
+    await user.click(screen.getByRole('tab', { name: label }))
+
+    // The address moved off the bare project href, which is what
+    // `select(null)` failed to do -- and it is the assertion that separates
+    // "the tab looks selected" from "the URL says so too". Curriculum is the
+    // one tab whose facet is not its id, so the shape rather than the literal.
+    expect(window.location.hash).not.toBe(`#/p/${ATLAS}`)
+    expect(window.location.hash.startsWith(`#/p/${ATLAS}/`)).toBe(true)
+    // Selected, and the only one. Radix leaves *every* trigger unselected when
+    // its value names no trigger, which is the silent half of the same defect.
+    const selected = screen.getAllByRole('tab').filter((tab) => tab.dataset.state === 'active')
+    expect(selected.map((tab) => tab.textContent)).toEqual([label])
+  }
+})
+
+/** The one selection on this page whose facet is not a tab id.
+ *
+ * `href` writes `#/p/<id>/session/<sid>[/at][?path]` for every scrub and every
+ * file open in the Workspace, and `session` has no trigger in the strip -- it
+ * had one until the holding-session tab was removed. So the mapping in
+ * `materialTab` is the only thing keeping a scrub from selecting nothing at
+ * all, and Radix's failure mode there is silent: a panel open below a strip
+ * with no tab chosen.
+ *
+ * Reverted -- `materialTab`'s `session` arm removed -- this fails on the
+ * selected tab, not on the panel. */
+it('opens a session selection on the Workspace tab, which is the only tab it has', async () => {
+  window.location.hash = `#/p/${ATLAS}/session/${TIP}`
+  renderApp(withWorkspace())
+
+  const workspace = await screen.findByRole('tab', { name: 'Workspace' })
+  expect(workspace).toHaveAttribute('aria-selected', 'true')
 })
 
 const MEDIA = SourceId('m1')
@@ -680,34 +795,72 @@ it('opens a bare project link on the catalog, not the holding session', async ()
 
   const curriculum = await screen.findByRole('tab', { name: 'Curriculum' })
   expect(curriculum).toHaveAttribute('aria-selected', 'true')
-  expect(screen.getByRole('tab', { name: 'Holding session' })).toHaveAttribute(
-    'aria-selected',
-    'false',
-  )
+  // It used to compare against the Holding session tab, which was first in the
+  // strip and the previous default. That tab is gone -- a person does not pick
+  // which session to read a project through -- so the pair is made with the
+  // first tab that is actually offered, whichever it is. A single
+  // `aria-selected="true"` proves nothing on its own: Radix selects nothing at
+  // all when its value names no trigger, and one unselected peer is what tells
+  // that state apart from a working default.
+  expect(screen.queryByRole('tab', { name: 'Holding session' })).not.toBeInTheDocument()
+  const others = screen.getAllByRole('tab').filter((tab) => tab !== curriculum)
+  expect(others.length).toBeGreaterThan(0)
+  for (const tab of others) expect(tab).toHaveAttribute('aria-selected', 'false')
 })
 
-/** A project nothing is holding has no workspace, so it is offered no
- *  Workspace tab.
+/** A project nothing has ever been written in has no workspace, so it is
+ *  offered no Workspace tab.
  *
- * The container's `project` read answers a null `activeSessionId`, which is the
- * condition -- a project's files belong to the session holding it, and with none
- * there is
- * no tree to show rather than an empty one. The tab's own panel already said
- * so in an `EmptyState`; what the interaction log measured is that saying so
- * costs a reader a click, 0.7s and a departure, 14 times out of 14.
+ * **The condition under this changed with its data source and the test changed
+ * with it.** It was "nothing is *holding* the project", which hid the tab for
+ * every project between sessions -- all of which have files. The tab was right
+ * to hide at the time, because the panel behind it read the holder and would
+ * have been empty: 14 entries, 0.7s median, 100% bounce, which is what
+ * arriving at an `EmptyState` and leaving looks like in aggregate. Widening the
+ * gate without moving the data source would have reproduced exactly that.
+ *
+ * What is left behind the gate is a project with no reading head at all --
+ * nothing written, nothing to show -- and the container's `project` read
+ * answers no `readingHeadSessionId`, which is that state.
  *
  * The second assertion is what stops this passing vacuously: a strip that
  * failed to render at all would satisfy the `queryByRole` alone.
  *
  * Reverted -- `TabList` given `MATERIAL_TABS` again -- this fails on the
  * first line, because the trigger is rendered whatever the panel would say. */
-it('offers no Workspace tab when nothing is holding the project', async () => {
+it('offers no Workspace tab for a project nothing has been written in', async () => {
   window.location.hash = `#/p/${ATLAS}`
   renderApp()
 
   await screen.findByRole('tab', { name: 'Curriculum' })
   expect(screen.queryByRole('tab', { name: 'Workspace' })).not.toBeInTheDocument()
   expect(screen.getByRole('tab', { name: 'Documents' })).toBeInTheDocument()
+})
+
+/** **The tab is offered for a released project, and it is not empty.**
+ *
+ * This is the claim the slice is for, and both halves have to be here. The tab
+ * appearing is what a widened gate would also achieve; the *file* is what says
+ * the data source moved with it. A reader of this test a year from now should
+ * be able to tell those two changes apart, and the only assertion that can is
+ * the second one.
+ *
+ * The project is held by nobody -- `activeSessionId: null` -- so every reader
+ * that resolves off the holder sees nothing here. `readingHeadSessionId` names
+ * the tip session, and the file below folds out of it.
+ *
+ * Reverted -- `sessionId` back to `holdingSessionId` in `ProjectView` -- this
+ * fails on the first line: the gate closes and the tab is not rendered. */
+it('offers a Workspace with files for a project nobody is holding', async () => {
+  const user = userEvent.setup()
+  window.location.hash = `#/p/${ATLAS}`
+  renderApp(withWorkspace())
+
+  await user.click(await screen.findByRole('tab', { name: 'Workspace' }))
+
+  const files = await screen.findByRole('listbox', { name: 'files' })
+  expect(within(files).getByRole('option', { name: /notes\.md/ })).toBeInTheDocument()
+  expect(screen.queryByText(/Nothing has been written here yet/)).not.toBeInTheDocument()
 })
 
 /** A link to a hidden tab still opens it, with its trigger.

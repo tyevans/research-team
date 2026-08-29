@@ -8,7 +8,7 @@ import { errorMessage } from '@application/ports/errors.ts'
 import { queryKeys } from '@application/queries/keys.ts'
 import { useContainer } from '@app/container-context.tsx'
 import type { TopicDocuments as Documents } from '@domain/research/topic-document.ts'
-import type { ScrubPoint } from '@domain/session/scrub-point.ts'
+import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
 import type { ProjectId, SessionId, TopicId } from '@domain/shared/identifier.ts'
 
@@ -145,7 +145,12 @@ export const TopicDocuments = ({
           projectId={projectId}
           sessionId={board.sessionId}
           path={selected.path}
-          scrub={board.at}
+          // HEAD, written here rather than read off the response. The server
+          // sent an `at` beside `sessionId` until 2026-08-27, when it was
+          // measured to name a scrub point at which a document in the same
+          // response did not exist; the files a project has are folded to
+          // HEAD, so this is the point they were folded at.
+          scrub={ScrubPoint.head()}
         />
       ) : null}
     </div>

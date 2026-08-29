@@ -148,6 +148,10 @@ const container = () =>
         id: ATLAS,
         name: 'atlas',
         activeSessionId: HOLDER,
+        // The Workspace tab is gated on the reading head rather than on the
+        // holder now. Equal to the holder here, which is what a held project
+        // reports -- the two only differ once nobody is holding it.
+        readingHeadSessionId: HOLDER,
         tipAtEvent: 0,
       }),
     },
@@ -466,25 +470,13 @@ it('measures a page with both regions loaded', async () => {
   expect(pane('material').textContent).toContain('A very long document title')
 })
 
-/** Claim 5. The transcript is still laid out, one tab away.
+/** Claim 5 stood here and is deleted with the panel it measured.
  *
- * Separate from claim 4 rather than folded into it, because the two need
- * *different pages*. Claim 4 opens the Documents tab, and this panel is
- * `keepMounted`, so it is still in the tree there — but `hidden`, which is
- * `display: none`, so everything in it measures zero. Folded together, "the
- * transcript is laid out" would be asserted against a panel that is present
- * and zero-sized, which is a green that means nothing.
- *
- * This is the fixture half of the holding session's move into MATERIAL: the
- * conversation used to be its own column and is now the default tab, so "the
- * transcript has messages laid out in it" is still a precondition of every
- * floor above, just reached differently.
+ * It asserted that the transcript was laid out in "the tab that replaced
+ * HOLDER" -- that `[aria-label="Conversation"] .conv-scroll` had children with
+ * a non-zero box -- and it existed because that panel is `keepMounted`, so on
+ * any other tab it is `display: none` and measures zero. The panel is gone
+ * with the holding-session tab, and with it the `keepMounted` that made a
+ * zero-sized green possible at all. There is nothing on this page now whose
+ * layout depends on which tab it is *not* on.
  */
-it('lays out the transcript in the tab that replaced HOLDER', async () => {
-  await show()
-  await resizeViewport(BP_WIDE)
-
-  expect(
-    pane('material').querySelectorAll('[aria-label="Conversation"] .conv-scroll *').length,
-  ).toBeGreaterThan(0)
-})
