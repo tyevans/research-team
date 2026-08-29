@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback } from 'react'
 
 import type { SessionStore } from '@application/session/session-store.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
@@ -347,7 +347,6 @@ export const ProjectView = ({
   selection,
   seekSeconds = null,
   store,
-  onLoaded,
 }: {
   projectId: ProjectId
   /** What is selected, owned by the route. Not mirrored into state: the address
@@ -365,16 +364,13 @@ export const ProjectView = ({
    *  holding session and the shell needs the same session's head for the
    *  breadcrumb. */
   store: SessionStore
-  /** Reported upward because the breadcrumb wants the project's name, and this
-   *  page is where the read that carries it happens. */
-  onLoaded?: (name: string | null) => void
 }) => {
-  const { projectName, readingHeadSessionId } = useProject(projectId)
-
-  useEffect(() => {
-    onLoaded?.(projectName)
-    return () => onLoaded?.(null)
-  }, [projectName, onLoaded])
+  // The breadcrumb used to be told the name from here, through an `onLoaded`
+  // the shell held in state. It reads `useCrumbProjectName` off the route
+  // instead: the settings page is about a project and mounts no project view,
+  // so a name pushed up from this component could never reach it. Both readers
+  // share `queryKeys.project`, so nothing here fetches twice.
+  const { readingHeadSessionId } = useProject(projectId)
 
   const watching: SessionId | null = selection?.facet === 'session' ? selection.id : null
 
