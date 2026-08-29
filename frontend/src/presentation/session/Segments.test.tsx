@@ -245,7 +245,7 @@ it('drops the bubble frame around a result that draws its own spine', () => {
 
   expect(container.querySelector('.msg.bare')).not.toBeNull()
   expect(container.querySelector('.msg.bare .msg-head')).toBeNull()
-  expect(container.querySelector('.msg.bare .stream-row')).not.toBeNull()
+  expect(container.querySelector('.msg.bare [data-testid="stream"]')).not.toBeNull()
 })
 
 it('keeps the frame and the head around a result with no artifact', () => {

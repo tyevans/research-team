@@ -55,7 +55,10 @@ export const ToolResult = ({
   if (!artifact) {
     if (fallback !== undefined) return <>{fallback}</>
     return (
-      <div className="stream-fallback">
+      <div
+        className="font-mono text-sm [overflow-wrap:anywhere] whitespace-pre-wrap text-fg-dim"
+        data-testid="stream-fallback"
+      >
         {truncate(contentText(message.content), RESULT_TEXT_LIMIT)}
       </div>
     )
@@ -87,5 +90,12 @@ export const ToolResult = ({
     }
   }
 
-  return <div className="stream">{shape()}</div>
+  return (
+    <div
+      className="flex flex-col font-mono text-sm leading-[1.45] text-fg-dim"
+      data-testid="stream"
+    >
+      {shape()}
+    </div>
+  )
 }

@@ -300,6 +300,50 @@
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
   --font-sans: ui-sans-serif, system-ui, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
 
+  /* The activity stream sets quoted source text in a serif against monospace
+     machinery, and that contrast is the load-bearing decision of the shape
+     design rather than a flourish: it is what lets a reader follow prose down
+     the page and let tool traffic blur. It is in `@theme` because the stream's
+     own stylesheet was refused -- `check-deleted.mjs` freezes the manifest at
+     22 -- so `font-serif` has to be a real utility for the quote and the
+     excerpt to be set at all.
+
+     The cost, stated because it is the objection this token invites: nothing
+     else in the console is serif, so a third family is available to anything
+     that wants one, and the palette's whole argument is that an unavailable
+     value cannot be written. Accepted rather than dismissed -- the alternative
+     is `font-[Georgia,serif]` at two sites, which is the literal outside the
+     palette that `--tint-msg`'s comment above describes coming home. */
+  --font-serif: Georgia, 'Iowan Old Style', 'Source Serif Pro', serif;
+
+  /* One pulse, two speeds, and the pair is the point.
+
+     `animate-stream-pulse` is the live glyph in a row's gutter. 1.6s, and the
+     keyframes run in the same direction as `provisional-pulse` in
+     `conversation.css`, because on a live tool result the two are on screen
+     together: the bubble's tag carries the console's dot and the row's gutter
+     carries this. Two pulses at 1.4s and 1.6s drift in and out of step and
+     read as two unrelated things blinking; in unison they read as one surface
+     being live, which is what they both mean.
+
+     `animate-worker-pulse` is a still-running worker's bar inside a
+     `delegation` card. 1.4s, deliberately *not* retimed to match: it is one
+     mark among several on a wall-clock axis, saying "this one has not
+     finished", and beating against the row's own glyph is what distinguishes
+     it from the row. Two tokens rather than one because the second was about
+     to be silently retimed by sharing the first. */
+  --animate-stream-pulse: stream-pulse 1.6s ease-in-out infinite;
+  --animate-worker-pulse: stream-pulse 1.4s ease-in-out infinite;
+  @keyframes stream-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+
   /* Font weights, and this is a decision about the type scale rather than a
      convenience.
 

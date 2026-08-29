@@ -25,7 +25,7 @@ export const Delegation = ({ artifact, phase, tool }: ShapeProps<DelegationArtif
         arg={artifact.task}
         count={`${artifact.workers.length} worker${artifact.workers.length === 1 ? '' : 's'}`}
       />
-      <div className="stream-list">
+      <div className="mt-[3px]">
         {artifact.workers.map((worker) => (
           <Item
             key={worker.name}
@@ -33,8 +33,13 @@ export const Delegation = ({ artifact, phase, tool }: ShapeProps<DelegationArtif
             name={worker.name}
             linked={worker.ok}
             mark={
-              <span className="stream-track">
+              <span className="relative block h-[5px] overflow-hidden rounded-[2px] bg-bg-raise">
                 <i
+                  // `min-w-[2px]` because the newest worker's start *is* the
+                  // right-hand edge of the axis, so a bar pinned to both would
+                  // be zero wide and the one worker a reader is watching would
+                  // be the one they cannot see.
+                  className="absolute top-0 h-full min-w-[2px] bg-accent opacity-80 data-[ok=false]:bg-tint-fail data-[running=true]:animate-worker-pulse motion-reduce:animate-none"
                   data-testid="worker-bar"
                   data-running={String(worker.duration_ms === null)}
                   data-ok={String(worker.ok)}

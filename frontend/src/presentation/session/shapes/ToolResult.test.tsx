@@ -50,7 +50,7 @@ describe('ToolResult', () => {
       />,
     )
     expect(container.querySelector('.provisional-body')).toHaveTextContent('the old body')
-    expect(container.querySelector('.stream-fallback')).toBeNull()
+    expect(container.querySelector('[data-testid="stream-fallback"]')).toBeNull()
   })
 
   it('leaves a caller’s fallback outside the stream’s own wrapper', () => {
@@ -70,7 +70,7 @@ describe('ToolResult', () => {
     expect(container.querySelector('.stream')).toBeNull()
 
     const shaped = render(<ToolResult message={hitListMessage} phase="settled" />)
-    expect(shaped.container.querySelector('.stream > .stream-row')).not.toBeNull()
+    expect(shaped.container.querySelector('[data-testid="stream"] > [data-phase]')).not.toBeNull()
   })
 
   it('ignores the fallback once an artifact parses', () => {

@@ -37,7 +37,7 @@ describe('EntityList geometry', () => {
     // make the counts stagger, which reads as noise rather than as a column.
     const { getAllByTestId } = render(<EntityList artifact={tenEntities} phase="settled" />)
     const values = getAllByTestId('entity').map((row) =>
-      row.querySelector('.stream-v')!.getBoundingClientRect(),
+      row.querySelector('[data-testid="stream-value"]')!.getBoundingClientRect(),
     )
     expect(new Set(values.map((box) => Math.round(box.right))).size).toBe(1)
   })

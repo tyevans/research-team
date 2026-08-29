@@ -10,15 +10,17 @@ import { hitListMessage, hitListMessageWithExpander } from './fixtures.ts'
  * test rather than a cheaper jsdom one: jsdom applies no stylesheet and
  * `getComputedStyle` returns only what an inline style said, so in jsdom the
  * class is in the attribute, the rule is in the bundle, and the two never
- * meet. A jsdom version of either test below would pass against a stylesheet
- * that had been deleted.
+ * meet. A jsdom version of either test below would pass against utilities that
+ * emit nothing at all.
  */
 describe('the spine', () => {
   it('draws one edge, not four', () => {
     // `border-solid` beside one directional width gives the other three sides
     // a style with no width, and they fall back to the browser's `medium`
     // (~3px): a rule meant for one edge draws a box. This build imports no
-    // Tailwind preflight, so nothing else zeroes them.
+    // Tailwind preflight, so nothing else zeroes them. The gutter is `border-l`
+    // alone, which Tailwind v4 emits as that side's style *and* width, leaving
+    // the other three at `border-style: none`.
     const { getAllByTestId } = render(<ToolResult message={hitListMessage} phase="settled" />)
     const style = getComputedStyle(getAllByTestId('stream-gutter')[0]!)
     expect(style.borderLeftWidth).toBe('1px')
@@ -42,11 +44,13 @@ describe('the spine', () => {
 
 describe('the expander', () => {
   it('gets the size its own class asks for', () => {
-    // `tokens.css` sets `font: inherit` on every bare button. It is layered
-    // now, so a class here wins -- but `font` is a *shorthand*, so before that
-    // fix it set `font-size` too and nothing about `text-xs` suggests it is
-    // competing with a `font` declaration. Red if the expander is ever styled
-    // with a utility instead of `.stream-exp`.
+    // `tokens.css` sets `font: inherit` on every bare button, and `font` is a
+    // *shorthand*, so before #313 layered that rule it set `font-size` too and
+    // every size utility on a control in this console was inert -- present in
+    // the attribute, present in the bundle, never applied. The expander is
+    // `text-[10px]` and nothing else, so this assertion is what stands between
+    // that fix and a silent regression: unlayer the rule again and the button
+    // renders at the inherited 12px with the class still on it.
     const { getByRole } = render(
       <ToolResult message={hitListMessageWithExpander} phase="settled" />,
     )

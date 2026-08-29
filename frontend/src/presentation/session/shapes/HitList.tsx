@@ -27,7 +27,7 @@ export const HitList = ({ artifact, phase, tool }: ShapeProps<HitListArtifact>) 
         arg={`/${artifact.pattern}/`}
         count={`${artifact.total} in ${sources.length} source${sources.length === 1 ? '' : 's'}`}
       />
-      <div className="stream-list">
+      <div className="mt-[3px]">
         {shown.map((source) => (
           <Item
             key={source.source_id}

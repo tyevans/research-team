@@ -79,7 +79,7 @@ describe('ProvisionalBubble', () => {
     // `ToolResult` were allowed to substitute its own default markup here.
     const { container } = render(<ProvisionalBubble entry={entry({ text: 'thinking' })} />)
     expect(container.querySelector('.provisional-body')).toHaveTextContent('thinking')
-    expect(container.querySelector('.stream-fallback')).toBeNull()
+    expect(container.querySelector('[data-testid="stream-fallback"]')).toBeNull()
   })
 
   it('leaves an assembled call summary literal rather than parsing it', () => {

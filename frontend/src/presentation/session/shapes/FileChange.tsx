@@ -26,7 +26,7 @@ export const FileChange = ({ artifact, phase, tool }: ShapeProps<FileChangeArtif
       <Header
         name={tool ?? 'edit_file'}
         arg={artifact.path}
-        title={artifact.path}
+        explanation={artifact.path}
         count={
           <>
             <Bar value={touched} max={artifact.total_lines} />
@@ -35,9 +35,12 @@ export const FileChange = ({ artifact, phase, tool }: ShapeProps<FileChangeArtif
         }
       />
       {hasDiff ? (
-        <div className="stream-diff" data-testid="diff">
-          {artifact.before ? <div className="del">− {cut(artifact.before)}</div> : null}
-          {artifact.after ? <div className="add">+ {cut(artifact.after)}</div> : null}
+        <div
+          className="mt-[4px] text-xs [overflow-wrap:anywhere] whitespace-pre-wrap"
+          data-testid="diff"
+        >
+          {artifact.before ? <div className="text-del-fg">− {cut(artifact.before)}</div> : null}
+          {artifact.after ? <div className="text-add-fg">+ {cut(artifact.after)}</div> : null}
         </div>
       ) : null}
       {hasDiff && (artifact.before ?? '').length + (artifact.after ?? '').length > PREVIEW ? (

@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import type { EntityListArtifact, EntityRef } from '@domain/conversation/artifact.ts'
 
-import { Bar, Expander, Header, Item, Row, type ShapeProps } from './parts.tsx'
+import { BAR_CLASS, Bar, Expander, Header, Item, Row, type ShapeProps } from './parts.tsx'
 
 const CAP = 5
 
@@ -51,9 +51,9 @@ export const EntityList = ({ artifact, phase, tool }: ShapeProps<EntityListArtif
         name={tool ?? 'graph_search'}
         arg={`“${artifact.query}”`}
         count={`${artifact.entities.length} entit${artifact.entities.length === 1 ? 'y' : 'ies'}`}
-        title={artifact.mode}
+        explanation={artifact.mode}
       />
-      <div className="stream-list">
+      <div className="mt-[3px]">
         {shownLinked.map((entity) => (
           <Item
             key={entity.entity_id}
@@ -64,7 +64,7 @@ export const EntityList = ({ artifact, phase, tool }: ShapeProps<EntityListArtif
             value={entity.relationship_count}
           />
         ))}
-        {shownUnlinked.length > 0 ? <div className="stream-sep" /> : null}
+        {shownUnlinked.length > 0 ? <div className="my-[4px] h-px bg-line-soft" /> : null}
         {shownUnlinked.map((entity) => (
           <Item
             key={entity.entity_id}
@@ -75,7 +75,7 @@ export const EntityList = ({ artifact, phase, tool }: ShapeProps<EntityListArtif
             // An empty track rather than a zero-width fill. A fill of width
             // zero is still a bar, and a bar drawn for a value that does not
             // exist puts the entity on an axis it is not on.
-            mark={<span className="stream-bar" data-testid="bar" />}
+            mark={<span className={BAR_CLASS} data-testid="bar" />}
             value="–"
           />
         ))}

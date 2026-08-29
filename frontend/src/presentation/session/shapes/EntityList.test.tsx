@@ -30,7 +30,10 @@ describe('EntityList', () => {
     const orphan = named('magic')
     expect(orphan).toHaveTextContent('–')
     expect(orphan).not.toHaveTextContent('0')
-    expect(orphan?.querySelector('.stream-nm')).toHaveAttribute('data-linked', 'false')
+    expect(orphan?.querySelector('[data-testid="stream-name"]')).toHaveAttribute(
+      'data-linked',
+      'false',
+    )
   })
 
   it('draws no bar for an entity that is on no axis', () => {
@@ -65,14 +68,26 @@ describe('EntityList', () => {
 
   it('shows everything when the expander is opened', async () => {
     render(<EntityList artifact={tenEntities} phase="settled" />)
-    await userEvent.click(screen.getByRole('button'))
+    // By name: the header's argument is a tooltip trigger and therefore also a
+    // button, so an unqualified role query matches two controls here.
+    await userEvent.click(screen.getByRole('button', { name: /5 more/ }))
     expect(screen.getAllByTestId('entity')).toHaveLength(10)
   })
 
   it('keeps the search mode reachable rather than dropping it', () => {
     // `mode` exists to make a silent degradation visible -- a console that
     // drops it reintroduces exactly the silence the field was added to break.
+    //
+    // It used to be a `title` attribute, and the assertion used to be
+    // `getByTitle`. It is a `Tooltip` now, per the S-D3 deletion: a `title` is
+    // announced on hover and on nothing else, so a reader who is not holding a
+    // mouse could not reach the very field that exists to be reachable. What
+    // is asserted here is the *trigger* -- a focusable control describing the
+    // argument -- because the explanation itself renders only inside an
+    // `OverlayHost`, which this bare render has none of. `Tooltip.test.tsx`
+    // owns the question of whether an open tooltip shows its text.
     render(<EntityList artifact={tenEntities} phase="settled" />)
-    expect(screen.getByTitle('vector')).toBeInTheDocument()
+    const trigger = screen.getByRole('button', { name: /magic/ })
+    expect(trigger).toHaveAttribute('data-state', 'closed')
   })
 })
