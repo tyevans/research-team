@@ -31,7 +31,9 @@ from research_team.application.authorization import (
     RoleTableAuthorizer,
     Subject,
 )
+from research_team.domain.settings import SettingError
 from research_team.domain.tenant import MemberAdded, TenantCreated, tenant_aggregate_id
+from research_team.infrastructure import config
 
 TENANT = "org-42"
 ALICE = "sub-alice"
@@ -67,18 +69,29 @@ async def test_auth_on_wires_the_role_table_and_the_admin_subjects(
     )
 
 
-@pytest.mark.parametrize("value", ["off", "", "ON ", "yes", "1"])
+@pytest.mark.parametrize("value", ["off", "", "ON ", " on"])
 async def test_only_the_word_on_turns_authorization_on(build_application, monkeypatch, value):
-    """A typo that turns authorization *off* is a security incident; one that
-    turns it on is an outage somebody notices in a second. So the check is an
-    exact match on `on` (case-folded and stripped) rather than the
-    negative-value set `AGENT_INTERACTION_LOG` uses, and `yes`/`1` deliberately
-    do **not** count -- being generous here is being generous in the direction
-    that fails silently."""
+    """Case-folded and stripped, because operators type into a shell."""
     monkeypatch.setenv("AGENT_AUTH", value)
     application = await build_application()
     expected = RoleTableAuthorizer if value.strip().lower() == "on" else PermissiveAuthorizer
     assert isinstance(application.authorizer, expected)
+
+
+@pytest.mark.parametrize("value", ["yes", "1", "true", "enabled"])
+def test_a_value_that_is_neither_on_nor_off_is_refused_rather_than_guessed(monkeypatch, value):
+    """`AGENT_AUTH` is an enum, not a boolean, and this is why.
+
+    Under `SettingType.BOOLEAN` every value here would read as `True`, which
+    sounds harmless until the mirror case: the same forgiveness makes a typo
+    that turns authorization *off* silent. The two directions are not
+    symmetric -- one is an outage somebody fixes in a second and the other is a
+    security incident nobody sees -- so the parser refuses everything it was not
+    told about, in both directions.
+    """
+    monkeypatch.setenv("AGENT_AUTH", value)
+    with pytest.raises(SettingError):
+        config.authorization_enabled()
 
 
 async def test_the_tenancy_projection_follows_the_log_in_a_started_application(
