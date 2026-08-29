@@ -66,7 +66,7 @@ document.documentElement.setAttribute('data-theme', 'dark')
 /** Wait for the stylesheet to have actually arrived, before any test measures
  *  anything against it.
  *
- * **This is the fix for the class of failure B182 describes, and it is what
+ * **This is the fix for the class of failure B184 describes, and it is what
  * lets a suite about computed styles be trusted at all.** Each test file gets
  * its own iframe and re-imports `index.css`, which is a chain of `@import`s
  * served by one dev server. Sometimes the first assertion in a file runs
@@ -91,7 +91,7 @@ document.documentElement.setAttribute('data-theme', 'dark')
  *
  * What it does not do is make the seam correct. The sheet still arrives when it
  * arrives, and a test running long after setup could in principle still meet a
- * later `@import` mid-flight. B182 carries the two proper fixes -- serve the
+ * later `@import` mid-flight. B184 carries the two proper fixes -- serve the
  * built stylesheet, or block on the sheet rather than on a probe of it. This is
  * the cheap one, and it turns a wrong measurement into a wait.
  */
@@ -116,7 +116,7 @@ while (!dressed()) {
     throw new Error(
       `vitest.setup.browser: index.css did not apply within ${DEADLINE_MS}ms ` +
         `(padding-top ${style.paddingTop}, opacity ${style.opacity}). Every ` +
-        `assertion in this file would have measured an unstyled page. See B182.`,
+        `assertion in this file would have measured an unstyled page. See B184.`,
     )
   }
   await new Promise((resolve) => requestAnimationFrame(resolve))

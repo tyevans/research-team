@@ -738,7 +738,7 @@ Found on 2026-08-23 while writing Storybook coverage for the console's
 highest-traffic components (#245, #248). Each of these is a real gap that was
 deliberately not closed on the spot, with the reason.
 
-### B182. The browser suite is sometimes served an incomplete stylesheet, and that is what B160 was
+### B184. The browser suite is sometimes served an incomplete stylesheet, and that is what B160 was
 
 Filed 2026-08-29, from emptying B160's quarantine and watching what happened.
 **This is the actual defect behind both files B160 quarantined.** Neither was
@@ -785,6 +785,15 @@ the dev server re-serves it. Serialised without the probe: one failure in four.
 With both: four consecutive green runs at 48 files and 198 tests, and the hangs
 stop. Serialising costs 67s against 46s and drops `setup` from 26s to 2.2s,
 which is the contention showing in the numbers.
+
+**The second failure mode, found after the mitigation landed:**
+`Failed to fetch dynamically imported module` on a `.browser.test.tsx` that
+passes alone -- observed in CI and reproduced locally on the same file, then on
+a different file the next run. So it is not only the stylesheet: the dev server
+under this suite intermittently fails to serve *any* module. On the 48-file
+suite this was filed against, serialised and probed, two runs in four were red,
+one of each kind. **Nothing about that is caused by the assertions**, and no
+quarantine can contain it, because the file it hits is chosen at random.
 
 **What is still not fixed**, and why this entry stays open: the seam. A sheet
 that is replaced mid-file is still a sheet that can be wrong at the moment an
@@ -852,13 +861,13 @@ document, which nothing was traced to and which made a failure here impossible
 to attribute.
 
 **If this goes red in CI again, read the `aspectRatio` line before
-re-quarantining, and then read B182.** `auto` means the rule was not there --
+re-quarantining, and then read B184.** `auto` means the rule was not there --
 and since the ratio is now a plain `course.css` rule that still reads `auto`
 sometimes, that is the suite being served an incomplete stylesheet, not the card.
 A *number* that is not 1.5 would be the card really drawn wrong, and nobody has
 seen one.
 
-**Superseded by B182**, which is the defect both of this entry's files were
+**Superseded by B184**, which is the defect both of this entry's files were
 victims of.
 
 The original entry follows, because its account of what a red suite costs is
