@@ -181,3 +181,78 @@ tmp="${OUT_FILE}.partial"
 mv "${tmp}" "${OUT_FILE}"
 
 log "wrote ${OUT_FILE} for client ${client_id}"
+
+# Brand the hosted login pages, so that signing in does not look like a
+# different product.
+#
+# **Why this is here and not in `docker-compose.yml`.** A label policy is org
+# state, not instance configuration: `FirstInstance` cannot set one, and the
+# only way in is the management API -- the same reason the project and the
+# application are created above.
+#
+# The eight colours are `frontend/STYLE_GUIDE.md`'s roles, read out of the
+# `light-dark()` pairs in `frontend/src/styles/theme.css`. Zitadel wants each
+# scheme as its own field, so the light half of a pair goes in the plain field
+# and the dark half in the `*Dark` one. `themeMode: AUTO` then switches on the
+# operating system's preference, which is what `color-scheme` does in the
+# console -- so a reader in dark mode is not flashed a white page in the middle
+# of a sign-in.
+#
+# This is the whole of the styling that Zitadel v3 offers. There is no custom
+# stylesheet and no font upload behind an API, so the login pages keep
+# Zitadel's own type and layout: the palette matches and the typography does
+# not. Accepted rather than worked around -- the alternative is forking the
+# login container, which is the v4 shape this stack pinned away from.
+#
+# `disableWatermark` removes "Powered by ZITADEL". Not a licence question on a
+# self-hosted instance, and the style guide's rule is that every mark on
+# screen is data or a control.
+brand_light_bg='#f7f6f3'
+brand_light_fg='#1b1f24'
+brand_light_accent='#8f570b'
+brand_light_warn='#c0362e'
+brand_dark_bg='#0b0d10'
+brand_dark_fg='#d7dee7'
+brand_dark_accent='#e2a457'
+brand_dark_warn='#f4736b'
+
+label_policy="$(jq -nc \
+    --arg bg "${brand_light_bg}" \
+    --arg fg "${brand_light_fg}" \
+    --arg accent "${brand_light_accent}" \
+    --arg warn "${brand_light_warn}" \
+    --arg bg_dark "${brand_dark_bg}" \
+    --arg fg_dark "${brand_dark_fg}" \
+    --arg accent_dark "${brand_dark_accent}" \
+    --arg warn_dark "${brand_dark_warn}" \
+    '{
+        primaryColor: $accent,
+        backgroundColor: $bg,
+        fontColor: $fg,
+        warnColor: $warn,
+        primaryColorDark: $accent_dark,
+        backgroundColorDark: $bg_dark,
+        fontColorDark: $fg_dark,
+        warnColorDark: $warn_dark,
+        themeMode: "THEME_MODE_AUTO",
+        hideLoginNameSuffix: false,
+        disableWatermark: true
+    }')"
+
+# `isDefault` tells the two calls apart. A fresh org inherits the instance
+# policy and has none of its own, where `PUT` answers 404; once one exists,
+# `POST` answers 409. Reading first is what makes a re-run a no-op rather than
+# an error -- this container runs again on every `docker compose up`.
+if [ "$(api GET /management/v1/policies/label | jq -r '.isDefault // false')" = "true" ]; then
+    log "adding the org label policy"
+    api POST /management/v1/policies/label "${label_policy}" >/dev/null
+else
+    log "updating the org label policy"
+    api PUT /management/v1/policies/label "${label_policy}" >/dev/null
+fi
+
+# Changes land in a *preview* until this is called, and the preview is only
+# visible from the Zitadel console. Without it every colour above is stored,
+# reported back by `GET`, and shown nowhere a person signing in would see it.
+api POST /management/v1/policies/label/_activate '{}' >/dev/null
+log "activated the branded login theme"
