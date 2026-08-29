@@ -1,0 +1,132 @@
+<h2>Compact, lists restored</h2>
+<p class="subtitle">Everything else from the last screen kept. Lists are back to one item per line, with a length cap and an expander so a long result can't run away with the page.</p>
+
+<style>
+  .stream { background:#0f1115; border:1px solid #2a2e37; border-radius:8px; padding:16px 18px;
+            font-family: ui-monospace,"SF Mono",Menlo,monospace; font-size:12px; color:#c9cdd6;
+            line-height:1.45; }
+  .stream b { color:#e6e9ef; font-weight:600; }
+  .d { color:#767c88; }
+  .ok { color:#6fae7e; }
+
+  .row { display:grid; grid-template-columns:15px 1fr; gap:10px; }
+  .gut { position:relative; }
+  .gut:before { content:""; position:absolute; left:7px; top:0; bottom:-7px; width:1px; background:#23262e; }
+  .row:last-child .gut:before { display:none; }
+  .glyph { position:relative; z-index:1; background:#0f1115; color:#d99a4e;
+           display:block; text-align:center; line-height:15px; font-size:10px; }
+  .body { padding-bottom:7px; min-width:0; }
+
+  .say { font-family:Georgia,serif; font-size:13.5px; line-height:1.6; color:#dfe3ea; padding:1px 0 3px; }
+  .say.user { color:#e6e9ef; }
+
+  .h { display:flex; gap:8px; align-items:baseline; }
+  .h b { font-weight:400; }
+  .h .arg { color:#e6e9ef; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .h .cnt { color:#767c88; font-size:11px; white-space:nowrap; }
+
+  /* one item per line; the three columns line up down the whole list, which is
+     what makes the bars comparable at a glance */
+  .list { margin-top:3px; }
+  .item { display:grid; grid-template-columns:1fr 54px 20px; gap:12px; align-items:center;
+          padding:0.5px 0; }
+  .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#c9cdd6; }
+  .nm em { color:#767c88; font-style:normal; font-size:10px; }
+  .nm.orph { color:#6b7280; }
+  .bar { height:5px; background:#21242b; border-radius:2px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:#d99a4e; opacity:.8; }
+  .v { color:#767c88; font-size:10px; text-align:right; }
+  .spark { display:flex; gap:2px; align-items:flex-end; height:8px; }
+  .spark i { width:2px; background:#d99a4e; opacity:.8; display:block; }
+  .sep { height:1px; background:#23262e; margin:4px 0; }
+
+  .q { color:#a9b0bd; padding-left:9px; border-left:1px solid #2f343d; margin-top:5px;
+       font-family:Georgia,serif; font-size:12.5px; line-height:1.5; }
+  .ruler { display:inline-flex; height:5px; width:56px; background:#21242b; border-radius:2px;
+           overflow:hidden; vertical-align:middle; margin:0 6px; }
+  .ruler i { display:block; height:100%; background:#d99a4e; }
+  .exp { color:#7a5c30; font-size:10px; margin-top:4px; }
+
+  .live .glyph { color:#d99a4e; }
+  .pulse { display:inline-block; width:4px; height:4px; border-radius:50%; background:#d99a4e;
+           animation:p 1.4s ease-in-out infinite; vertical-align:middle; margin-right:5px; }
+  @keyframes p { 0%,100%{opacity:.25} 50%{opacity:1} }
+  .shim { background:linear-gradient(90deg,#21242b 0%,#2c313a 50%,#21242b 100%);
+          background-size:200% 100%; animation:s 1.6s linear infinite; height:7px; border-radius:2px; }
+  @keyframes s { to { background-position:-200% 0 } }
+</style>
+
+<div class="stream">
+
+  <div class="row"><div class="gut"><span class="glyph" style="color:#7fb3d5">●</span></div>
+    <div class="body"><div class="say user">How do hard and soft magic systems differ, and what do my sources actually say about them?</div></div></div>
+
+  <div class="row"><div class="gut"><span class="glyph">◇</span></div>
+    <div class="body">
+      <div class="h"><b class="d">graph_search</b><span class="arg">“Magic Systems”</span><span class="cnt">5 entities</span></div>
+      <div class="list">
+        <div class="item"><span class="nm">Magic Systems <em>concept</em></span><span class="bar"><i style="width:100%"></i></span><span class="v">2</span></div>
+        <div class="item"><span class="nm">Magical Realism <em>concept</em></span><span class="bar"><i style="width:50%"></i></span><span class="v">1</span></div>
+        <div class="item"><span class="nm">magical animals <em>concept</em></span><span class="bar"><i style="width:50%"></i></span><span class="v">1</span></div>
+        <div class="sep"></div>
+        <div class="item"><span class="nm orph">magic <em>concept</em></span><span class="bar"></span><span class="v">–</span></div>
+        <div class="item"><span class="nm orph">magical academies <em>concept</em></span><span class="bar"></span><span class="v">–</span></div>
+      </div>
+    </div></div>
+
+  <div class="row"><div class="gut"><span class="glyph">⌕</span></div>
+    <div class="body">
+      <div class="h"><b class="d">search_sources</b><span class="arg">/magic/</span><span class="cnt">19 in 5 sources</span></div>
+      <div class="list">
+        <div class="item"><span class="nm">manuscriptreport.com <em>types of fictional genres</em></span><span class="spark"><i style="height:8px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:3px"></i><i style="height:7px"></i><i style="height:5px"></i><i style="height:8px"></i><i style="height:2px"></i><i style="height:6px"></i></span><span class="v">9</span></div>
+        <div class="item"><span class="nm">reedsy.com <em>story structure</em></span><span class="spark"><i style="height:5px"></i><i style="height:8px"></i><i style="height:3px"></i><i style="height:7px"></i><i style="height:4px"></i></span><span class="v">5</span></div>
+        <div class="item"><span class="nm">tidepooloctopus.com <em>history of books</em></span><span class="spark"><i style="height:7px"></i><i style="height:4px"></i><i style="height:5px"></i></span><span class="v">3</span></div>
+        <div class="item"><span class="nm">fredner.org <em>104z syllabus</em></span><span class="spark"><i style="height:7px"></i><i style="height:6px"></i></span><span class="v">2</span></div>
+      </div>
+      <div class="q">Magic Systems: Define the rules of your magic. A “hard” magic system has explicit rules and limitations…</div>
+      <div class="exp">▸ all 19 matches</div>
+    </div></div>
+
+  <div class="row"><div class="gut"><span class="glyph">▤</span></div>
+    <div class="body">
+      <div class="h"><b class="d">read_source</b><span class="arg">manuscriptreport.com · types of fictional genres</span><span class="cnt"><span class="ruler"><i style="margin-left:6%;width:9%"></i></span>1.5k–3.9k of 25.8k</span></div>
+      <div class="q">…complete with their own laws of nature, complex magic systems, unique histories and distinct mythologies. A “hard” magic system has explicit rules and limitations — like Brandon Sanderson’s <i>Mistborn</i> — so a solution drawn from it reads as earned rather than arbitrary.</div>
+      <div class="exp">▸ full excerpt</div>
+    </div></div>
+
+  <div class="row"><div class="gut"><span class="glyph ok">✓</span></div>
+    <div class="body"><span class="d">recorded a finding — <span style="color:#c9cdd6">hard vs soft magic systems</span> · topic “worldbuilding”</span></div></div>
+
+  <div class="row live"><div class="gut"><span class="glyph">◇</span></div>
+    <div class="body">
+      <div class="h"><span class="pulse"></span><b class="d">graph_describe</b><span class="arg">“hard magic system and soft magic system”</span><span class="cnt">10 entities</span></div>
+      <div class="list">
+        <div class="item"><span class="nm">science fiction <em>concept</em></span><span class="bar"><i style="width:100%"></i></span><span class="v">6</span></div>
+        <div class="item"><span class="nm">Magic Systems <em>concept</em></span><span class="bar"><i style="width:33%"></i></span><span class="v">2</span></div>
+        <div class="item"><span class="nm">Canvas <em>organization</em></span><span class="bar"><i style="width:33%"></i></span><span class="v">2</span></div>
+        <div class="item"><span class="nm">soft magic system <em>concept</em></span><span class="bar"><i style="width:17%"></i></span><span class="v">1</span></div>
+        <div class="item"><span class="nm">hard magic system <em>concept</em></span><span class="bar"><i style="width:17%"></i></span><span class="v">1</span></div>
+        <div class="exp">▸ 2 more · 3 unlinked</div>
+      </div>
+    </div></div>
+
+  <div class="row live"><div class="gut"><span class="glyph" style="color:#8a6330">●</span></div>
+    <div class="body">
+      <div class="say">The distinction your sources draw is about <i>whose</i> constraint the magic is. A hard system states its rules to the reader, so</div>
+      <div class="shim" style="width:62%;margin-top:5px"></div>
+    </div></div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px">You were right and the reason is worth writing into the spec: in a grid every column carries its own bar baseline, so two bars side by side are <b>not</b> on a common scale and comparing them is a mistake the layout invites. A single column puts every bar on one axis — the comparison the chart is for. The height that costs is bought back with a cap of five items and an expander, which also keeps a 40-match result from burying the reply underneath it.</p>
+
+<div class="options">
+  <div class="option" data-choice="yes" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>This is the target — write the spec</h3></div>
+  </div>
+  <div class="option" data-choice="tweak" onclick="toggleSelect(this)">
+    <div class="letter">~</div>
+    <div class="content"><h3>More changes first</h3></div>
+  </div>
+</div>
