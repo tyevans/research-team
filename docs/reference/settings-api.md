@@ -21,6 +21,48 @@ A setting's key is mechanically its environment variable minus `AGENT_`,
 lowercased. `AGENT_EXTRACTION_CHUNK_SIZE` is `extraction_chunk_size`. Nothing
 maps between the two by hand.
 
+## Provider credentials: the `provider_key.` namespace
+
+The registry declares four secrets, all for this project's own endpoints. The
+catalogue enumerates fifteen providers. Bridging the two is a **dynamic key
+namespace**, synthesised at request time from the catalogue rather than
+declared:
+
+```
+provider_key.<provider_id>[.<credential>]
+```
+
+- `provider_key.groq` — a provider with exactly one credential may omit the
+  trailing segment. It **normalises** to `provider_key.groq.api_key`, and every
+  route reports the normalised form. The two spellings are one row; the key is
+  hashed into the storage row id, so this is load-bearing rather than cosmetic.
+- `provider_key.bedrock` — **422**. Bedrock declares three credentials
+  (`access_key_id`, `secret_access_key`, `region`), so the segment is required
+  and the error names all three. Guessing would silently store a secret access
+  key under the id's name.
+- `provider_key.evilcorp` — **422**. The provider id is validated against the
+  catalogue, never accepted as free text: it lands in a storage key and a URL
+  segment.
+- `provider_key.groq.password` — **422**. The credential must be one the
+  provider declares.
+
+A dynamic key is a `SettingSpec` like any other. Parsing, scoping, encryption,
+masking and the resolution walk are the same code path with no branch on the
+key's shape — which is why a dynamic secret is covered by the same
+`test_a_secret_never_leaves_a_read_endpoint` population rather than by a case
+of its own.
+
+**Secrecy comes from the credential, not from the prefix.** Azure's `resource`,
+`deployment` and `api_version`, and Bedrock's `region`, are declared
+`secret: false` in the catalogue: they are stored and read back in the clear,
+because a region is not a secret.
+
+Each one also answers to a synthesised environment variable —
+`provider_key.groq.api_key` is `AGENT_PROVIDER_KEY_GROQ_API_KEY` — so a
+container can configure a provider credential with no settings database. That
+variable is in neither `SETTINGS` nor `ENVIRONMENT_ONLY`: it belongs to neither
+population, because it does not exist until a provider id is named.
+
 ## Scopes
 
 | scope | id | who sets it |
@@ -71,9 +113,16 @@ nothing wired.
     }
   ],
   "scopes": ["project", "user", "tenant"],
-  "roles": [{"role": "research", "setting_key": "model"}]
+  "roles": [{"role": "research", "setting_key": "model"}],
+  "provider_credential_group": "Provider credentials"
 }
 ```
+
+The `groups` array carries the declared settings **and** the twenty provider
+credentials the catalogue implies, all as ordinary specs. The group they are
+in is named by `provider_credential_group` rather than left for a client to
+recognise by key prefix — a client matching on `"provider_key."` would be a
+second, private copy of the key format.
 
 - `type` is one of `string`, `integer`, `number`, `boolean`, `enum`.
 - `choices` is non-empty exactly when `type` is `enum`.
@@ -86,6 +135,7 @@ nothing wired.
 - `scopes` is sorted alphabetically, not in resolution order. `scopes` at the
   top level is the resolution order.
 - Groups appear in registry order, which is the order the form should render.
+  The provider-credential group is last.
 
 ### `GET /api/settings/resolved?project=&user=&tenant=`
 
@@ -111,6 +161,10 @@ differently resolves identically.
 }
 ```
 
+- Every declared setting **and** every provider credential appears, whether or
+  not one is stored. A form has to be able to show "not set" for a provider
+  nobody has configured yet; listing only stored keys would mean it could never
+  offer the first one.
 - `value` is typed: a `boolean` setting comes back as `true`/`false`, an
   `integer` as a number.
 - `layer` is one of `project`, `user`, `tenant`, `environment`, `default`. It
@@ -223,18 +277,118 @@ back out of the store would be a read path for a secret in all but name.
 
 ## Model profiles
 
-`ModelProfile` (`domain/settings.py`) is a named
-`(provider, model, credentials, parameters)` triple selectable per **role** —
-`research`, `extraction`, `curation`, `embedding`, `vision`. The
-`roles` array in the schema response maps each role to the setting its model
-name resolves from today, which is what keeps profiles additive: a deployment
-that defines none behaves exactly as it did, through the same reader.
+`ModelProfile` is a named `(provider, model, credentials, parameters)` triple
+selectable per **role**: `research`, `extraction`, `curation`, `embedding`,
+`vision`. A profile names a *credential setting key*; it never carries the
+credential, because a profile is read back to a browser whole.
 
-A profile names a *credential setting key*; it never carries the credential.
+**No two roles resolve from one setting.** Extraction used to map to `model`
+alongside research, so choosing a cheap extraction model silently repointed the
+research agent at it — five roles sharing four keys is four roles. Extraction
+now has `extraction_model`, which falls back to the chat model when unset,
+exactly as `curation_model` does.
 
-Profiles have no storage route in W-C0. The concept, the roles and the
-role → setting bridge are here; the per-scope selection UI and its persistence
-are W-C1's.
+Profiles and role selections are **two separate walks**. A project may select a
+profile a *tenant* defined, which is the ordinary case for a shared team
+credential; folding them together would force a project to redefine a profile
+in order to use it. Profiles shadow by name (most specific definition wins);
+selections resolve by role (most specific choice wins).
+
+### `GET /api/profiles?project=&user=&tenant=`
+
+```json
+{
+  "scope_chain": [{"scope": "project", "scope_id": "p1"}],
+  "profiles": [
+    {
+      "scope": "tenant",
+      "scope_id": "t1",
+      "name": "groq-fast",
+      "provider_id": "groq",
+      "model": "llama-3.3-70b-versatile",
+      "credential_key": "provider_key.groq.api_key",
+      "base_url": null,
+      "parameters": {"temperature": 0}
+    }
+  ],
+  "roles": [
+    {
+      "role": "extraction",
+      "model": "llama-3.3-70b-versatile",
+      "layer": "project",
+      "scope_id": "p1",
+      "setting_key": "extraction_model",
+      "profile": "groq-fast",
+      "dangling": null
+    }
+  ]
+}
+```
+
+One endpoint rather than two, because the interesting question is the pair: a
+list of profiles says nothing about which is in use, and a list of roles with
+only names in it cannot be rendered without the definitions.
+
+- `model` is always populated. A role always has a model, because the settings
+  layer underneath always answers; a caller that only wants to make a call
+  reads this field and ignores the rest.
+- `layer` is the selecting scope when a profile answered, otherwise the layer
+  the role's *setting* resolved from, or `fallback` when the role's setting is
+  unset and the chat model answered.
+- `setting_key` is reported even when a profile answered — it is what the form
+  offers as the way back.
+- **`dangling`** names a selected profile that no scope in the chain defines.
+  Reported rather than silently ignored: a role quietly repointed at the
+  default model is the exact failure this feature exists to prevent. The
+  fallback still happens, because something has to be called.
+- A name defined at two scopes appears once, as the more specific one.
+
+### `PUT /api/profiles/{scope}/{scope_id}/{name}`
+
+```json
+{
+  "provider_id": "groq",
+  "model": "llama-3.3-70b-versatile",
+  "credential_key": "provider_key.groq",
+  "base_url": null,
+  "parameters": {"temperature": 0}
+}
+```
+
+`parameters` is an open dict, because it is provider-specific (`temperature`,
+`top_p`, Anthropic's `thinking`, vLLM's `chat_template_kwargs`) and a catalogue
+cannot enumerate what fifteen providers accept. It is stored and handed back
+whole; nothing interprets it.
+
+- `200` `{"scope", "scope_id", "name", "stored": true}`
+- `422` — unknown provider, empty model or name, or a `credential_key` that is
+  not a **secret** setting. A profile's credential is what a call is
+  authenticated with; pointing it at an ordinary setting would put a non-secret
+  on the credential path and render a secret-shaped field that is not one.
+
+### `DELETE /api/profiles/{scope}/{scope_id}/{name}`
+
+`204`, or `404` when this scope defined no profile by that name.
+
+A role still selecting the deleted name is **left selecting it** and reads back
+as `dangling`. Cascading was rejected: a more specific scope may define the same
+name, in which case the selection is still correct, and a delete that silently
+unpicked a role would be a second, invisible write.
+
+### `PUT /api/profiles/{scope}/{scope_id}/roles/{role}`
+
+```json
+{"profile": "groq-fast"}
+```
+
+`200`, or `422` for a role outside the five. The profile need not exist yet — a
+selection is resolved against the chain at read time, so a tenant may select a
+name a project will define.
+
+### `DELETE /api/profiles/{scope}/{scope_id}/roles/{role}`
+
+`204`, or `404` when the role was never selected at that scope. The role falls
+back to its setting.
 
 ## Secrets
 

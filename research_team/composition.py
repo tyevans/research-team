@@ -217,6 +217,7 @@ from research_team.infrastructure.persistence.read_models import (
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.settings import (
     HttpProviderProbe,
+    ModelProfileStore,
     SettingsStore,
     build_secret_box,
 )
@@ -1789,6 +1790,11 @@ def build_application(
         store=SettingsStore(resolved_path, resolved_tracer),
         secrets=build_secret_box(),
         probe=HttpProviderProbe(),
+        # Its own store beside the override table rather than rows in it: a
+        # profile is a record whose provider and credential key are each
+        # validated, and none of that is a thing a `value` column does. Same
+        # database, same lazy open.
+        profiles=ModelProfileStore(resolved_path, resolved_tracer),
     )
     definition_invalidation = EntityDefinitionRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
@@ -2226,7 +2232,11 @@ def build_application(
             store=store,
             event_store=repository.store,
             snapshot_store=repository.snapshot_store,
-            provider=LangChainLlmProvider(extraction_model, model=config.model_name()),
+            # The name redstring reports and prompts against, matched to the
+            # client beside it: `_extraction_model` builds against
+            # `config.extraction_model()`, and passing `model_name()` here
+            # would label every extraction with a model it was not run on.
+            provider=LangChainLlmProvider(extraction_model, model=config.extraction_model()),
             # `repository.publisher`, like every other repository built here,
             # and it was the one that did not have it. The corpus read model
             # follows the log through this bus, so without it a `remember`

@@ -24,6 +24,8 @@ keeping it beside the ciphertext would make the encryption decorative.
 | Variable | Default | Meaning |
 |---|---|---|
 | `AGENT_SETTINGS_KEY` | *(unset)* | key for encrypting stored credentials at rest, e.g. `openssl rand -base64 32`. Unset is supported: reads still resolve through the environment, and writing a *secret* setting is refused rather than stored in the clear |
+| `AGENT_EXTRACTION_MODEL` | *(unset)* | the model knowledge extraction runs on. Falls back to `AGENT_MODEL`, like `AGENT_CURATION_MODEL`. Set it to point extraction at something cheap **without** repointing the research agent — until this existed the two shared one name |
+| `AGENT_PROVIDER_KEY_<PROVIDER>_<CREDENTIAL>` | *(unset)* | a bring-your-own-model credential, e.g. `AGENT_PROVIDER_KEY_GROQ_API_KEY`. Synthesised from the provider catalogue rather than declared, so there is one per credential of each of the fifteen providers. See the settings API reference |
 
 The model is an OpenAI-compatible endpoint, configured entirely by environment
 variable:

@@ -117,7 +117,11 @@ def build_extraction_model() -> BaseChatModel:
     the backends this field is rejected by.
     """
     return ChatOpenAI(
-        model=config.model_name(),
+        # `extraction_model()`, not `model_name()`. The two are the same string
+        # on a default install and stop being so the moment anyone sets
+        # `AGENT_EXTRACTION_MODEL` -- which is the point: this client already
+        # differed from the agent's in everything but the name it sent.
+        model=config.extraction_model(),
         base_url=config.base_url(),
         api_key=config.api_key(),
         temperature=0,

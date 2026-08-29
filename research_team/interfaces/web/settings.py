@@ -29,21 +29,29 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from research_team.application.settings import (
+    ModelProfileService,
+    ModelProfileStorePort,
     ProviderProbePort,
     Resolved,
+    ResolvedRole,
     SecretBoxPort,
     SettingsResolver,
     SettingsStorePort,
+    StoredProfile,
 )
 from research_team.domain.providers import PROVIDERS, Provider, UnknownProvider, provider_for
 from research_team.domain.settings import (
+    PROVIDER_KEY_GROUP,
     RESOLUTION_ORDER,
     ROLE_MODEL_KEYS,
     SETTINGS,
+    ModelProfile,
+    ModelRole,
     Scope,
     ScopeRef,
     SettingError,
     SettingSpec,
+    dynamic_specs,
 )
 
 
@@ -61,6 +69,7 @@ class SettingsDeps:
     store: SettingsStorePort | None = None
     secrets: SecretBoxPort | None = None
     probe: ProviderProbePort | None = None
+    profiles: ModelProfileStorePort | None = None
 
 
 class SettingValue(BaseModel):
@@ -72,6 +81,26 @@ class SettingValue(BaseModel):
     """
 
     value: str
+
+
+class ProfileBody(BaseModel):
+    """A model profile, minus its name -- the name is the path segment.
+
+    `parameters` is an open dict because it is provider-specific (`temperature`,
+    `top_p`, Anthropic's `thinking`, vLLM's `chat_template_kwargs`) and a
+    catalogue cannot enumerate what fifteen providers accept. It is stored and
+    handed back whole; nothing here interprets it.
+    """
+
+    provider_id: str
+    model: str
+    credential_key: str | None = None
+    base_url: str | None = None
+    parameters: dict = {}
+
+
+class RoleBody(BaseModel):
+    profile: str
 
 
 class ProbeRequest(BaseModel):
@@ -116,6 +145,31 @@ def _resolved_view(resolved: Resolved) -> dict:
             "display": resolved.masked.display,
         }
     return view
+
+
+def _profile_view(stored: StoredProfile) -> dict:
+    return {
+        "scope": stored.scope.value,
+        "scope_id": stored.scope_id,
+        "name": stored.profile.name,
+        "provider_id": stored.profile.provider_id,
+        "model": stored.profile.model,
+        "credential_key": stored.profile.credential_key,
+        "base_url": stored.profile.base_url,
+        "parameters": stored.profile.parameters,
+    }
+
+
+def _role_view(resolved: ResolvedRole) -> dict:
+    return {
+        "role": resolved.role.value,
+        "model": resolved.model,
+        "layer": resolved.layer,
+        "scope_id": resolved.scope_id,
+        "setting_key": resolved.setting_key,
+        "profile": None if resolved.profile is None else resolved.profile.name,
+        "dangling": resolved.dangling,
+    }
 
 
 def _provider_view(provider: Provider) -> dict:
@@ -176,7 +230,12 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
         """
         groups: list[dict] = []
         index: dict[str, dict] = {}
-        for spec in SETTINGS:
+        # The declared settings, then the provider credentials the catalogue
+        # implies. Both are `SettingSpec`s and are rendered by one code path --
+        # a dynamic spec differs from a declared one only in where it was
+        # constructed, which is the whole reason `dynamic_spec_for` returns a
+        # spec rather than a new type.
+        for spec in (*SETTINGS, *dynamic_specs()):
             group = index.get(spec.group)
             if group is None:
                 group = {"name": spec.group, "settings": []}
@@ -190,6 +249,12 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
                 {"role": role.value, "setting_key": key}
                 for role, key in ROLE_MODEL_KEYS.items()
             ],
+            # Named rather than left for the client to recognise by prefix.
+            # W-C1 renders this group differently -- one row per provider a
+            # deployment actually uses, not forty checkboxes -- and a client
+            # matching on `"provider_key."` would be a second, private copy of
+            # this module's key format.
+            "provider_credential_group": PROVIDER_KEY_GROUP,
         }
 
     @router.get("/settings/resolved")
@@ -209,7 +274,12 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
         default", and those want different controls.
         """
         chain = _chain(project, user, tenant)
-        answers = await _resolver().resolve_all([spec.key for spec in SETTINGS], chain)
+        # Every provider credential, not only the stored ones. A settings page
+        # has to be able to show "not set" for a provider nobody has configured
+        # yet; listing only what is stored would mean the form could never
+        # offer the first one. Bounded at twenty rows by the catalogue.
+        keys = [spec.key for spec in (*SETTINGS, *dynamic_specs())]
+        answers = await _resolver().resolve_all(keys, chain)
         return {
             "scope_chain": [
                 {"scope": ref.scope.value, "scope_id": ref.scope_id} for ref in chain
@@ -256,6 +326,125 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
             )
         return Response(status_code=204)
 
+    def _profiles() -> ModelProfileService:
+        return ModelProfileService(deps.profiles, _resolver())
+
+    @router.get("/profiles")
+    async def list_profiles(
+        project: str | None = None,
+        user: str | None = None,
+        tenant: str | None = None,
+    ) -> dict:
+        """The profiles visible from this chain, and what each role resolves to.
+
+        W-B: authorize `project`, `user` and `tenant` here before reading.
+
+        One endpoint rather than two, because the interesting question is the
+        pair: a list of profiles says nothing about which is in use, and a list
+        of roles with only names in it cannot be rendered without the
+        definitions. `dangling` on a role names a selected profile no scope in
+        the chain defines -- reported rather than quietly falling back, because
+        a role silently repointed at the default model is the exact failure
+        this feature exists to prevent.
+        """
+        chain = _chain(project, user, tenant)
+        service = _profiles()
+        return {
+            "scope_chain": [
+                {"scope": ref.scope.value, "scope_id": ref.scope_id} for ref in chain
+            ],
+            "profiles": [_profile_view(stored) for stored in await service.profiles(chain)],
+            "roles": [_role_view(role) for role in await service.roles(chain)],
+        }
+
+    @router.put("/profiles/{scope}/{scope_id}/{name}")
+    async def write_profile(scope: str, scope_id: str, name: str, body: ProfileBody) -> dict:
+        """Define or replace a profile at one scope.
+
+        W-B: authorize `scope`/`scope_id` here before writing.
+
+        The provider id is checked against the catalogue and the credential key
+        against the registry, both in the service rather than here, so a CLI or
+        an import gets the same refusal.
+        """
+        ref = _scope_ref(scope, scope_id)
+        profile = ModelProfile(
+            name=name,
+            provider_id=body.provider_id,
+            model=body.model,
+            credential_key=body.credential_key,
+            base_url=body.base_url,
+            parameters=body.parameters,
+        )
+        try:
+            await _profiles().put(ref, profile)
+        except SettingError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {
+            "scope": ref.scope.value,
+            "scope_id": ref.scope_id,
+            "name": name,
+            "stored": True,
+        }
+
+    @router.delete("/profiles/{scope}/{scope_id}/{name}", status_code=204)
+    async def delete_profile(scope: str, scope_id: str, name: str) -> Response:
+        """Remove a profile. 404 when this scope defined none by that name.
+
+        W-B: authorize `scope`/`scope_id` here before writing.
+
+        A role still selecting the deleted name is left selecting it, and reads
+        back as `dangling`. Cascading the delete into the selections was
+        rejected: a more specific scope may define the same name, in which case
+        the selection is still correct, and a delete that silently unpicked a
+        role would be a second, invisible write.
+        """
+        ref = _scope_ref(scope, scope_id)
+        try:
+            removed = await _profiles().delete(ref, name)
+        except SettingError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if not removed:
+            raise HTTPException(
+                status_code=404, detail=f"no profile {name!r} at {scope} {scope_id}"
+            )
+        return Response(status_code=204)
+
+    @router.put("/profiles/{scope}/{scope_id}/roles/{role}")
+    async def select_role(scope: str, scope_id: str, role: str, body: RoleBody) -> dict:
+        """Point a role at a profile.
+
+        W-B: authorize `scope`/`scope_id` here before writing.
+        """
+        ref = _scope_ref(scope, scope_id)
+        try:
+            await _profiles().select(ref, _role(role), body.profile)
+        except SettingError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {
+            "scope": ref.scope.value,
+            "scope_id": ref.scope_id,
+            "role": role,
+            "profile": body.profile,
+        }
+
+    @router.delete("/profiles/{scope}/{scope_id}/roles/{role}", status_code=204)
+    async def clear_role(scope: str, scope_id: str, role: str) -> Response:
+        """Stop selecting a profile for a role, falling back to its setting.
+
+        W-B: authorize `scope`/`scope_id` here before writing.
+        """
+        ref = _scope_ref(scope, scope_id)
+        try:
+            removed = await _profiles().clear(ref, _role(role))
+        except SettingError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if not removed:
+            raise HTTPException(
+                status_code=404, detail=f"no {role} selection at {scope} {scope_id}"
+            )
+        return Response(status_code=204)
+
     @router.get("/providers")
     async def list_providers() -> dict:
         """The catalogue. Static data; no credential of any kind appears here."""
@@ -293,6 +482,22 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
         }
 
     return router
+
+
+def _role(role: str) -> ModelRole:
+    """A role name from a path segment, or a 422 naming the five.
+
+    The same shape as `_scope_ref` below and for the same reason: an enum
+    constructed from an untrusted segment raises `ValueError`, which FastAPI
+    would answer 500 rather than telling the caller what the five roles are.
+    """
+    try:
+        return ModelRole(role)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{role!r} is not one of {', '.join(r.value for r in ModelRole)}",
+        ) from error
 
 
 def _scope_ref(scope: str, scope_id: str) -> ScopeRef:

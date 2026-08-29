@@ -260,3 +260,90 @@ async def test_the_store_survives_being_reopened(tmp_path, box):
 
     assert resolved.value == "persisted"
     assert resolved.layer == "project"
+
+
+async def test_a_provider_credential_round_trips_through_the_real_store(store, box):
+    """The dynamic namespace, end to end, with nothing stubbed.
+
+    A dynamic spec is an ordinary `SettingSpec`, so this asserts the thing that
+    claim implies: encryption, masking and the resolution walk apply to it
+    unchanged, through the same code path, with no branch on the key's shape.
+    """
+    resolver = _resolver(store, box)
+    await resolver.write(PROJECT, "provider_key.groq", "gsk_abcd1234")
+
+    (row,) = await store.overrides([PROJECT])
+    assert row.value.startswith(PREFIX)
+    assert "gsk_abcd1234" not in row.value
+
+    resolved = await resolver.resolve("provider_key.groq.api_key", CHAIN)
+    assert resolved.secret is True
+    assert resolved.value is None
+    assert resolved.masked.last_four == "1234"
+    assert await resolver.secret("provider_key.groq", CHAIN) == "gsk_abcd1234"
+
+
+async def test_the_short_and_long_forms_of_a_provider_key_are_one_row(store, box):
+    """Written short, cleared long, and it is the same setting.
+
+    The key is hashed into the storage row id, so two spellings that did not
+    normalise would be two rows -- a credential written through one form and
+    cleared through the other would be invisible and unremovable. Found by
+    running it: `write` stored the caller's raw string until this branch, so
+    this failed with a 404 on the clear and an empty read.
+    """
+    resolver = _resolver(store, box)
+    await resolver.write(PROJECT, "provider_key.groq", "gsk_abcd1234")
+
+    assert await resolver.clear(PROJECT, "provider_key.groq.api_key") is True
+    assert await store.overrides([PROJECT]) == []
+
+
+async def test_a_provider_credential_resolves_down_the_chain(store, box):
+    """A user's own key beats the tenant's shared one, like any other setting."""
+    resolver = _resolver(store, box)
+    await resolver.write(TENANT, "provider_key.openai", "sk-tenant-0000")
+    await resolver.write(USER, "provider_key.openai", "sk-user-1111")
+
+    assert await resolver.secret("provider_key.openai", CHAIN) == "sk-user-1111"
+
+    await resolver.clear(USER, "provider_key.openai")
+    assert await resolver.secret("provider_key.openai", CHAIN) == "sk-tenant-0000"
+
+
+async def test_a_provider_credential_reads_from_the_environment_too(store):
+    """The synthesised variable is real, not a placeholder to satisfy the type.
+
+    A dynamic setting that no container could configure would be the one
+    setting in the system with no environment layer, and the resolver would
+    need a branch for it -- which is the branch that would eventually be wrong.
+    """
+    resolver = _resolver(store, environ={"AGENT_PROVIDER_KEY_GROQ_API_KEY": "gsk_from_env"})
+
+    resolved = await resolver.resolve("provider_key.groq", CHAIN)
+
+    assert resolved.layer == ENVIRONMENT_LAYER
+    assert resolved.masked.present is True
+    assert await resolver.secret("provider_key.groq", CHAIN) == "gsk_from_env"
+
+
+async def test_a_non_secret_provider_credential_is_readable(store, box):
+    """Secrecy is the credential's, not the prefix's. A region masked as a
+    secret would make the settings page unreadable for the two providers that
+    need the most from it."""
+    resolver = _resolver(store, box)
+    await resolver.write(TENANT, "provider_key.bedrock.region", "us-east-1")
+
+    resolved = await resolver.resolve("provider_key.bedrock.region", CHAIN)
+
+    assert resolved.secret is False
+    assert resolved.value == "us-east-1"
+
+
+async def test_a_provider_outside_the_catalogue_never_reaches_the_store(store, box):
+    """Refused before anything is written, so a caller cannot mint rows for
+    provider ids that do not exist."""
+    with pytest.raises(SettingError):
+        await _resolver(store, box).write(PROJECT, "provider_key.evilcorp", "x")
+
+    assert await store.overrides([PROJECT]) == []

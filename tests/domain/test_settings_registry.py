@@ -23,12 +23,20 @@ from research_team.domain.settings import (
     BY_ENV,
     BY_KEY,
     ENVIRONMENT_ONLY,
+    PROVIDER_KEY_GROUP,
+    PROVIDER_KEY_PREFIX,
     RESOLUTION_ORDER,
+    ROLE_MODEL_KEYS,
     SETTINGS,
+    ModelRole,
     Scope,
     SettingError,
     SettingType,
+    dynamic_spec_for,
+    dynamic_specs,
     mask,
+    provider_key,
+    resolve_spec,
     spec_for,
 )
 
@@ -284,3 +292,119 @@ def test_every_key_config_asks_for_is_declared(key):
     touch it.
     """
     assert key in BY_KEY, f"config.py asks for {key!r}, which SETTINGS does not declare"
+
+
+# --- the dynamic namespace, and how it stays out of the registry ---------
+
+
+def test_a_provider_key_is_not_a_declared_setting():
+    """The two populations are disjoint, and `SETTINGS` is the fixed one.
+
+    **How they stay separate, stated because the test above depends on it.**
+    `SETTINGS` is a literal tuple built at import; nothing appends to it at
+    runtime, and `spec_for` reads `BY_KEY`, which is derived from it once. So a
+    dynamic key cannot enter the registry, and
+    `test_every_environment_variable_config_reads_is_declared_or_excused`
+    cannot be satisfied by one -- the synthesised
+    `AGENT_PROVIDER_KEY_GROQ_API_KEY` appears in no module's source, so the
+    scan never sees it, and if it somehow did, `BY_ENV` would not contain it
+    and the test would fail rather than pass.
+
+    The direction that would be dangerous is the other one: a `spec_for` that
+    fell through to `dynamic_spec_for` would make any provider-shaped key look
+    declared. That is why the fall-through lives in `resolve_spec` instead, and
+    why this test asserts `spec_for` still refuses.
+    """
+    assert not any(key.startswith(f"{PROVIDER_KEY_PREFIX}.") for key in BY_KEY)
+    with pytest.raises(SettingError):
+        spec_for(provider_key("groq", "api_key"))
+
+
+def test_resolve_spec_reaches_both_populations():
+    """One entry point above the domain, two sources beneath it."""
+    assert resolve_spec("model").key == "model"
+    assert resolve_spec(provider_key("groq")).key == "provider_key.groq.api_key"
+
+
+@pytest.mark.parametrize("spec", dynamic_specs(), ids=[spec.key for spec in dynamic_specs()])
+def test_every_dynamic_credential_is_usable_by_a_form(spec):
+    """The same bar the declared settings are held to.
+
+    Parametrised over the catalogue rather than a sample, so a sixteenth
+    provider with an empty label fails here rather than rendering as a blank
+    row in the settings page.
+    """
+    assert spec.label.strip()
+    assert spec.description.strip()
+    assert spec.group == PROVIDER_KEY_GROUP
+    assert spec.scopes == set(RESOLUTION_ORDER)
+    assert spec.default is None
+    # No bounds on a credential: a bound in this registry is a claim about what
+    # the system permits, and the only evidence for one is a caller it would
+    # break. Nobody can say how long a provider's key is.
+    assert spec.minimum is None and spec.maximum is None
+
+
+def test_a_dynamic_key_normalises_to_its_named_form():
+    """`provider_key.groq` and `provider_key.groq.api_key` are one setting.
+
+    The key is hashed into the storage row id, so two spellings that did not
+    normalise would be two rows -- and a credential written through one and
+    cleared through the other would be invisible and unremovable. That is not
+    hypothetical: `SettingsResolver.write` stored the caller's raw string
+    until this branch, and this is the assertion that found it.
+    """
+    assert dynamic_spec_for(provider_key("groq")).key == provider_key("groq", "api_key")
+
+
+def test_a_provider_id_outside_the_catalogue_is_refused():
+    """The id lands in a storage key and a URL segment.
+
+    Free text in a storage key is a shape this project has been bitten by
+    before, and it would also let a caller mint unbounded rows in a table
+    nothing else bounds.
+    """
+    with pytest.raises(SettingError, match="evilcorp"):
+        dynamic_spec_for("provider_key.evilcorp")
+
+
+def test_a_provider_with_several_credentials_refuses_to_guess():
+    """Bedrock declares three, so the trailing segment is real rather than
+    decorative -- and the refusal names all three, because the person reading
+    it is deciding which one they meant."""
+    with pytest.raises(SettingError) as raised:
+        dynamic_spec_for(provider_key("bedrock"))
+
+    message = str(raised.value)
+    assert "access_key_id" in message
+    assert "secret_access_key" in message
+    assert "region" in message
+
+
+def test_secrecy_comes_from_the_credential_not_the_prefix():
+    """A region is not a secret. Masking it would make the settings page
+    unreadable for the two providers that need the most from it."""
+    assert dynamic_spec_for(provider_key("bedrock", "region")).secret is False
+    assert dynamic_spec_for(provider_key("bedrock", "secret_access_key")).secret is True
+
+
+def test_no_two_roles_resolve_from_one_setting():
+    """Five roles sharing four keys is four roles.
+
+    Extraction used to map to `model`, so choosing a cheap extraction model
+    silently repointed the research agent at it -- the enum named five roles
+    while two of them were one string. Reverting `ROLE_MODEL_KEYS` to that
+    turns this red, which is the whole reason it is a test rather than a
+    comment.
+    """
+    keys = list(ROLE_MODEL_KEYS.values())
+
+    assert len(set(keys)) == len(keys) == len(ModelRole)
+    assert ROLE_MODEL_KEYS[ModelRole.EXTRACTION] != ROLE_MODEL_KEYS[ModelRole.RESEARCH]
+
+
+@pytest.mark.parametrize("role", list(ModelRole), ids=lambda r: r.value)
+def test_every_role_names_a_declared_setting(role):
+    """A role pointing at a key nothing declares is a role that raises the
+    first time a settings page is opened."""
+    assert ROLE_MODEL_KEYS[role] in BY_KEY
