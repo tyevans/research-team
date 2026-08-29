@@ -2198,9 +2198,11 @@ deleting one sidecar line erases a person from the graph without touching an
 event — and it is the only item on this list that becomes impossible the moment
 the first real transcript is ingested.
 
-### B161. The 122px hole cannot be reproduced, so nothing holds the keying
+### B178. The 122px hole cannot be reproduced, so nothing holds the keying
 
 _Renumbered from B54 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B54` still has two possible answers and always will -- what changed is that this file no longer adds to them._
+
+_It was briefly B161 on this branch, and never on `main`. Three branches picked B160 as "the next free id" within one afternoon; the coordinator now hands out ranges, and B161 went to #325. Vacated here rather than argued about, because the cost of moving an id that has never left a branch is nil and the cost of two entries sharing one is this whole section._
 
 `itemKey` in `frontend/src/presentation/tree/ProjectRows.tsx` records a real
 incident: when the projects query answered and every row shifted down by a
@@ -4542,7 +4544,7 @@ There were **fifteen**, not ten. Beyond the ten enumerated here: B110,
 B122, B153, B154 and B155. The three the scouting pass found (B122, B153,
 B154) plus two more this one did.
 
-Every later duplicate is renumbered to B160-B174 and carries a line saying
+Every later duplicate is renumbered into B162-B178 and carries a line saying
 what it used to be. The earlier entry keeps the id in each pair, because an
 older commit message is likelier to be citing the older entry -- and a `git
 log` search for any of the fifteen still has two possible answers and always
@@ -4552,6 +4554,15 @@ The check is `tests/test_backlog_ids.py`, not a script: this repository has no
 `scripts/` directory and pytest is already a gate. It carries a second test
 asserting the file has entries at all, because the first one passes over an
 empty list exactly as it passes over a clean backlog.
+
+**It earned itself the same afternoon it was written.** Three branches
+independently picked B160 as "the next free id" within an hour of each other
+-- #329's quarantined browser tests, #325's authoring-phase entry, and this
+pass's renumbering of the second B36 -- and the uniqueness test is what
+surfaced it, as a red CI run rather than as a fourteenth ambiguous id. The
+range is B162-B178 rather than the B160-B174 it started as for exactly that
+reason. A backlog id is allocated by whoever greps last, which is a race, and
+the fix for a race is not a better grep.
 
 Ten ids appear **twice each**, always with two unrelated subjects: B36, B54,
 B58, B59, B60, B62, B63, B79, B80, B81. Found 2026-08-18 while renumbering the
