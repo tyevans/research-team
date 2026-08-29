@@ -152,6 +152,48 @@ The general rule outlives the ring: **before overriding anything declared in
 the utility will not win, and no gate will tell you — jsdom returns only what an
 inline style said, so the assertion has to be a browser measurement.
 
+**The third instance was an element selector, and it was inert for everything
+at once.** `tokens.css` gave a bare `button`, `input`, `textarea` and `select` a
+background, a colour and `font: inherit`, unlayered — so those rules beat every
+Tailwind utility on every such element in the console, since the day they were
+written. `bg-transparent`, `bg-bg-panel-2`, `text-accent`, `text-fg-dim` and
+`text-xs` on a `<button>` were all dead. `font: inherit` reaches furthest
+because it is a *shorthand*: it sets `font-size`, so the size utilities went
+silently along with the colour ones, and nothing about `text-xs` suggests it is
+competing with a `font` declaration.
+
+It surfaced on 2026-08-28 because `CourseCard` stretches its click target as
+`<button class="absolute inset-0 … bg-[transparent]">` across the whole card:
+the inert background painted `--bg` opaquely over the card's own art, title and
+blurb, so every catalog card drew as an empty bordered box. Everywhere else it
+had merely been drawing the wrong colour, invisibly — the catalog's *chosen*
+filter tab had been rendering in the unchosen tone.
+
+**Layer the rule, do not name a class, when the rule is a default.** Both of
+those went into `@layer base`, which is the opposite of the ring's fix, and the
+distinction is worth keeping: the global `:focus-visible` is a *decision* that
+particular elements opt out of, so opting out earns a named class. A background
+for an unclassed control is a *default*, and losing to anything more specific is
+what a default is for. `theme.css` already declares `@layer theme, base,
+components, utilities`.
+
+**What this instance changes about the advice above:** checking whether the rule
+you are fighting is layered is necessary and no longer sufficient, because the
+rule may not be one you went looking for. An element selector is invisible to a
+search for the class you are writing. `control-defaults.browser.test.tsx` is the
+standing measurement — a utility on a form control has to actually win — and it
+is a browser test for the usual reason: in jsdom the class is in the attribute,
+the rule is in the bundle, and the two never meet, so there is nothing to assert
+on.
+
+**And check pixels, not the DOM, when a surface renders wrong.** This one was
+first misdiagnosed from `getBoundingClientRect` and `getComputedStyle` on the
+content: every box had the right size, the right colour and the right text, and
+all of it was correct — the content was simply underneath an opaque sibling. The
+question that located it in one call was `document.elementFromPoint(x, y)` at
+the centre of the thing that would not show. Geometry says what was laid out;
+only a screenshot or a hit test says what was painted.
+
 **Do not run two `vitest` processes at once.** Concurrent runs fail
 spuriously, usually with a coverage temp-file error that names nothing about
 the real cause. If a frontend test fails, re-run it alone before investigating
