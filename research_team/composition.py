@@ -215,9 +215,15 @@ from research_team.infrastructure.persistence.read_models import (
     SocraticDialogueRunner,
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
+from research_team.infrastructure.settings import (
+    HttpProviderProbe,
+    SettingsStore,
+    build_secret_box,
+)
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep
 from research_team.interfaces.web.blurb_sweep import BlurbSweep
+from research_team.interfaces.web.settings import SettingsDeps
 
 logger = logging.getLogger(__name__)
 
@@ -698,6 +704,17 @@ class Application:
     A field for the same reason `corpus` is one: the queue is read by the
     agent through the tools attached with a project, and by anything driving an
     autonomous run, which shares nothing else with a session."""
+
+    settings: SettingsDeps
+    """What the settings and provider routes need: the override table, the
+    secret box, and the provider probe.
+
+    A field rather than something `web.py` builds, for the reason every other
+    collaborator here is one: a dependency assembled at the call site is one
+    the tests never see assembled, and `test_web_entrypoint.py` exists because
+    that gap has shipped three times. The store inside it opens on first use
+    rather than in `start()` -- see `SettingsStore` for why that is about the
+    event loop and not about laziness."""
 
     definitions: EntityDefinitionRunner
     """Keeps cached entity definitions marked stale. Idle until `start()`.
@@ -1762,6 +1779,17 @@ def build_application(
     # its own connection and its own view of `stale` -- the cache would then
     # go on serving text the invalidator had already marked untrustworthy,
     # which is precisely the state `stale` exists to make impossible.
+    # Not a projection, unlike its neighbours below -- see `SettingsStore` for
+    # why settings are current state rather than a fold -- and so it is built
+    # here only to be handed to `create_app` rather than to be started. The
+    # secret box is `None` when `AGENT_SETTINGS_KEY` is unset, which is the
+    # state every existing deployment is in: reads still resolve through the
+    # environment layer and writes of a *secret* refuse, naming the variable.
+    settings_deps = SettingsDeps(
+        store=SettingsStore(resolved_path, resolved_tracer),
+        secrets=build_secret_box(),
+        probe=HttpProviderProbe(),
+    )
     definition_invalidation = EntityDefinitionRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
     )
@@ -2919,6 +2947,7 @@ def build_application(
         corpus=corpus,
         blob_store=blob_store,
         topics=topics,
+        settings=settings_deps,
         definitions=definition_invalidation,
         definition_readers=definition_reader,
         ontology=ontology,

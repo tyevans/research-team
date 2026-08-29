@@ -135,6 +135,12 @@ def main() -> None:
             # shipped through three times before this test existed: routes
             # added to `create_app` and not to this call answer 503 in the
             # running server while every test that builds its own app passes.
+            # The settings and provider surface. Built in composition rather
+            # than here for the reason every neighbour is: a dependency
+            # assembled at this call site is one no test ever sees assembled,
+            # which is the gap `corpus` and `topic_repository` each shipped
+            # through. `test_web_entrypoint.py` is what demands this line.
+            settings=application.settings,
             catalog=application.catalog,
             # A getter, not the attribute: `catalog_features` is `None` until
             # the lifespan above has run `start()`, and this call happens

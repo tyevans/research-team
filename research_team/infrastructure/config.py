@@ -1,76 +1,192 @@
-"""Everything the process reads from its environment, in one place.
+"""Everything the process reads from its configuration, in one place.
 
 Kept at the edge on purpose: no layer below this one asks the environment
 anything, so tests configure the application by passing arguments rather than
 by setting variables.
+
+**These are readers over a resolved value now, not over `os.getenv`.** Each
+function below asks `domain/settings.py` for its declaration and gets back the
+environment variable's name, the built-in default, the type and the validation
+in one object -- which is what makes a settings UI possible without a second,
+hand-written description of the same forty knobs, and what
+`test_every_environment_variable_config_reads_is_declared_or_excused` checks by
+introspection over this module's own source.
+
+What has *not* changed is which value wins here: this module resolves the
+environment, then the built-in default, and nothing else. It has no scope to
+resolve for -- a process has no project and no user -- so it reads the bottom
+two layers of the chain and no more. `application/settings.SettingsResolver` is
+the same walk with project, user and tenant on top of it, and the two agree
+because the environment layer and the defaults are read from the one registry.
+
+Three behaviours the move standardised, all of them previously spelled three
+different ways in this file: an empty variable now reads as unset everywhere
+(it already did in most readers), a boolean accepts exactly one set of words,
+and an enum is lowercased and validated against its declared choices.
 """
 
 import os
 from pathlib import Path
 
-DEFAULT_MODEL = "qwen3.6-27b-mtp"
-DEFAULT_BASE_URL = "http://localhost:8080/v1/"
-DEFAULT_API_KEY = "not-needed"
+from research_team.domain.settings import BY_KEY, SettingType
 
-CONTEXT_MODES = ("full", "elide", "compact", "delegate")
-DEFAULT_CONTEXT_MODE = "full"
 
-DEFAULT_CONTEXT_TRIGGER_TOKENS = 120_000
-DEFAULT_CONTEXT_KEEP_MESSAGES = 20
-DEFAULT_CONTEXT_KEEP_RESULTS = 6
-DEFAULT_CONTEXT_CLEAR_OVER_CHARS = 2_000
+def _value(key: str) -> object | None:
+    """The environment's answer for `key`, or the built-in default.
 
-DEFAULT_OTLP_ENDPOINT = "http://localhost:4318/v1/traces"
-DEFAULT_SERVICE_NAME = "research-team"
+    Empty reads as unset rather than as an empty string. That is what
+    `AGENT_TRACING=` has always meant, and what `AGENT_SEARXNG_URL="   "` has
+    always meant, and it is now what every variable means -- an empty value in
+    a `.env` file is a person clearing a setting, not asking for the empty
+    string.
+    """
+    spec = BY_KEY[key]
+    raw = os.getenv(spec.env_var)
+    if raw is None or not raw.strip():
+        return spec.default
+    return spec.parse(raw)
 
-DEFAULT_SEARXNG_RESULTS = 5
 
-DEFAULT_GRAPH_STORE = "memory"
+def _text(key: str) -> str:
+    """A setting that always has a value. `str()` rather than a cast because
+    the declaration is what guarantees the default is not None, and a reader
+    that quietly returned `"None"` would be worse than a type error."""
+    value = _value(key)
+    if value is None:
+        raise ValueError(f"{BY_KEY[key].env_var} has no value and no default")
+    return str(value)
+
+
+def _optional(key: str) -> str | None:
+    """A setting whose absence is a meaningful state -- no search tool, no
+    vision, no transcriber."""
+    value = _value(key)
+    return None if value is None else str(value)
+
+
+def _int(key: str) -> int:
+    return int(_value(key))  # type: ignore[arg-type]
+
+
+def _float(key: str) -> float:
+    return float(_value(key))  # type: ignore[arg-type]
+
+
+def _flag(key: str) -> bool:
+    return bool(_value(key))
+
+
+def _builtin(key: str) -> object:
+    """The declared default, ignoring the environment entirely.
+
+    The module constants below are *defaults*, not resolved values, and the
+    distinction bites at import time: reading them through `_value` would make
+    `DEFAULT_MODEL` become whatever `AGENT_MODEL` happened to say in the
+    process that imported this module. `redstring_adapter` takes
+    `DEFAULT_CONSOLIDATION_BATCH` as a fallback and `test_embedding_config`
+    asserts `embedding_model() != model_name()` against `DEFAULT_EMBEDDING_MODEL`
+    -- both would have been quietly wrong, and neither would have failed on a
+    machine with a clean environment.
+    """
+    value = BY_KEY[key].default
+    if value is None:
+        raise ValueError(f"{BY_KEY[key].env_var} has no built-in default")
+    return value
+
+
+def _builtin_text(key: str) -> str:
+    return str(_builtin(key))
+
+
+def _builtin_int(key: str) -> int:
+    return int(_builtin(key))  # type: ignore[arg-type]
+
+
+def _builtin_float(key: str) -> float:
+    return float(_builtin(key))  # type: ignore[arg-type]
+
+
+def _choices(key: str) -> tuple[str, ...]:
+    """A declared enum's options, for the module constants below.
+
+    Derived rather than duplicated: `CONTEXT_MODES` and `VECTOR_STORES` are
+    parametrised over by tests and named in error messages, and a second copy
+    of either would be free to drift from the one the validation uses.
+    """
+    spec = BY_KEY[key]
+    assert spec.type is SettingType.ENUM
+    return spec.choices
+
+
+# Every constant below is read out of the registry rather than written
+# twice. They are kept as module names because other modules import them
+# (`redstring_adapter` takes `DEFAULT_CONSOLIDATION_BATCH`, `composition`
+# takes the reconcile interval) and because the tests that pin the documented
+# numbers read them from here -- but the *value* now has exactly one home, so
+# a default changed in `domain/settings.py` cannot leave a stale twin behind.
+DEFAULT_MODEL = _builtin_text("model")
+DEFAULT_BASE_URL = _builtin_text("base_url")
+DEFAULT_API_KEY = _builtin_text("api_key")
+
+CONTEXT_MODES = _choices("context")
+DEFAULT_CONTEXT_MODE = _builtin_text("context")
+
+DEFAULT_CONTEXT_TRIGGER_TOKENS = _builtin_int("context_trigger")
+DEFAULT_CONTEXT_KEEP_MESSAGES = _builtin_int("context_keep_messages")
+DEFAULT_CONTEXT_KEEP_RESULTS = _builtin_int("context_keep_results")
+DEFAULT_CONTEXT_CLEAR_OVER_CHARS = _builtin_int("context_clear_over")
+
+DEFAULT_OTLP_ENDPOINT = _builtin_text("otlp_endpoint")
+DEFAULT_SERVICE_NAME = _builtin_text("service_name")
+
+DEFAULT_SEARXNG_RESULTS = _builtin_int("searxng_results")
+
+DEFAULT_GRAPH_STORE = _builtin_text("graph_store")
 #: `research_corpus`, not `auto`. See `knowledge_domain` for the trade, and
 #: the schema's own YAML for the measurement that motivated it.
-DEFAULT_KNOWLEDGE_DOMAIN = "research_corpus"
+DEFAULT_KNOWLEDGE_DOMAIN = _builtin_text("knowledge_domain")
 
 #: Chosen together, and neither means much alone -- see `extraction_chunk_size`
 #: for why the pair is the unit. 8 matches the slot count of the local server
 #: `DEFAULT_BASE_URL` points at; 2000 is below redstring's own 3000 default,
 #: which is affordable only because the calls now overlap.
-DEFAULT_EXTRACTION_CONCURRENCY = 8
-DEFAULT_EXTRACTION_CHUNK_SIZE = 2_000
+DEFAULT_EXTRACTION_CONCURRENCY = _builtin_int("extraction_concurrency")
+DEFAULT_EXTRACTION_CHUNK_SIZE = _builtin_int("extraction_chunk_size")
 
 #: How many extracted entities are decided together in one consolidation pass.
 #: 25 rather than "all of them" -- see `consolidation_batch_size` for the two
 #: costs that grow with it and why neither has been measured to a limit yet.
-DEFAULT_CONSOLIDATION_BATCH = 25
+DEFAULT_CONSOLIDATION_BATCH = _builtin_int("consolidation_batch")
 
 #: How many catalog candidates a blurb or art sweep has in flight at once.
 #: 1, not because concurrency is unimplemented but because it was measured
 #: to buy 1.1% on this endpoint. See `catalog_sweep_concurrency` for the curve.
-DEFAULT_CATALOG_SWEEP_CONCURRENCY = 1
+DEFAULT_CATALOG_SWEEP_CONCURRENCY = _builtin_int("catalog_sweep_concurrency")
 
-VECTOR_STORES = ("none", "memory", "pgvector")
+VECTOR_STORES = _choices("vector_store")
 #: On, since the third scoring feature is what lets consolidation merge a
 #: cross-document duplicate on evidence rather than on an overridden threshold.
 #: See `vector_store` for what it costs and how it degrades.
-DEFAULT_VECTOR_STORE = "memory"
+DEFAULT_VECTOR_STORE = _builtin_text("vector_store")
 
 #: Named alongside `postgres` even though `build_chunk_store` refuses that
 #: branch -- see its docstring -- so an operator who sets it sees a real,
 #: unwired setting rather than a typo.
-CHUNK_STORES = ("none", "memory", "postgres")
+CHUNK_STORES = _choices("chunk_store")
 #: On by default, because `memory` here is the graph's `memory`: chunks are
 #: rebuilt from `DocumentChunked` at project open, so the cost of the default
 #: is a fold proportional to corpus size, paid once per open, not lost data.
-DEFAULT_CHUNK_STORE = "memory"
+DEFAULT_CHUNK_STORE = _builtin_text("chunk_store")
 
 #: A widely-served local embedding model, and the width it returns. Defaults
 #: exist for these two *because* the store now defaults to on: a default-on
 #: feature whose required variables have no defaults does not start. Both are
 #: overridden together or not at all -- see `embedding_dimension`.
-DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
-DEFAULT_EMBEDDING_DIMENSION = 768
+DEFAULT_EMBEDDING_MODEL = _builtin_text("embedding_model")
+DEFAULT_EMBEDDING_DIMENSION = _builtin_int("embedding_dimension")
 
-DEFAULT_NEO4J_URI = "bolt://localhost:7687"
-DEFAULT_NEO4J_USER = "neo4j"
+DEFAULT_NEO4J_URI = _builtin_text("neo4j_uri")
+DEFAULT_NEO4J_USER = _builtin_text("neo4j_user")
 
 #: The `Budget` handed to `readeverything.represent`, deliberately equal to
 #: `MAX_DOCUMENT_CHARS` in `application/knowledge.py` -- derived text lands in
@@ -82,15 +198,15 @@ DEFAULT_NEO4J_USER = "neo4j"
 #: The two constants must be changed together -- drift makes a transcript
 #: truncate at a different length than a document, which is visible rather
 #: than silent, but still a bug.
-DEFAULT_PERCEPTION_MAX_CHARS = 500_000
+DEFAULT_PERCEPTION_MAX_CHARS = _builtin_int("perception_max_chars")
 
 #: Seconds between periodic reconciliation sweeps -- see
 #: `media_reconcile_interval_seconds` below for why this number.
-DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS = 300.0
+DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS = _builtin_float("media_reconcile_interval")
 
 #: How old an unreferenced blob must be before the sweep may delete it -- see
 #: `blob_sweep_grace_seconds` below for why a whole day.
-DEFAULT_BLOB_SWEEP_GRACE_SECONDS = 86_400.0
+DEFAULT_BLOB_SWEEP_GRACE_SECONDS = _builtin_float("blob_sweep_grace")
 
 
 def default_db_path() -> str:
@@ -143,12 +259,7 @@ def interaction_log_enabled() -> bool:
     about. That is the most sensitive field in the system and this variable is
     the answer to it.
     """
-    return os.getenv("AGENT_INTERACTION_LOG", "on").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
+    return _flag("interaction_log")
 
 
 def blob_root() -> Path:
@@ -175,15 +286,15 @@ def blob_root() -> Path:
 
 
 def model_name() -> str:
-    return os.getenv("AGENT_MODEL", DEFAULT_MODEL)
+    return _text("model")
 
 
 def base_url() -> str:
-    return os.getenv("AGENT_BASE_URL", DEFAULT_BASE_URL)
+    return _text("base_url")
 
 
 def api_key() -> str:
-    return os.getenv("AGENT_API_KEY", DEFAULT_API_KEY)
+    return _text("api_key")
 
 
 def web_host() -> str:
@@ -201,12 +312,7 @@ def context_mode() -> str:
     to the model, and mixing them within a process would make "why did this
     turn see that?" unanswerable.
     """
-    configured = os.getenv("AGENT_CONTEXT", DEFAULT_CONTEXT_MODE).strip().lower()
-    if configured not in CONTEXT_MODES:
-        raise ValueError(
-            f"AGENT_CONTEXT={configured!r} is not one of {', '.join(CONTEXT_MODES)}"
-        )
-    return configured
+    return _text("context")
 
 
 def context_trigger_tokens() -> int:
@@ -215,7 +321,7 @@ def context_trigger_tokens() -> int:
     Approximate tokens, not characters: the threshold has to mean something
     against a model's window, and every published trigger is quoted in tokens.
     """
-    return int(os.getenv("AGENT_CONTEXT_TRIGGER", DEFAULT_CONTEXT_TRIGGER_TOKENS))
+    return _int("context_trigger")
 
 
 def context_keep_messages() -> int:
@@ -227,7 +333,7 @@ def context_keep_messages() -> int:
     default, and a thin tail is where summarization does most of its damage --
     recent detail is what the agent is actively using.
     """
-    return int(os.getenv("AGENT_CONTEXT_KEEP_MESSAGES", DEFAULT_CONTEXT_KEEP_MESSAGES))
+    return _int("context_keep_messages")
 
 
 def context_keep_results() -> int:
@@ -237,7 +343,7 @@ def context_keep_results() -> int:
     swing with the shape of the conversation; Anthropic's tool-result clearing
     counts the same way.
     """
-    return int(os.getenv("AGENT_CONTEXT_KEEP_RESULTS", DEFAULT_CONTEXT_KEEP_RESULTS))
+    return _int("context_keep_results")
 
 
 def context_clear_over_chars() -> int:
@@ -246,7 +352,7 @@ def context_clear_over_chars() -> int:
     Not a truncation length -- a result over this size is replaced outright,
     because a partial result reads as a whole one.
     """
-    return int(os.getenv("AGENT_CONTEXT_CLEAR_OVER", DEFAULT_CONTEXT_CLEAR_OVER_CHARS))
+    return _int("context_clear_over")
 
 
 def tracing_enabled() -> bool:
@@ -255,17 +361,17 @@ def tracing_enabled() -> bool:
     Opt-in rather than opt-out because tracing is only useful if something is
     collecting it, and a developer running this locally has nothing listening.
     """
-    return os.getenv("AGENT_TRACING", "").strip().lower() in {"1", "true", "yes", "on"}
+    return _flag("tracing")
 
 
 def otlp_endpoint() -> str:
     """Where traces are sent. The OTLP/HTTP default collector address."""
-    return os.getenv("AGENT_OTLP_ENDPOINT", DEFAULT_OTLP_ENDPOINT)
+    return _text("otlp_endpoint")
 
 
 def tracing_service_name() -> str:
     """What this process calls itself in a trace."""
-    return os.getenv("AGENT_SERVICE_NAME", DEFAULT_SERVICE_NAME)
+    return _text("service_name")
 
 
 def searxng_url() -> str | None:
@@ -274,18 +380,18 @@ def searxng_url() -> str | None:
     Unset is the default and means the agent gets no network tool at all --
     which is what keeps the sandbox claim true for anyone who has not opted in.
     """
-    configured = os.getenv("AGENT_SEARXNG_URL", "").strip()
-    return configured.rstrip("/") or None
+    configured = _optional("searxng_url")
+    return configured.rstrip("/") if configured else None
 
 
 def searxng_results() -> int:
     """How many results reach the model. Capped because context is the cost."""
-    return int(os.getenv("AGENT_SEARXNG_RESULTS", str(DEFAULT_SEARXNG_RESULTS)))
+    return _int("searxng_results")
 
 
 def graph_store() -> str:
     """What backs the knowledge graph. `memory` needs no server."""
-    return os.getenv("AGENT_GRAPH_STORE", DEFAULT_GRAPH_STORE)
+    return _text("graph_store")
 
 
 def knowledge_domain() -> str:
@@ -303,7 +409,7 @@ def knowledge_domain() -> str:
     `encyclopedia_wiki` -- the schema whose `date` entity type is half of the
     bug. Set `AGENT_KNOWLEDGE_DOMAIN=auto` to get the old behaviour back.
     """
-    return os.getenv("AGENT_KNOWLEDGE_DOMAIN", DEFAULT_KNOWLEDGE_DOMAIN)
+    return _text("knowledge_domain")
 
 
 def extraction_concurrency() -> int:
@@ -331,7 +437,7 @@ def extraction_concurrency() -> int:
     is `min(concurrency, chunks in the batch)`, and the chunk count is not
     `len(text) / chunk_size` -- overlap makes it larger.
     """
-    return int(os.getenv("AGENT_EXTRACTION_CONCURRENCY", str(DEFAULT_EXTRACTION_CONCURRENCY)))
+    return _int("extraction_concurrency")
 
 
 def consolidation_batch_size() -> int:
@@ -365,7 +471,7 @@ def consolidation_batch_size() -> int:
     raised is not wall clock but merges-per-pass -- if it falls, phase 1's
     staleness window is what took them.
     """
-    return int(os.getenv("AGENT_CONSOLIDATION_BATCH", str(DEFAULT_CONSOLIDATION_BATCH)))
+    return _int("consolidation_batch")
 
 
 def catalog_sweep_concurrency() -> int:
@@ -434,9 +540,7 @@ def catalog_sweep_concurrency() -> int:
     call and a slow call are indistinguishable from the client, which is why
     the probe columns are part of this table rather than a note beside it.
     """
-    return int(
-        os.getenv("AGENT_CATALOG_SWEEP_CONCURRENCY", str(DEFAULT_CATALOG_SWEEP_CONCURRENCY))
-    )
+    return _int("catalog_sweep_concurrency")
 
 
 def extraction_chunk_size() -> int:
@@ -482,7 +586,7 @@ def extraction_chunk_size() -> int:
     no longer means "proportionally more round trips". The direction to watch
     is unchanged; the slope is not.
     """
-    return int(os.getenv("AGENT_EXTRACTION_CHUNK_SIZE", str(DEFAULT_EXTRACTION_CHUNK_SIZE)))
+    return _int("extraction_chunk_size")
 
 
 def extraction_thinking() -> bool:
@@ -507,12 +611,7 @@ def extraction_thinking() -> bool:
     Only extraction is affected. Whether the conversational agent should
     reason is a separate question that nobody has measured.
     """
-    return os.getenv("AGENT_EXTRACTION_THINKING", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    return _flag("extraction_thinking")
 
 
 def vector_store() -> str:
@@ -571,12 +670,7 @@ def vector_store() -> str:
     `build_graph_store`'s reason: a deployment that asked for pgvector and
     silently got none consolidates worse than it asked to and says nothing.
     """
-    configured = os.getenv("AGENT_VECTOR_STORE", DEFAULT_VECTOR_STORE).strip().lower()
-    if configured not in VECTOR_STORES:
-        raise ValueError(
-            f"AGENT_VECTOR_STORE={configured!r} is not one of {', '.join(VECTOR_STORES)}"
-        )
-    return configured
+    return _text("vector_store")
 
 
 def chunk_store() -> str:
@@ -593,12 +687,7 @@ def chunk_store() -> str:
     so an operator who sets it is told it is a real, unwired setting rather
     than a typo.
     """
-    configured = os.getenv("AGENT_CHUNK_STORE", DEFAULT_CHUNK_STORE).strip().lower()
-    if configured not in CHUNK_STORES:
-        raise ValueError(
-            f"AGENT_CHUNK_STORE={configured!r} is not one of {', '.join(CHUNK_STORES)}"
-        )
-    return configured
+    return _text("chunk_store")
 
 
 def curation_model() -> str:
@@ -618,7 +707,7 @@ def curation_model() -> str:
     faster, or on a different endpoint entirely sets `AGENT_CURATION_MODEL`
     and the two stop moving together.
     """
-    return os.getenv("AGENT_CURATION_MODEL", "").strip() or model_name()
+    return _optional("curation_model") or model_name()
 
 
 def embeddings_enabled() -> bool:
@@ -644,7 +733,7 @@ def embedding_model() -> str:
     `RedstringKnowledge._embedding_pair` exists rather than a promise that this
     name resolves.
     """
-    return os.getenv("AGENT_EMBEDDING_MODEL", "").strip() or DEFAULT_EMBEDDING_MODEL
+    return _text("embedding_model")
 
 
 def embedding_dimension() -> int:
@@ -665,8 +754,7 @@ def embedding_dimension() -> int:
     widened one -- two models' vectors are not comparable even at equal
     dimension, so a store holding both ranks on nonsense.
     """
-    configured = os.getenv("AGENT_EMBEDDING_DIMENSION", "").strip()
-    return int(configured) if configured else DEFAULT_EMBEDDING_DIMENSION
+    return _int("embedding_dimension")
 
 
 def embedding_base_url() -> str:
@@ -678,13 +766,12 @@ def embedding_base_url() -> str:
     entirely. Reusing `AGENT_BASE_URL` is the right default and would be a
     wrong requirement.
     """
-    configured = os.getenv("AGENT_EMBEDDING_BASE_URL", "").strip()
-    return configured or base_url()
+    return _optional("embedding_base_url") or base_url()
 
 
 def embedding_api_key() -> str:
     """The key for the embedding endpoint. Falls back to the shared one."""
-    return os.getenv("AGENT_EMBEDDING_API_KEY", "").strip() or api_key()
+    return _optional("embedding_api_key") or api_key()
 
 
 def pgvector_dsn() -> str:
@@ -694,14 +781,14 @@ def pgvector_dsn() -> str:
     against `postgres://localhost/postgres` either fails confusingly or
     connects to somebody's development database and writes to it.
     """
-    configured = os.getenv("AGENT_PGVECTOR_DSN", "").strip()
+    configured = _optional("pgvector_dsn")
     if not configured:
         raise ValueError("AGENT_PGVECTOR_DSN must be set when AGENT_VECTOR_STORE=pgvector")
     return configured
 
 
 def neo4j_uri() -> str:
-    return os.getenv("AGENT_NEO4J_URI", DEFAULT_NEO4J_URI)
+    return _text("neo4j_uri")
 
 
 def neo4j_auth() -> tuple[str, str]:
@@ -711,15 +798,15 @@ def neo4j_auth() -> tuple[str, str]:
     is one that either fails confusingly or, worse, connects to somebody's
     development server.
     """
-    password = os.getenv("AGENT_NEO4J_PASSWORD")
+    password = _optional("neo4j_password")
     if not password:
         raise ValueError("AGENT_NEO4J_PASSWORD must be set when AGENT_GRAPH_STORE=neo4j")
-    return os.getenv("AGENT_NEO4J_USER", DEFAULT_NEO4J_USER), password
+    return _text("neo4j_user"), password
 
 
 def neo4j_database() -> str | None:
     """Which database within the server. None means the server's default."""
-    return os.getenv("AGENT_NEO4J_DATABASE") or None
+    return _optional("neo4j_database")
 
 
 def transcriber_url() -> str | None:
@@ -730,7 +817,8 @@ def transcriber_url() -> str | None:
     degradation rather than an error, which is why this is a `None` and not a
     raise.
     """
-    return os.getenv("AGENT_TRANSCRIBER_URL", "").strip().rstrip("/") or None
+    configured = _optional("transcriber_url")
+    return configured.rstrip("/") if configured else None
 
 
 def transcriber_model() -> str:
@@ -744,7 +832,7 @@ def transcriber_model() -> str:
     the previous one's cache entries silently, and "silently" is the whole
     problem.
     """
-    configured = os.getenv("AGENT_TRANSCRIBER_MODEL", "").strip()
+    configured = _optional("transcriber_model")
     if not configured:
         raise ValueError("AGENT_TRANSCRIBER_MODEL must be set when AGENT_TRANSCRIBER_URL is")
     return configured
@@ -760,7 +848,7 @@ def vision_model() -> str | None:
     different models, and pointing this at one that cannot see images fails
     per-request rather than at startup.
     """
-    return os.getenv("AGENT_VISION_MODEL", "").strip() or None
+    return _optional("vision_model")
 
 
 def perception_max_chars() -> int:
@@ -771,8 +859,7 @@ def perception_max_chars() -> int:
     question, and the smaller of two answers would be the one that silently
     truncated a transcript.
     """
-    configured = os.getenv("AGENT_PERCEPTION_MAX_CHARS", "").strip()
-    return int(configured) if configured else DEFAULT_PERCEPTION_MAX_CHARS
+    return _int("perception_max_chars")
 
 
 def perception_root() -> Path:
@@ -803,8 +890,7 @@ def media_reconcile_interval_seconds() -> float:
     `Application` sleeps *between* sweeps rather than on a fixed schedule --
     so lowering this trades wasted reads for latency and nothing else.
     """
-    configured = os.getenv("AGENT_MEDIA_RECONCILE_INTERVAL", "").strip()
-    return float(configured) if configured else DEFAULT_MEDIA_RECONCILE_INTERVAL_SECONDS
+    return _float("media_reconcile_interval")
 
 
 def blob_sweep_grace_seconds() -> float:
@@ -837,5 +923,4 @@ def blob_sweep_grace_seconds() -> float:
     neither is impossible. This is the reason the sweep is operator-run and
     reports before it deletes rather than running on a timer.
     """
-    configured = os.getenv("AGENT_BLOB_SWEEP_GRACE", "").strip()
-    return float(configured) if configured else DEFAULT_BLOB_SWEEP_GRACE_SECONDS
+    return _float("blob_sweep_grace")
