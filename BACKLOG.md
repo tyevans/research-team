@@ -258,7 +258,13 @@ latter is real and nobody has needed to decide.
 appears, fix the pattern rather than adding to it** — at that point it is the
 codebase's convention whether anyone chose it or not.
 
-### B10. `Application.close()` can skip `detach_project`
+### B10. `Application.close()` can skip `detach_project` -- CLOSED 2026-08-29
+
+`Application.close` no longer runs its teardown as a straight run of
+`await`s. Every step runs whatever the ones before it did, and the failures
+are re-raised together as an `ExceptionGroup` with each one noting the step it
+came from, so a broken teardown is still loud -- it just no longer takes the
+Neo4j driver and every open graph store down with it.
 
 `research_team/composition.py`. `detach_project()` is the last statement after
 `turns.cancel_all()`, `summaries.stop()` and `service.close()`. If any of those
@@ -334,7 +340,14 @@ long-lived project makes every listing slower even if there is only one.
 
 Found in review of the corpus-layer work; the scan predates it.
 
-### B22. `self_review_separation` is called a harness invariant and bound like an option
+### B22. `self_review_separation` is called a harness invariant and bound like an option -- CLOSED 2026-08-29
+
+Moot: `research_team/application/checks.py` and the three presets this
+entry is about (`hybrid.py`, `ubd.py`, `addie.py`) were deleted with the
+workflow system (B147, 2026-08-27). Nothing here describes code that exists.
+Left in the file rather than deleted, with the rest of the closed entries,
+because the reasoning about self-screening pass rates is worth reading if the
+idea ever returns.
 
 `research_team/application/checks.py` describes it as an invariant -- a critic
 must not be the generator whose work it screens, because self-screening yields
@@ -367,7 +380,10 @@ costs anything" with numbers instead of argument. Deciding what to do about them
 — more bindings, or an engine-level assertion — is still entirely open, and the
 telemetry round deliberately did not touch it.
 
-### B38. Four `matrix_density` bindings still have no axes, so they still report
+### B38. Four `matrix_density` bindings still have no axes, so they still report -- CLOSED 2026-08-29
+
+Moot for B22's reason -- `stage_exit.course_matrices` and all five presets
+went with the workflow system (B147).
 
 `stage_exit.course_matrices` builds the matrix a `matrix_density` binding is
 about, from `rows` and `columns` filters on the binding. Only
@@ -401,7 +417,10 @@ with an override rate to match, which is the shape this entry asserts and could
 not previously demonstrate.** The numbers make the case; wiring the axes is
 still the open work and nothing about it was fixed.
 
-### B44. Check telemetry has no HTTP route and no browser view, deliberately
+### B44. Check telemetry has no HTTP route and no browser view, deliberately -- CLOSED 2026-08-29
+
+Moot for B22's reason. The `check_outcomes` table and the `/checks` REPL
+view it describes went with the workflow system (B147).
 
 `/checks` in the REPL is the only way to read the `check_outcomes` table.
 `create_app` gained no parameter and `tests/interfaces/test_web_entrypoint.py`
@@ -429,7 +448,9 @@ approvals are guards in `summarise`, not notes in a docstring, so any surface
 reading through that function inherits them. A surface that recomputed the
 statistics from rows would not.
 
-### B45. `test_advisory_findings_do_not_fail_the_condition` passes for the wrong reason
+### B45. `test_advisory_findings_do_not_fail_the_condition` passes for the wrong reason -- CLOSED 2026-08-29
+
+Moot: `tests/application/test_stage_runner.py` does not exist (B147).
 
 `tests/application/test_stage_runner.py:324` binds
 `Check(check="shared.orphan", params={"artifact_type": "Intent"})`.
@@ -458,7 +479,10 @@ Worth checking the neighbours at the same time: one wrong parameter spelling in
 a test file is rarely alone, and nothing fails when a check quietly stops
 running.
 
-### B46. No test drives a real gate through to a rendered `/checks` table
+### B46. No test drives a real gate through to a rendered `/checks` table -- CLOSED 2026-08-29
+
+Moot: neither `tests/application/test_stage_runner.py` nor
+`tests/infrastructure/test_check_telemetry.py` exists (B147).
 
 The path from a gate to a number is covered in three overlapping pieces and
 nowhere as a whole: `tests/application/test_stage_runner.py` proves both gate
@@ -1126,7 +1150,9 @@ has to change first, and it is a wider change than it looks: the positions are
 persisted in `TopicInvestigated.at_position` and in every acknowledgement's
 expiry, so redefining the scale invalidates both.
 
-### B36. Topic dispatch is web-only, and the REPL is a second composition site
+### B160. Topic dispatch is web-only, and the REPL is a second composition site
+
+_Renumbered from B36 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B36` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 `docs/design/topic-dispatch.md` §9 asks for a deliberate answer rather than a
 silent absence, so here it is: **dispatch is wired in `web.py` and not in
@@ -1885,7 +1911,23 @@ through `build_chunk_store`'s `"postgres"` branch, and give it the same
 `ensure_schema`-style startup check pgvector has, rather than discovering a
 dimension mismatch mid-write.
 
-### B74. `mark_stale` is read-modify-write, not `UPDATE ... SET stale = 1`
+### B74. `mark_stale` is read-modify-write, not `UPDATE ... SET stale = 1` -- CLOSED 2026-08-29
+
+Both instances are one statement now:
+`EntityDefinitionStore.mark_stale` and `OntologyStore.mark_stale_for_source`,
+the second of which was additionally fetching every class in the project to
+filter by source in Python and committing once per matching row.
+
+The cost is stated where the code is: neither goes through the repository any
+more, because `save` is an upsert of every column -- which *is* the
+read-modify-write -- so `updated_at`, `version + 1` and `deleted_at IS NULL`
+are now maintained by hand.
+
+**The lost update itself is not covered by a test and could not be made to
+be.** Two writers inside one call cannot be forced in this harness; the
+attempts are recorded in
+`test_staling_keeps_the_repository_bookkeeping_a_save_would_have_done`. What
+is tested is the bookkeeping and the source scoping.
 
 `EntityDefinitionStore.mark_stale` (`infrastructure/persistence/read_models.py`,
 Task 7) reads the row, flips the flag in Python, and writes it back — two
@@ -2087,7 +2129,9 @@ deleting one sidecar line erases a person from the graph without touching an
 event — and it is the only item on this list that becomes impossible the moment
 the first real transcript is ingested.
 
-### B54. The 122px hole cannot be reproduced, so nothing holds the keying
+### B161. The 122px hole cannot be reproduced, so nothing holds the keying
+
+_Renumbered from B54 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B54` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 `itemKey` in `frontend/src/presentation/tree/ProjectRows.tsx` records a real
 incident: when the projects query answered and every row shifted down by a
@@ -2506,7 +2550,9 @@ If it is ever picked up as a defect rather than an observation, the fix is on th
 observer side (size from the container's own measurement synchronously on the
 frame the layout changes), not on the test side.
 
-### B62. Which width wins on the drawer below 820 — CLOSED, measured 2026-08-14
+### B162. Which width wins on the drawer below 820 — CLOSED, measured 2026-08-14
+
+_Renumbered from B62 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B62` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 **A question, not a defect, and the distinction is the entry.** `Drawer.tsx:164`
 sets the panel's width three ways in Tailwind utilities — `w-[42vw]
@@ -2578,7 +2624,9 @@ itself. 800 is inside the media query, not on its edge, so `max-width: 820px`
 being the right number for this rule is still unmeasured — a different question
 from which rule wins inside it.
 
-### B63. Research content below 821 — CLOSED, on a corrected premise, 2026-08-14
+### B163. Research content below 821 — CLOSED, on a corrected premise, 2026-08-14
+
+_Renumbered from B63 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B63` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 **This entry was filed on a fact that was not true, and the correction is kept
 rather than the entry deleted, because a wrong premise that got corrected tells
@@ -2873,7 +2921,9 @@ the `Shell`/`100vh` fixture, rederive claim 2's `topRow` from the split's own
 height rather than from a literal 900, and re-prove claim 2 red. Small, and
 worth doing before anyone reads 486 as a measured floor.
 
-### B79. The Tree tab does not virtualize, and it is fine until the node cap moves
+### B164. The Tree tab does not virtualize, and it is fine until the node cap moves
+
+_Renumbered from B79 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B79` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 `frontend/src/presentation/research/EntityTree.tsx` (Task 2 of
 `docs/superpowers/plans/2026-08-15-entity-tree-view.md`) renders every entity
@@ -3314,7 +3364,18 @@ Found by a general dead-code survey during the workflow removal
 (`docs/reports/dead-code-survey.md`, item 7), and independently confirmed
 before filing. Unrelated to that removal.
 
-### B159. `embeddings_enabled()` is dead because its only call site open-codes it
+### B159. `embeddings_enabled()` is dead because its only call site open-codes it -- CLOSED 2026-08-29
+
+Deleted, which is the opposite of what this entry proposed, and the reason
+is in the call site it named. `build_application` reads `config.vector_store()`
+once into `vector_kind` and passes the value down -- there is a comment
+fourteen lines further on saying exactly that about `embedding_dimension` --
+and `embeddings_enabled()` reads the variable itself, so calling it there
+would have been the second read that comment forbids. A predicate its one
+caller cannot use is not a predicate.
+
+The half worth keeping is kept as a value rather than a function:
+`config.NO_VECTOR_STORE` is now the single spelling of the off state.
 
 **Not a deletion — the function is the right shape and the caller is wrong.**
 `infrastructure/config.py:641` reads, whole:
@@ -3352,7 +3413,9 @@ argued down during that survey's follow-up rather than acted on.
 
 ## Waiting on redstring
 
-### B58. `graph = 0.0` across a document boundary is absence of evidence read as disagreement
+### B165. `graph = 0.0` across a document boundary is absence of evidence read as disagreement
+
+_Renumbered from B58 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B58` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 Open as of redstring **0.9.1**. This is the ask that would let
 `redstring_adapter._WEIGHTS` go back to redstring's defaults, and it is worth
@@ -3512,7 +3575,9 @@ blocking half.
 Both measurements are executable in
 `tests/infrastructure/test_embedded_consolidation.py`.
 
-### B60. Every extraction fixture omits `description`, so the suite tests an adjudicator production never runs
+### B166. Every extraction fixture omits `description`, so the suite tests an adjudicator production never runs
+
+_Renumbered from B60 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B60` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 `Adjudicator._one_batch` puts `left_description` and `right_description` into
 every question, and `_render` prints them under each name. `ExtractedEntity`
@@ -3533,7 +3598,9 @@ Discovered while measuring B58; costs nothing today because the adjudicator's
 verdicts are faked in these tests, and would start mattering the moment
 anything asserts on prompt content.
 
-### B59. We send `nomic-embed-text` no task prefix, and adding the correct one is harmful
+### B167. We send `nomic-embed-text` no task prefix, and adding the correct one is harmful
+
+_Renumbered from B59 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B59` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 Open as of redstring **0.9.1**. Filed as a *decision*, not a defect to fix:
 the off-spec call is currently the safer one, and that needs writing down
@@ -3730,7 +3797,9 @@ around it here by passing an explicit `overlap_size`: that hides the defect on
 one call site and leaves it for `corpus_spans.py`, the extraction path, and
 every future caller.
 
-### B80. Binary document upload
+### B168. Binary document upload
+
+_Renumbered from B80 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B80` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 The corpus stores `text: str` and nothing in this tree decodes any binary
 document format — a person holding a PDF converts it to text before the
@@ -3739,7 +3808,9 @@ browser's Add dialog will take it. This is the same limitation `fetch` and
 incapability rather than adding a new one. Reasoning in
 `docs/superpowers/specs/2026-08-15-managing-documents-design.md`, Decision 1.
 
-### B81. Purging a dropped document's graph contributions
+### B169. Purging a dropped document's graph contributions
+
+_Renumbered from B81 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B81` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 A drop excludes the document from the corpus and keeps the record — but
 extraction has already written entities and edges that no longer know which
@@ -4023,7 +4094,21 @@ landing the derived row, the medium briefly offers "Transcribe" again. A second
 press there is answered `queued: false`, so the cost is a stale offer rather
 than duplicated work.
 
-### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build
+### B100. `build_application` still leaks the event store, blob store, and every projection runner on a partial build -- CLOSED 2026-08-29
+
+`build_application` is now a thin wrapper that unwinds a partial build.
+Three trade-offs, all stated in the code rather than only here: the body is
+not indented into a `try` (`composition.py` is contended, and a whole-file
+conflict for a forty-line fix is not worth it); the resources are read out of
+the raising frame's locals against a name list rather than appended to a
+registry at two dozen construction sites; and with a loop already running the
+teardown is **scheduled, not awaited**, because `build_application` is
+synchronous and has no `await` on its raise path -- so what is guaranteed is
+that the resources close, not when.
+
+This entry's observation about B98's test still stands and is still fine:
+that test asserts an ordering, which is a different claim.
+`test_a_partial_build_closes_what_it_already_opened` now sits beside it.
 
 `research_team/composition.py`. The batch-1 review's B98 fixed the specific
 leak it found — the media `httpx.AsyncClient` is now built last, so a raise
@@ -4176,7 +4261,9 @@ needs this join — B107's absent consumers would be the first callers — but
 whichever one is built first should not assume it can get exact interleaving
 across the two stores; it can't, structurally.
 
-### B110. `select(id, source)` and `EntityTreePane`'s emitter are plumbing with no caller
+### B170. `select(id, source)` and `EntityTreePane`'s emitter are plumbing with no caller
+
+_Renumbered from B110 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B110` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 **Closed 2026-08-29, by wiring rather than by deleting.** Both call sites this
 entry names now pass their own word: `GraphPane.pick` -- a result chosen out of
@@ -4380,7 +4467,22 @@ payload` enough -- the learner projection announces what it dropped as
 Nothing to fix here; this is a checklist item for whoever adds the next route
 that returns authored content.
 
-### B116. Ten backlog ids are already duplicated, and one commit message says otherwise
+### B116. Ten backlog ids are already duplicated, and one commit message says otherwise -- CLOSED 2026-08-29
+
+There were **fifteen**, not ten. Beyond the ten enumerated here: B110,
+B122, B153, B154 and B155. The three the scouting pass found (B122, B153,
+B154) plus two more this one did.
+
+Every later duplicate is renumbered to B160-B174 and carries a line saying
+what it used to be. The earlier entry keeps the id in each pair, because an
+older commit message is likelier to be citing the older entry -- and a `git
+log` search for any of the fifteen still has two possible answers and always
+will. What changed is that this file no longer adds to them.
+
+The check is `tests/test_backlog_ids.py`, not a script: this repository has no
+`scripts/` directory and pytest is already a gate. It carries a second test
+asserting the file has entries at all, because the first one passes over an
+empty list exactly as it passes over a clean backlog.
 
 Ten ids appear **twice each**, always with two unrelated subjects: B36, B54,
 B58, B59, B60, B62, B63, B79, B80, B81. Found 2026-08-18 while renumbering the
@@ -4638,7 +4740,9 @@ Worth knowing before choosing: this document's design spec was wrong about
 this case twice in one day, in both directions, and each reading took ten
 seconds to check against the adapter. Check before arguing.
 
-### B122. `AGENT_CONSOLIDATION_BATCH` is a chosen number, not a measured one
+### B171. `AGENT_CONSOLIDATION_BATCH` is a chosen number, not a measured one
+
+_Renumbered from B122 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B122` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 Consolidation now decides entities in batches of 25 (`consolidation_batch_size`)
 rather than one at a time, which collapses one adjudicator round trip per
@@ -5222,7 +5326,25 @@ which is a confusion waiting to happen on the one surface whose job is
 clarity. And `by_decision` has only ever held `approve`, so the rejection path
 of that chart has never rendered with data in it.
 
-### B153. `/api/projects/{id}/workers` may have no callers left
+### B172. `/api/projects/{id}/workers` may have no callers left -- CLOSED 2026-08-29
+
+Confirmed, and deleted. The console reaches only the cross-project
+`/api/workers`: `HttpWorkerRepository` has one method, and `WorkerRepository`
+in `application/ports/repositories.ts` declares one, whose docstring says
+asking per project would be O(projects) requests on every page load. There is
+no `on` to call.
+
+`WorkerRoster.on` stays -- `everywhere()` folds it per active project, so the
+method is live even though the route was not. Three of the route's four tests
+went with it; the fourth is re-pointed at `/api/workers`, because its claim is
+about the fold and not the URL.
+
+The two other uncalled routes this entry's sibling names -- `POST
+/api/corpus/rebuild` and `POST /api/projects/{project_id}/sources/reindex` --
+are deliberately left. Both are plausibly operator surfaces, and B153's own
+framing was "a survey, not a deletion".
+
+_Renumbered from B153 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B153` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 The console's last frontend consumer went with the project-page roster
 (2026-08-27) -- `WorkerRepository.on` is deleted and only `everywhere()`
@@ -5235,7 +5357,9 @@ check `tests/interfaces/` for what drives it, and decide. Filed rather than
 guessed at, because deleting a route on the strength of one client's disuse is
 how a public surface disappears.
 
-### B154. `course.css` dresses a float on a research tab, and its name says otherwise
+### B173. `course.css` dresses a float on a research tab, and its name says otherwise
+
+_Renumbered from B154 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B154` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 After this plan the file dresses `AutonomyPanel` and `ExtractionPane`, and
 `ExtractionPane` moved to `presentation/research/` as a float on the graph
@@ -5250,7 +5374,9 @@ into a placement change would make the diff harder to review for the thing the
 change is actually about. Left as a header manifest already down to two
 families, which is the shape a future sweep would start from.
 
-### B155. `font-medium`, `font-semibold` and `font-normal` generate no rule, at 29 sites
+### B174. `font-medium`, `font-semibold` and `font-normal` generate no rule, at 29 sites
+
+_Renumbered from B155 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B155` still has two possible answers and always will -- what changed is that this file no longer adds to them._
 
 **Done, in the light-mode commit, which is where the entry said it belonged.**
 `theme.css` now declares three weights -- 400, 500, 600, one for each the
