@@ -1217,9 +1217,11 @@ has to change first, and it is a wider change than it looks: the positions are
 persisted in `TopicInvestigated.at_position` and in every acknowledgement's
 expiry, so redefining the scale invalidates both.
 
-### B160. Topic dispatch is web-only, and the REPL is a second composition site
+### B177. Topic dispatch is web-only, and the REPL is a second composition site
 
 _Renumbered from B36 on 2026-08-29 (B116). It was the second entry to claim that id; the first keeps it, because an older commit message is likelier to be citing the older entry. A `git log` search for `B36` still has two possible answers and always will -- what changed is that this file no longer adds to them._
+
+_It was briefly B160 on this branch, and never on `main`: #329 filed a real B160 while the renumbering was in review, and `tests/test_backlog_ids.py` failed on the collision in CI. Recorded because it is the check earning its keep on its first day -- a renumbering pass is exactly the thing that collides with concurrent work, and the id it collided with was one this pass had just freed._
 
 `docs/design/topic-dispatch.md` §9 asks for a deliberate answer rather than a
 silent absence, so here it is: **dispatch is wired in `web.py` and not in
