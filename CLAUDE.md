@@ -670,14 +670,42 @@ by construction. The failure arrives where the author is, before any merge.
    copy -- every aggregate type is routed or deliberately not, every checkpoint
    marker is named in a prompt (`CHECKPOINT_MARKERS`). New members fail until
    somebody classifies them.
-3. **Make the branches conflict**, when nothing can be derived. Force the
-   contested value through one line every filing branch must rewrite:
-   `BACKLOG.md`'s `<!-- next id: N -->`. Two branches rewriting one line to
-   different values is a conflict git cannot auto-resolve, so the check runs
-   against the *merge*, in front of a person, before `main` is red. The cost is
-   real and deliberate -- guaranteed friction on every concurrent branch, about
-   a minute each -- and it is paid by the branch that is merging rather than by
-   everybody whose PR the red `main` blocks.
+3. **Make the branches write *different* things on one line**, when nothing can
+   be derived. One line every filing branch rewrites is not enough on its own,
+   and this is the entry's own mistake, made and found the same day: `<!-- next
+   id: N -->` shipped as a counter, and a counter is a value both branches
+   *read the same* and therefore both **write the same**. Measured on
+   2026-08-29 -- #345 and #340 each took 182, each wrote `next id: 183`, git
+   merged two identical lines without a murmur, and the duplicate surfaced from
+   `test_no_two_backlog_entries_share_an_id` on `main`. A counter narrows the
+   window to branches that overlap; it does not close it, and the case it
+   fails is the concurrent one it was written for.
+
+   What conflicts is a line that carries something **only that branch can
+   write**. The marker is now `<!-- next id: N; B<n> claimed by: <slug> -->`,
+   where the slug is the filing entry's own heading: two branches filing two
+   different entries cannot produce the same line. Simulated on 2026-08-29 with
+   two branches off one base, each filing into a different section of the file
+   as #325 and #328 did -- **counter-only merged clean with two `B183` headings
+   in the result; counter-plus-claim conflicted, on merge and on rebase alike.**
+   The cost is real and deliberate -- guaranteed friction on every concurrent
+   branch, about a minute each -- and it is paid by the branch that is merging
+   rather than by everybody whose PR the red `main` blocks.
+
+   The general form worth carrying to the next instance: **a shared allocator
+   read is not a conflict surface.** Ask what the two branches would each write
+   there. If the answer is a function of what they both read, git will merge it.
+
+   The honest residual is written up as B185: a conflict a person never reads.
+   `-X ours` and `-X theirs` were then measured, and the fallback holds -- both
+   entries land whatever the marker says, so the uniqueness test is red on the
+   resolving branch rather than on `main`. What that measurement also killed is
+   a plausible-sounding claim: keeping the *other* side's marker was expected to
+   be caught by the slug check, and it is not, because after the merge both
+   headings are present and either slug matches one. The slug's whole job is to
+   make the line conflict; it is not a second net behind that. `rerere` is still
+   unmeasured, and it is the one that can resolve the line with no conflict
+   reported at all.
 
 **What does not work, and reads as though it does:** a test that detects the
 collision after both sides exist. `test_no_two_backlog_entries_share_an_id` is
