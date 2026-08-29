@@ -12,3 +12,11 @@ package-lock.json
 # which is how the frontend chain went a whole session without being run end to
 # end. Ignoring the path is cheaper than rewriting files nobody authored.
 .claude/tackline
+
+# Real authored lesson files, lifted verbatim out of the event log for
+# `slides.test.ts` to segment. Formatting them defeats the point of checking
+# them in: the segmentation rule is fitted to the shape a `lesson-drafter`
+# actually writes, and a prettier pass rewraps prose and normalises emphasis --
+# so the fixture becomes a document nobody authored, which is the failure
+# CLAUDE.md's "checkpoints over model output" section is about.
+src/domain/lesson/fixtures
