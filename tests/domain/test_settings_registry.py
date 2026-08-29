@@ -205,6 +205,32 @@ def test_the_scopes_a_deployment_setting_offers_exclude_a_project():
     assert Scope.PROJECT in BY_KEY["model"].scopes
 
 
+def _key_helpers(tree: ast.Module) -> set[str]:
+    """The reader helpers, from the module rather than from a list here.
+
+    This used to be eleven names written out, and that is the one
+    hand-maintained list in this file load-bearing enough to bite: a twelfth
+    helper added to `config.py` would not be scanned, so every key requested
+    through it would escape `test_every_key_config_asks_for_is_declared`
+    silently -- the test would keep passing on the eleven it still knew about,
+    which is exactly the shape CLAUDE.md's "a checkpoint that matches anything
+    cannot tell a phase that worked from one that stopped" warns about.
+
+    The signature is the definition: a helper is a module-level private
+    function whose first parameter is `key`. That is what makes `_text("model")`
+    a registry lookup rather than an ordinary call, so deriving from it means a
+    new helper is scanned the moment it is written.
+    """
+    found = set()
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("_"):
+            continue
+        args = node.args.posonlyargs + node.args.args
+        if args and args[0].arg == "key":
+            found.add(node.name)
+    return found
+
+
 def _keys_requested(path: Path) -> set[str]:
     """Every registry key `config.py` asks for, from its syntax tree.
 
@@ -215,8 +241,7 @@ def _keys_requested(path: Path) -> set[str]:
     setting nobody exercises in the suite.
     """
     tree = ast.parse(path.read_text())
-    helpers = {"_value", "_text", "_optional", "_int", "_float", "_flag", "_choices"}
-    helpers |= {"_builtin", "_builtin_text", "_builtin_int", "_builtin_float"}
+    helpers = _key_helpers(tree)
     requested: set[str] = set()
     for node in ast.walk(tree):
         if (
@@ -234,9 +259,20 @@ def _keys_requested(path: Path) -> set[str]:
 KEYS_REQUESTED = sorted(_keys_requested(PACKAGE / "infrastructure" / "config.py"))
 
 
+KEY_HELPERS = sorted(
+    _key_helpers(ast.parse((PACKAGE / "infrastructure" / "config.py").read_text()))
+)
+
+
 def test_the_key_scan_found_the_readers_it_is_supposed_to_guard():
-    """Same argument as the scan above: zero keys would pass silently."""
+    """Same argument as the scan above: zero keys would pass silently.
+
+    Both floors, because the scan can now come up empty two ways -- no keys, or
+    no helpers to find them through -- and the second is the quieter one.
+    """
     assert len(KEYS_REQUESTED) >= 30, KEYS_REQUESTED
+    assert len(KEY_HELPERS) >= 8, KEY_HELPERS
+    assert "_text" in KEY_HELPERS
 
 
 @pytest.mark.parametrize("key", KEYS_REQUESTED)
