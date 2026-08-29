@@ -366,9 +366,14 @@ def authoring_research_rounds() -> int:
     """How many model calls a parent authoring turn may make before its
     reading tools are withdrawn.
 
-    Separate from every `AGENT_CONTEXT_*` knob above, and the separation is the
-    point: those bound what a *turn* re-sends, and the failure this bounds is
-    inside one turn, where they never run. See
+    Separate from the context-management knobs above, and the separation is
+    the point: those bound what a *turn* re-sends, and the failure this bounds
+    is inside one turn, where they never run. (Written as prose rather than as
+    the variable-name glob it wants to be, because
+    `test_every_environment_variable_config_reads_is_declared_or_excused`
+    scans this module's source for literals and reads a glob as an undeclared
+    setting -- which it did, and the failure message is clear enough that the
+    test earns the small awkwardness.) See
     `infrastructure/agent/research_budget.py` for the three live runs that
     fixed the default at 6, and for the log-derived number that preceded it and
     was measured to do nothing.
