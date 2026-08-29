@@ -46,6 +46,53 @@ the console shows an empty project list with a first-run prompt. There is
 deliberately no separate "provision a user" step, so a new account cannot
 arrive in a state an existing account never reaches.
 
+## Where the activation email goes
+
+Registration ends with Zitadel emailing an activation link, so a stack with no
+SMTP provider leaves every new account stuck one step short. It does not look
+like a failure: Zitadel accepts the registration, logs the send failure into
+its own output, and returns the browser to a screen that says to check your
+mail.
+
+`docker-compose.yml` runs [Mailpit](https://mailpit.axllent.org/) for that.
+Open **<http://localhost:8025>** and the activation mail is the first thing in
+the list; click the link inside it exactly as a real user would. Nothing leaves
+the machine, and nothing is kept — the mailbox is in memory, so a restart of
+the container empties it.
+
+Mailpit rather than MailHog, which is the name most people know. MailHog has
+had no functional commit since 2022; Mailpit is its drop-in successor on the
+same ports (1025 for SMTP, 8025 for the UI). Checked 2026-08-29.
+
+One detail in `docker-compose.yml` looks like a typo and is the whole thing
+working: the SMTP **user is empty and the password is not**. Two different
+parts of Zitadel read those two fields, and neither does what its name
+suggests.
+
+- The notifier refuses to build an email channel when the stored password is
+  NULL — it returns `QUERY-Wrs3gw Errors.SMTPConfig.NotFound` before looking
+  at anything else, and Zitadel stores an empty password as NULL. So a
+  provider with no password is invisible to the only component that sends
+  mail, while `GET /admin/v1/smtp` cheerfully reports it
+  `SMTP_CONFIG_ACTIVE`. The value is never checked; it only has to exist.
+- Whether Zitadel offers `AUTH` at all is `user != "" && password != ""`.
+  Leaving the user empty is what stops it issuing an AUTH command, which
+  Mailpit does not implement — set a user and delivery fails with
+  `Errors.SMTP.CouldNotAuth Parent=(502 Command not implemented)` and you are
+  one plausible step from turning AUTH on at the catcher to fix a problem you
+  created.
+
+Measured on 2026-08-29 against a throwaway first-run stack: with those values
+and a Mailpit with no environment at all, the mail arrives.
+
+**The trap, and it will bite an existing stack.** Zitadel reads
+`ZITADEL_DEFAULTINSTANCE_SMTPCONFIGURATION_*` when it *creates* the instance
+and never again. A stack that was brought up before this was added has an
+instance with no mail provider, and pulling the new compose file changes
+nothing about it — no error, no log line, the same silent dead end. Start over
+(below), or add the provider by hand in Zitadel's console under **Settings →
+Notification providers**.
+
 ## What the bootstrap actually does
 
 Two things Zitadel cannot be told to do declaratively.
@@ -163,6 +210,17 @@ profile: the ID token carried `sub` and nothing else. `OidcClient` falls back to
 the userinfo endpoint for display claims, so this should not happen against
 this stack — if it does, the userinfo request is failing, and the app
 deliberately treats that as cosmetic rather than as a failed sign-in.
+
+**Registration says to check your mail and nothing arrives at
+<http://localhost:8025>.** `docker compose logs zitadel | grep -i smtp` tells
+you which of four it is, and none of them says so on the browser:
+
+| In the log | What it is |
+| --- | --- |
+| `QUERY-Wrs3gw Errors.SMTPConfig.NotFound` | No provider, or a provider whose password is empty. If the instance predates this section, it has none — see above. |
+| `Errors.SMTP.CouldNotAuth Parent=(502 Command not implemented)` | The provider has a non-empty user, so Zitadel is offering AUTH. Clear the user rather than enabling AUTH on Mailpit. |
+| a dial or connection error | Mailpit is down, or the host lost its port — it must be `mailpit:1025`. A bare hostname is refused *inside a migration*, so a fresh stack exits 1 on `setup failed` with `INST-mruNY Errors.Invalid.Argument` and nothing naming SMTP. |
+| nothing at all | The mail was sent and the mailbox was emptied. Mailpit keeps nothing across a restart. |
 
 **`tenant_id` is empty.** The `urn:zitadel:iam:user:resourceowner` scope is what
 carries the organisation id, and it is in the default scope set. If

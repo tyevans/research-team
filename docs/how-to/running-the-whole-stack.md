@@ -15,6 +15,7 @@ so expect a few minutes. After that:
 | the app | <http://localhost:8000> | the console and the API |
 | Zitadel | <http://localhost:8081> | the identity provider |
 | SearXNG | <http://localhost:8888> | search, for the `fetch` tool |
+| Mailpit | <http://localhost:8025> | every mail Zitadel sends, caught rather than delivered |
 | Postgres | `localhost:5432` | pgvector, for entity embeddings |
 | Neo4j | <http://localhost:7474> | the knowledge graph |
 
