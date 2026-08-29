@@ -3120,6 +3120,42 @@ strip's own width and accept clipped labels. Whichever is chosen changes
 narrates it, so read that comment first — it already carries the history of
 every floor move to date.
 
+### B178. Four of the five model roles still resolve process-wide
+
+`research_team/application/effective.py` makes one bundle -- extraction --
+resolve per project, and W-C2 stopped there deliberately rather than for lack
+of time. The remaining four roles each need a different seam, and three of them
+need a decision this branch had no grounds to make:
+
+- **research.** `resolved_model` is built once in `build_application` and
+  handed to one executor, which every session shares. Per-project means either
+  an executor per project or a model proxy that re-resolves per turn, and the
+  second re-reads a knob mid-run -- the exact thing the `authoring_rounds`
+  comment beside it refuses to do, for the reason it gives.
+- **curation and search.** `searxng_url()` does not merely configure the search
+  tool, it decides whether the tool is *registered at all*, and the prompt
+  suffix branches on the same value (`SEARCH_PROMPT` / `NO_SEARCH_CLAUSE`).
+  Per-project search is therefore a per-project tool set and a per-project
+  system prompt, which is a much larger change than a per-project string.
+- **vision.** `readeverything_adapter` reads `config.vision_model()` from a
+  module-level function with no project in scope. It wants the same treatment
+  extraction got, and is the cheapest of the four.
+- **embedding.** Left process-wide on purpose and probably permanently:
+  `embedding_dimension` is baked into the shared vector store and the chunk
+  store at `ProjectGraphs` construction, and two projects disagreeing about a
+  width against one store is `DimensionMismatchError` on the first write --
+  a poison event, so the ingest that triggers it is unrecoverable rather than
+  retryable (`build_embedding_provider`'s docstring has the measurement). The
+  registry still declares these at project scope, which is now a small lie:
+  a project can set `embedding_model` through the API and nothing will read it.
+  Narrowing those two to `_DEPLOYMENT` is a separate, smaller change and should
+  probably be done first.
+
+The scope chain is also project-only. `EffectiveSettings._chain` names no user
+and no tenant, because W-A owns identity and W-B owns tenancy and a chain that
+guessed at a user id would resolve confidently against the wrong person. Adding
+those two layers is one line each once a request carries a principal.
+
 ## The ask page
 
 Everything here was named in

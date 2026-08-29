@@ -80,6 +80,7 @@ from research_team.application.course_catalog import (
 )
 from research_team.application.course_realization import CourseService, RealizedCourse
 from research_team.application.document_extraction import DocumentExtractor
+from research_team.application.effective import EffectiveSettings, SettingsRevision
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef, source_id_for_url
@@ -1970,15 +1971,36 @@ def _build_application(
     # secret box is `None` when `AGENT_SETTINGS_KEY` is unset, which is the
     # state every existing deployment is in: reads still resolve through the
     # environment layer and writes of a *secret* refuse, naming the variable.
+    # One counter for both tables, not one each. A role's model can change
+    # without the override table being touched at all -- selecting a profile
+    # does it -- so a per-table counter would leave `EffectiveSettings`
+    # serving a stale bundle after exactly the write a user is most likely to
+    # make. Handed to the stores rather than to the routes, so a second write
+    # path added later invalidates the cache without knowing it exists.
+    settings_revision = SettingsRevision()
+    settings_store = SettingsStore(resolved_path, resolved_tracer, settings_revision)
+    # Its own store beside the override table rather than rows in it: a
+    # profile is a record whose provider and credential key are each
+    # validated, and none of that is a thing a `value` column does. Same
+    # database, same lazy open.
+    profile_store = ModelProfileStore(resolved_path, resolved_tracer, settings_revision)
+    settings_secrets = build_secret_box()
     settings_deps = SettingsDeps(
-        store=SettingsStore(resolved_path, resolved_tracer),
-        secrets=build_secret_box(),
+        store=settings_store,
+        secrets=settings_secrets,
         probe=HttpProviderProbe(),
-        # Its own store beside the override table rather than rows in it: a
-        # profile is a record whose provider and credential key are each
-        # validated, and none of that is a thing a `value` column does. Same
-        # database, same lazy open.
-        profiles=ModelProfileStore(resolved_path, resolved_tracer),
+        profiles=profile_store,
+    )
+    # What makes any of the above take effect. Everything below that builds a
+    # client for a *project* resolves through this rather than through
+    # `config`, which answers for the process and has no project to answer
+    # for. See `application/effective.py` for why the project id is the key
+    # and not a context variable.
+    effective_settings = EffectiveSettings(
+        store=settings_store,
+        secrets=settings_secrets,
+        profiles=profile_store,
+        revision=settings_revision,
     )
     definition_invalidation = EntityDefinitionRunner(
         repository.store, resolved_path, repository.publisher, resolved_tracer
@@ -2469,16 +2491,36 @@ def _build_application(
         would hand straight back out.
         """
         store = await graphs.open(target_project_id)
+        # The one place a background run picks up its project's settings.
+        # `open_graph` is on the path of every ingest, every re-extraction and
+        # every catalog sweep, and it is already parametrised by the project
+        # id -- which is exactly why resolution keys on the id here rather
+        # than on a request that most of those callers never had.
+        #
+        # Resolved per open, not per process. That is what makes a setting
+        # saved through the API reach the *next* run: the bundle is cached on
+        # `(project, revision)` and the stores bump the revision on write, so
+        # this await is a dict lookup until somebody changes something and a
+        # fresh resolve immediately after they do.
+        settings = await effective_settings.extraction(target_project_id)
+        # A caller that injected a model has said which model they want used,
+        # and a fake has no endpoint to repoint -- see `_extraction_model`,
+        # which makes the same call for the same reason. Everything else gets
+        # a client built against this project's resolved model, endpoint and
+        # credential, which is the whole point of the branch.
+        project_extraction_model = (
+            extraction_model if model is not None else build_extraction_model(settings)
+        )
         knowledge = RedstringKnowledge(
             target_project_id,
             store=store,
             event_store=repository.store,
             snapshot_store=repository.snapshot_store,
             # The name redstring reports and prompts against, matched to the
-            # client beside it: `_extraction_model` builds against
-            # `config.extraction_model()`, and passing `model_name()` here
-            # would label every extraction with a model it was not run on.
-            provider=LangChainLlmProvider(extraction_model, model=config.extraction_model()),
+            # client beside it -- one field on `ExtractionSettings` rather than
+            # two reads, because two reads of one setting is how a label comes
+            # to name a model the run was not made on.
+            provider=LangChainLlmProvider(project_extraction_model, model=settings.model),
             # `repository.publisher`, like every other repository built here,
             # and it was the one that did not have it. The corpus read model
             # follows the log through this bus, so without it a `remember`
@@ -2503,7 +2545,7 @@ def _build_application(
                 repository.publisher,
                 snapshot_store=repository.snapshot_store,
             ),
-            domain=config.knowledge_domain(),
+            domain=settings.knowledge_domain,
             embeddings=embedding_provider,
             # `graphs.vectors()` rather than a captured store: `graphs.open`
             # above has already opened it, so this is a cached attribute read,
@@ -2516,8 +2558,8 @@ def _build_application(
             # already holds every card embedding this project has recorded,
             # not a fresh one this ingest would start filling from empty.
             card_vector_store=graphs.card_vectors(target_project_id),
-            concurrency=config.extraction_concurrency(),
-            consolidation_batch=config.consolidation_batch_size(),
+            concurrency=settings.concurrency,
+            consolidation_batch=settings.consolidation_batch,
             # One chunker per project adapter rather than one for the process.
             # `SlidingWindowChunker` holds only its three numbers -- no buffer,
             # no state carried between `chunk` calls -- so sharing one would
@@ -2537,7 +2579,7 @@ def _build_application(
             # module's docstring for why that was preferred to shrinking the
             # budget, and for the measurement.
             chunker=MarkdownTableChunker(
-                SlidingWindowChunker(default_chunk_size=config.extraction_chunk_size())
+                SlidingWindowChunker(default_chunk_size=settings.chunk_size)
             ),
             # `graphs.chunks(...)`, not a second `build_chunk_store()` call:
             # `graphs.open` above already built this project's chunk store and

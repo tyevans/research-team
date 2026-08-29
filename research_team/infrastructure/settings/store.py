@@ -31,6 +31,7 @@ from eventsource import ReadModel
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 
+from research_team.application.effective import SettingsRevision
 from research_team.domain.settings import Override, Scope, ScopeRef
 from research_team.infrastructure.persistence.read_models import apply_schema
 
@@ -96,18 +97,30 @@ class SettingsStore:
     started store has.
     """
 
-    def __init__(self, db_path: str, tracer=None) -> None:
+    def __init__(
+        self, db_path: str, tracer=None, revision: SettingsRevision | None = None
+    ) -> None:
         self._db_path = db_path
         self._tracer = tracer
         self._connection: aiosqlite.Connection | None = None
         self._rows: ReadModelRepository | None = None
         self._opening = asyncio.Lock()
+        #: Bumped by `put` and `clear`, read by `EffectiveSettings` to decide
+        #: whether its cached bundle is still current. It lives here rather
+        #: than at the route because this class is the single production
+        #: writer for this table: a second write path added tomorrow -- a CLI
+        #: import, a bulk endpoint -- invalidates the cache without knowing
+        #: the cache exists. `None` builds its own, so a store constructed by
+        #: a test is not obliged to care.
+        self._revision = revision if revision is not None else SettingsRevision()
 
     @classmethod
-    async def open(cls, db_path: str, tracer=None) -> "SettingsStore":
+    async def open(
+        cls, db_path: str, tracer=None, revision: SettingsRevision | None = None
+    ) -> "SettingsStore":
         """An already-opened store, for a caller that has a loop and wants the
         table to exist now -- the tests, mainly."""
-        store = cls(db_path, tracer)
+        store = cls(db_path, tracer, revision)
         await store._ensure()
         return store
 
@@ -185,6 +198,7 @@ class SettingsStore:
                 updated_at=datetime.now(UTC),
             )
         )
+        self._revision.bump()
 
     async def clear(self, ref: ScopeRef, key: str) -> bool:
         """Remove an override. False means there was nothing to remove.
@@ -198,6 +212,7 @@ class SettingsStore:
         if await rows.get(row_id) is None:
             return False
         await rows.delete(row_id)
+        self._revision.bump()
         return True
 
     async def close(self) -> None:

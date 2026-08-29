@@ -25,6 +25,7 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
+from research_team.application.effective import ExtractionSettings
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge_attachment import _compose
 from research_team.application.ports import (
@@ -96,7 +97,7 @@ def build_model() -> BaseChatModel:
     )
 
 
-def build_extraction_model() -> BaseChatModel:
+def build_extraction_model(settings: ExtractionSettings | None = None) -> BaseChatModel:
     """The same endpoint as `build_model`, told not to think before answering.
 
     A second `ChatOpenAI` rather than `build_model().bind(extra_body=...)`,
@@ -115,7 +116,23 @@ def build_extraction_model() -> BaseChatModel:
 
     See `config.extraction_thinking` for the measurement, the env override and
     the backends this field is rejected by.
+
+    `settings` is one project's resolved answer, from
+    `application/effective.EffectiveSettings`. `None` is the process answer --
+    the environment, then the built-in default -- read through `config` exactly
+    as this function always did, which is what a CLI run and every test that
+    never names a project still get. The two branches read the same eight
+    values in the same order; they differ only in how many layers were
+    consulted to produce them.
     """
+    if settings is not None:
+        return ChatOpenAI(
+            model=settings.model,
+            base_url=settings.base_url,
+            api_key=settings.api_key,
+            temperature=0,
+            extra_body=None if settings.thinking else dict(NO_THINKING),
+        )
     return ChatOpenAI(
         # `extraction_model()`, not `model_name()`. The two are the same string
         # on a default install and stop being so the moment anyone sets
