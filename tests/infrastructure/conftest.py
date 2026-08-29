@@ -19,6 +19,7 @@ from research_team.application.corpus_read import (
     CorpusReadError,
     SourceListing,
     StoredDocument,
+    TextSourceUri,
 )
 from research_team.application.knowledge import SourceRef
 from research_team.application.topics import TopicError
@@ -160,6 +161,26 @@ class _CorpusStoreReadPort:
         return StoredDocument(
             record=to_record(row), text=row.text, locator_map=row.locator_map
         )
+
+    async def list_text_uris(self) -> list[TextSourceUri]:
+        """The port's third method, and the one this fake first shipped without.
+
+        `fetch.stored_page` calls it on every fetch to decide whether the page
+        is already in the corpus, so a fake missing it raises `AttributeError`
+        from inside production code rather than failing a protocol check -- the
+        stack names `fetch.py`, which is the one file that is not wrong.
+
+        A `Protocol` is structural, so nothing verifies a fake against it: the
+        gap is invisible until a test happens to reach the method. Any method
+        added to `CorpusReadPort` has to be added here by hand, and will
+        announce itself the same way.
+        """
+        rows = await self._store.list_all(self._project_id)
+        return [
+            TextSourceUri(source_id=row.source_id, uri=row.uri)
+            for row in rows
+            if getattr(row, "uri", None) and getattr(row, "kind", "text") == "text"
+        ]
 
 
 async def _seed(store: CorpusStore, project_id, *documents: StoreSourceDocument) -> None:
