@@ -49,6 +49,8 @@ from eventsource.ports.readmodels.query import Filter
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.domain.tenant import (
+    LOCAL_SUBJECT,
+    LOCAL_TENANT,
     TENANT_NAMESPACE,
     InvitationAccepted,
     InvitationCreated,
@@ -61,6 +63,7 @@ from research_team.domain.tenant import (
     ProjectGrantRevoked,
     TenantCreated,
     TenantKind,
+    tenant_aggregate_id,
 )
 from research_team.infrastructure.persistence.read_models import (
     LOCAL_RETRY_POLICY,
@@ -528,6 +531,50 @@ class TenantRunner:
         failures = {name: err for name, err in results.items() if err is not None}
         if failures:
             raise RuntimeError(f"the tenant projection failed to start: {failures}")
+
+    async def seed_local_tenant(self) -> bool:
+        """Give `LOCAL_TENANT` a row and `LOCAL_SUBJECT` an `owner` membership.
+
+        `ProjectCreated.tenant_id` is required (B2) and is the string `"local"`
+        when `AGENT_AUTH` is off, so without this the off configuration points
+        every project at a tenant that does not exist. The design calls that
+        "the foreign concept dangling", and the cost of leaving it is not a
+        crash -- it is that the *on* path and the *off* path stop being the same
+        code with a different final bool, which is the one property that makes
+        the permissive adapter worth having.
+
+        Returns whether it wrote. Guarded by a read rather than left idempotent:
+        the row ids are derived, so a second append would overwrite rather than
+        duplicate, but it would still put two more events on the log on every
+        process start forever, and a log that grows when nothing happened is a
+        log nobody can read a history out of.
+
+        **Not personal-tenant provisioning.** W-A mirrors a Zitadel org id onto
+        `users.tenant_id` and nothing creates an organisation; doing that on
+        first sign-in is B6's, and it needs the management API this has no
+        business calling. This is the auth-off case only, where there is no
+        principal at all and the tenant id comes from a constant.
+        """
+        if await self.tenants.tenant(LOCAL_TENANT) is not None:
+            return False
+        stream = tenant_aggregate_id(LOCAL_TENANT)
+        await self.record(
+            TenantCreated(
+                aggregate_id=stream,
+                tenant_id=LOCAL_TENANT,
+                name="This installation",
+                kind="personal",
+                created_by=LOCAL_SUBJECT,
+            ),
+            MemberAdded(
+                aggregate_id=stream,
+                tenant_id=LOCAL_TENANT,
+                subject=LOCAL_SUBJECT,
+                role="owner",
+            ),
+        )
+        await self.caught_up()
+        return True
 
     async def record(self, *events: DomainEvent) -> None:
         """Append tenancy events and wake the subscription.

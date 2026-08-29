@@ -1400,6 +1400,12 @@ class Application:
         await self.dialogues.start()
         await self.interaction_log.start()
         await self.tenants.start()
+        if not config.authorization_enabled():
+            # `LOCAL_TENANT` is a real tenant with a real row, not a special
+            # case in the checker -- see `seed_local_tenant`. Only with auth
+            # off: with it on, a `"local"` tenant nobody created would be a
+            # tenant nobody can see the membership of.
+            await self.tenants.seed_local_tenant()
         if self._initial_project_id is not None:
             await self.attach_project(self._initial_project_id)
 
