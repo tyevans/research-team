@@ -6,29 +6,36 @@ with enough detail that picking it up does not require rediscovering it.
 The `B` numbers are stable handles, not a taxonomy. Closed entries are deleted;
 if tracked code cites one by name, say where its reasoning went before deleting.
 
-<!-- next id: 184 -->
+<!-- next id: 186; B185 claimed by: the-marker-conflict-can-be-auto-resolved-away-and-one-path-is-still-unmeasured -->
 
-**Take your id from that line and increment it in the same commit.** Do not
-grep the file for the largest number in use: that is a read of *your* branch,
-and a branch cannot see the entry another branch filed an hour ago. B161 was
-allocated twice on 2026-08-29 that way -- #325 renumbered an entry into it and
-#328 landed a different one on it three minutes later, in the other half of the
-file. Neither branch conflicted, both were green, and `main` merged red, which
-blocked every open PR until somebody renumbered.
+**Take your id from that line. Then rewrite the whole line: the new counter,
+the id you took, and a slug of your entry's own heading.** Do not grep the file
+for the largest number in use -- that is a read of *your* branch, and a branch
+cannot see the entry another branch filed an hour ago. B161 was allocated twice
+on 2026-08-29 that way: #325 renumbered an entry into it and #328 landed a
+different one on it three minutes later, in the other half of the file. Neither
+branch conflicted, both were green, and `main` merged red, which blocked every
+open PR until somebody renumbered.
 
-**The line is the allocation, and its whole job is to conflict.** Two branches
-that both file an entry both rewrite that one line to a different value, and
-git cannot merge two different rewrites of one line -- so the second one to
-merge stops with a conflict, in front of a person, *before* `main` is red. That
-friction is the design and not a defect of it: it costs about a minute (take
-the higher number, renumber your own entry, bump the counter past both) and it
-is paid by the branch that is merging rather than by everyone whose PR would
-otherwise be blocked. It also settles the question the uniqueness test cannot
-answer -- which entry moves, and *where to*.
+**The claim is the half that makes the line conflict, and the counter alone did
+not.** A counter is a value both branches *read the same* and therefore both
+write the same: #345 and #340 each took 182 and each wrote `next id: 183` on
+2026-08-29, git merged the two identical lines without a murmur, and the
+duplicate surfaced from `test_no_two_backlog_entries_share_an_id` on `main` --
+the exact outcome the counter was added to prevent. Two branches filing two
+different entries cannot write the same slug, so the line they both rewrite now
+differs, and git stops the second merge in front of a person.
 
-`tests/test_backlog_ids.py` holds both halves: no id is used twice, and the
-counter is above every id in the file, so a branch that files an entry without
-bumping the line is red on its own branch rather than on `main`.
+That friction is the design and not a defect of it. It costs about a minute
+(take the higher number, renumber your own entry, rewrite the line with your
+own slug) and it is paid by the branch that is merging rather than by everyone
+whose PR a red `main` blocks. It also settles the question the uniqueness test
+cannot answer -- which entry moves, and *where to*.
+
+`tests/test_backlog_ids.py` holds the branch-local halves: no id is used twice,
+the counter is above every id in the file, and the claimed slug matches the
+heading of the entry that took it (when that entry is still here -- closed
+entries are deleted, and a stale claim must not outlive its entry as a gate).
 
 ## Code quality
 
@@ -5710,3 +5717,54 @@ The shape is CLAUDE.md's "two structures that must agree, in two places the
 merge cannot compare", with the second structure missing rather than
 disagreeing. A scope declaration is half a contract; the reader is the other
 half, and there is no reader.
+## Repository process
+
+### B185. The marker conflict can be auto-resolved away, and one path is still unmeasured
+
+_Filed as B182, renumbered to B185 before merging: #345 consumed B182 while
+this branch could not see it, #340 took B183 and #339 B184. The fix for the id
+race lost the id race, which is the third independent confirmation in one day
+of the property the mechanism now exists to hold -- and the renumbering cost
+about a minute, at the merge, in front of a person, which is the trade the
+design is making. Rebasing onto #340 then produced the conflict on this very
+line -- the first time in production the mechanism has stopped anything, and
+the same pair of branches that merged clean under the bare counter._
+
+`BACKLOG.md`'s `<!-- next id: N; B<n> claimed by: <slug> -->` line puts a
+duplicate id in front of a person as a merge conflict, and that was proved
+against two branches that could not see each other (see the commit that
+introduced the claim field). What that proof does not cover is a conflict
+resolved by something other than a person reading it:
+
+- `git merge -X ours` / `-X theirs`, and GitHub's "Update branch" button,
+  resolve without asking.
+- A tired author who keeps one side of the marker and does not renumber.
+- `git rerere`, if enabled locally, replays a previous resolution of the same
+  line -- and the previous resolution is almost certainly "keep one side",
+  which is the wrong answer here every time.
+
+**The first two are now measured, and the answer is better than it was
+reasoned to be.** Both branches' entries land in the file regardless of how the
+marker line is resolved -- the entries themselves are in different sections and
+never conflicted -- so `test_no_two_backlog_entries_share_an_id` is red on the
+resolving *branch*, before `main`. Run on 2026-08-29 against both resolutions
+of a real two-branch conflict: `-X ours` and `-X theirs` each produced two
+`### B186.` headings and each failed that test and only that test, five passing.
+
+**The asymmetry that looked likely is not there, and this is the part worth
+carrying.** Keeping the *other* side's marker was expected to be caught by the
+slug check, on the reasoning that the claim would then name a heading the
+branch does not have. It does have it: after the merge both entries are
+present, so whichever slug survives matches some heading and
+`test_the_claimed_slug_matches_the_heading_that_took_the_id` passes in both
+directions. Only the uniqueness test catches either. The slug earns its place
+at merge time, by making the line conflict at all; it is not a second net
+afterwards.
+
+**What remains unmeasured is `rerere`**, which differs from the two above in
+that it can resolve the line *without the merge ever reporting a conflict* --
+so nobody is prompted, and the claim "a person sees it" fails silently rather
+than loudly. The uniqueness test should still be red on the branch by the same
+argument, but that is the argument that was already wrong once above. Enable
+`rerere`, run the two-branch simulation twice, and record what happens before
+anyone writes down that the window is closed.
