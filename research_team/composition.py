@@ -3339,6 +3339,19 @@ _PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
     ("asks", "stop"),
     ("authoring", "stop"),
     ("dialogues", "stop"),
+    # In `close()`'s order, beside `dialogues` and before the interaction log,
+    # for the reason the `tenants` comment above gives: the two lists have no
+    # compiler between them, so matching order is the only thing a reader can
+    # diff by eye.
+    #
+    # Unlike `tenants`, this one is not inert. A started `UserRunner` holds an
+    # aiosqlite connection, a `SubscriptionManager` and a SQLAlchemy engine, so
+    # a build that raises after it is constructed abandons all three -- which
+    # presents as a hung interpreter at exit and nothing red. This was the
+    # third instance of the same omission in one day (a tenants runner and a
+    # project-summaries port preceded it) and the first one a test caught
+    # rather than a reader.
+    ("users", "stop"),
     ("interaction_log", "stop"),
     ("interaction_store", "close"),
     ("service", "close"),
