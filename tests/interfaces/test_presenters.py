@@ -9,6 +9,7 @@ from research_team.application import SessionSummary
 from research_team.application.corpus_read import SourceListing
 from research_team.application.course_catalog import CachedOutline, Catalog
 from research_team.application.course_realization import CourseDetail, RealizedCourse
+from research_team.application.project_summaries import ProjectSummary
 from research_team.domain import (
     AssistantMessageAdded,
     AutonomyChanged,
@@ -436,19 +437,28 @@ def test_the_project_detail_carries_identity_holder_and_reading_head():
     }
 
 
-def test_the_listing_row_is_the_detail_without_the_reading_head():
-    """The one column the detail has and the listing does not, pinned.
+def test_the_listing_and_the_detail_differ_by_exactly_one_column_each():
+    """The two routes' asymmetry, pinned in both directions.
 
     `project_view` was an *alias* of `project_detail_view` for two slices, and
     the alias's docstring named the condition for undoing it: "the day a
-    listing earns a column a detail does not". It happened in the other
-    direction -- the detail earned one -- and the reason it is not on the
-    listing is `GET /api/projects`, which folds one aggregate per row.
+    listing earns a column a detail does not". **That day arrived**, and this
+    test is the half that had to change: it used to assert the row was a strict
+    subset of the detail, which was true only while the asymmetry ran one way.
 
-    The alias was protecting a real property: a field added for both must not
-    reach one route and miss the other. `project_view` therefore delegates and
-    deletes one key, and this test is that key and nothing else. It would fail
-    if either function grew a field the other did not.
+    It now runs both ways, and each direction has its own reason:
+
+    - `reading_head_session_id` is the detail's, because it is what a project
+      *page* reads files through and `GET /api/projects` folds one aggregate
+      per row already.
+    - `summary` is the listing's, because a project page has the project in
+      front of it and needs no summary of itself, where an index has six rows
+      and nothing else to tell them apart.
+
+    The property the alias was protecting is unchanged and is the last
+    assertion: a field added for *both* must not reach one route and miss the
+    other. Everything outside the two named keys still has to agree, value for
+    value.
     """
     session_id = uuid4()
     kwargs = {"active_session_id": session_id, "tip_at_event": 7}
@@ -457,7 +467,63 @@ def test_the_listing_row_is_the_detail_without_the_reading_head():
     row = project_view(AGGREGATE, "atlas", **kwargs)
 
     assert set(detail) - set(row) == {"reading_head_session_id"}
-    assert row == {key: value for key, value in detail.items() if key in row}
+    assert set(row) - set(detail) == {"summary"}
+
+    shared = set(row) & set(detail)
+    assert {key: row[key] for key in shared} == {key: detail[key] for key in shared}
+
+
+def test_a_listing_row_carries_a_summary_even_with_nothing_to_summarise():
+    """The zeros are always present, never an absent object.
+
+    `ProjectSummaries.all` answers only the projects that have something to
+    summarise, so a project created a minute ago is simply missing from it and
+    `project_view` is handed `None`. An optional object on the wire would make
+    every consumer write the same `?? 0` fallback, and this console has shipped
+    a silently-absent field read as a zero before.
+    """
+    row = project_view(AGGREGATE, "atlas")
+
+    assert row["summary"] == {
+        "topics": 0,
+        "topics_open": 0,
+        "sources": 0,
+        "extracted": 0,
+        "courses": 0,
+        "sessions": 0,
+        "last_activity": None,
+    }
+
+
+def test_a_listing_row_carries_the_summary_it_was_given():
+    """And the counts reach the wire under the names the console reads.
+
+    Paired with the test above rather than folded into it: that one is about
+    the *shape* being unconditional, this one is about the mapping being right.
+    A single test over a filled summary would pass with `project_summary_view`
+    returning its zeros regardless of the argument.
+    """
+    summary = ProjectSummary(
+        topics=14,
+        topics_open=3,
+        sources=11,
+        extracted=9,
+        courses=2,
+        sessions=6,
+        last_activity="2026-08-29T07:30:28.688146+00:00",
+    )
+
+    row = project_view(AGGREGATE, "atlas", summary=summary)
+
+    assert row["summary"] == {
+        "topics": 14,
+        "topics_open": 3,
+        "sources": 11,
+        "extracted": 9,
+        "courses": 2,
+        "sessions": 6,
+        "last_activity": "2026-08-29T07:30:28.688146+00:00",
+    }
 
 
 @pytest.mark.parametrize(
