@@ -32,6 +32,7 @@ export const SettingControl = ({
   disabled,
   describedBy,
   id,
+  suggestions = [],
 }: {
   spec: SettingSpec
   /** The draft, always a string. One representation for five types, because
@@ -53,6 +54,20 @@ export const SettingControl = ({
   disabled: boolean
   describedBy: string | undefined
   id: string
+  /** Values worth offering, from somewhere that knows more than the schema
+   *  does -- today, the models a connection test just found at this group's
+   *  endpoint.
+   *
+   *  A `<datalist>` rather than a `<select>`, and the difference is the point:
+   *  a list that came back from one endpoint is a *suggestion*, not the set of
+   *  legal values. A model can be servable without appearing in `/v1/models`,
+   *  and an endpoint that has not been tested offers nothing at all -- so a
+   *  control that refused anything unlisted would refuse correct input in both
+   *  cases. Free text stays free; the list saves the typing.
+   *
+   *  Only for text: `enum` already has its choices from the schema and
+   *  numerics have bounds, so neither has anything to learn from a probe. */
+  suggestions?: readonly string[]
 }) => {
   if (spec.type === 'boolean') {
     return (
@@ -112,31 +127,42 @@ export const SettingControl = ({
   }
 
   const numeric = spec.type === 'integer' || spec.type === 'number'
+  const listId = !numeric && suggestions.length > 0 ? `${id}-suggestions` : undefined
 
   return (
-    <input
-      id={id}
-      className="input w-full"
-      type={numeric ? 'number' : 'text'}
-      value={value}
-      disabled={disabled}
-      aria-describedby={describedBy}
-      // Both from the declaration. `?? undefined` rather than `?? ''`: an
-      // empty `min` attribute is not the same as an absent one to a browser's
-      // own validation, and `exactOptionalPropertyTypes` makes the difference
-      // a type error rather than a surprise.
-      min={numeric ? (spec.minimum ?? undefined) : undefined}
-      max={numeric ? (spec.maximum ?? undefined) : undefined}
-      step={spec.type === 'integer' ? 1 : undefined}
-      onChange={(event) => onChange(event.target.value)}
-      onBlur={() => onCommit(value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault()
-          onCommit(value)
-        }
-      }}
-    />
+    <>
+      <input
+        id={id}
+        className="input w-full"
+        type={numeric ? 'number' : 'text'}
+        value={value}
+        disabled={disabled}
+        aria-describedby={describedBy}
+        list={listId}
+        // Both from the declaration. `?? undefined` rather than `?? ''`: an
+        // empty `min` attribute is not the same as an absent one to a browser's
+        // own validation, and `exactOptionalPropertyTypes` makes the difference
+        // a type error rather than a surprise.
+        min={numeric ? (spec.minimum ?? undefined) : undefined}
+        max={numeric ? (spec.maximum ?? undefined) : undefined}
+        step={spec.type === 'integer' ? 1 : undefined}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => onCommit(value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            onCommit(value)
+          }
+        }}
+      />
+      {listId ? (
+        <datalist id={listId}>
+          {suggestions.map((suggestion) => (
+            <option key={suggestion} value={suggestion} />
+          ))}
+        </datalist>
+      ) : null}
+    </>
   )
 }
 

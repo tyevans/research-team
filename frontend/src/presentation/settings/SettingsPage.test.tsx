@@ -82,6 +82,7 @@ const SCHEMA: SettingsSchema = {
   ],
   scopes: ['project', 'user', 'tenant'],
   roles: [{ role: 'research', settingKey: 'model' }],
+  connections: [],
 }
 
 const RESOLVED: ResolvedSettings = {
@@ -126,6 +127,8 @@ const repository = (over: Partial<SettingsRepository> = {}): SettingsRepository 
   ),
   put: vi.fn().mockResolvedValue(undefined),
   clear: vi.fn().mockResolvedValue(true),
+  providers: vi.fn().mockResolvedValue([]),
+  testProvider: vi.fn(),
   ...over,
 })
 

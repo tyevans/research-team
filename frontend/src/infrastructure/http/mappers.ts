@@ -33,7 +33,7 @@ import type {
   RealizedCourse,
 } from '@domain/knowledge/course.ts'
 import type { Timeline, TimelineBand } from '@domain/knowledge/timeline.ts'
-import type { SettingSpec, SettingsSchema } from '@domain/settings/spec.ts'
+import type { ProbeResult, Provider, SettingSpec, SettingsSchema } from '@domain/settings/spec.ts'
 import type { ResolvedSetting, ResolvedSettings } from '@domain/settings/layer.ts'
 import type {
   ApprovalSummary,
@@ -1041,6 +1041,31 @@ export const toSettingsSchema = (raw: Dto<typeof dto.settingsSchemaDto>): Settin
   })),
   scopes: raw.scopes,
   roles: raw.roles.map((role) => ({ role: role.role, settingKey: role.setting_key })),
+  connections: raw.connections.map((connection) => ({
+    role: connection.role,
+    group: connection.group,
+    modelKey: connection.model_key,
+    baseUrlKey: connection.base_url_key,
+    apiKeyKey: connection.api_key_key,
+  })),
+})
+
+export const toProvider = (raw: Dto<typeof dto.providerDto>): Provider => ({
+  id: raw.id,
+  displayName: raw.display_name,
+  baseUrl: raw.base_url,
+  auth: raw.auth,
+  openaiCompatible: raw.openai_compatible,
+  notes: raw.notes,
+})
+
+export const toProbeResult = (raw: Dto<typeof dto.probeResultDto>): ProbeResult => ({
+  providerId: raw.provider_id,
+  outcome: raw.outcome,
+  ok: raw.ok,
+  detail: raw.detail,
+  models: raw.models,
+  latencyMs: raw.latency_ms,
 })
 
 export const toResolvedSetting = (raw: Dto<typeof dto.resolvedSettingDto>): ResolvedSetting => ({

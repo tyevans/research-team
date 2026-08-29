@@ -51,6 +51,8 @@ const settingsFake = (over: Partial<SettingsRepository> = {}): SettingsRepositor
   resolved: vi.fn(),
   put: vi.fn().mockResolvedValue(undefined),
   clear: vi.fn().mockResolvedValue(true),
+  providers: vi.fn().mockResolvedValue([]),
+  testProvider: vi.fn(),
   ...over,
 })
 

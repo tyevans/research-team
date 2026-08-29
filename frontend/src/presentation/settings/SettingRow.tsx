@@ -48,9 +48,16 @@ export const SettingRow = ({
   scopeId,
   chain,
   below,
+  suggestions,
 }: {
   spec: SettingSpec
   resolved: ResolvedSetting
+  /** Values worth offering for this key, from a connection test that just ran
+   *  against the group's endpoint. Empty or absent for every row but the model
+   *  one, and for that one until a test has succeeded -- see
+   *  `SettingControl.suggestions` for why they are offered rather than
+   *  enforced. */
+  suggestions?: readonly string[]
   /** The same key from the resolution taken with this scope *omitted*. This is
    *  where the fallback line comes from, and the whole reason it is a second
    *  request rather than the schema's `default`: the default is wrong whenever
@@ -197,6 +204,7 @@ export const SettingRow = ({
               value={draft}
               onChange={setDraft}
               onCommit={commit}
+              suggestions={suggestions ?? []}
               disabled={busy}
               describedBy={help ? helpId : undefined}
               id={controlId}

@@ -4,10 +4,16 @@ import { useMemo, useState } from 'react'
 import { useContainer } from '@app/container-context.tsx'
 import { queryKeys } from '@application/queries/keys.ts'
 import { byKey, isOverriddenAt, type ScopeRef } from '@domain/settings/layer.ts'
-import { groupsForScope, specMatches, type Scope } from '@domain/settings/spec.ts'
+import {
+  connectionForGroup,
+  groupsForScope,
+  specMatches,
+  type Scope,
+} from '@domain/settings/spec.ts'
 
 import { Confirm } from '../common/Confirm.tsx'
 import { Disclosure, EmptyState, ErrorBox, Loading } from '../common/primitives.tsx'
+import { ConnectionTest } from './ConnectionTest.tsx'
 import { GroupRail } from './GroupRail.tsx'
 import { SettingRow } from './SettingRow.tsx'
 import { SCOPE_COPY } from './scope-copy.ts'
@@ -108,6 +114,20 @@ const SettingsBody = ({
   })
 
   const guard = useUnsavedGuard(dirtyCount)
+
+  /** What each group's last connection test found, by group name.
+   *
+   * Held here rather than in `ConnectionTest` because the models are for the
+   * *model row*, which is a sibling: the test knows them and the row needs
+   * them, and the page is the nearest thing that holds both. Keyed by group so
+   * one group's test cannot offer its models to another's endpoint.
+   *
+   * Deliberately not persisted or cached across a reload. A model list is a
+   * statement about what an endpoint was serving a moment ago, and offering
+   * yesterday's list as though it were current is the kind of stale
+   * suggestion that sends somebody looking for a model that has since been
+   * unloaded. */
+  const [discovered, setDiscovered] = useState<ReadonlyMap<string, readonly string[]>>(new Map())
 
   const copy = SCOPE_COPY[scope]
 
@@ -237,57 +257,82 @@ const SettingsBody = ({
             />
           ) : null}
 
-          {visible.map((g, index) => (
-            <Disclosure
-              key={g.name}
-              label={
-                <span>
-                  {g.name}
-                  <span className="ml-2 font-mono text-xs text-fg-faint">{g.settings.length}</span>
-                </span>
-              }
-              // Open when asked for by name, when a search hit is in it, when
-              // this scope overrode something in it, or when it is one of the
-              // first two. The rest fold. Not an advanced/basic split: the
-              // registry carries no such flag and inventing one here is exactly
-              // the second hand-written description of forty settings that
-              // `settings.py` exists to prevent. If a tier is wanted it is a
-              // field on `SettingSpec`, where a test can hold it.
-              open={
-                opened.has(g.name) ||
-                searching ||
-                (overrideCounts.get(g.name) ?? 0) > 0 ||
-                (group === null && index < 2)
-              }
-              onToggle={() =>
-                setOpened((previous) => {
-                  const next = new Set(previous)
-                  if (next.has(g.name)) next.delete(g.name)
-                  else next.add(g.name)
-                  return next
-                })
-              }
-            >
-              <div className="flex flex-col">
-                {g.settings.map((spec) => {
-                  const row = current?.get(spec.key)
-                  if (!row) return null
-                  return (
-                    <SettingRow
-                      key={spec.key}
-                      spec={spec}
-                      resolved={row}
-                      fallback={fallbacks?.get(spec.key)}
-                      scope={scope}
-                      scopeId={scopeId}
-                      chain={chain}
-                      below={below}
-                    />
-                  )
-                })}
-              </div>
-            </Disclosure>
-          ))}
+          {visible.map((g, index) => {
+            const connection = connectionForGroup(schema.data, g.name)
+            return (
+              <Disclosure
+                key={g.name}
+                label={
+                  <span>
+                    {g.name}
+                    <span className="ml-2 font-mono text-xs text-fg-faint">
+                      {g.settings.length}
+                    </span>
+                  </span>
+                }
+                // Open when asked for by name, when a search hit is in it, when
+                // this scope overrode something in it, or when it is one of the
+                // first two. The rest fold. Not an advanced/basic split: the
+                // registry carries no such flag and inventing one here is exactly
+                // the second hand-written description of forty settings that
+                // `settings.py` exists to prevent. If a tier is wanted it is a
+                // field on `SettingSpec`, where a test can hold it.
+                open={
+                  opened.has(g.name) ||
+                  searching ||
+                  (overrideCounts.get(g.name) ?? 0) > 0 ||
+                  (group === null && index < 2)
+                }
+                onToggle={() =>
+                  setOpened((previous) => {
+                    const next = new Set(previous)
+                    if (next.has(g.name)) next.delete(g.name)
+                    else next.add(g.name)
+                    return next
+                  })
+                }
+              >
+                <div className="flex flex-col">
+                  {g.settings.map((spec) => {
+                    const row = current?.get(spec.key)
+                    if (!row) return null
+                    return (
+                      <SettingRow
+                        key={spec.key}
+                        spec={spec}
+                        resolved={row}
+                        fallback={fallbacks?.get(spec.key)}
+                        scope={scope}
+                        scopeId={scopeId}
+                        chain={chain}
+                        below={below}
+                        // Only the model row, and only for this group's own
+                        // connection: the endpoint and key rows have nothing to
+                        // learn from a list of models, and another group's test
+                        // says nothing about this one's endpoint.
+                        suggestions={
+                          connection !== null && spec.key === connection.modelKey
+                            ? (discovered.get(g.name) ?? [])
+                            : []
+                        }
+                      />
+                    )
+                  })}
+                </div>
+                {/* Below the rows rather than above them: the test is a question
+                  about what the rows say, so it reads after them. */}
+                {connection !== null ? (
+                  <ConnectionTest
+                    connection={connection}
+                    resolved={current}
+                    onModels={(models) =>
+                      setDiscovered((previous) => new Map(previous).set(g.name, models))
+                    }
+                  />
+                ) : null}
+              </Disclosure>
+            )
+          })}
         </div>
       </div>
 

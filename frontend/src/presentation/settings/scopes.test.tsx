@@ -87,6 +87,7 @@ const SCHEMA: SettingsSchema = {
   ],
   scopes: ['project', 'user', 'tenant'],
   roles: [],
+  connections: [],
 }
 
 const resolvedFor = (scope: Scope, scopeId: string): ResolvedSettings => ({
@@ -121,6 +122,8 @@ const repository = (scopeId: string) => {
     resolved,
     put: () => Promise.resolve(),
     clear: () => Promise.resolve(true),
+    providers: () => Promise.resolve([]),
+    testProvider: () => Promise.reject(new Error('not used in this test')),
   }
   // The spy is handed back beside the port rather than read off it later:
   // `vi.mocked(settings.resolved)` detaches the method from its object, which

@@ -625,3 +625,37 @@ def test_profiles_answer_with_no_store_wired(client_without_profiles):
     assert body["profiles"] == []
     assert len(body["roles"]) == 5
     assert all(row["profile"] is None for row in body["roles"])
+
+
+def test_the_schema_says_which_groups_can_be_tested(client):
+    """The console renders a connection test from this and from nothing else.
+
+    Asserted as "the group named here holds the keys named here", using the
+    schema's own groups rather than a literal list, because the failure this
+    guards is a `group` that drifts from where its settings actually sit: the
+    button then renders under a form that cannot show what it tested, and both
+    halves look right in isolation.
+    """
+    body = client.get("/api/settings/schema").json()
+    groups = {
+        group["name"]: {setting["key"] for setting in group["settings"]}
+        for group in body["groups"]
+    }
+
+    assert body["connections"], "no connections at all -- the test proves nothing"
+    for connection in body["connections"]:
+        keys = groups[connection["group"]]
+        assert connection["model_key"] in keys
+        assert connection["base_url_key"] in keys
+        assert connection["api_key_key"] in keys
+
+
+def test_a_connections_model_key_matches_the_role_it_names(client):
+    """Picking a model from a test's results writes `model_key`, and the role
+    is what reads it. A mismatch saves a value nothing consumes -- the defect
+    this whole branch descends from, in miniature."""
+    body = client.get("/api/settings/schema").json()
+    roles = {role["role"]: role["setting_key"] for role in body["roles"]}
+
+    for connection in body["connections"]:
+        assert connection["model_key"] == roles[connection["role"]]
