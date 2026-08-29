@@ -167,18 +167,23 @@ it('gives the panes that hold their own scrollers a body that does not scroll', 
   expect(scrollOf('conversation')).toBe('regions')
 })
 
-it('pins the composer and the activity feed outside the scrolling bodies', () => {
+it('pins the composer outside the scrolling body, and gives the timeline no footer at all', () => {
   const { container: dom } = show()
 
   const footerOf = (id: string) => dom.querySelector(`[data-pane='${id}'] .lay-pane-footer`)
 
-  // The timeline's live feed and the conversation's approvals-and-composer sit
-  // below their bodies rather than at the end of them. Inside, they scroll away
-  // -- for the composer that means a text box that leaves the screen as the
-  // conversation grows, which is the whole reason `footer` is a slot.
-  expect(footerOf('timeline')).toBeInTheDocument()
+  // The composer sits below its body rather than at the end of it. Inside, it
+  // scrolls away -- a text box that leaves the screen as the conversation
+  // grows, which is the whole reason `footer` is a slot.
   expect(footerOf('conversation')).toBeInTheDocument()
   expect(footerOf('workspace')).toBeNull()
+
+  // The timeline's footer held the live activity strip and holds nothing now:
+  // provisional entries preview *messages*, so they render at the foot of the
+  // transcript instead. This assertion is the one that fails if anyone
+  // reinstates the strip here and leaves the same frames drawn twice on one
+  // screen.
+  expect(footerOf('timeline')).toBeNull()
 
   expect(dom.querySelector('[data-pane="conversation"] .lay-pane-body')).not.toContainElement(
     screen.getByRole('textbox'),

@@ -46,14 +46,28 @@ export const activityEntries = (buffer: ActivityBuffer): readonly ActivityEntry[
   ...buffer.values(),
 ]
 
-/** What a provisional bubble shows.
+/** What a provisional bubble shows, and which of the two things it is.
+ *
+ * The `form` is what the renderer needs and the text alone cannot say. A
+ * streaming assistant turn is prose the model wrote in markdown, and it should
+ * read the way the recorded message it is about to become reads — through
+ * `Markdown`. A tool-call summary is the `→ name(arg)` shape below, which is a
+ * label this code assembled, not a document: run it through a markdown parser
+ * and an argument containing `_` or `*` silently turns italic. So the
+ * distinction is returned rather than re-derived by a caller sniffing the
+ * string, which is how the two would drift.
  *
  * A whole-message entry clears `text` server-side and populates `payload`
  * instead, whose content and calls sit under `data` — the same nesting the
  * timeline's own summariser unwraps. Mirroring it here rather than reading
  * `payload.content`, which is always undefined. */
-export const activityBody = (entry: ActivityEntry): string => {
-  if (entry.text) return entry.text
+export interface ActivityContent {
+  readonly form: 'prose' | 'calls'
+  readonly text: string
+}
+
+export const activityContent = (entry: ActivityEntry): ActivityContent => {
+  if (entry.text) return { form: 'prose', text: entry.text }
   const payload = entry.payload
   const data =
     payload && typeof payload === 'object'
@@ -71,7 +85,10 @@ export const activityBody = (entry: ActivityEntry): string => {
         args: record['args'],
       })
     })
-    return truncate(`→ ${summaries.join(', ')}`, ACTIVITY_SUMMARY_LIMIT)
+    return { form: 'calls', text: truncate(`→ ${summaries.join(', ')}`, ACTIVITY_SUMMARY_LIMIT) }
   }
-  return contentText(data?.['content'])
+  return { form: 'prose', text: contentText(data?.['content']) }
 }
+
+/** The body text alone, for callers that do not care which form it took. */
+export const activityBody = (entry: ActivityEntry): string => activityContent(entry).text
