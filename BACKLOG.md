@@ -762,8 +762,26 @@ process at a time:
   what a missing `aspect-[3/2]` utility looks like rather than a card that was
   reworked.
 
+**The second was diagnosed the same day, by CI, from the instrumentation.**
+`aspectRatio` came back `auto` -- no rule at all, with `aspect-[3/2]` in the
+class attribute. A fresh `npm run build` has both `aspect-ratio:3/2` and
+`aspect-ratio:16/9` and `check:tailwind` passes, so the product was never
+broken; the stylesheet the *browser suite* is served was incomplete, because
+Tailwind's dev-time scan of `@source '../**/*.tsx'` had not reached
+`CourseCard.tsx` when `vitest.setup.browser.ts` requested the CSS, and a vitest
+browser page never sees the invalidation. The ratio is a rule in `course.css`
+now and `CARD_ART` is gone.
+
+That is worth generalising exactly once and no further: **an arbitrary-value
+utility whose only occurrence is one string in one component is the most
+fragile thing that scan can be asked for, and the browser suite is the only
+consumer that can be served a stale answer.** If another browser test starts
+failing on a computed property that a production build clearly contains, this
+is the shape. It is not an argument for moving utilities back into
+stylesheets.
+
 So the honest state is that this entry's *first* claim is refuted and its
-second is real but intermittent and undiagnosed. What went in with the
+second was real. What went in with the
 quarantine's removal is instrumentation rather than a fix: the aspect case now
 asserts `getComputedStyle(...).aspectRatio === '3 / 2'` beside the box
 measurement, so a recurrence says which of the two causes it is instead of
@@ -771,8 +789,9 @@ reporting a number; and `boxOf` is scoped to a root rather than to the
 document, which nothing was traced to and which made a failure here impossible
 to attribute.
 
-**If this goes red in CI, it is not a mystery and it should not be
-re-quarantined without reading the `aspectRatio` line in the failure.**
+**If this goes red in CI again, read the `aspectRatio` line before
+re-quarantining.** `auto` means the rule is missing, which now means somebody
+deleted it from `course.css`; a number means the card really is drawn wrong.
 
 The original entry follows, because its account of what a red suite costs is
 right and is why the CI job exists.
