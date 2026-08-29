@@ -17,18 +17,25 @@ describe('Excerpt', () => {
     expect(ruler).toHaveStyle({ marginLeft: '5.93%' })
   })
 
-  it('keeps the raw id and uri available without showing them', () => {
-    // The title is what a reader scanning a run is looking for; the id is what
-    // a bug report needs, and only that.
+  it('keeps the raw uri available without showing it', () => {
+    // The title is what a reader scanning a run is looking for; the uri is what
+    // a bug report needs, and only that. It reaches the reader through a
+    // `Tooltip` rather than a `title` attribute -- see the S-D3 note in
+    // `EntityList.test.tsx` for why, and why this asserts the trigger rather
+    // than the sentence.
     render(<Excerpt artifact={excerpt} phase="settled" />)
-    expect(screen.getByTitle('https://manuscriptreport.com/genres')).toHaveTextContent(
+    expect(screen.getByRole('button')).toHaveTextContent(
       'manuscriptreport.com · types of fictional genres',
     )
   })
 
   it('offers no expander for an excerpt already shown in full', () => {
+    // By name, not by role: the header's argument is a tooltip trigger and
+    // therefore also a button, so a bare `queryByRole('button')` here would be
+    // green for the wrong reason -- it would fail even with an expander
+    // correctly absent.
     render(<Excerpt artifact={excerpt} phase="settled" />)
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /excerpt/ })).not.toBeInTheDocument()
   })
 
   it('truncates a long excerpt behind an expander', () => {

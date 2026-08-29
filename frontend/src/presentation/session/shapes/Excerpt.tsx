@@ -23,10 +23,10 @@ export const Excerpt = ({ artifact, phase, tool }: ShapeProps<ExcerptArtifact>) 
       <Header
         name={tool ?? 'read_source'}
         arg={artifact.label ? `${name} · ${artifact.label}` : name}
-        title={artifact.uri ?? artifact.source_id}
+        explanation={artifact.uri ?? artifact.source_id}
         count={
           <>
-            <span className="stream-ruler">
+            <span className="inline-block h-[5px] w-[56px] overflow-hidden rounded-[2px] bg-bg-raise align-middle [&>i]:block [&>i]:h-full [&>i]:bg-accent">
               <i
                 data-testid="ruler-fill"
                 style={{

@@ -28,7 +28,7 @@ export const Inventory = ({ artifact, phase, tool }: ShapeProps<InventoryArtifac
         arg={artifact.kind}
         count={`${artifact.total} item${artifact.total === 1 ? '' : 's'}`}
       />
-      <div className="stream-list">
+      <div className="mt-[3px]">
         {shown.map((item) => (
           <Item
             key={item.item_id}

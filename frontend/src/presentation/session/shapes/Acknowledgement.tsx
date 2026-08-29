@@ -26,7 +26,11 @@ export const Acknowledgement = ({
     phase={phase}
     tone={artifact.ok ? 'ok' : 'fail'}
   >
-    <span className="stream-ack" data-testid="ack" data-ok={String(artifact.ok)}>
+    <span
+      className="text-fg-faint data-[ok=false]:text-tint-fail [&>b]:font-normal [&>b]:text-fg-dim"
+      data-testid="ack"
+      data-ok={String(artifact.ok)}
+    >
       {artifact.action} — <b>{artifact.subject}</b>
       {artifact.detail ? ` · ${artifact.detail}` : null}
     </span>

@@ -7,6 +7,7 @@ import type { Message } from '@domain/conversation/message.ts'
 import type { TranscriptSegment } from '@domain/conversation/transcript.ts'
 
 import { Segments } from './Segments.tsx'
+import { hitList } from './shapes/fixtures.ts'
 
 /** The conversation's folds, which had no test at all.
  *
@@ -218,4 +219,46 @@ it('reports each toggle to its caller rather than handling it internally', async
   // so the string is a stored value and changing its shape silently discards
   // whatever a reader had open.
   expect(onToggle).toHaveBeenCalledWith('run:3')
+})
+
+it('drops the bubble frame around a result that draws its own spine', () => {
+  // The doubled boundary the stream design exists to remove: a border and a
+  // background around content that is already indented behind a rule in its
+  // own gutter. The head goes with it -- `TOOL` above a header that reads
+  // `search_sources · "magic" · 19 in 3 sources` is the same word twice.
+  //
+  // Asserted on the class rather than on a computed style deliberately. What
+  // the class *does* is `.msg.bare` in `conversation.css`, and jsdom returns
+  // only what an inline style said, so a computed-style assertion here would
+  // read `''` against a stylesheet that never loaded and would pass either
+  // way. This asserts the half jsdom can see -- that the decision reached the
+  // markup -- and the stylesheet carries the half it cannot.
+  const segments: readonly TranscriptSegment[] = [
+    {
+      kind: 'toolRun',
+      at: 0,
+      messages: [message({ role: 'tool', content: '19 match(es)', artifact: hitList })],
+    },
+  ]
+
+  const { container } = render(<Host segments={segments} initial={['run:0']} />)
+
+  expect(container.querySelector('.msg.bare')).not.toBeNull()
+  expect(container.querySelector('.msg.bare .msg-head')).toBeNull()
+  expect(container.querySelector('.msg.bare [data-testid="stream"]')).not.toBeNull()
+})
+
+it('keeps the frame and the head around a result with no artifact', () => {
+  // The other half, and the one that would otherwise pass with `bare` applied
+  // to every tool message: on a real database nothing has an artifact, so a
+  // rule that stripped the frame unconditionally would leave the whole
+  // transcript's machinery undressed and nothing above here would notice.
+  const segments: readonly TranscriptSegment[] = [
+    { kind: 'toolRun', at: 0, messages: [message({ role: 'tool', content: 'the result body' })] },
+  ]
+
+  const { container } = render(<Host segments={segments} initial={['run:0']} />)
+
+  expect(container.querySelector('.msg.bare')).toBeNull()
+  expect(container.querySelector('.msg-tool .msg-head')).not.toBeNull()
 })

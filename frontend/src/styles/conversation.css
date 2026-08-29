@@ -93,8 +93,9 @@
      the collapse rather than a retune. */
   background: var(--tint-fail);
 }
-/* A tool result drawn from an artifact brings its own boundary: `stream.css`
- * runs a rule down the gutter and indents the body behind it. A border and a
+/* A tool result drawn from an artifact brings its own boundary: `Row` in
+ * `shapes/parts.tsx` runs a rule down the gutter and indents the body behind
+ * it. A border and a
  * background around that draws the same edge twice, which is most of what made
  * a turn with nine tool calls read as nine heavy blocks.
  *

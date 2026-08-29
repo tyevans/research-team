@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 
 import { SHAPE_GLYPH, type Shape } from '@domain/conversation/artifact.ts'
 
+import { Tooltip } from '../../common/Tooltip.tsx'
+
 /** The stream's shared primitives.
  *
  * Seven shape components must not each invent a bar. The reason is the same
@@ -67,8 +69,8 @@ export const compact = (n: number): string => {
  * indented behind a rule draws the same boundary twice, and that doubled
  * chrome is most of what makes the current feed feel heavy. Where an enclosing
  * box already draws a boundary the spine's rule is suppressed rather than the
- * row restructured — `stream.css` under `.provisional`, and `conversation.css`
- * for a shaped result inside a run.
+ * row restructured — the `[.provisional_&]` variant on the gutter below, and
+ * `.msg.bare` in `conversation.css` for a shaped result inside a run.
  *
  * The row takes a **shape**, not a character. `SHAPE_GLYPH` is the registry
  * and a call carries the same mark its result does; seven components each
@@ -95,10 +97,44 @@ export const Row = ({
   tone?: 'ok' | 'fail'
   children: ReactNode
 }) => (
-  <div className="stream-row" data-phase={phase}>
-    <div className="stream-gutter" data-testid="stream-gutter">
+  <div className="grid grid-cols-[15px_1fr] gap-3" data-phase={phase}>
+    {/* The spine sits *under* the glyph rather than at the row's left edge, so
+        the gutter is half its own width and offset by the other half. Its run
+        into the next row comes from the body's padding rather than a negative
+        offset, so the last row needs no `:last-child` case.
+
+        `border-l` with no `border-solid`: Tailwind v4 emits the style longhand
+        beside the width for one side and leaves the other three at
+        `border-style: none`. Adding `border-solid` would give three sides a
+        style with no width and let them fall back to the browser's `medium`,
+        which is the box-instead-of-an-edge trap CLAUDE.md records.
+
+        `[.provisional_&]` suppresses the rule and only the rule. `.provisional`
+        already draws a 2px accent rail 16px to the left, and two vertical rules
+        closing on the same content is the doubled boundary this design objects
+        to — of the two the rail is the one carrying meaning, since it says *not
+        recorded yet*, which a spine cannot say. Transparent rather than a width
+        of zero: the width is what positions the glyph's halo over the line, and
+        a gutter that narrowed by a pixel inside a provisional bubble would move
+        the whole card when its turn committed. */}
+    <div
+      className="relative ml-[7px] w-[8px] border-l border-l-line [.provisional_&]:border-l-transparent"
+      data-testid="stream-gutter"
+    >
+      {/* Punched through the spine with the page's own background, which is
+          what makes the line read as passing behind the glyph rather than
+          stopping at it. `bg-bg-panel` rather than `bg-bg`: the stream is drawn
+          on a panel, and a glyph haloed in the wrong background is a smudge.
+
+          The live edge is this animation and this colour, and nothing else. If
+          a phase ever adds a pixel, every card in a turn jumps at the instant
+          it commits, which is the exact defect "phase is position" was adopted
+          to remove — `a-card-does-not-change-when-its-turn-commits.browser.test.tsx`
+          holds it. Motion here is decorative, since the row's position already
+          says "still arriving", so a reader who asked for less of it loses
+          nothing. */}
       <span
-        className="stream-glyph"
+        className="absolute top-0 -left-[8px] block w-[15px] bg-bg-panel text-center text-[10px] leading-[15px] text-accent data-[phase=live]:animate-stream-pulse data-[tone=fail]:text-tint-fail data-[tone=ok]:text-tint-ok motion-reduce:data-[phase=live]:animate-none"
         data-testid="stream-glyph"
         data-phase={phase}
         {...(tone ? { 'data-tone': tone } : {})}
@@ -107,38 +143,66 @@ export const Row = ({
         {glyph ?? SHAPE_GLYPH[shape]}
       </span>
     </div>
-    <div className="stream-body" data-testid="stream-body">
+    <div className="min-w-0 pb-[7px]" data-testid="stream-body">
       {children}
     </div>
   </div>
 )
 
+/** The argument's own box: one line, ellipsised, taking the room the name and
+ *  the count leave.
+ *
+ * A constant because it is worn by two different elements — a bare `<span>`
+ * when there is nothing to explain, and the `Tooltip`'s trigger when there is.
+ * The trigger *is* the box rather than sitting inside one, which is what keeps
+ * the element count the same either way and stops the header's flex row
+ * collapsing around an inline-sized button. */
+const ARG_CLASS = 'min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-fg'
+
 /** `tool_name · argument · count`, and the call and its result are one row.
  *
  * `arg` is the source's *title*, resolved from the artifact —
  * `manuscriptreport.com · types of fictional genres`, not
- * `manuscriptreport-com-blog-types-of-fictional-genres-42e281d8`. The raw id
- * goes to `title`, because that is what a bug report needs and nothing else
- * does. */
+ * `manuscriptreport-com-blog-types-of-fictional-genres-42e281d8`.
+ *
+ * The raw id goes to `explanation`, and it used to go to a `title` attribute.
+ * That is the pattern the S-D3 deletion removed repo-wide and
+ * `check-deleted.mjs` fails the build over: a `title` is announced on hover
+ * after a delay the operating system owns, and on nothing else — not on focus,
+ * not on touch, not to a screen reader reading a `<span>`. A bug report needing
+ * the raw id is precisely a reader who may not be holding a mouse.
+ *
+ * The cost, since `Tooltip` states it and it applies here: with no
+ * `OverlayHost` in scope the explanation does not render at all. Every shape's
+ * unit test mounts bare, so those tests see the trigger and no content; the
+ * console mounts inside `Shell`, which has the host. */
 export const Header = ({
   name,
   arg,
   count,
-  title,
+  explanation,
 }: {
   name: string
   arg?: ReactNode
   count?: ReactNode
-  title?: string
+  explanation?: string
 }) => (
-  <div className="stream-h">
-    <b className="stream-name">{name}</b>
-    {arg === undefined ? null : (
-      <span className="stream-arg" {...(title ? { title } : {})}>
+  <div className="flex items-baseline gap-[8px]" data-testid="stream-header">
+    <b className="font-normal whitespace-nowrap text-fg-faint">{name}</b>
+    {arg === undefined ? null : explanation ? (
+      <Tooltip explanation={explanation} className={ARG_CLASS}>
+        {arg}
+      </Tooltip>
+    ) : (
+      <span className={ARG_CLASS} data-testid="stream-arg">
         {arg}
       </span>
     )}
-    {count === undefined ? null : <span className="stream-cnt">{count}</span>}
+    {count === undefined ? null : (
+      <span className="flex items-center gap-[4px] text-xs whitespace-nowrap text-fg-faint">
+        {count}
+      </span>
+    )}
   </div>
 )
 
@@ -158,13 +222,27 @@ export const Item = ({
   value: ReactNode
   testId?: string
 }) => (
-  <div className="stream-item" {...(testId ? { 'data-testid': testId } : {})} data-name={name}>
-    <span className="stream-nm" data-linked={String(linked)}>
+  <div
+    className="grid grid-cols-[1fr_54px_20px] items-center gap-[12px] py-[0.5px]"
+    {...(testId ? { 'data-testid': testId } : {})}
+    data-name={name}
+  >
+    {/* An entity the graph knows by name and has connected to nothing is the
+        most actionable thing a `graph_search` returns, and in the paragraph
+        this replaces it was the least visible: dimmed and below a rule is what
+        `data-linked="false"` buys. */}
+    <span
+      className="overflow-hidden text-ellipsis whitespace-nowrap text-fg-dim data-[linked=false]:text-fg-faint [&_em]:text-xs [&_em]:text-fg-faint [&_em]:not-italic"
+      data-testid="stream-name"
+      data-linked={String(linked)}
+    >
       {name}
       {detail ? <em> {detail}</em> : null}
     </span>
     {mark}
-    <span className="stream-v">{value}</span>
+    <span className="text-right text-xs text-fg-faint" data-testid="stream-value">
+      {value}
+    </span>
   </div>
 )
 
@@ -174,9 +252,17 @@ export const Item = ({
  * why: the track is what has to share a left edge with every other track for
  * the list to be one axis, and the fill is what has to be in proportion to the
  * value. Asserting both on one element would confuse "the column is aligned"
- * with "the number is drawn", and only the second can go wrong quietly. */
+ * with "the number is drawn", and only the second can go wrong quietly.
+ *
+ * The fill is styled through `[&>i]` on the track rather than by classing the
+ * `<i>`, because `EntityList` renders the same track *empty* for an unlinked
+ * entity — one class constant, two call sites, and no way for the empty one to
+ * drift. */
+export const BAR_CLASS =
+  'block h-[5px] overflow-hidden rounded-[2px] bg-bg-raise [&>i]:block [&>i]:h-full [&>i]:bg-accent [&>i]:opacity-80'
+
 export const Bar = ({ value, max }: { value: number; max: number }) => (
-  <span className="stream-bar" data-testid="bar">
+  <span className={BAR_CLASS} data-testid="bar">
     {value > 0 && max > 0 ? (
       <i data-testid="bar-fill" style={{ width: `${percent(value, max)}%` }} />
     ) : null}
@@ -196,7 +282,10 @@ export const Sparkline = ({
   positions: readonly number[]
   total: number
 }) => (
-  <span className="stream-spark" data-testid="spark">
+  <span
+    className="relative block h-[8px] [&>i]:absolute [&>i]:top-0 [&>i]:-ml-px [&>i]:block [&>i]:h-[8px] [&>i]:w-[2px] [&>i]:bg-accent [&>i]:opacity-80"
+    data-testid="spark"
+  >
     {positions.map((position, index) => (
       <i key={index} style={{ left: `${percent(position, total)}%` }} />
     ))}
@@ -205,12 +294,19 @@ export const Sparkline = ({
 
 /** The control behind the cap of five.
  *
- * A `<button>` with a *named class*, and that is not a style preference.
- * `tokens.css` gives every bare `button` an unlayered `background`, `color`
- * and `font: inherit`; because `font` is a shorthand it sets `font-size` too,
- * so `text-xs bg-transparent` here would be present in the class attribute,
- * present in the bundle, and never applied. It fails silently and looks
- * identical to a utility that worked. */
+ * Utilities, and every one of the four resets is load-bearing rather than
+ * decoration. `tokens.css` gives a bare `button` a `background`, a `color` and
+ * `font: inherit`, and this build imports no Tailwind preflight, so the user
+ * agent's border and padding survive too. Those rules are in `@layer base`
+ * since #313, so the utilities here beat them — but only because they are
+ * layered, and `spine.browser.test.tsx` measures the size and the background
+ * rather than trusting it. Unlayer that rule again and every class below is in
+ * the attribute, in the bundle, and never applied, which looks exactly like a
+ * utility that worked.
+ *
+ * `text-[10px]` is an arbitrary value rather than `text-xs` (10.5px) because
+ * the measurement asserts an exact number and half a pixel of type is not a
+ * scale step anyone chose. */
 export const Expander = ({
   label,
   expanded,
@@ -220,7 +316,12 @@ export const Expander = ({
   expanded: boolean
   onToggle: () => void
 }) => (
-  <button type="button" className="stream-exp" aria-expanded={expanded} onClick={onToggle}>
+  <button
+    type="button"
+    className="mt-[4px] inline-block cursor-pointer border-0 bg-transparent p-0 font-mono text-[10px] leading-[1.4] text-accent-dim hover:text-accent"
+    aria-expanded={expanded}
+    onClick={onToggle}
+  >
     <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {label}
   </button>
 )
@@ -231,5 +332,10 @@ export const Expander = ({
  * they are meant to skim — the same split the whole design rests on, applied
  * inside one card. */
 export const Quote = ({ children }: { children: ReactNode }) => (
-  <div className="stream-q">{children}</div>
+  <div
+    className="mt-[5px] border-l border-l-line-soft pl-[9px] font-serif text-md leading-[1.5] [overflow-wrap:anywhere] whitespace-pre-wrap text-fg-dim"
+    data-testid="stream-quote"
+  >
+    {children}
+  </div>
 )

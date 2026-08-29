@@ -21,7 +21,10 @@ describe('FileChange', () => {
   it('draws no diff block for a change that carried no text', () => {
     render(<FileChange artifact={{ ...fileChange, before: null, after: null }} phase="settled" />)
     expect(screen.queryByTestId('diff')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    // By name: the header's argument is a tooltip trigger and therefore also a
+    // button, so a bare role query here would report the path and not the
+    // expander.
+    expect(screen.queryByRole('button', { name: /full change/ })).not.toBeInTheDocument()
   })
 
   it('puts a long change behind an expander', () => {
