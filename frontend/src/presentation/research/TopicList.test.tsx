@@ -669,28 +669,29 @@ it('ignores a dispatch frame for another project', async () => {
   expect(dispatchStatus).toHaveBeenCalledTimes(1)
 })
 
-/** The toolbar survives both fetch states, because the doors on it are not
- *  about topics.
+/** The header survives both fetch states, because what sits in it is not
+ *  about whether the read succeeded.
  *
- * `QueueHeader` carries the only two inbound links to `#/p/<id>/ask` and
- * `#/p/<id>/dialogue`, and this container returns the loading and error
- * branches *instead of* the queue that draws them. Threading the toolbar only
- * into `TopicQueue` therefore removed both doors for the length of every
- * topic request and permanently on a project whose topic read fails -- the
- * same one-way door this pane has shipped twice, arriving through a state
- * rather than through a deletion.
+ * It holds the fan-out, whose control names the scope it would act on, and
+ * this container returns the loading and error branches *instead of* the
+ * queue. Rendering the slot only on the happy path would leave a reader
+ * looking at a drawer that says nothing about what it is for whenever the
+ * topics fail to load.
  *
- * **Found by `App.test.tsx` rather than predicted**: its container has no
- * `topics.list` at all, so every test in it renders the error branch, and two
- * of them assert those links by name. **Proved red** here by returning
- * `<ErrorBox>` alone: `Unable to find an accessible element with the role
- * "link" and name "the way out"`.
+ * The slot used to carry the only two inbound links to `#/p/<id>/ask` and
+ * `#/p/<id>/dialogue`, which is the sharper version of the same argument and
+ * is why this test was written. Those live in the console's chrome now
+ * (`TopicControls`), which is a stronger fix than this test: they no longer
+ * depend on any fetch state anywhere.
+ *
+ * **Proved red** by returning `<ErrorBox>` alone: `Unable to find an
+ * accessible element with the role "link" and name "the way out"`.
  */
-it('keeps the toolbar when the topics cannot be read', async () => {
+it('keeps the header when the topics cannot be read', async () => {
   renderWithContainer(
     <TopicList
       projectId={PROJECT}
-      toolbar={() => <a href="#/p/x/ask">the way out</a>}
+      header={() => <a href="#/p/x/ask">the way out</a>}
       onOpen={() => {}}
     />,
     { topics: fakeTopics(vi.fn().mockRejectedValue(new Error('no'))) },
@@ -700,7 +701,7 @@ it('keeps the toolbar when the topics cannot be read', async () => {
   expect(screen.getByRole('link', { name: 'the way out' })).toBeInTheDocument()
 })
 
-/** The toolbar is handed exactly the rows on screen, filter and all.
+/** The header is handed exactly the rows on screen, filter and all.
  *
  * This is the client half of the fan-out's whole safety property: the ids the
  * drawer sends are the ids the queue is showing, not every topic in the
@@ -709,7 +710,7 @@ it('keeps the toolbar when the topics cannot be read', async () => {
  * ids sent match each other; nothing there can see whether the ids that
  * arrived were the *filtered* set, because they arrive as a prop.
  *
- * So this types into the filter and asserts the toolbar's argument moved with
+ * So this types into the filter and asserts the header's argument moved with
  * it. Filtering rather than a bare render is the case that separates the two
  * candidate implementations -- `shown.map(...)` and `query.data.map(...)`
  * produce identical arrays on every unfiltered queue, which is every queue
@@ -720,7 +721,7 @@ it('keeps the toolbar when the topics cannot be read', async () => {
  * from `shown` in `use-topic-queue.ts`: two ids arrive instead of one, and
  * every other assertion in this file stays green.
  */
-it('hands the toolbar the topics the filter is showing, not every topic', async () => {
+it('hands the header the topics the filter is showing, not every topic', async () => {
   const seen: (readonly TopicId[])[] = []
   const topics = fakeTopics(
     vi.fn<TopicRepository['list']>().mockResolvedValue([
@@ -735,9 +736,9 @@ it('hands the toolbar the topics the filter is showing, not every topic', async 
   renderWithContainer(
     <TopicList
       projectId={PROJECT}
-      toolbar={(shownTopicIds) => {
+      header={(shownTopicIds) => {
         seen.push(shownTopicIds)
-        return <span>toolbar</span>
+        return <span>header</span>
       }}
     />,
     { topics },

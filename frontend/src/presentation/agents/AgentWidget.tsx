@@ -7,7 +7,7 @@ import { sample } from '@domain/worker/transcript-tail.ts'
 
 import { Popover } from '../common/Popover.tsx'
 import { Tooltip } from '../common/Tooltip.tsx'
-import { WorkerDrawer } from '../project/queue/WorkerDrawer.tsx'
+import { WorkerDrawer } from '../project/topics/WorkerDrawer.tsx'
 import { elapsed } from '../formatting/format.ts'
 import { useRunningAgents, type RunningAgent } from './use-running-agents.ts'
 

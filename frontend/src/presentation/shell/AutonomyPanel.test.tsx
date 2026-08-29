@@ -11,7 +11,7 @@ import type { AutonomyRepository } from '@application/ports/repositories.ts'
 import type { AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
 import { SessionId } from '@domain/shared/identifier.ts'
 
-import { AutonomyAllowAll } from '../project/queue/AutonomyAllowAll.tsx'
+import { AutonomyAllowAll } from '../project/topics/AutonomyAllowAll.tsx'
 import { AutonomyPanel } from './AutonomyPanel.tsx'
 
 const SESSION = SessionId('22222222-2222-2222-2222-222222222222')

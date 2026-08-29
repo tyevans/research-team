@@ -93,7 +93,7 @@ it('puts a topic in QUEUE and not in MATERIAL', () => {
  * narrow band.
  *
  * **The real assertion exists and CI does not reach it.**
- * `project-tracks.browser.test.tsx` sums every tab's width, the column gaps and
+ * A browser test summed every tab's width, the column gaps and
  * the strip's padding, and requires MATERIAL's floor to be at least that wide.
  * It is in the `browser` project, which `CLAUDE.md` states is "deliberately
  * outside `verify` and outside CI, so nothing forces you to run it". So a

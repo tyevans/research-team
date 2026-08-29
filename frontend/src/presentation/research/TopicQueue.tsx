@@ -384,7 +384,6 @@ export const TopicQueue = ({
   onDispatch,
   onManage,
   onStop,
-  toolbar,
 }: {
   /** Already filtered and ranked. Ranking is `byUrgency`, a domain rule, and
    *  a component that re-sorted what it was given could disagree with the
@@ -409,18 +408,6 @@ export const TopicQueue = ({
   onDispatch: (topicId: TopicId, action: DispatchAction) => void
   onManage: (topicId: TopicId) => void
   onStop: () => void
-  /** The controls that act on the whole queue, on the search box's line.
-   *
-   * A slot rather than a rendered component, because everything that belongs
-   * here needs a `ProjectId`, a container and an overlay host, and this
-   * component deliberately has none of the three -- the split that lets a
-   * story show a failed dispatch is the same split that would be undone by
-   * importing `QueueHeader` here. `ProjectView` supplies it.
-   *
-   * Optional, and the default is the honest one: a queue rendered outside a
-   * routed page has no project-wide verbs to offer, and the search box simply
-   * takes the whole line. */
-  toolbar?: ReactNode
 }) => (
   <div className="flex h-full flex-col gap-[8px]">
     {/* `.topic-filters` wrapped these two and is *dissolved* rather than
@@ -432,15 +419,9 @@ export const TopicQueue = ({
         again would mean choosing a second, smaller gap for no reason a reader
         could see. */}
 
-    {/* The toolbar line: the search box, then the verbs that act on the whole
-        project. One line rather than the four stacked bands `QueueHeader`
-        used to be -- see its docstring and `docs/design/
-        topic-actions-on-the-row.md` §2, which draws exactly this row.
-
-        The field is `flex-1` and the toolbar is `flex-none`, so the ~294px the
-        rail gives this line is split by giving the icons what they measure and
-        the field the rest. The other way round clips a glyph, which is the
-        width fight `CHIP` below records losing twice. */}
+    {/* The search box, alone on its line. It shared it with three glyphs
+        until those moved to the console's chrome -- see `TopicControls`, which
+        carries why the whole queue moved with them. */}
     <div className="flex items-center gap-[4px]">
       {/* `input` stays a class: it is the shared field style, declared for every
           text field in the console, and it is not this slice's to dissolve. */}
@@ -452,7 +433,6 @@ export const TopicQueue = ({
         value={search}
         onChange={(event) => onSearchChange(event.target.value)}
       />
-      {toolbar}
     </div>
     {/* A radio group, not a row of buttons: these four are one choice with
         one answer, and that is what a screen reader should be told. The

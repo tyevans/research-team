@@ -7,11 +7,11 @@ import { expect, it, vi } from 'vitest'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { EventStream, EventStreamListener } from '@application/ports/event-stream.ts'
-import { ProjectId } from '@domain/shared/identifier.ts'
+import { ProjectId, TopicId } from '@domain/shared/identifier.ts'
 
 import { OverlayHost } from '../../layout/OverlayHost.tsx'
 import { StreamProvider } from '../../shell/StreamProvider.tsx'
-import { QueueHeader } from './QueueHeader.tsx'
+import { TopicControls } from './TopicControls.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
@@ -34,7 +34,17 @@ const renderHeader = (parts: Partial<AppContainer> = {}) => {
         container={
           {
             stream: fakeStream(),
-            topics: { seedStatus: vi.fn().mockResolvedValue({ current: null, last: null }) },
+            // `list` and `dispatchStatus` are here because the drawer holds the
+            // queue now: `TopicList` reads both the moment it mounts, and a
+            // container without them fails every drawer assertion for a reason
+            // that has nothing to do with what is being asserted.
+            topics: {
+              seedStatus: vi.fn().mockResolvedValue({ current: null, last: null }),
+              list: vi.fn().mockResolvedValue([]),
+              dispatchStatus: vi
+                .fn()
+                .mockResolvedValue({ running: null, queued: [], finished: [] }),
+            },
             ...parts,
           } as unknown as AppContainer
         }
@@ -45,7 +55,9 @@ const renderHeader = (parts: Partial<AppContainer> = {}) => {
       </ContainerProvider>
     </QueryClientProvider>
   )
-  return render(<QueueHeader projectId={PROJECT} shownTopicIds={[]} />, { wrapper })
+  return render(<TopicControls projectId={PROJECT} openTopic={null} onOpenTopic={() => {}} />, {
+    wrapper,
+  })
 }
 
 /** Both ask routes keep a door, and this file is where that is held.
@@ -160,4 +172,71 @@ it('closes, and seeding goes with it', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Close' }))
 
   expect(screen.queryByRole('textbox', { name: /subject/i })).not.toBeInTheDocument()
+})
+
+/** The queue came in with the seeding form, and this is what says so.
+ *
+ * The filter and the rows were a quarter-width rail on every project page
+ * until this slice; `TopicControls`'s docstring carries why they moved. The
+ * `queryBy` before the click is the load-bearing half here for the same reason
+ * it is above: asserting only that the filter appears afterwards would pass
+ * against a build that still drew the rail *and* opened a drawer over it.
+ */
+it('holds the filter and the queue rather than leaving them on the page', async () => {
+  renderHeader()
+
+  expect(screen.queryByRole('searchbox', { name: 'Filter topics' })).not.toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { name: /seed and manage/i }))
+
+  expect(await screen.findByRole('searchbox', { name: 'Filter topics' })).toBeInTheDocument()
+  expect(screen.getByRole('radiogroup', { name: 'Which topics to show' })).toBeInTheDocument()
+})
+
+/** A link to a topic opens the door the topic is now behind.
+ *
+ * `#/p/<id>/topic/<tid>` is an address a person sends, and the thing it names
+ * is inside a drawer that nothing has clicked. Without this the route would
+ * parse, render the project page, and show none of what it named -- which is
+ * exactly the defect `use-topic-queue.ts` records against the `useState` this
+ * routing replaced, arriving a second time through a drawer.
+ *
+ * **Proved red** by dropping `|| openTopic !== null` from `showing`: `Unable to
+ * find an accessible element with the role "dialog"`.
+ */
+it('opens itself when the route already names a topic', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>
+      <ContainerProvider
+        container={
+          {
+            stream: fakeStream(),
+            topics: {
+              seedStatus: vi.fn().mockResolvedValue({ current: null, last: null }),
+              list: vi.fn().mockResolvedValue([]),
+              dispatchStatus: vi
+                .fn()
+                .mockResolvedValue({ running: null, queued: [], finished: [] }),
+              read: vi.fn().mockResolvedValue(undefined),
+            },
+          } as unknown as AppContainer
+        }
+      >
+        <StreamProvider>
+          <OverlayHost>{children}</OverlayHost>
+        </StreamProvider>
+      </ContainerProvider>
+    </QueryClientProvider>
+  )
+  render(
+    <TopicControls
+      projectId={PROJECT}
+      openTopic={TopicId('22222222-2222-2222-2222-222222222222')}
+      onOpenTopic={() => {}}
+    />,
+    { wrapper },
+  )
+
+  expect(await screen.findByRole('dialog', { name: /seed and manage/i })).toBeInTheDocument()
 })

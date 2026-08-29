@@ -1,19 +1,13 @@
-import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect } from 'react'
 
-import { queryKeys } from '@application/queries/keys.ts'
 import type { SessionStore } from '@application/session/session-store.ts'
-import { useContainer } from '@app/container-context.tsx'
-import { isClosed } from '@domain/research/topic.ts'
 import { ScrubPoint } from '@domain/session/scrub-point.ts'
 import type { FilePath } from '@domain/shared/file-path.ts'
-import { SourceId, TopicId, type ProjectId, type SessionId } from '@domain/shared/identifier.ts'
+import { SourceId, type ProjectId, type SessionId } from '@domain/shared/identifier.ts'
 
 import { EmptyState } from '../common/primitives.tsx'
 import { TabList, TabPanel, Tabs } from '../common/Tabs.tsx'
 import { useProject } from './use-project.ts'
-import { Pane } from '../layout/Pane.tsx'
-import { Split } from '../layout/Split.tsx'
 import { DocumentList } from '../research/DocumentList.tsx'
 import { CatalogPane } from '../curriculum/CatalogPane.tsx'
 import { CoursePage } from '../curriculum/CoursePage.tsx'
@@ -23,13 +17,10 @@ import { EntityTreePane } from '../research/EntityTreePane.tsx'
 import { GraphPane } from '../research/GraphPane.tsx'
 import { MediaProposalPane } from '../research/MediaProposalPane.tsx'
 import { TimelinePane } from '../research/TimelinePane.tsx'
-import { TopicList } from '../research/TopicList.tsx'
 import { projectHref, sessionSelection, type Facet, type Selection } from '../routing/routes.ts'
 import { navigate } from '../routing/use-route.ts'
 import { WorkspacePanel } from '../session/panels.tsx'
 import { useSessionScreen } from '../session/use-session-screen.ts'
-import { QueueHeader } from './queue/QueueHeader.tsx'
-import { PROJECT_TRACKS, useProjectPanes } from './use-project-panes.ts'
 
 /** The two regions a project page has: a sidebar and the content beside it.
  *
@@ -150,9 +141,17 @@ export const regionOf = (facet: Facet): Region => {
  */
 type MaterialFacet = 'file' | 'doc' | 'media' | 'entity' | 'tree' | 'ontology' | 'timeline' | 'area'
 
-/** Exported so `project-tracks.browser.test.tsx` can compare the strip it
- *  measures against the strip that was declared — a count taken from the
- *  rendered row alone cannot tell "eight tabs" from "eight of nine rendered". */
+/** Exported so a measurement of the rendered strip can be compared against the
+ *  strip that was declared — a count taken from the rendered row alone cannot
+ *  tell "eight tabs" from "eight of nine rendered".
+ *
+ * `project-tracks.browser.test.tsx` was that measurement and is deleted with
+ * the split it took its floor from: the floors it held were widths at which
+ * *two* regions still fit, and this page has one. The strip's own overflow
+ * behaviour is unchanged — `.tabs` scrolls — so a twelfth tab is still
+ * reachable rather than painted-and-unclickable, which is the failure the
+ * floors existed to keep away. Nothing measures the strip's width now, and
+ * that is a real gap rather than a tidy-up. */
 export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // **"Holding session" was first and is gone.** Not demoted -- removed. A
   // person does not choose which session to read a project through: the
@@ -192,8 +191,8 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // the canvas draws, and the two belong next to each other. Nothing here is
   // lazy and nothing pulls a canvas, so it costs the default tab nothing --
   // the same argument Tree makes one line above. What it *did* cost is the
-  // narrow band: see `project-stacked.browser.test.tsx`, which predicted this
-  // tab before it existed.
+  // narrow band, back when this page stacked two panes below 821 -- measured
+  // by `project-stacked.browser.test.tsx`, deleted with the split.
   { id: 'ontology', label: 'Classes' },
   // After Graph, not before: this list is ordered by what the reader is asking,
   // and the timeline is a second reading of the graph's own material. Last also
@@ -206,10 +205,11 @@ export const MATERIAL_TABS: readonly { id: MaterialFacet; label: string }[] = [
   // `area` and `path` are two readings of one response -- what the project is
   // about, and what order to take it in -- and the pane switches between them
   // with a toggle of its own. Two tabs was the first arrangement and it broke
-  // the strip: `project-tracks.browser.test.tsx` measured MATERIAL's floor at
-  // 646px against 837px of tabs, and `project-stacked.browser.test.tsx` found
-  // two clipped controls in the narrow band. Eleven tabs is where this strip
-  // stops fitting, which is worth knowing before the twelfth is added.
+  // the strip: MATERIAL's floor measured 646px against 837px of tabs, and two
+  // controls clipped in the narrow band. Eleven tabs is where this strip
+  // stopped fitting *beside a sidebar*, which is worth knowing before the
+  // twelfth is added -- though the sidebar is gone and both measurements were
+  // taken by browser tests that went with it.
   //
   // Nine now, since Artifacts and Findings came out with the workflow system.
   // That is about 150px of headroom and it is deliberately unspent: what to put
@@ -320,29 +320,27 @@ export const visibleMaterialTabs = (
  * `catalog` selection that arrives from the route. */
 export const DEFAULT_MATERIAL: Facet = 'catalog'
 
-/** A project, whole: one page with a sidebar and a content area, instead of two
- *  pages.
+/** A project, whole: one page, instead of two.
  *
  * **A frame with mostly-unchanged tenants.** Slice 0 built this as three panes
  * holding the components the two old pages happened to have, unrestyled, on
  * purpose: the container and the regions are two changes and shipping them
- * together leaves no way to tell which half broke. Slice 1 gave QUEUE its header
- * band; slice 2 took the nesting out of HOLDER and gave MATERIAL the workspace;
- * slice 3 rewrote three of MATERIAL's tabs in utilities and threaded their route
- * ids in. The topic list is still the research page's, in QUEUE, and it is not
- * MATERIAL's to rewrite — which is also why `research.css` has not died yet.
- * The stage rail that sat above it is gone with the workflow system.
+ * together leaves no way to tell which half broke. Slice 1 gave QUEUE its
+ * header band; slice 2 took the nesting out of HOLDER and gave MATERIAL the
+ * workspace; slice 3 rewrote three of MATERIAL's tabs in utilities and
+ * threaded their route ids in.
  *
- * **This slice made it two regions rather than three**, and the tenants moved
- * again without being rewritten: HOLDER's four panels are MATERIAL's first tab,
- * in the order and the flex column they already had.
+ * **There is one region now, and this is the second of the two that left.**
+ * HOLDER became a tab in MATERIAL; QUEUE has become a drawer in the console's
+ * chrome, which `TopicControls` argues in full. `Split` went with it -- what a
+ * split buys is sizing, folding, the persistence of a fold and a stacked
+ * fallback below `--bp-narrow`, and every one of those is an answer about how
+ * *two* regions share a surface.
  *
- * A `Split` rather than two divs, still, and the reasons survive the change of
- * shape: `Split` owns the sizing, the fold, the persistence of the fold, the
- * rail form a folded pane takes, and the handoff to the stylesheet below the
- * widest breakpoint. A sidebar needs every one of those. What it does not need
- * is a second fold — MATERIAL passes `collapsible={false}`, which is the one
- * thing this page asks the primitive for that peers never did.
+ * `regionOf` below still names both, and deliberately: `queue` no longer means
+ * "the left column of this page", it means "drawn by the chrome rather than by
+ * this view", which is a distinction the tab resolution below still has to
+ * make.
  */
 export const ProjectView = ({
   projectId,
@@ -372,13 +370,11 @@ export const ProjectView = ({
   onLoaded?: (name: string | null) => void
 }) => {
   const { projectName, readingHeadSessionId } = useProject(projectId)
-  const openTopics = useOpenTopicCount(projectId)
 
   useEffect(() => {
     onLoaded?.(projectName)
     return () => onLoaded?.(null)
   }, [projectName, onLoaded])
-  const panes = useProjectPanes()
 
   const watching: SessionId | null = selection?.facet === 'session' ? selection.id : null
 
@@ -462,18 +458,6 @@ export const ProjectView = ({
    */
   const openDoc =
     selection?.facet === 'doc' && selection.id !== null ? SourceId(selection.id) : null
-  /** QUEUE's, not MATERIAL's, and the fourth of the four that parsed an id and
-   *  dropped it. `#/p/<id>/topic/<tid>` reached this region and rendered the
-   *  default queue, because `TopicList` took `projectId` alone and the open
-   *  topic was `useState` inside `useTopicQueue` — so a link to a topic was a
-   *  link to the project page, and the reader found the question by hand.
-   *
-   * Branded through `TopicId(...)` exactly as `openDoc` is through
-   * `SourceId(...)`: the route's ids are strings, the repository ports take
-   * brands, and the constructor is where a string becomes one. */
-  const openTopic =
-    selection?.facet === 'topic' && selection.id !== null ? TopicId(selection.id) : null
-
   /** The facet the tab strip is showing, which is the route's when the route
    *  names one this region draws and `DEFAULT_MATERIAL`'s otherwise.
    *
@@ -525,249 +509,191 @@ export const ProjectView = ({
   }
 
   return (
-    <Split
-      id="project"
-      label="Project regions"
-      tracks={PROJECT_TRACKS}
-      collapsed={panes.collapsed}
-      onCollapsedChange={panes.onCollapsedChange}
-      onRefuse={panes.onRefuse}
-    >
-      <Pane
-        id="queue"
-        label="Queue"
-        meta={openTopics === null ? undefined : `${String(openTopics)} open`}
-      >
-        {/* Replaced rather than pushed, like every MATERIAL selection below: a topic is a **glance**, not a
-            destination. The queue is a list a reader scans — open a question,
-            read what it is blocked on, go back to the list, open the next —
-            and the honest test is what the back button should do after
-            forty of those. Pushed, it walks back out through thirty-nine
-            topics before it leaves the project page; replaced, it leaves.
-            Watching a worker is the one selection on this page that is a
-            destination, and it is the one that passes `false`.
+    /* One region rather than a `Split`, and the sidebar it lost is the point
+       of the change. MATERIAL was `1fr` beside a quarter-width QUEUE that held
+       the topic list; the list is in the chrome's drawer now (`TopicControls`
+       carries why), so there is nothing to split with. `Split` owned the
+       sizing, the fold, the persistence of that fold and the stacked shape
+       below `--bp-narrow` -- all four are answers to "how do two regions share
+       a surface", and none of them has a question here any more.
 
-            Closing writes `null` rather than `{ facet: 'topic', id: null }`,
-            which is where this differs from the document list. A doc's close
-            keeps its facet because MATERIAL has *tabs* and dropping the facet
-            would close the Documents tab under the reader; QUEUE is always
-            rendered whatever the facet is, so there is nothing for a bare
-            `topic` selection to hold open and it would only be a URL that
-            means the same as no selection at all. */}
-        <TopicList
-          projectId={projectId}
-          // The queue's own verbs, on the queue's own toolbar line rather than
-          // in a band above it. It was `<QueueHeader/>` rendered here as a
-          // sibling, which is what made it a band; `QueueHeader` carries the
-          // measurement of what that cost. Handed down as a node because
-          // `TopicQueue` fetches nothing and must keep not fetching.
-          toolbar={(shownTopicIds) => (
-            <QueueHeader projectId={projectId} shownTopicIds={shownTopicIds} />
-          )}
-          open={openTopic}
-          onOpen={(topicId) => select(topicId === null ? null : { facet: 'topic', id: topicId })}
-        />
-      </Pane>
-
-      <Pane id="material" label="Material" scroll="regions" collapsible={false} showLabel={false}>
-        {/* Utilities rather than a stylesheet, per the standing policy: new
+       A plain flex column rather than a `Pane`: `Pane` draws a label, a fold
+       control and a `meta` line, and this one was already passing
+       `collapsible={false}` and `showLabel={false}` to turn two of the three
+       off. What is left of it is `scroll="regions"`, which is the flex column
+       below said in a prop. */
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Utilities rather than a stylesheet, per the standing policy: new
             surfaces are dressed in utilities and no stylesheet is added. The
             flex column is what carries the pane body's height down to
             `.graph-browser`, which is `flex: 1; min-height: 0` and draws
             nothing in a box with no height. */}
-        <Tabs
-          value={materialTab}
-          // The cast is narrow and is the one Radix forces: `Tabs` is
-          // controlled by `string`, and every value it can hand back is an id
-          // this component declared in `MATERIAL_TABS`.
-          //
-          // **There used to be an arm above this one, and it broke silently.**
-          // Clicking "Holding session" wrote `select(null)`, on the argument
-          // that `null` lands back on that tab through `DEFAULT_MATERIAL` --
-          // true while the default was `session`. The default moved to
-          // `catalog` (#286) and this arm did not move with it, so the tab
-          // bounced its own readers to Curriculum for a whole slice. Nothing
-          // caught it, because the only file that clicked this tab was in the
-          // browser project, outside CI.
-          //
-          // The tab is gone now and so is the arm, but the lesson is not: the
-          // assertions that would have caught it -- what a click selects, and
-          // which panel renders after it -- are jsdom's to make and now live
-          // in `ProjectView.test.tsx`, in CI. `session` is still a *facet*
-          // (`href` writes it for every scrub and file open) and it maps to
-          // the Workspace tab through `materialTab` above; no click here
-          // produces one, so no arm here handles one.
-          onValueChange={(next) => {
-            // The Curriculum tab opens on the catalog, not the area map --
-            // `catalog` is its default reading (see `routes.ts`'s `FACETS`
-            // comment), and `area`/`path` are reached from inside the pane.
-            // Writing `area` here would reopen the analytic map on every
-            // click of a tab whose declared default has moved.
-            if (next === 'area') {
-              select({ facet: 'catalog', id: null })
-              return
-            }
-            select({ facet: next as MaterialFacet, id: null })
-          }}
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          {/* The declared strip, filtered by what this project has — see
+      <Tabs
+        value={materialTab}
+        // The cast is narrow and is the one Radix forces: `Tabs` is
+        // controlled by `string`, and every value it can hand back is an id
+        // this component declared in `MATERIAL_TABS`.
+        //
+        // **There used to be an arm above this one, and it broke silently.**
+        // Clicking "Holding session" wrote `select(null)`, on the argument
+        // that `null` lands back on that tab through `DEFAULT_MATERIAL` --
+        // true while the default was `session`. The default moved to
+        // `catalog` (#286) and this arm did not move with it, so the tab
+        // bounced its own readers to Curriculum for a whole slice. Nothing
+        // caught it, because the only file that clicked this tab was in the
+        // browser project, outside CI.
+        //
+        // The tab is gone now and so is the arm, but the lesson is not: the
+        // assertions that would have caught it -- what a click selects, and
+        // which panel renders after it -- are jsdom's to make and now live
+        // in `ProjectView.test.tsx`, in CI. `session` is still a *facet*
+        // (`href` writes it for every scrub and file open) and it maps to
+        // the Workspace tab through `materialTab` above; no click here
+        // produces one, so no arm here handles one.
+        onValueChange={(next) => {
+          // The Curriculum tab opens on the catalog, not the area map --
+          // `catalog` is its default reading (see `routes.ts`'s `FACETS`
+          // comment), and `area`/`path` are reached from inside the pane.
+          // Writing `area` here would reopen the analytic map on every
+          // click of a tab whose declared default has moved.
+          if (next === 'area') {
+            select({ facet: 'catalog', id: null })
+            return
+          }
+          select({ facet: next as MaterialFacet, id: null })
+        }}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        {/* The declared strip, filtered by what this project has — see
               `visibleMaterialTabs` for the measurement and for why a tab the
               route names is offered regardless. The `TabPanel`s below are all
               still rendered: hiding a trigger is what this does, and a panel
               removed with it would break the deep links that keep their
               triggers. */}
-          <TabList label="Material" options={visibleMaterialTabs(has, materialTab)} />
+        <TabList label="Material" options={visibleMaterialTabs(has, materialTab)} />
 
-          {/* No `overflow-auto`, for the same reason the document list has
+        {/* No `overflow-auto`, for the same reason the document list has
               none: `WorkspacePanel` is a file list over a file viewer, each
               scrolling on its own — `workspace.css` gives `.files` its own
               `overflow: auto` and a 34% cap, and `.file-view` the rest. This
               panel is the flex column those two are sized against, which is
               exactly what the `scroll="regions"` pane body was on `#/s/`. */}
-          <TabPanel value="file" className="flex min-h-0 flex-1 flex-col">
-            {sessionId === null ? (
-              // A blank panel reads as a load that failed rather than as an
-              // absence, so the empty state says which one it is.
-              //
-              // **The sentence changed with the condition.** It used to read
-              // "A project's files belong to the session holding it. Join the
-              // project and its tree appears here." -- which was accurate
-              // about where the bytes came from and wrong about the project:
-              // a released project has files, and a reader was told to join
-              // to see files that were already there. This branch is now only
-              // reached by a project nothing has ever been written in, and
-              // that is what it says.
-              <EmptyState
-                heading="Nothing has been written here yet."
-                detail="This project has no files. Start a session in it, and everything it writes appears here."
-              />
-            ) : (
-              <WorkspacePanel screen={screen} sessionId={sessionId} openPath={openPath} />
-            )}
-          </TabPanel>
+        <TabPanel value="file" className="flex min-h-0 flex-1 flex-col">
+          {sessionId === null ? (
+            // A blank panel reads as a load that failed rather than as an
+            // absence, so the empty state says which one it is.
+            //
+            // **The sentence changed with the condition.** It used to read
+            // "A project's files belong to the session holding it. Join the
+            // project and its tree appears here." -- which was accurate
+            // about where the bytes came from and wrong about the project:
+            // a released project has files, and a reader was told to join
+            // to see files that were already there. This branch is now only
+            // reached by a project nothing has ever been written in, and
+            // that is what it says.
+            <EmptyState
+              heading="Nothing has been written here yet."
+              detail="This project has no files. Start a session in it, and everything it writes appears here."
+            />
+          ) : (
+            <WorkspacePanel screen={screen} sessionId={sessionId} openPath={openPath} />
+          )}
+        </TabPanel>
 
-          {/* No `overflow-auto`: the document list owns a virtualizer, which
+        {/* No `overflow-auto`: the document list owns a virtualizer, which
               owns a scroll container, and a scroller around it is the outer box
               absorbing the wheel from the inner one. */}
-          <TabPanel value="doc" className="flex min-h-0 flex-1 flex-col">
-            {/* Replaced rather than pushed, like every other selection here:
+        <TabPanel value="doc" className="flex min-h-0 flex-1 flex-col">
+          {/* Replaced rather than pushed, like every other selection here:
                 opening a source is a glance down a list, and the drawer's own
                 close writes `{ facet: 'doc', id: null }` so that closing it
                 leaves the reader on the Documents tab rather than back at the
                 default one. */}
-            <DocumentList
-              projectId={projectId}
-              open={openDoc}
-              seekSeconds={seekSeconds}
-              onOpen={(sourceId) => select({ facet: 'doc', id: sourceId })}
-            />
-          </TabPanel>
+          <DocumentList
+            projectId={projectId}
+            open={openDoc}
+            seekSeconds={seekSeconds}
+            onOpen={(sourceId) => select({ facet: 'doc', id: sourceId })}
+          />
+        </TabPanel>
 
-          {/* `overflow-auto` here, unlike `doc` beside it: this panel has no
+        {/* `overflow-auto` here, unlike `doc` beside it: this panel has no
               virtualizer of its own to own the scroll, and a proposal list
               longer than the pane needs somewhere to scroll or the tail of
               the last need's group runs off the bottom of the page. */}
-          <TabPanel value="media" className="min-h-0 flex-1 overflow-auto">
-            <MediaProposalPane projectId={projectId} />
-          </TabPanel>
+        <TabPanel value="media" className="min-h-0 flex-1 overflow-auto">
+          <MediaProposalPane projectId={projectId} />
+        </TabPanel>
 
-          <TabPanel value="entity" className="flex min-h-0 flex-1 flex-col">
-            <GraphPane
-              projectId={projectId}
-              entity={selection?.facet === 'entity' ? (selection.id ?? null) : null}
-              // Replaced rather than pushed, for the reason it was replaced on
-              // the research page: browsing a graph also *grows* it, so a back
-              // button restoring the previous entity would return a URL
-              // describing a smaller graph than the one on screen.
-              onEntity={(entity) => select({ facet: 'entity', id: entity })}
-            />
-          </TabPanel>
+        <TabPanel value="entity" className="flex min-h-0 flex-1 flex-col">
+          <GraphPane
+            projectId={projectId}
+            entity={selection?.facet === 'entity' ? (selection.id ?? null) : null}
+            // Replaced rather than pushed, for the reason it was replaced on
+            // the research page: browsing a graph also *grows* it, so a back
+            // button restoring the previous entity would return a URL
+            // describing a smaller graph than the one on screen.
+            onEntity={(entity) => select({ facet: 'entity', id: entity })}
+          />
+        </TabPanel>
 
-          <TabPanel value="tree" className="flex min-h-0 flex-1 flex-col">
-            <EntityTreePane
-              projectId={projectId}
-              entity={selection?.facet === 'tree' ? (selection.id ?? null) : null}
-              onEntity={(entity) => select({ facet: 'tree', id: entity })}
-            />
-          </TabPanel>
+        <TabPanel value="tree" className="flex min-h-0 flex-1 flex-col">
+          <EntityTreePane
+            projectId={projectId}
+            entity={selection?.facet === 'tree' ? (selection.id ?? null) : null}
+            onEntity={(entity) => select({ facet: 'tree', id: entity })}
+          />
+        </TabPanel>
 
-          <TabPanel value="ontology" className="flex min-h-0 flex-1 flex-col overflow-auto">
-            {/* No selection of its own yet: the view shows every class at once
+        <TabPanel value="ontology" className="flex min-h-0 flex-1 flex-col overflow-auto">
+          {/* No selection of its own yet: the view shows every class at once
                 and there is nothing a URL would usefully single out. The facet
                 still carries an `id` slot, because the grammar gives every
                 facet one -- it is simply unused here rather than absent. */}
-            <OntologyPane projectId={projectId} />
-          </TabPanel>
+          <OntologyPane projectId={projectId} />
+        </TabPanel>
 
-          <TabPanel value="area" className="flex min-h-0 flex-1 flex-col">
-            {/* Four readings behind one tab, chosen by the facet: the
+        <TabPanel value="area" className="flex min-h-0 flex-1 flex-col">
+          {/* Four readings behind one tab, chosen by the facet: the
                 catalog (default), the two analytic readings `area`/`path`
                 that `CurriculumPane` already draws, and one candidate's own
                 course page. `catalog` and `course` are their own components
                 and their own fetches -- see `CatalogPane`'s and
                 `CoursePage`'s own docstrings for why folding either response
                 shape into `CurriculumPane` would be the wrong seam. */}
-            {selection?.facet === 'area' || selection?.facet === 'path' ? (
-              <CurriculumPane
-                projectId={projectId}
-                reading={selection.facet === 'path' ? 'path' : 'areas'}
-                selected={selection.id ?? null}
-                onReading={(reading) =>
-                  select({ facet: reading === 'path' ? 'path' : 'area', id: null })
-                }
-              />
-            ) : selection?.facet === 'course' && selection.id !== null ? (
-              <CoursePage
-                projectId={projectId}
-                slug={selection.id}
-                onBack={() => select({ facet: 'catalog', id: null })}
-              />
-            ) : (
-              <CatalogPane
-                projectId={projectId}
-                categoryKey={selection?.facet === 'catalog' ? (selection.id ?? null) : null}
-                onCategory={(key) => select({ facet: 'catalog', id: key })}
-                onCourse={(slug) => select({ facet: 'course', id: slug })}
-              />
-            )}
-          </TabPanel>
-
-          <TabPanel value="timeline" className="flex min-h-0 flex-1 flex-col">
-            <TimelinePane
+          {selection?.facet === 'area' || selection?.facet === 'path' ? (
+            <CurriculumPane
               projectId={projectId}
-              entity={selection?.facet === 'timeline' ? (selection.id ?? null) : null}
-              onEntity={(entity) => select({ facet: 'timeline', id: entity })}
+              reading={selection.facet === 'path' ? 'path' : 'areas'}
+              selected={selection.id ?? null}
+              onReading={(reading) =>
+                select({ facet: reading === 'path' ? 'path' : 'area', id: null })
+              }
             />
-          </TabPanel>
-        </Tabs>
-      </Pane>
-    </Split>
-  )
-}
+          ) : selection?.facet === 'course' && selection.id !== null ? (
+            <CoursePage
+              projectId={projectId}
+              slug={selection.id}
+              onBack={() => select({ facet: 'catalog', id: null })}
+            />
+          ) : (
+            <CatalogPane
+              projectId={projectId}
+              categoryKey={selection?.facet === 'catalog' ? (selection.id ?? null) : null}
+              onCategory={(key) => select({ facet: 'catalog', id: key })}
+              onCourse={(slug) => select({ facet: 'course', id: slug })}
+            />
+          )}
+        </TabPanel>
 
-/** How many questions this project still owes an answer to.
- *
- * QUEUE's `meta`, and the pane's only statement about itself. It replaces
- * "N of M stages left behind", which was folded from a course that no real
- * project ever had -- measured 2026-08-27 against `~/.research-team/sessions.db`:
- * zero workflow events, 64 topics across six projects.
- *
- * The same query key `TopicList` uses, deliberately, rather than a count route
- * or a prop threaded up out of the list. React Query serves both readers from
- * one cache entry and one request, so the header and the list below it can
- * never disagree about how long the queue is -- which is the failure a second
- * source would produce, silently, and only under a stale cache.
- *
- * `null` while the read is in flight or after it fails, and the pane renders no
- * `meta` at all rather than "0 open". A count of zero is a claim about the
- * project; not knowing is not.
- */
-const useOpenTopicCount = (projectId: ProjectId): number | null => {
-  const { topics } = useContainer()
-  const query = useQuery({
-    queryKey: queryKeys.topics(projectId),
-    queryFn: () => topics.list(projectId),
-  })
-  return query.data === undefined ? null : query.data.filter((topic) => !isClosed(topic)).length
+        <TabPanel value="timeline" className="flex min-h-0 flex-1 flex-col">
+          <TimelinePane
+            projectId={projectId}
+            entity={selection?.facet === 'timeline' ? (selection.id ?? null) : null}
+            onEntity={(entity) => select({ facet: 'timeline', id: entity })}
+          />
+        </TabPanel>
+      </Tabs>
+    </div>
+  )
 }
