@@ -334,15 +334,14 @@
      to be silently retimed by sharing the first. */
   --animate-stream-pulse: stream-pulse 1.6s ease-in-out infinite;
   --animate-worker-pulse: stream-pulse 1.4s ease-in-out infinite;
-  @keyframes stream-pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.25;
-    }
-  }
+  /* The keyframes themselves are below this block rather than nested in it,
+     and that is not a style choice. `scripts/theme.test.ts` reads `@theme` by
+     slicing to the *first* `}` after the opener, so a nested at-rule ends the
+     block early and every token declared after it becomes invisible — which
+     is how fourteen aliases were reported as pointing at tokens `theme.css`
+     "does not declare" while every one of them was right there. Tailwind emits
+     a top-level `@keyframes` unconditionally rather than only when an
+     `animate-*` utility is used; that is the cost, and it is one rule. */
 
   /* Font weights, and this is a decision about the type scale rather than a
      convenience.
@@ -423,6 +422,16 @@
   --spacing-4: 14px;
   --spacing-5: 20px;
   --spacing-6: 28px;
+}
+
+@keyframes stream-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
 }
 
 /* Deliberately *not* in `@theme`: `--topbar-h`, the panes' 34px rail, the
