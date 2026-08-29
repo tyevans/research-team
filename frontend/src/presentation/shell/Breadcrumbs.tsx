@@ -1,4 +1,4 @@
-import { shortId } from '@domain/shared/identifier.ts'
+import { ProjectId, shortId } from '@domain/shared/identifier.ts'
 import type { SessionProjection } from '@domain/session/session.ts'
 import { forkOrigin } from '@domain/session/session.ts'
 
@@ -53,10 +53,51 @@ export const Breadcrumbs = ({
     )
   }
 
-  if (route.name !== 'session') {
+  // Every route that is not a project or a session used to land on a single
+  // fallthrough that drew `projects` as dead text. That was wrong in two
+  // different ways at once, which is why it survived: on the project list it
+  // named the page you were already standing on, and on settings and the log
+  // -- both reachable only *from* somewhere -- it looked like the way back
+  // while being a span. The trail is now written per route.
+
+  // Nothing at all on the root. There is nowhere to go up to, and the brand is
+  // already the way home from everywhere; a one-item trail that cannot be
+  // clicked is decoration that reads as a control.
+  if (route.name === 'home') return null
+
+  if (route.name === 'settings') {
+    // Only the project scope has somewhere to walk back to. `#/settings/user`
+    // and `#/settings/tenant` are the same screen over data that belongs to no
+    // project, so the trail names the scope rather than turning a tenant id
+    // into a project link that would 404.
+    const projectId = route.scope === 'project' ? ProjectId(route.scopeId) : null
     return (
       <nav className="crumbs" id="crumbs">
-        <span className="sep">projects</span>
+        <a href={homeHref()}>projects</a>
+        <span className="sep">/</span>
+        {projectId ? (
+          <>
+            <a className="sid" href={projectHref(projectId)}>
+              {projectName || shortId(projectId)}
+            </a>
+            <span className="sep">/</span>
+            <span className="sid">settings</span>
+          </>
+        ) : (
+          <span className="sid">{route.scope} settings</span>
+        )}
+      </nav>
+    )
+  }
+
+  if (route.name === 'interactions') {
+    return (
+      <nav className="crumbs" id="crumbs">
+        <a href={homeHref()}>projects</a>
+        <span className="sep">/</span>
+        {/* The log spans every project, so `projects` is the whole of the trail
+            above it -- there is no one project this sits under. */}
+        <span className="sid">log</span>
       </nav>
     )
   }

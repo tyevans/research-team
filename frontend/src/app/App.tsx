@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 
 import { useAuthStatus, useCurrentUser } from '@application/auth/use-auth.ts'
 import { LoginScreen } from '@presentation/auth/LoginScreen.tsx'
@@ -26,6 +26,7 @@ import { InteractionsView } from '@presentation/interactions/InteractionsView.ts
 import { SettingsPage } from '@presentation/settings/SettingsPage.tsx'
 import { SessionView } from '@presentation/session/SessionView.tsx'
 import { Breadcrumbs } from '@presentation/shell/Breadcrumbs.tsx'
+import { useCrumbProjectName } from '@presentation/shell/use-crumb-project-name.ts'
 import { AutonomyLock } from '@presentation/shell/AutonomyLock.tsx'
 import { ThemeControl } from '@presentation/shell/ThemeControl.tsx'
 import { ConnectionBadge, DriftBadge } from '@presentation/shell/ConnectionBadge.tsx'
@@ -205,7 +206,7 @@ const Console = () => {
   )
 
   const head = sessionStore((state) => state.head)
-  const [projectName, setProjectName] = useState<string | null>(null)
+  const projectName = useCrumbProjectName(route)
 
   useTreeRefresh(route.name === 'home')
 
@@ -254,7 +255,7 @@ const Console = () => {
             <Breadcrumbs
               route={route}
               session={route.name === 'session' ? head : null}
-              projectName={route.name === 'project' ? projectName : null}
+              projectName={projectName}
             />
             <div className="chrome-right">
               {/* In the bar rather than floating over the page: as a fixed panel
@@ -365,12 +366,7 @@ const Console = () => {
             in the shell rather than the three per-session call sites it
             replaces. It renders nothing when nothing is pending. */}
           <DecisionBar />
-          <CurrentView
-            route={route}
-            seekSeconds={seekSeconds}
-            store={sessionStore}
-            onProjectName={setProjectName}
-          />
+          <CurrentView route={route} seekSeconds={seekSeconds} store={sessionStore} />
         </LoggedErrorBoundary>
       </Shell>
     </InteractionLogProvider>
@@ -415,7 +411,6 @@ const CurrentView = ({
   route,
   seekSeconds,
   store,
-  onProjectName,
 }: {
   route: Route
   /** The `doc` route's own `?t=`, threaded down rather than re-read: it comes
@@ -425,7 +420,6 @@ const CurrentView = ({
    *  anywhere to put it -- see its own prop for where it lands. */
   seekSeconds: number | null
   store: SessionStore
-  onProjectName: (name: string | null) => void
 }) => {
   if (route.name === 'session') {
     return <SessionView store={store} sessionId={route.id} at={route.at} path={route.path} />
@@ -477,7 +471,6 @@ const CurrentView = ({
       selection={selection}
       seekSeconds={seekSeconds}
       store={store}
-      onLoaded={onProjectName}
     />
   )
 }

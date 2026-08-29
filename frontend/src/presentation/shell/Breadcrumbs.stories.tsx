@@ -72,7 +72,10 @@ const Frame = ({ heading, children }: { heading: string; children: React.ReactNo
   </section>
 )
 
-/** The landing page. One dead word, because there is nowhere above it. */
+/** The landing page, which draws no trail: there is nowhere above it, and the
+ *  one dead word it used to print named the page you were standing on while
+ *  looking like the way off it. The story is kept, empty, because "renders
+ *  nothing here" is the assertion. */
 export const Home: Story = {
   render: () => (
     <Frame heading="home">

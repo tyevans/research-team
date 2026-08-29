@@ -28,10 +28,14 @@ const {
   ASessionWithoutAProject,
 } = composeStories(stories)
 
-it('gives the landing page no link, because there is nowhere above it', () => {
-  render(<Home />)
+it('draws no trail on the landing page, because there is nowhere above it', () => {
+  // This used to assert a dead `projects` span was present. Same reasoning,
+  // carried one step further: a crumb naming the page you are already on, in
+  // the separator's colour, is not a trail -- it reads as a control and is
+  // not one. The brand is the way home from everywhere else.
+  const { container } = render(<Home />)
   expect(screen.queryAllByRole('link')).toHaveLength(0)
-  expect(screen.getByText('projects')).toBeInTheDocument()
+  expect(container.querySelector('#crumbs')).not.toBeInTheDocument()
 })
 
 /** The pair. With nothing selected the project crumb has nowhere to go, so it

@@ -65,6 +65,15 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Anchored here rather than by whatever sits to its left. `.lay-chrome` is a
+     plain flex row with no `justify-content`, and `.crumbs` (`flex: 1 1 auto`)
+     was the only child that grew -- so the breadcrumb was doubling as this
+     element's spacer, and the landing page's trail could not become empty
+     without dragging the badges 668px left onto the `log` link. Measured in
+     Chromium at a 900px chrome: right edge 886 with a trail, 217.7 without.
+     `chrome-right-anchor.browser.test.tsx` holds the pair; it is a browser
+     test because jsdom's rects are all zero and cannot tell the two apart. */
+  margin-left: auto;
 }
 
 .conn {
