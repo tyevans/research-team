@@ -3311,6 +3311,70 @@ async def test_listing_graph_entities_filters_by_name(app_and_client):
     assert [row["entity_id"] for row in body["entities"]] == [str(ids["prandtl_id"])]
 
 
+async def test_the_first_graph_entity_listing_for_an_untouched_project_works(client):
+    """`_project_with_graph` seeds through `graphs.open`, so nothing here can.
+
+    CLAUDE.md's fixture rule: a fixture that seeds through the same call the
+    code under test depends on cannot see that dependency go missing. Every
+    other test in this section arranges through `_project_with_graph`, which
+    calls `application.graphs.open` -- the very call `_graph_reader` is
+    responsible for making. From those tests' point of view the project is
+    always open, so a route that stopped opening it would keep passing.
+
+    The failure this guards against is not a wrong answer, it is a 503 on the
+    *first* request for any newly-touched project and a 200 on every request
+    after it, in the same process. `CLAUDE.md` records that shipping once, on
+    the entity-definitions work, and it reads as flakiness.
+
+    Three sibling route families already carry this guard --
+    `tests/interfaces/test_curriculum_routes.py`
+    (`test_the_first_request_for_an_untouched_project_works`),
+    `test_document_routes.py:650`, and
+    `test_reading_the_whole_graph_of_an_empty_project_is_not_an_error` below.
+    The two graph-entity families never got theirs.
+
+    **This one cannot be proved red against today's tree, and saying so is
+    the honest version.** `_graph_reader` reads exactly one per-project
+    resource -- the store `graphs.open` returns -- so there is no "fetched
+    before open" ordering available to get wrong in it, unlike `_usage_reader`
+    below. The guard is here for the next resource `ProjectGraphs.open` builds
+    (`chunks`, `co_mentions`, `card_vectors` and `cards` are all already in
+    that set) reaching this route ahead of the open, which is the change that
+    would otherwise ship silently.
+    """
+    created = await client.post("/api/projects", json={"name": f"graph-{uuid4()}"})
+    project_id = created.json()["id"]
+
+    response = await client.get(f"/api/projects/{project_id}/graph/entities")
+
+    assert response.status_code == 200, "a 503 here is the route reading before it opens"
+    assert response.json()["entities"] == []
+
+
+async def test_the_first_neighborhood_request_for_an_untouched_project_works(client):
+    """The neighborhood route, from a project nothing has opened.
+
+    404 rather than 200 is the right answer -- the entity asked for does not
+    exist -- and 404 rather than **503** is what this asserts. The distinction
+    matters because 503 is what a route that reached for a per-project store
+    before `graphs.open` built it would answer, and only on the first request
+    for that project.
+
+    Asked with a random entity id deliberately: seeding one would need
+    `graphs.open`, which is the call being tested for.
+
+    Not provable red today, for the reason the listing guard above states.
+    """
+    created = await client.post("/api/projects", json={"name": f"graph-{uuid4()}"})
+    project_id = created.json()["id"]
+
+    response = await client.get(
+        f"/api/projects/{project_id}/graph/entities/{uuid4()}/neighborhood"
+    )
+
+    assert response.status_code == 404, "a 503 here is the route reading before it opens"
+
+
 async def test_a_neighborhood_carries_root_entities_and_relationships(app_and_client):
     application, client = app_and_client
     project_id, ids = await _project_with_graph(application, client)
@@ -3609,6 +3673,34 @@ async def test_usages_returns_passages_with_offsets(app_and_client):
     assert response.status_code == 200
     first = response.json()["usages"][0]
     assert first["source_id"] and first["end"] > first["start"]
+
+
+async def test_the_first_usages_request_for_an_untouched_project_works(client):
+    """The usages route, from a project nothing has opened.
+
+    This is the closest of the three to the incident CLAUDE.md records, and
+    `_usage_reader`'s own docstring names it: the chunk store this route reads
+    is *built inside* `graphs.open`, so asking `graphs.chunks` first gets
+    `None` and a 503 that only means "nobody happened to ask for the graph
+    yet". `_project_with_a_usage` opens the project to seed it, which is
+    exactly why no test in this section could see that.
+
+    An untouched project has no passages, so an empty list is the answer; the
+    assertion that carries the weight is the status code.
+
+    **Proved red on 2026-08-29** by swapping the two lines in `_usage_reader`
+    so `graphs.chunks` is called before `graphs.open` -- 1 failed, 5 passed
+    over `-k "untouched or usages"`. The one that failed is this one; every
+    other usages test stayed green, which is the whole of CLAUDE.md's fixture
+    rule in one run.
+    """
+    created = await client.post("/api/projects", json={"name": f"usages-{uuid4()}"})
+    project_id = created.json()["id"]
+
+    response = await client.get(f"/api/projects/{project_id}/graph/entities/{uuid4()}/usages")
+
+    assert response.status_code == 200, "a 503 here is the route reading before it opens"
+    assert response.json()["usages"] == []
 
 
 async def test_usages_for_an_unknown_project_is_a_404(client):
