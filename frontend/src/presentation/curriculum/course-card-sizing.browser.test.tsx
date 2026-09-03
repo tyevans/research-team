@@ -96,6 +96,32 @@ it('gives the art a declared aspect ratio rather than the image its own', async 
   // before that change: green, green, and one failure of this case, with the
   // file passing alone every time.
   const element = document.querySelector('.crs-card-art')!
+  // TEMPORARY DIAGNOSTIC -- to be removed. The failure is CI-only and every
+  // hypothesis about it has been wrong so far, so this prints the state at the
+  // moment of the assertion rather than inviting another guess.
+  const rulesMatching: string[] = []
+  for (const sheetItem of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList
+    try {
+      rules = sheetItem.cssRules
+    } catch {
+      rulesMatching.push('CORS-BLOCKED')
+      continue
+    }
+    for (const rule of Array.from(rules)) {
+      if (rule.cssText.includes('crs-card-art')) rulesMatching.push(rule.cssText.slice(0, 120))
+    }
+  }
+  expect({
+    matches: document.querySelectorAll('.crs-card-art').length,
+    className: element.className,
+    tag: element.tagName,
+    connected: element.isConnected,
+    aspect: getComputedStyle(element).aspectRatio,
+    objectFit: getComputedStyle(element).objectFit,
+    sheets: document.styleSheets.length,
+    rulesMatching,
+  }).toBe('DIAGNOSTIC')
   expect(getComputedStyle(element).aspectRatio).toBe('3 / 2')
 
   const art = element.getBoundingClientRect()
