@@ -124,11 +124,32 @@ it('gives the art a declared aspect ratio rather than the image its own', async 
       }
     })
   })
+  const probeDiv = document.createElement('div')
+  probeDiv.className = 'crs-card-art'
+  document.body.appendChild(probeDiv)
+  const probeImg = document.createElement('img')
+  probeImg.className = 'crs-card-art'
+  document.body.appendChild(probeImg)
+  const probeInline = document.createElement('img')
+  probeInline.style.aspectRatio = '3 / 2'
+  document.body.appendChild(probeInline)
+  const readings = {
+    syntheticDiv: getComputedStyle(probeDiv).aspectRatio,
+    syntheticImg: getComputedStyle(probeImg).aspectRatio,
+    syntheticImgInline: getComputedStyle(probeInline).aspectRatio,
+  }
+  probeDiv.remove()
+  probeImg.remove()
+  probeInline.remove()
   expect({
     aspect: getComputedStyle(element).aspectRatio,
+    userAgent: navigator.userAgent,
+    complete: (element as HTMLImageElement).complete,
+    naturalWidth: (element as HTMLImageElement).naturalWidth,
+    readings,
     inlineStyle: element.getAttribute('style'),
     perSheet,
-    aspectRules,
+    aspectRules: aspectRules.length,
     matchingRules,
   }).toBe('DIAGNOSTIC')
   expect(getComputedStyle(element).aspectRatio).toBe('3 / 2')
