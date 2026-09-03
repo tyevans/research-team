@@ -810,6 +810,60 @@ application ships. A red here is currently ambiguous between "the CSS is wrong"
 and "the CSS was not there", which is the one distinction this suite exists to
 make.
 
+**Update 2026-09-03: it stopped being intermittent, and the mitigation's stated
+premise turned out to be false.**
+
+On the GitHub runner this now reproduces on **every** run. Three consecutive
+CI runs -- `main` on 2026-09-01, and a redstring bump branch twice on
+2026-09-03, the second a bare re-run of the job with no push between -- failed
+with the same two files, the same two messages, and the same counts (47
+passed, 2 failed; 193 tests passed, 1 failed). On one quiet local machine the
+same commit is green: 49 files, 199 tests. So it is a machine-speed
+difference, not randomness, which makes CI the instrument for this entry --
+the box that reproduces it is the one nobody was measuring on.
+
+**The probe was passing on a sheet that was missing a rule.** It waited on
+`structure.css`'s `#root { display: contents }` on the reasoning that it is the
+last of the chain, "so anything earlier in the chain has necessarily arrived".
+In all three runs the probe passed and `course-card-sizing`'s aspect case still
+read `auto`: `course.css` is `index.css`'s import on line 25 and
+`structure.css` is on line 51, so the later one applied while the earlier one
+had not. **The chain does not arrive in source order**, and every conclusion
+drawn from a probe of its tail is worth no more than that assumption.
+
+**What went in** (one of the two real fixes this entry named -- hold the sheet
+immutable for the life of a file):
+
+`vitest.setup.browser.ts` imports `index.css` **`?inline`** and injects the
+string as one `<style>` element. Vite resolves every `@import` and Tailwind
+generates `@layer utilities` at transform time, so the module's value is the
+whole sheet and it is fetched atomically. Measured 2026-09-03: 109,479
+characters, **zero** occurrences of `@import`, with `.crs-card-art`, `#root`,
+`opacity-0` and `@layer` all present. There is no longer a partial state for a
+test to observe. The 10-second probe is now a synchronous check for the same
+two values -- a wait would be dishonest when the sheet is a string the module
+already holds.
+
+**And a third failure flavour, which is not the stylesheet at all.** All three
+runs printed `dependency optimized: react-dom/client` -> `Vite unexpectedly
+reloaded a test` -> `optimized dependencies changed. reloading`, and within a
+second `settings-row.browser.test.tsx` came back with 0 tests and `Failed to
+import test file / Caused by: Vitest failed to find the current suite`. The
+reload discards the iframe's vitest context mid-import, and the error names
+nothing about the cause. `optimizeDeps: { include: ['react-dom/client'] }` on
+the browser project is the fix vite prints in its own warning. Eighteen
+`*.browser.test.tsx` files reach `react-dom/client` through
+`@testing-library/react`, so `settings-row` is where the reload landed rather
+than the file responsible.
+
+**Why this entry stays open.** Two things are unfixed and one is unmeasured.
+`optimizeDeps.include` closes the one name three runs reported; a future test
+importing some other unlisted subpath re-opens it in a different file with the
+same unrecognisable error, and there is no gate for that -- the evidence is a
+CI log. The `Failed to fetch dynamically imported module` mode above is
+untouched. And the fix above was verified on the machine where the bug does
+*not* reproduce, so **CI is the proof**: three consecutive red runs before it
+is the baseline it has to beat.
 ### B160. Neither file reproduces, the quarantine is empty, and one of the two is a race
 
 **Quarantine emptied 2026-08-29.** `frontend/package.json`'s `test:browser:ci`

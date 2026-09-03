@@ -244,6 +244,46 @@ export default defineConfig({
       },
       {
         extends: true,
+        /** Pre-bundle what the suite imports, so the dev server does not
+         *  discover a dependency mid-run and reload the page under whichever
+         *  file is importing at that moment.
+         *
+         * Measured, not guessed. Three consecutive CI runs -- `main` on
+         * 2026-09-01 and this branch twice on 2026-09-03 -- printed the same
+         * three lines in the same order:
+         *
+         * ```
+         * [vite] (client) dependency optimized: react-dom/client
+         * [vitest] Vite unexpectedly reloaded a test. This may cause tests to
+         *          fail, lead to flaky behaviour or duplicated test runs.
+         * [vite] (client) optimized dependencies changed. reloading
+         * ```
+         *
+         * and within a second of them `settings-row.browser.test.tsx` came
+         * back with **0 tests** and `Failed to import test file / Caused by:
+         * Vitest failed to find the current suite`. The reload discards the
+         * iframe's vitest context while the file's module graph is still
+         * loading, so the error names the symptom and nothing about the cause.
+         *
+         * `react-dom/client` alone, because that is the only name any of the
+         * three runs reported. Eighteen `*.browser.test.tsx` files import
+         * `@testing-library/react`, which is what reaches it, so the discovery
+         * is not particular to the file it killed -- `settings-row` is simply
+         * where the reload landed. Vite prints `optimizeDeps.include` as the
+         * fix in the warning itself.
+         *
+         * **The residual, stated rather than left to be rediscovered:** this
+         * closes the one instance that was measured. A future test importing
+         * some other unlisted subpath re-opens it, in a different file, with
+         * the same unrecognisable error. A general fix is `optimizeDeps` over
+         * the whole test surface, or a run that fails on the warning; neither
+         * is done here. What a test would fail on: nothing. There is no gate
+         * for this, and the evidence is a CI log.
+         *
+         * Local runs never showed it -- three full-suite runs on this machine,
+         * green -- which is the usual shape: the discovery order depends on
+         * how fast the runner is. */
+        optimizeDeps: { include: ['react-dom/client'] },
         test: {
           /** The claims jsdom cannot judge, in an engine that can.
            *
