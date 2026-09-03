@@ -1920,8 +1920,8 @@ vision = [
 
 [[package]]
 name = "redstring"
-version = "0.10.0"
-source = { git = "https://github.com/tyevans/redstring.git?rev=9b1df55085e96b35f0915f80135ad20eed60f3f2#9b1df55085e96b35f0915f80135ad20eed60f3f2" }
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dateparser" },
     { name = "eventsource-py" },
@@ -1929,6 +1929,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/cf/d6a97f3360dfd7d41104fe38cc59376f09eb04d0eab93e3af1a3ddbe6fe1/redstring-0.11.0.tar.gz", hash = "sha256:510ead963302a1dfa81e03a149f0f61f57954b2bc7840540120c52a5b87ae9c5", size = 2052722, upload-time = "2026-09-03T19:40:04.859Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/00/ff9aa11e898e6e6a6a1fd6ab22796fd45a65e434e46e7ef922cbda8c197a/redstring-0.11.0-py3-none-any.whl", hash = "sha256:07fc4de65f015d94b6331bfb967f7d3b963dd53892f986523098f570e12effd2", size = 455264, upload-time = "2026-09-03T19:40:02.818Z" },
 ]
 
 [package.optional-dependencies]
@@ -2097,7 +2101,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "readeverything", extras = ["documents", "images", "remote-transcription", "vision"], specifier = ">=0.3.0,<0.4" },
-    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], git = "https://github.com/tyevans/redstring.git?rev=9b1df55085e96b35f0915f80135ad20eed60f3f2" },
+    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], specifier = ">=0.11.0,<0.12" },
     { name = "trafilatura", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
 ]
