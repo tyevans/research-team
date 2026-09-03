@@ -105,6 +105,36 @@ document.documentElement.setAttribute('data-theme', 'dark')
  * computed style or a measurement, so an unstyled page is not a suite that
  * fails a little -- it is a suite whose every reading is the user agent's
  * default, reported perfectly confidently. */
+/** Check the injected string, not just the computed result.
+ *
+ * The computed check below can be satisfied by the *other* copy of the sheet --
+ * `.storybook/preview.tsx` imports `index.css` for its own reasons -- so on its
+ * own it cannot tell "the injection worked" from "the injection produced
+ * nothing and the chain happened to arrive". That is the silent-default shape:
+ * the passing reading is the same either way. Measured on 2026-09-03: the first
+ * attempt at this fix shipped with only the computed check, CI stayed red on
+ * `course-card-sizing` with the check green, and the string itself was never
+ * looked at.
+ *
+ * The three properties are what `?inline` is *for*: Vite has resolved every
+ * `@import` (so there are none left), Tailwind has generated its layers, and
+ * the last import in the chain is present. The error prints the measurements
+ * rather than naming them, because the machine that fails this is not the one
+ * reading the message. */
+const facts = {
+  length: indexCss.length,
+  imports: (indexCss.match(/@import/g) ?? []).length,
+  layers: indexCss.includes('@layer'),
+  lastImport: indexCss.includes('#root'),
+}
+if (facts.imports > 0 || !facts.layers || !facts.lastImport || facts.length < 50_000) {
+  throw new Error(
+    `vitest.setup.browser: index.css?inline is not the whole stylesheet ` +
+      `(${JSON.stringify(facts)}). Every assertion in this file would have ` +
+      `measured whatever else happened to arrive. See B184.`,
+  )
+}
+
 const sheet = document.createElement('style')
 sheet.textContent = indexCss
 document.head.appendChild(sheet)
