@@ -71,32 +71,31 @@ dependencies = [
     # runtime break for a narrow duck-typed double -- it type-checks nowhere
     # and fails at the first `resolve`. Nothing here passes one; every store
     # handed to a `Consolidator` is redstring's own.
-    # Pinned to a commit on `main` rather than a release, because the fix this
-    # needs is merged and unreleased: redstring PR #72 stops
-    # `SlidingWindowChunker` emitting chunks wholly contained in another. That
-    # matters here twice -- the quotable corpus is chunked with it, and so is
-    # extraction.
+    # Back on a released version, which is where the git pin this replaces
+    # was always meant to end. It was a SHA on `main` because two fixes
+    # this project needs were merged and unreleased: PR #72, which stops
+    # `SlidingWindowChunker` emitting chunks wholly contained in another (the
+    # quotable corpus and extraction are both chunked with it), and PR #75,
+    # which adds `extraction/date_nodes.py` -- `graph_reader` imports
+    # `is_date_node` from it, so falling below that commit is an ImportError
+    # at startup rather than a subtle behaviour change. Both shipped in
+    # 0.10.0. A released wheel also means an install no longer has to reach
+    # GitHub.
     #
-    # **A SHA, not `@main`.** A branch ref resolves to something different on
-    # every `uv lock`, which is exactly what CI's `--locked` exists to prevent;
-    # the lockfile would still pin bytes, but nobody could tell from this file
-    # what they were meant to be. Swap this back to a version range the moment
-    # 0.10.0 is released -- a git dependency also means every install needs to
-    # reach GitHub, which a released wheel does not.
+    # **This bump changes no code.** The pinned SHA *was* 0.10.0's tree, and
+    # the diff from it to the 0.11.0 tag touches two files: `__version__` in
+    # `src/redstring/__init__.py`, and dev/test dependency bumps in
+    # redstring's own `pyproject.toml` (hypothesis, pre-commit,
+    # pytest-asyncio, two `types-*` stubs). Nothing else under `src/` differs
+    # -- checked with `git diff <sha> v0.11.0 -- src`, not assumed from the
+    # release notes. So the cap-crossing reasoning recorded when the SHA went
+    # in still holds unchanged: the package root's public surface is a
+    # superset of 0.9.2's (`Theme`, `ThemeReport` and `summarize_themes`
+    # added, nothing removed).
     #
-    # Now also carries `extraction/date_nodes.py`, which this project needs
-    # rather than merely benefits from: `graph_reader` imports `is_date_node`
-    # from it, so a downgrade below this SHA is an ImportError at startup and
-    # not a subtle behaviour change. redstring PR #75, merged and unreleased.
-    #
-    # This crosses the `<0.10` cap the line below used to carry, and the cap's
-    # reasoning still stands -- a minor is where redstring's breaking renames
-    # land. Checked rather than assumed before crossing it: the package root's
-    # public surface at this commit is a superset of 0.9.2's (`Theme`,
-    # `ThemeReport` and `summarize_themes` added, nothing removed), and its
-    # `eventsource-py>=0.14.0,<0.15` is identical to ours, so the two libraries
-    # do not have to move together this time.
-    "redstring[llm,neo4j,pgvector] @ git+https://github.com/tyevans/redstring.git@9b1df55085e96b35f0915f80135ad20eed60f3f2",
+    # `eventsource-py>=0.14.0,<0.15` is 0.11.0's pin and is identical to ours,
+    # so the two libraries do not have to move together this time either.
+    "redstring[llm,neo4j,pgvector]>=0.11.0,<0.12",
     "trafilatura>=2.2.0",
     "uvicorn[standard]>=0.52.3",
     # The blob store streams to disk with async file handles rather than
