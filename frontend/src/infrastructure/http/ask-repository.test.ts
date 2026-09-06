@@ -279,3 +279,87 @@ it('forgets a chat by deleting it, and reports a refusal', async () => {
     ApiError,
   )
 })
+
+it('lists a project’s past conversations, camel-cased as the route sends them', async () => {
+  // The list route writes `conversationId`/`firstQuestion`, where the SSE
+  // frames beside it are snake_case. Mirrored rather than corrected: a schema
+  // that accepted both would hide the day one of them changes. Red against
+  // `z.object({ conversation_id: ... })`.
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify([
+        {
+          conversationId: 'c-1',
+          openedAt: '2026-09-01T10:00:00Z',
+          firstQuestion: 'why?',
+          turnCount: 2,
+        },
+      ]),
+      { status: 200 },
+    ),
+  )
+
+  const listed = await new HttpAskRepository('', fetcher).conversations(PROJECT)
+
+  expect(listed).toEqual([
+    {
+      conversationId: 'c-1',
+      openedAt: '2026-09-01T10:00:00Z',
+      firstQuestion: 'why?',
+      turnCount: 2,
+    },
+  ])
+  expect(fetcher).toHaveBeenCalledWith(`/api/projects/${PROJECT}/asks`)
+})
+
+it('reads one stored conversation, and drops an answer a server should not send', async () => {
+  // **The `answer` key is absent from the schema and that is the assertion.**
+  // The route withholds the raw markdown because it carries the key `blocks`
+  // was projected to remove -- and the leak it withholds was real (B106). A
+  // schema that carried it through would make re-adding it server-side
+  // invisible on this side. The fixture sends one anyway, as a server that had
+  // regressed would; zod strips it.
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        conversationId: 'c-1',
+        openedAt: '2026-09-01T10:00:00Z',
+        firstQuestion: 'why?',
+        turnCount: 1,
+        turns: [
+          {
+            position: 0,
+            question: 'why?',
+            answer: 'the raw markdown, with `correct: true` in it',
+            blocks: [{ kind: 'markdown', text: 'two papers' }],
+            citations: [{ kind: 'source', id: 's1' }],
+          },
+        ],
+      }),
+      { status: 200 },
+    ),
+  )
+
+  const conversation = await new HttpAskRepository('', fetcher).conversation(PROJECT, 'c-1')
+
+  expect(conversation.turns[0]).toEqual({
+    position: 0,
+    question: 'why?',
+    blocks: [{ kind: 'markdown', text: 'two papers' }],
+    citations: [{ kind: 'source', id: 's1' }],
+  })
+  expect(JSON.stringify(conversation)).not.toContain('correct: true')
+})
+
+it('raises an ApiError when the history routes refuse', async () => {
+  // A 503 from the list route means the ask projection is unwired, which the
+  // route distinguishes from an empty project on purpose. Swallowing it into
+  // `[]` here would throw that distinction away at the last step.
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'ask history is not configured' }), { status: 503 }),
+    )
+
+  await expect(new HttpAskRepository('', fetcher).conversations(PROJECT)).rejects.toThrow(ApiError)
+})

@@ -27,20 +27,39 @@ import { projectHref } from '../routing/routes.ts'
  * shared head someone writes will want the same cap for the same page, and
  * this is where the cost of adopting it is written down.
  */
-export const AskHead = ({ projectId, onReset }: { projectId: ProjectId; onReset: () => void }) => (
+export const AskHead = ({
+  projectId,
+  onReset,
+  reading = false,
+}: {
+  projectId: ProjectId
+  onReset: () => void
+  /** Whether a stored conversation is being read rather than a live one.
+   *
+   * It changes two strings and nothing else. **The composer is absent in this
+   * mode, and a page that removed it without saying so leaves a reader looking
+   * for a control that used to be there** -- found by driving the built
+   * console against a real database on 2026-09-05, where the head still
+   * offered to keep a conversation on a page there was no way to add to. */
+  reading?: boolean
+}) => (
   // `border-0` first, `border-b` second: `border-solid` sets `border-style:
   // solid` on all four sides, and a side with a style but no explicit width
   // falls back to the browser's `medium` (~3px) rather than 0 -- the same
   // defect `AskTurn.tsx` documents, caught here by the same screenshot.
   <header className="flex shrink-0 items-start justify-between gap-5 border-0 border-b border-solid border-line-soft px-5 pt-5 pb-4">
     <div>
-      <h1 className="m-0 text-2xl font-semibold">Ask</h1>
+      <h1 className="m-0 text-2xl font-semibold">{reading ? 'A past conversation' : 'Ask'}</h1>
       {/* `ask-sub` is a selector hook for `AskView.test.tsx`, which has no
-          other way to tell this paragraph from the composer's own "not
-          saved" copy -- both say the same sentence on purpose. */}
+          other way to tell this paragraph from the composer's own copy -- both
+          say the same thing on purpose. See `AskComposer` for why both stopped
+          saying "not saved": the ask has been persisted the whole time, and
+          the sentence only became checkable when the history list gave a
+          reader a way to reopen one. */}
       <p className="ask-sub mt-1 max-w-[60ch] text-sm text-fg-dim">
-        Answers come from this project’s sources and findings. Not saved — the conversation goes
-        when you leave.
+        {reading
+          ? 'Read only — this conversation cannot be continued. Start a new chat to ask something.'
+          : 'Answers come from this project’s sources and findings. Kept — you can reopen a past conversation from a new chat.'}
       </p>
     </div>
 

@@ -5,10 +5,11 @@ import { describe, it } from 'vitest'
 import * as askPageStories from './AskPage.stories.tsx'
 import * as askTurnStories from './AskTurn.stories.tsx'
 import * as askHeadStories from './AskHead.stories.tsx'
+import * as askHistoryStories from './AskHistory.stories.tsx'
 import * as askComposerStories from './AskComposer.stories.tsx'
 import * as citationListStories from './CitationList.stories.tsx'
 
-/** Smoke test over every story in the ask page's five story files.
+/** Smoke test over every story in the ask page's six story files.
  *
  * This asserts only that each composed story renders without throwing. It is
  * the fix for the gap the spec's "stories are exercised by the suite through
@@ -31,6 +32,7 @@ describe('ask stories render without throwing', () => {
     AskPage: composeStories(askPageStories),
     AskTurn: composeStories(askTurnStories),
     AskHead: composeStories(askHeadStories),
+    AskHistory: composeStories(askHistoryStories),
     AskComposer: composeStories(askComposerStories),
     CitationList: composeStories(citationListStories),
   }

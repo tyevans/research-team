@@ -21,3 +21,7 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const Default: Story = {}
+
+/** The stored-conversation head: a different title, and the sentence that
+ *  explains why there is no composer under it. */
+export const Reading: Story = { args: { reading: true } }

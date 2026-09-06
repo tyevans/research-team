@@ -1,4 +1,5 @@
 /** The ask page, from a reader's point of view. */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
@@ -14,12 +15,25 @@ import { AskView } from './AskView.tsx'
 
 const PROJECT = ProjectId('11111111-1111-1111-1111-111111111111')
 
-const renderAsk = (ask: Partial<AskRepository>) => {
-  const container = { ask: { forget: vi.fn(), ...ask } } as unknown as AppContainer
+const renderAsk = (ask: Partial<AskRepository>, conversationId: string | null = null) => {
+  const container = {
+    ask: {
+      forget: vi.fn(),
+      // Defaulted so the tests that predate the history list need no argument.
+      // An empty list draws nothing, which is what they showed before it
+      // existed -- see the two cases at the end of this file for the ones that
+      // pass a real one.
+      conversations: vi.fn().mockResolvedValue([]),
+      ...ask,
+    },
+  } as unknown as AppContainer
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <ContainerProvider container={container}>{children}</ContainerProvider>
+    <QueryClientProvider client={client}>
+      <ContainerProvider container={container}>{children}</ContainerProvider>
+    </QueryClientProvider>
   )
-  return render(<AskView projectId={PROJECT} />, { wrapper })
+  return render(<AskView projectId={PROJECT} conversationId={conversationId} />, { wrapper })
 }
 
 /** `Citation.kind` is `'source'` alone -- the tool that would have produced a
@@ -84,9 +98,14 @@ it('turns a model-written source reference into a link', async () => {
   expect(link).toHaveTextContent('1')
 })
 
-it('says the page keeps nothing', () => {
-  // The contract is ephemerality; a reader who does not know that will expect
-  // to find this conversation again tomorrow.
+it('says the conversation is kept, because it is', () => {
+  // **This test asserted the opposite sentence, and the sentence was false.**
+  // It required the head to say "not saved", on the reasoning that "the
+  // contract is ephemerality; a reader who does not know that will expect to
+  // find this conversation again tomorrow". They will find it: the ask has
+  // appended to an `AskConversation` stream since the persistence spec landed,
+  // and what was missing was any way to reach one. The copy described the
+  // console rather than the system, and the test held it there.
   //
   // Scoped to the subtitle rather than left as a page-wide text search. The
   // page says this in more than one place by design -- the head states it and
@@ -95,7 +114,7 @@ it('says the page keeps nothing', () => {
   // match. Narrowing the query keeps the claim and drops the accident.
   renderAsk({ ask: answering('x') })
 
-  expect(screen.getByText(/not saved/i, { selector: '.ask-sub' })).toBeInTheDocument()
+  expect(screen.getByText(/kept/i, { selector: '.ask-sub' })).toBeInTheDocument()
 })
 
 it('surfaces a refusal to the reader', async () => {
@@ -234,4 +253,104 @@ it('refuses to send while a question is in flight', async () => {
 
   expect(screen.getByRole('button', { name: /^ask$/i })).toBeDisabled()
   expect(screen.getByRole('textbox')).toBeDisabled()
+})
+
+it('lists past conversations where the thread would otherwise be empty', async () => {
+  // B103's whole subject: the server has answered `GET /asks` since the
+  // persistence spec landed, and nothing in the console called it, so a stored
+  // conversation was reachable by `curl` and by nothing a reader could click.
+  //
+  // The assertion is a link with the conversation's own href, not that the
+  // question's text appears: text alone passes if the row is rendered as a
+  // `<span>` nobody can open, which is the same defect one layer down.
+  renderAsk({
+    ask: answering('x'),
+    conversations: vi.fn().mockResolvedValue([
+      {
+        conversationId: 'c-1',
+        openedAt: '2026-09-01T10:00:00Z',
+        firstQuestion: 'what did the corpus say about succession?',
+        turnCount: 3,
+      },
+    ]),
+  })
+
+  const link = await screen.findByRole('link', { name: /succession/ })
+  expect(link).toHaveAttribute('href', `#/p/${PROJECT}/ask/c-1`)
+})
+
+it('hides the list once a question has been asked, and brings it back on a new chat', async () => {
+  // The cost `AskHistory` writes down, asserted rather than left as prose:
+  // history draws in the empty state, so mid-conversation it is one "New chat"
+  // away. A test is what stops that becoming "and then it never came back".
+  renderAsk({
+    ask: answering('two papers'),
+    conversations: vi.fn().mockResolvedValue([
+      {
+        conversationId: 'c-1',
+        openedAt: '2026-09-01T10:00:00Z',
+        firstQuestion: 'an earlier question',
+        turnCount: 1,
+      },
+    ]),
+  })
+
+  expect(await screen.findByRole('link', { name: /an earlier question/ })).toBeInTheDocument()
+
+  await ask('why?')
+  expect(await screen.findByText('two papers')).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: /an earlier question/ })).not.toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole('button', { name: /new chat/i }))
+  expect(await screen.findByRole('link', { name: /an earlier question/ })).toBeInTheDocument()
+})
+
+it('reads a stored conversation, and cannot be typed into', async () => {
+  // The other half of B106. `storedTranscript` recovers the prose from the
+  // markdown blocks because the route deliberately does not send it -- so an
+  // assertion that the answer's text is on screen is also an assertion that
+  // the recovery happened, and it is red if the mapper returns the raw
+  // `answer` field the wire does not carry.
+  //
+  // The absent composer is asserted too: a stored conversation cannot be
+  // continued (B102), and a textbox that accepted a question here would start
+  // a different conversation under the same heading.
+  renderAsk(
+    {
+      conversation: vi.fn().mockResolvedValue({
+        conversationId: 'c-1',
+        openedAt: '2026-09-01T10:00:00Z',
+        firstQuestion: 'what did we find?',
+        turnCount: 1,
+        turns: [
+          {
+            position: 0,
+            question: 'what did we find?',
+            blocks: [{ kind: 'markdown', text: 'two papers, both on succession' }],
+            citations: [],
+          },
+        ],
+      }),
+    },
+    'c-1',
+  )
+
+  expect(await screen.findByText('what did we find?')).toBeInTheDocument()
+  expect(await screen.findByText(/two papers, both on succession/)).toBeInTheDocument()
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  // The absence has to be explained where it happens. Found by driving the
+  // built console against a real database: the composer was gone and the head
+  // still offered to keep a conversation, so the page read as one that had
+  // lost its own control rather than one that is read-only by design.
+  expect(screen.getByText(/read only/i, { selector: '.ask-sub' })).toBeInTheDocument()
+})
+
+it('says why a stored conversation would not load, rather than showing an empty one', async () => {
+  // A 404 here is an id that does not belong to this project, which is exactly
+  // what a hand-edited or stale link produces. Without this the page draws the
+  // empty state -- "Nothing asked yet" over somebody's real conversation --
+  // which reads as data loss.
+  renderAsk({ conversation: vi.fn().mockRejectedValue(new Error('no such conversation')) }, 'c-9')
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(/no such conversation/)
 })

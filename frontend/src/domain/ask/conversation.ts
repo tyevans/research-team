@@ -135,3 +135,75 @@ export const applyEvent = (transcript: AskTranscript, event: AskEvent): AskTrans
       return replaced({ ...turn, error: event.detail, settled: true })
   }
 }
+
+/** One past conversation, as the history list shows it.
+ *
+ * Deliberately not an `AskTurn[]`: the list route answers with a summary per
+ * conversation and no turns at all, because a project with forty conversations
+ * would otherwise send forty transcripts to draw forty rows. Opening one is a
+ * second request.
+ */
+export interface AskConversationSummary {
+  readonly conversationId: string
+  readonly openedAt: string
+  /** What was asked first, which is the only thing that names a conversation.
+   *  Nothing titles these -- a title would be a second model call per ask for
+   *  a string a reader can already recognise. */
+  readonly firstQuestion: string
+  readonly turnCount: number
+}
+
+/** A stored turn, as the read route sends it.
+ *
+ * **There is no `answer` field here and its absence is the whole shape.** The
+ * route withholds the raw markdown because it carries the answer key that
+ * `blocks` was projected to remove -- see `read_ask` in `app.py`, where a
+ * `"answer": turn.answer` beside these blocks was a real leak. A client that
+ * wants the prose walks `blocks` for its markdown entries, which is what
+ * `storedTranscript` below does.
+ */
+export interface StoredAskTurn {
+  readonly position: number
+  readonly question: string
+  readonly blocks: readonly DocumentBlock[]
+  readonly citations: readonly Citation[]
+}
+
+export interface StoredAskConversation extends AskConversationSummary {
+  readonly turns: readonly StoredAskTurn[]
+}
+
+/** A stored conversation, as the transcript the live page already renders.
+ *
+ * The point of the mapping is that nothing downstream has to know where a turn
+ * came from: `AskThread` and `AskTurn` take an `AskTranscript`, and a reopened
+ * conversation is one whose turns are all settled and carry no activity.
+ *
+ * `answer` is recovered by joining the markdown blocks rather than read off the
+ * wire, because the wire deliberately does not carry it (see `StoredAskTurn`).
+ * That is lossy in exactly one direction and worth naming: a fenced component
+ * in the original prose comes back as a `component` block and not as the fence
+ * that produced it, so a reader reopening a conversation sees the widget rather
+ * than the source. That is the same thing the live page shows once the answer
+ * settles, so the two readings agree.
+ *
+ * `activity` is empty because nothing stores it. A reopened conversation cannot
+ * say what the model looked at, and the fold renders nothing rather than an
+ * empty disclosure -- see `AskActivityFold`, which returns null for no rows.
+ */
+export const storedTranscript = (conversation: StoredAskConversation | undefined): AskTranscript =>
+  (conversation?.turns ?? []).map((turn) => ({
+    question: turn.question,
+    answer: turn.blocks
+      .filter(
+        (block): block is Extract<DocumentBlock, { kind: 'markdown' }> => block.kind === 'markdown',
+      )
+      .map((block) => block.text)
+      .join('\n\n'),
+    blocks: turn.blocks,
+    position: turn.position,
+    activity: [],
+    citations: turn.citations,
+    error: null,
+    settled: true,
+  }))

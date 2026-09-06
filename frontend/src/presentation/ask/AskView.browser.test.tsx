@@ -23,6 +23,7 @@
  * the composer leaves the bottom edge on a long conversation, which is
  * precisely when somebody wants to type the next question.
  */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { expect, it, vi } from 'vitest'
 import { page, userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
@@ -65,10 +66,18 @@ const answering = vi.fn(
  *  inside `.lay-surface`, and this is that constraint without the shell. */
 const Page = () => {
   const container = {
-    ask: { ask: answering, forget: vi.fn() },
+    // `conversations` answers an empty list rather than being absent: this
+    // file measures the layout of a page with turns on it, and a history list
+    // in the empty state would be a different box. `AskView` reads it through
+    // react-query, which is why the provider below is not optional -- without
+    // it every case here fails at `useQuery` before a pixel is laid out.
+    ask: { ask: answering, forget: vi.fn(), conversations: vi.fn().mockResolvedValue([]) },
   } as unknown as AppContainer
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   const wrapper = (children: ReactNode) => (
-    <ContainerProvider container={container}>{children}</ContainerProvider>
+    <QueryClientProvider client={client}>
+      <ContainerProvider container={container}>{children}</ContainerProvider>
+    </QueryClientProvider>
   )
   return (
     <div style={{ height: '520px', width: '900px', display: 'flex', flexDirection: 'column' }}>

@@ -13,7 +13,11 @@ import { z } from 'zod'
 
 import { ApiError } from '@application/ports/errors.ts'
 import type { AskRepository } from '@application/ports/repositories.ts'
-import type { AskEvent } from '@domain/ask/conversation.ts'
+import type {
+  AskConversationSummary,
+  AskEvent,
+  StoredAskConversation,
+} from '@domain/ask/conversation.ts'
 import type { AttemptResponse, Verdict } from '@domain/lesson/attempt.ts'
 import type { DocumentBlock } from '@domain/lesson/document.ts'
 import type { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
@@ -61,6 +65,40 @@ const askFrameDto = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('error'), detail: z.string() }),
 ])
+
+/** The summary the list route sends per conversation.
+ *
+ * Camel-cased on the wire, unlike the SSE frames above: `_conversation_view`
+ * in `app.py` writes `conversationId`/`firstQuestion` rather than the snake
+ * case the streaming frames use. Mirrored rather than corrected, because the
+ * route is what it is and a mapper that silently accepted both would hide the
+ * day one of them changes. */
+const conversationDto = z.object({
+  conversationId: z.string(),
+  openedAt: z.string(),
+  firstQuestion: z.string(),
+  turnCount: z.number().int().nonnegative(),
+})
+
+const storedTurnDto = z.object({
+  position: z.number().int().nonnegative(),
+  question: z.string(),
+  // `unknown` for the reason the `answer` frame's blocks are: the domain
+  // narrows an open `data` record at the one boundary that needs it, and a
+  // second copy of the component registry in zod is a second thing to keep in
+  // step.
+  blocks: z.array(z.unknown()).default([]),
+  citations: z.array(citationDto).default([]),
+})
+
+/** **No `answer` member, and leaving it out is the assertion.** The route
+ *  withholds the raw markdown because it carries the key `blocks` was
+ *  projected to remove, and a schema that accepted one would make re-adding it
+ *  server-side invisible here. `test_a_stored_turn_is_parsed_the_same_way_as_a
+ *  _live_one` guards the other end. */
+const storedConversationDto = conversationDto.extend({
+  turns: z.array(storedTurnDto).default([]),
+})
 
 const toEvent = (raw: z.output<typeof askFrameDto>): AskEvent => {
   switch (raw.type) {
@@ -136,6 +174,28 @@ export class HttpAskRepository implements AskRepository {
     // A body may end without its trailing blank line, and the last frame is
     // usually the answer -- the one event it would be worst to lose.
     emit(pending, onEvent)
+  }
+
+  async conversations(projectId: ProjectId): Promise<readonly AskConversationSummary[]> {
+    const body = await this.readJson(`/api/projects/${seg(projectId)}/asks`)
+    return z.array(conversationDto).parse(body)
+  }
+
+  async conversation(projectId: ProjectId, conversationId: string): Promise<StoredAskConversation> {
+    const body = await this.readJson(`/api/projects/${seg(projectId)}/asks/${seg(conversationId)}`)
+    return storedConversationDto.parse(body) as StoredAskConversation
+  }
+
+  /** One GET, parsed as JSON, refused as an `ApiError`.
+   *
+   * Not routed through `HttpClient` for the reason `submitAskAttempt` below
+   * states: this repository already owns a bare `fetcher` for the SSE body it
+   * cannot let `HttpClient` buffer, and a second HTTP path here would be a
+   * second place to keep the error handling in step. */
+  private async readJson(path: string): Promise<unknown> {
+    const response = await this.fetcher(`${this.baseUrl}${path}`)
+    if (!response.ok) throw new ApiError(await detail(response), response.status)
+    return JSON.parse(await response.text())
   }
 
   async forget(projectId: ProjectId, chatId: string): Promise<void> {
