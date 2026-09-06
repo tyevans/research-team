@@ -1656,6 +1656,66 @@ def create_app(
             content={"queued": len(queued), "source_ids": queued},
         )
 
+    @app.post("/api/projects/{project_id}/sources/perceive")
+    async def perceive_all_sources(project_id: UUID):
+        """Queue every stored medium with no transcript. 202, none of it has run.
+
+        B94's remaining half, and the caller `MediaPerceiver.unperceived` was
+        written for -- that method's docstring has said "this has no caller yet"
+        since it shipped, and described the rule this route now runs rather than
+        one anything ran. **Read it before changing the set here**: the
+        exclusions are subtle in one direction (a dropped medium is not a
+        candidate) and subtle in the other (a dropped *transcript* still counts
+        its parent as perceived, because superseding a derived source erases the
+        drop and returns it to extraction).
+
+        Registered inside the literal-segment block for that block's reason:
+        `perceive` would otherwise be read as a `{source_id}` by
+        `/sources/{source_id}/perceive` one screen down.
+
+        **The capability check is here and the per-source refusals are not**,
+        which is the one place this diverges from its neighbour
+        `perceive_source`. That route resolves the id first so a typo, a text
+        id, a dropped source and a missing blob each get their own status --
+        a distinction worth drawing for a press aimed at one row. Here the set
+        comes from the corpus rather than from a caller, so there is no id to be
+        wrong about, and resolving every medium up front would read every blob's
+        record to answer a question the enqueue is about to ask again. A medium
+        whose bytes have gone reports `failed` on the pane, which is where the
+        rest of a batch's failures already land. An install with no model at all
+        still refuses the press, for `perceive_source`'s reason: accepting work
+        it cannot do and failing a minute later is worse than a refusal.
+
+        `queued` counts what this press took on, not what was asked for -- the
+        queue refuses a medium it already holds, so a second press while the
+        first drains answers 0 rather than claiming to have started it again.
+        """
+        if perceiver is None or perception is None or extract_queue is None:
+            raise HTTPException(status_code=503, detail="perception is not configured")
+        await _require_project(project_id)
+
+        capabilities = perception.capabilities()
+        if not capabilities.any_model():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "this install cannot perceive media: " + "; ".join(capabilities.missing())
+                ),
+            )
+
+        pending = await perceiver.unperceived(project_id)
+        queued = [
+            source_id
+            for source_id in pending
+            if extract_queue.start(
+                project_id, source_id, _perception_of(project_id, source_id)
+            )
+        ]
+        return JSONResponse(
+            status_code=202,
+            content={"queued": len(queued), "source_ids": queued},
+        )
+
     @app.post("/api/projects/{project_id}/sources/reindex")
     async def reindex_sources(project_id: UUID):
         """Chunk every stored document again, and say how many. 200, it has run.

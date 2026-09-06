@@ -91,6 +91,8 @@ const Browser = () => (
       derived={new Map()}
       perceiveBusy={false}
       onPerceive={() => {}}
+      perceivableCount={0}
+      onPerceiveAll={() => {}}
       onAdd={() => {}}
     />
   </div>
@@ -170,6 +172,8 @@ const MediaBrowser = () => (
       }
       perceiveBusy={false}
       onPerceive={() => {}}
+      perceivableCount={0}
+      onPerceiveAll={() => {}}
       onAdd={() => {}}
     />
   </div>

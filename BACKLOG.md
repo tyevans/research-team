@@ -4620,7 +4620,44 @@ would newly run without embeddings need checking one at a time rather than in
 a feature branch about video.
 
 
-### B94. There is still no batch "Transcribe all" control
+### B94. There is still no batch "Transcribe all" control -- CLOSED 2026-09-06
+
+**Done, both halves.** `POST /api/projects/{id}/sources/perceive` is the caller
+`MediaPerceiver.unperceived` was written for -- that method's docstring has said
+"this has no caller yet, and that is deliberate rather than a loose end" since
+it shipped, and described a rule nothing ran. It runs now.
+
+The route is `extract_all_sources`' shape with one deliberate divergence, stated
+where it lives: it keeps the **capability** refusal and drops the per-source
+404/409/410 its neighbour `perceive_source` draws. A batch has no id to be wrong
+about, and resolving every medium up front would read every blob's record to
+answer a question the enqueue asks again a moment later; a medium whose bytes
+have gone reports `failed` on the pane, where the rest of a batch's failures
+already land.
+
+The control consumes `mediaPerception` rather than rebuilding it, as this entry
+asked. `unperceivedCount` is the count, and its three exclusions are
+`unperceived`'s: not a text row, not a dropped medium, and not one that already
+has a transcript **even where that transcript was itself dropped**. That last
+one is the half a future reader is most likely to "fix" -- superseding a derived
+source erases its `dropped_reason` and returns the text to chunking and
+extraction, so re-reading its parent undoes an exclusion nobody asked to undo.
+`derivedSources`' docstring said the two ends "agree by coincidence of shape and
+nothing else says so", at a time when the server rule had no caller; there is a
+test on each side now, and the pairing is named in both.
+
+**One decision this entry did not anticipate: the control is hidden at zero
+rather than greyed out.** "Extract all (0)" is always meaningful because every
+corpus holds documents; most corpora hold no media at all, and a permanently-off
+"Transcribe all (0)" beside every text-only project is chrome that never becomes
+useful. The cost is that a reader whose media are all transcribed loses the
+control rather than reading a zero off it, so "did I get everything?" is
+answered by an absence -- the weaker answer, and the row state says the same
+thing where they are already looking.
+
+Still deliberately absent, unchanged from below: no `transcribed` state.
+
+### B94 (original). There is still no batch "Transcribe all" control
 
 The per-row half of this entry is done: `mediaPerception` in
 `frontend/src/domain/research/extraction-queue.ts` reads a medium's

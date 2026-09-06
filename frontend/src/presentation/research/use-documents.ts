@@ -9,11 +9,12 @@ import {
   useExtractAll,
   useExtractDocument,
   useExtractionQueue,
+  usePerceiveAll,
   usePerceiveDocument,
 } from '@application/research/use-extraction-queue.ts'
 import { useContainer } from '@app/container-context.tsx'
 import { derivedSources, documentLabel, type SourceSummary } from '@domain/research/document.ts'
-import { unextractedCount } from '@domain/research/extraction-queue.ts'
+import { unextractedCount, unperceivedCount } from '@domain/research/extraction-queue.ts'
 import type { ProjectId, SourceId } from '@domain/shared/identifier.ts'
 
 import { useFrameRefresh } from '../shell/use-frame-refresh.ts'
@@ -67,6 +68,7 @@ export const useDocuments = (
   const extractingAll = useExtractAll(projectId)
   const cancelling = useCancelExtraction(projectId)
   const perceiving = usePerceiveDocument(projectId)
+  const perceivingAll = usePerceiveAll(projectId)
 
   // Over `query.data` and not `filtered`, which is the point of computing it
   // here rather than in the row: see `derivedSources`. A filter matching a
@@ -109,6 +111,12 @@ export const useDocuments = (
       // taken from the filtered rows would promise to extract what the reader
       // can see while the press extracted more.
       extractableCount: unextractedCount(query.data ?? [], board),
+      // The unfiltered corpus and the whole-corpus `derived` map, for
+      // `extractableCount`'s reason and one more: a filter matching a
+      // recording and not its transcript would make a transcribed medium
+      // count as untranscribed, which is real duplicated work rather than a
+      // cosmetic miscount.
+      perceivableCount: unperceivedCount(query.data ?? [], derived, board),
       queue: board,
       queueSize: board.queued.length + (board.running === null ? 0 : 1),
       busy: extracting.isPending || extractingAll.isPending,
@@ -151,7 +159,27 @@ export const useDocuments = (
       // while one is pending, which is `busy`'s bargain -- the mutation is not
       // keyed by source, and two presses for one intention is the failure
       // worth preventing.
-      perceiveBusy: perceiving.isPending,
+      perceiveBusy: perceiving.isPending || perceivingAll.isPending,
+      onPerceiveAll: () => {
+        perceivingAll.mutate(undefined, {
+          // The server's count, not `perceivableCount`, exactly as
+          // `onExtractAll` reports the server's: the two differ precisely when
+          // a previous press is still draining, which is when a client-side
+          // number would be most confidently wrong.
+          onSuccess: (queued) => {
+            notify(
+              queued === 0
+                ? 'Nothing left to transcribe'
+                : `Queued ${String(queued)} recording${queued === 1 ? '' : 's'} for transcription`,
+            )
+          },
+          // Verbatim, for `onPerceive`'s reason: the 503 names what the install
+          // is short of, and it is the only sentence an operator can act on.
+          onError: (error) => {
+            notify(errorMessage(error), 'bad')
+          },
+        })
+      },
       onPerceive: (sourceId: SourceId) => {
         perceiving.mutate(sourceId, {
           // `queued: false` means the queue already holds this medium, exactly

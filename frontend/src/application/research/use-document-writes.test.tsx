@@ -60,6 +60,9 @@ const fakeDocuments = (over: Partial<DocumentRepository>): DocumentRepository =>
   perceive: vi.fn(() => {
     throw new Error('perceive was not stubbed for this test')
   }),
+  perceiveAll: vi.fn(() => {
+    throw new Error('perceiveAll was not stubbed for this test')
+  }),
   create: vi.fn(() => {
     throw new Error('create was not stubbed for this test')
   }),
