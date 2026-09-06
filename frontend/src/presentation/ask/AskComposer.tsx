@@ -62,9 +62,19 @@ export const AskComposer = ({
         />
         <div className="flex items-center justify-between gap-3">
           {/* Said again here, at the moment somebody is about to type
-              something they may want back. */}
+              something they may want back.
+
+              **It said "Not saved -- this conversation goes when you leave",
+              and that was false when it was written.** The ask has appended to
+              an `AskConversation` stream since the persistence spec landed;
+              what was missing was any way to reach one, so the copy described
+              the console rather than the system. Now that the history list
+              reaches them, the sentence would be a lie a reader could
+              disprove in two clicks. What genuinely is not kept is the
+              reader's own answers to components in an answer -- `AskTurn` says
+              so where those appear, which is the only place it matters. */}
           <span className="min-w-0 overflow-hidden text-xs text-ellipsis whitespace-nowrap text-fg-faint">
-            Not saved — this conversation goes when you leave.
+            Kept — you can reopen this conversation later.
           </span>
           <Button tone="accent" type="submit" disabled={asking || !draft.trim()}>
             Ask

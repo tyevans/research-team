@@ -15,6 +15,12 @@ const fakeAsk = (over: Partial<AskRepository> = {}): AskRepository => ({
     onEvent({ type: 'answer', text: 'two papers', blocks: [], position: 0, citations: [] })
   }),
   forget: vi.fn().mockResolvedValue(undefined),
+  // The store does not read history -- the view does, through react-query --
+  // so these are here only to satisfy the port. A store that started calling
+  // one would fail on the resolved value rather than on a missing method,
+  // which is the louder of the two.
+  conversations: vi.fn().mockResolvedValue([]),
+  conversation: vi.fn(),
   submitAskAttempt: vi.fn(),
   ...over,
 })

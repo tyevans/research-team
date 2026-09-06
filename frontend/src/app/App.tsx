@@ -439,10 +439,19 @@ const CurrentView = ({
   const { id, selection } = route
 
   // Ahead of the project page rather than inside it, and the last arm of the
-  // old dispatch left standing: ask is one conversation with no parts worth a
-  // URL and nothing to read it against, so it is a view rather than a region.
-  // `ProjectView.regionOf` maps it anyway, and says why.
-  if (selection?.facet === 'ask') return <AskView key={id} projectId={id} />
+  // old dispatch left standing: ask is one conversation, so it is a view
+  // rather than a region. `ProjectView.regionOf` maps it anyway, and says why.
+  //
+  // It **does** have a part worth a URL now, which this comment used to deny:
+  // `#/p/<id>/ask/<conversationId>` opens a stored conversation, read. The
+  // grammar needed no change -- `Selection` already carries an id for every
+  // plain facet -- which is what `routes.ts` predicted for `dialogue`.
+  // The id is a PROP, not part of the key, for the reason the dialogue arm
+  // below gives: keyed on it, opening a stored conversation from the history
+  // list would remount the view and re-mint the live chat behind the reader.
+  if (selection?.facet === 'ask') {
+    return <AskView key={id} projectId={id} conversationId={selection.id} />
+  }
 
   // Intercepted for `ask`'s reason -- a dialogue is one conversation with no
   // parts worth a URL segment beyond its own id, so it is a view rather than a

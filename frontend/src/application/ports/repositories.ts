@@ -7,7 +7,11 @@ import type {
   LoggedInteraction,
 } from '@domain/interaction/log.ts'
 import type { InteractionFilters } from '@domain/interaction/filters.ts'
-import type { AskEvent } from '@domain/ask/conversation.ts'
+import type {
+  AskConversationSummary,
+  AskEvent,
+  StoredAskConversation,
+} from '@domain/ask/conversation.ts'
 import type { DialogueEvent } from '@domain/dialogue/conversation.ts'
 import type { ActivityEntry } from '@domain/activity/activity.ts'
 import type { AutonomyChange, AutonomyPolicyView } from '@domain/autonomy/autonomy.ts'
@@ -959,6 +963,18 @@ export interface AskRepository {
   ): Promise<void>
   /** Forgets the server's copy of a conversation, backing "new chat". */
   forget(projectId: ProjectId, chatId: string): Promise<void>
+  /** Every conversation asked of this project, most recent first.
+   *
+   * Rejects with a 503 rather than answering `[]` when the projection is
+   * unwired, and the route says why: an empty list is the right answer for a
+   * project nobody has asked anything, so a build with no runner started would
+   * otherwise be indistinguishable from a quiet project. The caller must show
+   * the refusal rather than an empty state. */
+  conversations(projectId: ProjectId): Promise<readonly AskConversationSummary[]>
+  /** One stored conversation with its turns, or a 404 for an id this project
+   *  does not own -- the route answers the same for "no such conversation" and
+   *  "belongs to another project", deliberately. */
+  conversation(projectId: ProjectId, conversationId: string): Promise<StoredAskConversation>
   /** The browser cannot mark an answer to a question the model asked back
    *  either — the key never left the server. Posts one and renders the reply.
    *

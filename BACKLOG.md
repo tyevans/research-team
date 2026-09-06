@@ -3447,7 +3447,28 @@ passes while all of the above is true, because it asserts the artifact exists
 rather than that the feature works. The restart test is honest about what it
 covers; this entry is the rest.
 
-### B103. The ask history has no frontend
+### B103. The ask history has no frontend -- CLOSED 2026-09-05
+
+**Done, with [[B106]], which is the same gap seen from the other end.** The
+design this entry said had not been done is written up in `AskHistory.tsx`: the
+list draws in the thread's **empty state** and nowhere else. A rail was
+rejected because it takes width from a 72ch column on every turn of every
+conversation to serve a click that happens once; a drawer because it is a
+second piece of chrome on a page whose whole argument is that it has almost
+none. The empty state is the moment a reader has nothing in front of them, and
+what they most plausibly want then is something they already asked.
+
+The cost is real and is asserted rather than merely written down
+(`hides the list once a question has been asked, and brings it back on a new
+chat`): mid-conversation the list needs a "New chat" first. If that turns out
+to be wrong the fix is a disclosure in `AskHead`, not a rail.
+
+"How resume reads" is still not answered, because resuming still does not
+exist -- see [[B102]]. A stored conversation is read, and the composer is
+**absent** rather than disabled: a disabled control with no explanation is a
+promise the page cannot keep, and there is nothing to explain until B102 lands.
+
+### B103 (original). The ask history has no frontend
 
 The backend half of the ask-persistence spec
 (`docs/superpowers/specs/2026-08-16-ask-persistence-design.md`) is done: the
@@ -4631,7 +4652,40 @@ Every other resource here doesn't have that luxury — there's meaningful
 construction between the event store and the return statement — so the fix
 has to actually unwind, not just reorder.
 
-### B106. Ask history has a server half and no client -- reopening a conversation is not reachable
+### B106. Ask history has a server half and no client -- CLOSED 2026-09-05
+
+**Done.** `#/p/<id>/ask/<conversationId>` opens a stored conversation, read,
+through the same `AskPage` a live one uses. The routing grammar needed no
+change -- `Selection` already carries an id for every plain facet, which is
+what `routes.ts` predicted for `dialogue` and which turned out to hold here
+too; the id is a prop rather than part of the `key`, which is `DialogueView`'s
+correction and applies for its reason.
+
+`storedTranscript` is the whole of the difference between a stored turn and a
+settled live one, and it is a pure function in the domain. Two things about it
+are worth carrying:
+
+- **It recovers the prose from `blocks`, because the wire deliberately does not
+  carry it.** This entry records why: `"answer": turn.answer` beside the
+  projected blocks handed back the key the projection had just removed. The
+  client schema has no `answer` member, and the repository test sends one
+  anyway -- as a server that had regressed would -- and asserts zod strips it.
+- **`activity` is empty, because nothing stores it.** A reopened conversation
+  cannot say what the model looked at. The fold renders nothing rather than an
+  empty disclosure, so this costs a reader a row they never see.
+
+**One thing this changed that was not on the list.** The head and the composer
+both said "Not saved -- this conversation goes when you leave", and a test
+required it (`says the page keeps nothing`, whose comment argued "the contract
+is ephemerality"). That was false when it was written: the ask has appended to
+an `AskConversation` stream since the persistence spec landed. The copy
+described the console rather than the system, the test held it there, and
+nothing could disprove either until a reader had a way to reopen one. Both now
+say the conversation is kept. What genuinely is not kept is a reader's answers
+to components inside an answer, and `AskTurn` says so where those appear --
+which is the only place it matters.
+
+### B106 (original). Ask history has a server half and no client -- reopening a conversation is not reachable
 
 **Corrected 2026-08-18: the sentence this entry opened with was false.** It
 said `read_ask` was "correct and tested: a stored ask turn carries projected

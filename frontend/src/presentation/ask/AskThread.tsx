@@ -1,9 +1,11 @@
+import { clsx } from 'clsx'
 import { useState } from 'react'
 
-import type { AskTranscript } from '@domain/ask/conversation.ts'
+import type { AskConversationSummary, AskTranscript } from '@domain/ask/conversation.ts'
 import type { ProjectId } from '@domain/shared/identifier.ts'
 
 import { EmptyState } from '../common/primitives.tsx'
+import { AskHistory } from './AskHistory.tsx'
 import { AskTurn } from './AskTurn.tsx'
 
 /** The conversation so far: question, what was consulted, answer, sources.
@@ -16,10 +18,18 @@ export const AskThread = ({
   projectId,
   transcript,
   conversationId,
+  history,
+  historyError,
 }: {
   projectId: ProjectId
   transcript: AskTranscript
   conversationId: string | null
+  /** Past conversations, for the empty state below. Empty rather than optional
+   *  on a build that has none: the list is the same shape whether the project
+   *  is quiet or the projection is unwired, which is what `historyError`
+   *  separates. */
+  history: readonly AskConversationSummary[]
+  historyError: string | null
 }) => {
   /** Which activity folds are open, by turn index.
    *
@@ -31,11 +41,25 @@ export const AskThread = ({
 
   if (transcript.length === 0) {
     return (
-      <div className="ask-thread flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-5">
-        <EmptyState
-          heading="Nothing asked yet."
-          detail="Ask about this project’s sources, topics and findings. Nothing you ask here is written down."
-        />
+      // Top-aligned rather than centred once there is a list to draw: a
+      // centred empty state with ten conversations under it puts the heading
+      // in the middle of the page and pushes half the list off the bottom.
+      <div
+        className={clsx(
+          'ask-thread flex min-h-0 flex-1 flex-col overflow-y-auto p-5',
+          history.length === 0 ? 'items-center justify-center' : 'items-center',
+        )}
+      >
+        <div className="flex w-full max-w-[72ch] flex-col items-center gap-6">
+          <EmptyState
+            heading="Nothing asked yet."
+            detail="Ask about this project’s sources, topics and findings. What you ask is kept, so you can reopen it — but answers you give to its questions are not."
+          />
+          {/* The history list draws here and nowhere else -- see `AskHistory`
+              for why the empty state is the place, and what that costs
+              mid-conversation. */}
+          <AskHistory projectId={projectId} conversations={history} error={historyError} />
+        </div>
       </div>
     )
   }
