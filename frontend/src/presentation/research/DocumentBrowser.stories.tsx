@@ -87,6 +87,8 @@ const base = {
   onCancelExtraction: () => {},
   derived: new Map<string, SourceId>(),
   perceiveBusy: false,
+  perceivableCount: 0,
+  onPerceiveAll: () => {},
   onPerceive: () => {},
   onAdd: () => {},
 }

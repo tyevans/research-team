@@ -82,6 +82,8 @@ export const DocumentBrowser = ({
   derived,
   perceiveBusy,
   onPerceive,
+  perceivableCount,
+  onPerceiveAll,
   onAdd,
 }: {
   /** Already filtered. Filtering is a `useMemo` in the hook rather than a
@@ -124,6 +126,12 @@ export const DocumentBrowser = ({
    *  extracting and perceiving are different presses on different rows. */
   perceiveBusy: boolean
   onPerceive: (sourceId: SourceId) => void
+  /** How many recordings a "Transcribe all" press would take on, over the
+   *  *unfiltered* corpus -- `extractableCount`'s reasoning, and see
+   *  `unperceivedCount` for the three exclusions it applies. Zero hides the
+   *  control rather than greying it out; the comment beside it says why. */
+  perceivableCount: number
+  onPerceiveAll: () => void
   onAdd: () => void
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -210,6 +218,36 @@ export const DocumentBrowser = ({
               Extract all ({extractableCount})
             </Button>
           </Tooltip>
+          {/* **Hidden outright when there is nothing to transcribe**, which is
+              the one place this diverges from its neighbour. "Extract all (0)"
+              is always meaningful -- every corpus holds documents -- but most
+              corpora hold no media at all, and a permanently-off "Transcribe
+              all (0)" beside every text-only project is chrome that never
+              becomes useful. It appears with the first recording.
+
+              The cost is that a reader whose media are all transcribed loses
+              the control rather than seeing it greyed out, so "did I transcribe
+              everything?" is answered by its absence instead of by a zero. That
+              is the weaker answer and it is the trade: the row-level state says
+              the same thing where a reader is already looking. */}
+          {perceivableCount > 0 ? (
+            <Tooltip
+              asChild
+              explanation="Queue every recording in this corpus that has no transcript yet"
+            >
+              <Button
+                small
+                tone="quiet"
+                aria-disabled={perceiveBusy}
+                onClick={() => {
+                  if (perceiveBusy) return
+                  onPerceiveAll()
+                }}
+              >
+                Transcribe all ({perceivableCount})
+              </Button>
+            </Tooltip>
+          ) : null}
           {addControl}
         </span>
       </div>

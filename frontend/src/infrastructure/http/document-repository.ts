@@ -84,6 +84,18 @@ export class HttpDocumentRepository implements DocumentRepository {
     return body.cancelled
   }
 
+  async perceiveAll(projectId: ProjectId) {
+    const body = await this.http.post(
+      `/api/projects/${seg(projectId)}/sources/perceive`,
+      {},
+      // `source_ids` dropped, as `extractAll` drops it and for the same
+      // reason: the header reports a count, and a list of ids it would have to
+      // render is a second design.
+      z.object({ queued: z.number() }),
+    )
+    return body.queued
+  }
+
   async perceive(projectId: ProjectId, sourceId: SourceId) {
     const body = await this.http.post(
       `/api/projects/${seg(projectId)}/sources/${seg(sourceId)}/perceive`,

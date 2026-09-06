@@ -177,3 +177,39 @@ export const unextractedCount = (
   documents: readonly SourceSummary[],
   board: ExtractionQueueBoard,
 ): number => documents.filter((document) => canExtract(documentExtraction(document, board))).length
+
+/** How many media "transcribe all" would actually take on.
+ *
+ * `unextractedCount`'s shape over perception's subject, and an estimate of the
+ * server's own set for the same reason: it recomputes at press time, and the
+ * honest report afterwards is the count the 202 returns.
+ *
+ * **Three exclusions, and the third is the one that is easy to get wrong.** A
+ * text row is not a medium. A *dropped* medium is not a candidate -- a drop is
+ * a judgement that the source should not inform the project, and a transcript
+ * of it would be extracted into the graph the drop exists to keep it out of.
+ * And a medium that already has a derived text source is done, **even when
+ * that transcript was itself dropped**: superseding a derived source erases
+ * the drop and returns the text to chunking and extraction, so re-reading its
+ * parent would undo an exclusion nobody asked to undo.
+ *
+ * All three are `MediaPerceiver.unperceived`'s rules on the server, which is
+ * what actually decides the set. `derived` carries the third one and must be
+ * built over the **whole** corpus rather than the filtered rows -- see
+ * `derivedSources`, whose docstring has said the two ends "agree by
+ * coincidence of shape and nothing else says so" since it shipped, at a time
+ * when the server rule had no caller to run it. It has one now, and this is
+ * the client half of the same pair.
+ */
+export const unperceivedCount = (
+  documents: readonly SourceSummary[],
+  derived: ReadonlyMap<string, SourceId>,
+  board: ExtractionQueueBoard,
+): number =>
+  documents.filter(
+    (document) =>
+      document.kind === 'media' &&
+      !isDropped(document) &&
+      !derived.has(document.sourceId) &&
+      canPerceive(mediaPerception(document, board)),
+  ).length

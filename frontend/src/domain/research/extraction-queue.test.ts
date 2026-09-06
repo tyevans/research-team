@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 
-import type { MediaSummary, TextSummary } from './document.ts'
+import { derivedSources, type MediaSummary, type TextSummary } from './document.ts'
 import { SourceId } from '../shared/identifier.ts'
 import {
   canExtract,
@@ -9,6 +9,7 @@ import {
   emptyExtractionQueue,
   mediaPerception,
   unextractedCount,
+  unperceivedCount,
   type ExtractionQueueBoard,
 } from './extraction-queue.ts'
 
@@ -204,4 +205,59 @@ it('leaves nothing to extract when everything is extracted, queued or dropped', 
     doc({ sourceId: SourceId('s3'), droppedReason: 'superseded' }),
   ]
   expect(unextractedCount(rows, board({ queued: [SourceId('s2')] }))).toBe(0)
+})
+
+/** B94's batch count, and the three exclusions it has to make.
+ *
+ * Written as one case per exclusion in one test rather than three tests,
+ * because what makes the count correct is that all three hold at once: a
+ * corpus with a candidate, a dropped medium and a transcribed one is the only
+ * arrangement that separates this implementation from the two plausible wrong
+ * ones -- counting every medium, and counting every medium the board is not
+ * holding.
+ *
+ * Each assertion fails on its own clause: drop the `isDropped` test and the
+ * dropped medium counts; drop the `derived` test and the transcribed one does;
+ * drop `canPerceive` and the queued one does.
+ */
+it('counts the media a transcribe-all would take on, and no others', () => {
+  const candidate = video({ sourceId: SourceId('fresh') })
+  const dropped = video({ sourceId: SourceId('dropped'), droppedReason: 'off topic' })
+  const transcribed = video({ sourceId: SourceId('read') })
+  const queued = video({ sourceId: SourceId('waiting') })
+  const rows = [candidate, dropped, transcribed, queued, doc({ sourceId: SourceId('s1') })]
+  // The map `derivedSources` builds over the whole corpus: one medium has a
+  // transcript, and that is what takes it out of the set.
+  const derived = new Map([['read', SourceId('read#perceived')]])
+
+  expect(unperceivedCount(rows, derived, board({ queued: [SourceId('waiting')] }))).toBe(1)
+
+  // And with nothing excluded by the board, the two live candidates are the
+  // fresh one and the one that was merely waiting.
+  expect(unperceivedCount(rows, derived, emptyExtractionQueue)).toBe(2)
+  // A text document is never a candidate, whatever the board says.
+  expect(
+    unperceivedCount([doc({ sourceId: SourceId('s1') })], new Map(), emptyExtractionQueue),
+  ).toBe(0)
+})
+
+/** **A dropped transcript still counts its medium as transcribed.**
+ *
+ * The subtle half of `MediaPerceiver.unperceived`'s rule, and the one a future
+ * reader is most likely to "fix": re-reading such a medium supersedes the
+ * derived source, which erases its `dropped_reason` and returns the text to
+ * chunking and extraction -- undoing an exclusion nobody asked to undo.
+ *
+ * `derivedSources` already builds the map that way, over dropped rows
+ * included; this asserts the count consumes it rather than re-deriving a
+ * narrower set of its own.
+ */
+it('does not offer to re-transcribe a medium whose transcript was dropped', () => {
+  const medium = video({ sourceId: SourceId('m9') })
+  const derived = derivedSources([
+    medium,
+    doc({ sourceId: SourceId('m9#perceived'), derivedFrom: 'm9', droppedReason: 'noisy' }),
+  ])
+
+  expect(unperceivedCount([medium], derived, emptyExtractionQueue)).toBe(0)
 })

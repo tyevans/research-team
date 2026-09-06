@@ -416,3 +416,87 @@ async def test_an_unwired_build_answers_503(db_path, fake_model):
         # left open by a failing assertion hangs the run at teardown, and a
         # hang hides which assertion failed.
         await application.close()
+
+
+async def test_perceiving_every_medium_transcribes_the_ones_with_no_transcript(wired):
+    """B94's batch half, asserted on the stored rows rather than on the count.
+
+    The 202 arrives whether or not the enqueue happened -- the same reason the
+    first test in this file gives -- so `queued: 2` proves the route computed a
+    set and nothing more. What proves it *ran* is two derived rows that were not
+    there before.
+
+    Red with the route absent (405) and red with the enqueue dropped from its
+    body, measured both ways.
+    """
+    application, client, queue, port, _activity = wired
+    project = await _new_project(client)
+    await _upload_media(client, project, "one")
+    await _upload_media(client, project, "two")
+
+    response = await client.post(f"/api/projects/{project}/sources/perceive")
+
+    assert response.status_code == 202
+    assert response.json()["queued"] == 2
+    await _settle(application, queue, project)
+    rows = await _rows(client, project)
+    assert rows["one#perceived"]["derived_from"] == "one"
+    assert rows["two#perceived"]["derived_from"] == "two"
+    assert len(port.calls) == 2
+
+
+async def test_perceiving_every_medium_skips_a_dropped_one_and_one_already_read(wired):
+    """The two exclusions `MediaPerceiver.unperceived` reasoned out, run.
+
+    That method's docstring has described this rule since it shipped and had no
+    caller to run it. Both halves matter and they fail differently: taking on a
+    **dropped** medium would extract into the graph the drop exists to keep it
+    out of, and taking on an **already perceived** one pays for a second
+    reading of the same bytes.
+
+    Asserted on `port.calls`, which is the only thing that can tell "excluded
+    from the set" from "enqueued and refused by the queue" -- the count in the
+    body cannot, since both answer the same number.
+    """
+    application, client, queue, port, _activity = wired
+    project = await _new_project(client)
+    await _upload_media(client, project, "keep")
+    await _upload_media(client, project, "gone")
+    await _upload_media(client, project, "done")
+
+    dropped = await client.post(
+        f"/api/projects/{project}/sources/gone/drop", json={"reason": "off topic"}
+    )
+    assert dropped.status_code == 200
+    first = await client.post(f"/api/projects/{project}/sources/done/perceive")
+    assert first.status_code == 202
+    await _settle(application, queue, project)
+    port.calls.clear()
+
+    response = await client.post(f"/api/projects/{project}/sources/perceive")
+
+    assert response.json()["source_ids"] == ["keep"]
+    await _settle(application, queue, project)
+    assert port.calls == ["keep"] or len(port.calls) == 1, port.calls
+    rows = await _rows(client, project)
+    assert "gone#perceived" not in rows
+
+
+async def test_perceiving_every_medium_on_an_install_with_no_model_answers_503(
+    unconfigured,
+):
+    """The press is refused rather than accepted and failed a minute later.
+
+    The same ruling `perceive_source` makes for one row, and it is the only
+    refusal this route keeps: a batch has no id to be wrong about, so the
+    404/409/410 distinctions its neighbour draws have nothing to draw them
+    against here.
+    """
+    _application, client, port = unconfigured
+    project = await _new_project(client)
+    await _upload_media(client, project, "vid")
+
+    response = await client.post(f"/api/projects/{project}/sources/perceive")
+
+    assert response.status_code == 503
+    assert port.calls == [], "an install that cannot perceive must not pay for a reading"

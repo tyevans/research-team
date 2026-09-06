@@ -104,6 +104,7 @@ const fakeDocuments = (
   // press taking the medium on is the ordinary case, and a test about
   // something else should not have to stub it to reach a row.
   perceive: vi.fn<DocumentRepository['perceive']>().mockResolvedValue(true),
+  perceiveAll: vi.fn<DocumentRepository['perceiveAll']>().mockResolvedValue(0),
   create: vi.fn(() => {
     throw new Error('create was not stubbed for this test')
   }),
@@ -997,4 +998,69 @@ it('renders a 503 from the perceive route in the server’s own words', async ()
       'this install cannot perceive media: AGENT_VISION_MODEL is not set; ffmpeg is not on PATH',
     ),
   )
+})
+
+/** B94's batch control, end to end from the press to the toast.
+ *
+ * Two recordings and one already-transcribed one, so the number on the button
+ * is a number only the exclusion rules produce -- "3" would mean the count
+ * ignores `derivedSources`, and no count at all would mean the control never
+ * rendered.
+ *
+ * The toast reports the *server's* number and not the button's, which is the
+ * same distinction `reports how many extract-all actually took on` draws and
+ * for the same reason: the two differ exactly while a previous press drains.
+ */
+it('queues every untranscribed recording, and reports what the server took on', async () => {
+  const perceiveAll = vi.fn<DocumentRepository['perceiveAll']>().mockResolvedValue(2)
+  const documents = fakeDocuments(
+    vi.fn<DocumentRepository['list']>().mockResolvedValue([
+      media({ sourceId: SourceId('m1'), title: 'The keynote' }),
+      media({ sourceId: SourceId('m2'), title: 'The panel' }),
+      media({ sourceId: SourceId('m3'), title: 'The workshop' }),
+      doc({
+        sourceId: SourceId('m3#perceived'),
+        title: 'Workshop transcript',
+        derivedFrom: 'm3',
+      }),
+    ]),
+    { perceiveAll },
+  )
+  const user = userEvent.setup()
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  await screen.findByText('The keynote')
+
+  await user.click(screen.getByRole('button', { name: 'Transcribe all (2)' }))
+
+  expect(perceiveAll).toHaveBeenCalledWith(PROJECT)
+  await waitFor(() =>
+    expect(useToasts.getState().toasts.at(-1)?.message).toBe(
+      'Queued 2 recordings for transcription',
+    ),
+  )
+})
+
+/** No control at all on a corpus with no media, which is most of them.
+ *
+ * "Transcribe all (0)" beside every text-only project is chrome that never
+ * becomes useful -- unlike "Extract all (0)", which is always meaningful
+ * because every corpus holds documents. The cost is that a reader whose media
+ * are all transcribed loses the control rather than seeing a zero; the row
+ * state says the same thing where they are already looking.
+ */
+it('offers no transcribe-all where there is nothing to transcribe', async () => {
+  const documents = fakeDocuments(
+    vi
+      .fn<DocumentRepository['list']>()
+      .mockResolvedValue([doc({ sourceId: SourceId('s1'), title: 'Ada Lovelace' })]),
+  )
+
+  renderWithContainer(<DocumentList projectId={PROJECT} />, { documents })
+  await screen.findByText('Ada Lovelace')
+
+  expect(screen.queryByRole('button', { name: /Transcribe all/ })).not.toBeInTheDocument()
+  // The extract control is still there, which is what makes this a test of the
+  // hiding rule rather than of the header failing to render.
+  expect(screen.getByRole('button', { name: 'Extract all (1)' })).toBeInTheDocument()
 })

@@ -520,6 +520,7 @@ const fakeDocumentsWithMedia = (): DocumentRepository => ({
   extractionQueue: vi.fn().mockResolvedValue(emptyExtractionQueue),
   cancelExtraction: vi.fn(),
   perceive: vi.fn(),
+  perceiveAll: vi.fn(),
   create: vi.fn(),
   revise: vi.fn(),
   drop: vi.fn(),

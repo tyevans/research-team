@@ -148,6 +148,23 @@ export const usePerceiveDocument = (projectId: ProjectId) => {
   })
 }
 
+/** Queue every stored medium that has no transcript yet.
+ *
+ * `useExtractAll`'s shape, and it invalidates the same one query for
+ * `usePerceiveDocument`'s reason: the 202 says work was *accepted*, not that
+ * any of it ran, so the corpus listing provably has not changed yet.
+ * `useDocumentRefresh` is what re-reads it as each `StoreDerivedText` lands. */
+export const usePerceiveAll = (projectId: ProjectId) => {
+  const { documents } = useContainer()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => documents.perceiveAll(projectId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.extractionQueue(projectId) }),
+  })
+}
+
 /** Queue every stored document that has no graph yet. */
 export const useExtractAll = (projectId: ProjectId) => {
   const { documents } = useContainer()

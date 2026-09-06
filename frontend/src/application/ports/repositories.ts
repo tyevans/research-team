@@ -358,6 +358,21 @@ export interface DocumentRepository {
    * with one of its own throws away the only sentence an operator can act on.
    * Report `ApiError.message` verbatim. */
   perceive(projectId: ProjectId, sourceId: SourceId): Promise<boolean>
+  /** Queue every stored medium with no transcript, answering how many this
+   *  press actually took on.
+   *
+   * `extractAll`'s shape over `perceive`'s subject, and the server draws the
+   * set: a dropped medium is excluded, and so is one that already has a
+   * transcript **even if that transcript was itself dropped** -- superseding a
+   * derived source erases the drop and returns it to extraction, so re-reading
+   * one would undo an exclusion nobody asked to undo. `derivedSources` on this
+   * side applies the same rule, and the two agree by shape rather than by
+   * anything that checks.
+   *
+   * The only refusal is 503 for an install with no vision model and no
+   * transcriber, naming which -- report it verbatim, for `perceive`'s reason.
+   * There is no id here to be 404 or 409 about. */
+  perceiveAll(projectId: ProjectId): Promise<number>
   /** Store a document a person is holding.
    *
    * Refused by the server when the corpus already holds the id, rather than

@@ -70,6 +70,9 @@ const noExtraction = {
   perceive: vi.fn(() => {
     throw new Error('DocumentReader should never perceive a medium')
   }),
+  perceiveAll: vi.fn(() => {
+    throw new Error('DocumentReader should never perceive anything')
+  }),
   create: vi.fn(() => {
     throw new Error('DocumentReader should never create a document')
   }),
@@ -89,6 +92,7 @@ const noExtraction = {
   | 'extractionQueue'
   | 'cancelExtraction'
   | 'perceive'
+  | 'perceiveAll'
   | 'create'
   | 'revise'
   | 'drop'
