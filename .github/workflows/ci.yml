@@ -219,8 +219,37 @@ jobs:
       # why the bar is `high` rather than `low`: at that level the interruption
       # is rare enough to be worth stopping for. Dependabot (`dependabot.yml`)
       # is what raises the fix; this is what makes ignoring it impossible.
+      #
+      # Retried, and a registry that will not answer is a warning rather than a
+      # failure. `npm audit` exits 1 for two unrelated reasons -- an advisory at
+      # or above the bar, and a request it could not complete -- and the second
+      # is not a fact about this branch. It turned `main` red on 2026-09-03 with
+      # `npm warn audit network timeout` and `npm error audit endpoint returned
+      # an error`, five minutes after a build that had nothing wrong with it,
+      # and a red `main` blocks every open PR.
+      #
+      # The distinction is made on the output rather than on the exit code,
+      # because npm reports both as 1. That is a string match against messages
+      # npm may reword, so the failure mode is stated plainly: if npm renames
+      # them, a genuine outage fails the job -- which is the direction to fail
+      # in, and the opposite of what `continue-on-error: true` would give,
+      # since that swallows real advisories too.
       - name: npm audit
-        run: npm audit --audit-level=high
+        run: |
+          for attempt in 1 2 3; do
+            if output=$(npm audit --audit-level=high 2>&1); then
+              printf '%s\n' "$output"
+              exit 0
+            fi
+            printf '%s\n' "$output"
+            if printf '%s' "$output" | grep -qiE 'audit endpoint returned an error|network timeout|ENOTFOUND|ECONNRESET|ETIMEDOUT'; then
+              echo "::warning::npm audit could not reach the registry (attempt $attempt of 3)"
+              sleep $((attempt * 15))
+              continue
+            fi
+            exit 1
+          done
+          echo "::warning::npm audit skipped -- the registry did not answer in three attempts"
         working-directory: frontend
 
   # `npm run test:browser` -- headless Chromium over `src/**/*.browser.test.tsx`.

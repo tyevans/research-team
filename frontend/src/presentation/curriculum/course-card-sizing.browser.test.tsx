@@ -81,57 +81,46 @@ it('gives the art a declared aspect ratio rather than the image its own', async 
 
   // Two assertions on one fact, and the pair is deliberate. The measured box is
   // what a reader sees; the computed property is *why*, and it is the half that
-  // tells the two candidate causes apart when this goes red, and it earned its
-  // keep within the hour. B160 reports this case at 10.63:1 on another machine
-  // -- a ratio that wide being a box whose height came from a broken image's
-  // alt text rather than from a rule -- and the property came back `auto` in
-  // CI, which names the cause as "no rule at all" where the box measurement
-  // reports only a number.
+  // tells the two candidate causes apart when this goes red. B160 reports this
+  // case at 10.63:1 on another machine -- a ratio that wide being a box whose
+  // height came from a broken image's alt text rather than from a rule.
   //
-  // What that turned out to be is in `course.css`: the `aspect-[3/2]` utility
-  // this used to depend on is generated correctly in a production build and was
-  // absent from the stylesheet the browser suite is served, because Tailwind's
-  // dev-time scan had not reached `CourseCard.tsx` when the setup file
-  // requested the CSS. The ratio is a rule now. Three local full-suite runs
-  // before that change: green, green, and one failure of this case, with the
-  // file passing alone every time.
-  const element = document.querySelector('.crs-card-art')!
-  // TEMPORARY DIAGNOSTIC -- to be removed. The failure is CI-only and every
-  // hypothesis about it has been wrong so far, so this prints the state at the
-  // moment of the assertion rather than inviting another guess.
-  const perSheet: string[] = []
-  const aspectRules: string[] = []
-  const matchingRules: string[] = []
-  Array.from(document.styleSheets).forEach((sheetItem, i) => {
-    let rules: CSSRuleList
-    try {
-      rules = sheetItem.cssRules
-    } catch {
-      perSheet.push(`${i}: CORS-BLOCKED`)
-      return
-    }
-    perSheet.push(`${i}: ${rules.length} rules, href=${sheetItem.href ?? 'inline'}`)
-    Array.from(rules).forEach((rule) => {
-      const text = rule.cssText
-      if (text.includes('aspect-ratio')) aspectRules.push(`${i}| ${text.slice(0, 100)}`)
-      const selector = (rule as CSSStyleRule).selectorText
-      if (selector) {
-        try {
-          if (element.matches(selector)) matchingRules.push(`${i}| ${text.slice(0, 100)}`)
-        } catch {
-          /* not a selector this engine can match */
-        }
-      }
-    })
-  })
-  expect({
+  // **The diagnosis this comment used to carry was wrong, and saying so is the
+  // point of the paragraph.** It read: the `aspect-[3/2]` utility was absent
+  // from the stylesheet the browser suite is served, because Tailwind's
+  // dev-time scan had not reached `CourseCard.tsx`; moving the ratio into
+  // `course.css` made it a rule, and a rule cannot be half-generated. Every
+  // clause is true and the conclusion did not hold: the CI run of 2026-09-03
+  // printed the sheet from the inside and found
+  // `.crs-card-art { aspect-ratio: 3 / 2 }` present in both copies AND matching
+  // this element, with the computed value still `auto`. So the rule is there,
+  // it wins, and something about the element -- not the stylesheet -- is what
+  // this reads. Left in `course.css` regardless: that move was independently
+  // right, and reverting it would only put a second unknown back.
+  //
+  const element = screen.container.querySelector('.crs-card-art')!
+
+  // The reading carries its own evidence rather than inviting a fourth
+  // hypothesis: what no run has yet reported is anything about the ELEMENT,
+  // which is what the paragraph above leaves.
+  //
+  // This replaces an `expect({...}).toBe('DIAGNOSTIC')` that failed on every
+  // run, correct reading or not -- so the browser job was red on `main`
+  // whatever the code did, and the one signal it was left there to collect was
+  // indistinguishable from the noise it made. A failure message costs the same
+  // and only speaks when something is wrong.
+  const state = () => ({
     aspect: getComputedStyle(element).aspectRatio,
-    inlineStyle: element.getAttribute('style'),
-    perSheet,
-    aspectRules,
-    matchingRules,
-  }).toBe('DIAGNOSTIC')
-  expect(getComputedStyle(element).aspectRatio).toBe('3 / 2')
+    tag: element.tagName,
+    className: element.className,
+    connected: element.isConnected,
+    matchesInDocument: document.querySelectorAll('.crs-card-art').length,
+    rect: element.getBoundingClientRect().toJSON(),
+    complete: (element as HTMLImageElement).complete,
+    naturalWidth: (element as HTMLImageElement).naturalWidth,
+    agent: navigator.userAgent,
+  })
+  expect(state(), JSON.stringify(state(), null, 2)).toMatchObject({ aspect: '3 / 2' })
 
   const art = element.getBoundingClientRect()
   expect(art.width).toBeGreaterThan(0)
