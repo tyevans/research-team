@@ -4979,7 +4979,32 @@ worth doing first regardless -- a check that refuses a duplicate id when one is
 added. There is no test to hang it on today; the natural home is whatever
 lints documentation, and nothing does.
 
-### B117. Every `ActivityRemark` on the ask surface draws an empty bubble
+### B117. Every `ActivityRemark` on the ask surface draws an empty bubble -- CLOSED 2026-09-05
+
+**Done, by the pickup route this entry named.** `_ask_frame` returns `str |
+None`, both `yield` sites skip a `None`, and an `ActivityRemark` travels as a
+`message` frame with `kind: "remark"`, an empty `message_id` and `payload:
+{"text": ...}` -- the same three choices `_socratic_frame` already made, so the
+browser learned one schema rather than two.
+
+The frontend half went further than the entry asked, because carrying the text
+to a page that would not read it is half a fix. `AskActivity`'s fold labelled
+every remark row with the bare word `remark`: `activityName` reads
+`payload.data`, which a remark has no more of than an empty payload did, so it
+fell through to the kind. It now reads a remark's own text first, which fixes
+the **dialogue** surface at the same time -- that one has carried real remarks
+since it shipped and has been drawing the word `remark` for all of them.
+
+Three tests, each proved red first:
+`test_a_remark_reaches_the_reader_as_text_rather_than_an_empty_bubble` asserts
+on the frame's bytes rather than on the handler being called, per this entry;
+`test_a_note_type_this_build_cannot_draw_sends_no_frame_at_all` pins the `None`
+branch; and the repository test pins the zod enum, whose failure mode is a
+silently dropped frame rather than anything a reader could see.
+
+The original entry follows.
+
+### B117 (original). Every `ActivityRemark` on the ask surface draws an empty bubble
 
 `_ask_frame`'s final `else` (`app.py`, around :3018) emits
 `{"type": "message", "message_id": "", "kind": "assistant", "payload": {}}` for

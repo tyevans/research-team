@@ -4495,8 +4495,8 @@ def create_app(
             "last": extraction.last(project_id),
         }
 
-    def _ask_frame(note: object) -> str:
-        """One SSE `data:` line per note.
+    def _ask_frame(note: object) -> str | None:
+        """One SSE `data:` line per note, or `None` for a note with nothing to draw.
 
         `message` mirrors ActivityMessage's fields so the browser reuses the
         parsing it already has for the session activity feed.
@@ -4541,8 +4541,29 @@ def create_app(
                     {"kind": citation.kind, "id": citation.id} for citation in note.citations
                 ],
             }
-        else:  # ActivityRemark and anything added later
-            body = {"type": "message", "message_id": "", "kind": "assistant", "payload": {}}
+        elif isinstance(note, ActivityRemark):
+            # Carried, not flattened, and this branch is the whole of B117.
+            # The `else` below used to swallow a remark into an assistant
+            # message with an empty `payload`, so the page drew a blank bubble
+            # mid-answer and dropped the one thing a remark is: its text. A
+            # remark has no `message_id` by design (see `ActivityRemark`), so
+            # it travels with an empty one and `kind: "remark"` -- which is
+            # exactly what `_socratic_frame` already sends, so the browser's
+            # activity fold needs one schema rather than two.
+            body = {
+                "type": "message",
+                "message_id": "",
+                "kind": "remark",
+                "payload": {"text": note.text},
+                "is_error": False,
+            }
+        else:
+            # Anything added later, and deliberately nothing rather than an
+            # empty bubble: a frame the page cannot render still occupies a row
+            # in the transcript, which is worse than a note that is missing.
+            # Both `yield` sites below skip a `None`. Same trade, and the same
+            # reasoning, as `_socratic_frame`'s final branch.
+            return None
         return f"data: {json.dumps(body)}\n\n"
 
     @app.post("/api/projects/{project_id}/ask")
@@ -4582,9 +4603,13 @@ def create_app(
                 if failed is not None:
                     raise failed
                 if first is not None:
-                    yield _ask_frame(first)
+                    frame = _ask_frame(first)
+                    if frame is not None:
+                        yield frame
                 async for note in notes:
-                    yield _ask_frame(note)
+                    frame = _ask_frame(note)
+                    if frame is not None:
+                        yield frame
             except Exception as failure:  # noqa: BLE001 -- the browser needs the reason
                 # A stream that simply stops looks identical to a slow model, so a
                 # failure is reported in-band before the connection closes.

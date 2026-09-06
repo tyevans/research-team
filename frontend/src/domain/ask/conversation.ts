@@ -17,7 +17,13 @@ export interface Citation {
 
 export interface AskActivity {
   readonly messageId: string
-  readonly kind: 'assistant' | 'tool'
+  /** `remark` is a line about the turn rather than a message in it -- what
+   *  context preparation left out of the model's view, for instance. It has
+   *  no message id, so it carries an empty one, and its payload is `{text}`
+   *  rather than a langchain message. Added here because the ask stream sent
+   *  every remark as an empty assistant bubble until B117; the dialogue
+   *  surface has carried the same kind since it shipped. */
+  readonly kind: 'assistant' | 'tool' | 'remark'
   readonly payload: unknown
   readonly isError: boolean
 }
@@ -52,7 +58,7 @@ export type AskEvent =
   | {
       readonly type: 'message'
       readonly messageId: string
-      readonly kind: 'assistant' | 'tool'
+      readonly kind: 'assistant' | 'tool' | 'remark'
       readonly payload: unknown
       readonly isError: boolean
     }

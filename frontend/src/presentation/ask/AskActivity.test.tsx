@@ -153,3 +153,20 @@ it('degrades to a named row when a frame carries no calls and no result', () => 
     { key: 'm1', name: 'tool', result: null, isError: false },
   ])
 })
+
+it('names a remark by its own text, which is the only thing a remark is', () => {
+  // B117: the ask stream sent every remark as an empty assistant bubble, and
+  // the fold labelled the row `remark` once the frame started carrying text.
+  // Red against either -- the empty payload has nothing to read, and the
+  // fallback returns the kind.
+  expect(
+    activityName(
+      activity({ kind: 'remark', payload: { text: 'dropped 3 sources to fit the window' } }),
+    ),
+  ).toBe('dropped 3 sources to fit the window')
+})
+
+it('degrades a remark with no text left in it to its kind, not to an empty row', () => {
+  expect(activityName(activity({ kind: 'remark', payload: { text: '   ' } }))).toBe('remark')
+  expect(activityName(activity({ kind: 'remark', payload: {} }))).toBe('remark')
+})

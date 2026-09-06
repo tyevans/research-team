@@ -25,7 +25,7 @@ from research_team.application.ask import (
     Citation,
     ConversationRegistry,
 )
-from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
 from research_team.domain.ask_conversation import AskConversation
 from research_team.infrastructure.persistence.read_models import AskConversationStore
 from research_team.interfaces.web.app import AskRequest, create_app
@@ -162,6 +162,55 @@ def test_activity_is_streamed_before_the_answer():
     # questions are being recorded on before any of them is answered, because
     # the id it minted itself is not the one anything is stored under.
     assert kinds == ["conversation", "delta", "message", "answer"]
+
+
+def test_a_remark_reaches_the_reader_as_text_rather_than_an_empty_bubble():
+    """B117: the note the ask actually emits, carried rather than flattened.
+
+    Asserted on the frame's bytes and not on the handler being called, because
+    the handler *was* called correctly the whole time this was broken -- the
+    final `else` turned every remark into an assistant message with an empty
+    payload, and the page drew a blank bubble where the remark's text belonged.
+    Red against that branch: `kind` reads `assistant` and `payload` is `{}`.
+    """
+    executor = StubExecutor(notes=[ActivityRemark(text="dropped 3 sources to fit the window")])
+    response = client(ask_service(executor)).post(
+        f"/api/projects/{uuid4()}/ask", json={"chat_id": "c", "question": "why?"}
+    )
+
+    remarks = [frame for frame in frames(response) if frame.get("kind") == "remark"]
+    assert remarks == [
+        {
+            "type": "message",
+            # A remark has no message id by design, and an empty one is how
+            # that travels -- see `ActivityRemark`.
+            "message_id": "",
+            "kind": "remark",
+            "payload": {"text": "dropped 3 sources to fit the window"},
+            "is_error": False,
+        }
+    ]
+
+
+def test_a_note_type_this_build_cannot_draw_sends_no_frame_at_all():
+    """A frame the page cannot render still occupies a row in the transcript.
+
+    The `else` branch this pins is the one that used to emit an empty bubble
+    for every unrecognised note; it now yields nothing, which is what the
+    socratic stream has always done. Red if that branch starts returning a
+    frame again -- the stream would carry a fifth entry between `conversation`
+    and `answer`.
+    """
+
+    class SomeNoteAddedLater:
+        pass
+
+    executor = StubExecutor(notes=[SomeNoteAddedLater()])
+    response = client(ask_service(executor)).post(
+        f"/api/projects/{uuid4()}/ask", json={"chat_id": "c", "question": "why?"}
+    )
+
+    assert [frame["type"] for frame in frames(response)] == ["conversation", "answer"]
 
 
 def test_the_conversation_id_leads_the_stream():

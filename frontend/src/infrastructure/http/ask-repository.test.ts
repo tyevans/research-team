@@ -130,6 +130,29 @@ it('drops a frame whose shape this build does not understand', async () => {
   expect(seen).toEqual([{ type: 'answer', text: 'x', blocks: [], position: 0, citations: [] }])
 })
 
+it('carries a remark through rather than dropping the frame', async () => {
+  // B117: the route flattened every remark into an empty `assistant` frame,
+  // so this kind never arrived. A schema that had not learned it would drop
+  // the frame in `parseFrame` -- silently, which is what makes this worth an
+  // assertion rather than a type. Red against `z.enum(['assistant', 'tool'])`.
+  const seen = await collect(
+    respond(
+      'data: {"type":"message","message_id":"","kind":"remark",' +
+        '"payload":{"text":"dropped 3 sources"},"is_error":false}\n\n',
+    ),
+  )
+
+  expect(seen).toEqual([
+    {
+      type: 'message',
+      messageId: '',
+      kind: 'remark',
+      payload: { text: 'dropped 3 sources' },
+      isError: false,
+    },
+  ])
+})
+
 it('carries an in-band failure through as an event', async () => {
   // After streaming starts the route has no status code left, so the only
   // report of an executor failure is this frame.
