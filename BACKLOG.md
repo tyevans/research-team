@@ -928,8 +928,46 @@ entries are `disabled`, since a disabled sheet enumerates its rules and does not
 apply them -- which is the one state consistent with every number collected so
 far.
 
-**The hypothesis left, untested:** the element `getComputedStyle` is asked
-about is not participating in layout in that document at that moment -- a
+**The disabled-sheet hypothesis is dead, measured 2026-09-06 on #365.** All
+three sheets came back `disabled=false, media=all` -- 2, 636 and 636 rules,
+byte-identical to what a *passing* local run reports. So every observable thing
+about the stylesheet is the same in a run that fails and a run that passes, and
+the sheet is not the variable. That is the third stylesheet hypothesis to die
+and it should be the last one anybody spends time on.
+
+**What the same run did establish, and it is about the element.** The failing
+reading now carries the box and the image state:
+
+```
+rect: 207.25 x 19.5   complete: true   naturalWidth: 0   tag: IMG
+```
+
+19.5px is one line of alt text, not a 3:2 box, and `complete: true` with
+`naturalWidth: 0` is a load that **failed** rather than one still in flight.
+That matters because a broken `<img>` with `alt` stops being a replaced element
+in Chrome and lays out its alt text instead -- so `aspect-ratio` stops governing
+the used size. Reproduced standalone: a `<img src=/nope.png alt=...>` at
+`width:200px; aspect-ratio:3/2` lays out **200x200**, not 200x133.
+
+**And the obvious conclusion from that is wrong, which is why it is written
+down.** The same standalone probe reports `getComputedStyle(...).aspectRatio`
+as `3 / 2` throughout, before and after the load fails. A broken image loses the
+*used* ratio and keeps the *computed* one -- so the broken `src` explains the
+19.5px box and does **not** explain the `auto` this test asserts on. Two
+different failures wearing one number.
+
+The file's comment calls the broken `src` "the harshest case for this rule". It
+is really the *ambiguous* case: it makes the element stop being the kind of
+element the rule applies to, and it means the test's own name -- "rather than
+the image its own" -- is checked against an image that has no intrinsic ratio to
+be preferred over. A `data:` URL with a real and *different* intrinsic ratio
+would be a stronger test and a deterministic one, and is the first thing to try;
+what it will not do is explain the computed value, which is still unaccounted
+for.
+
+**The hypothesis left, and it is now the only one:** the element
+`getComputedStyle` is asked about is not participating in layout in that
+document at that moment -- a
 detached or not-yet-styled node returns initial values for every property,
 which is exactly `auto` and exactly a zero rect, and it would be indifferent to
 a stylesheet that is perfectly correct. The reading now carries `isConnected`,
