@@ -6,7 +6,7 @@ with enough detail that picking it up does not require rediscovering it.
 The `B` numbers are stable handles, not a taxonomy. Closed entries are deleted;
 if tracked code cites one by name, say where its reasoning went before deleting.
 
-<!-- next id: 186; B185 claimed by: the-marker-conflict-can-be-auto-resolved-away-and-one-path-is-still-unmeasured -->
+<!-- next id: 187; B186 claimed by: the-aspect-ratio-rule-wins-in-ci-and-the-computed-value-is-still-auto -->
 
 **Take your id from that line. Then rewrite the whole line: the new counter,
 the id you took, and a slug of your entry's own heading.** Do not grep the file
@@ -864,6 +864,55 @@ CI log. The `Failed to fetch dynamically imported module` mode above is
 untouched. And the fix above was verified on the machine where the bug does
 *not* reproduce, so **CI is the proof**: three consecutive red runs before it
 is the baseline it has to beat.
+### B186. The aspect-ratio rule wins in CI and the computed value is still `auto`
+
+**The measurement that closes off every stylesheet explanation, and opens
+nothing in its place.** `course-card-sizing`'s aspect case is the last of
+[[B184]]'s symptoms still standing. The CI run of 2026-09-03 printed the
+document's stylesheets from the inside at the moment of the assertion, and the
+answer was not the one three rounds of work had assumed:
+
+- `.crs-card-art { aspect-ratio: 3 / 2; }` present, in **both** copies of the
+  injected sheet;
+- that rule in the list of rules that **match the element**, alongside only a
+  `*` scrollbar rule -- so nothing else in the cascade declares the property;
+- `getComputedStyle(element).aspectRatio` === `auto`.
+
+Those three cannot all be true of an element that is being styled by that
+sheet. So the remaining question is about the **element**, not the stylesheet,
+and it is the one question no run has yet reported anything about.
+
+**What this rules out, and it is worth naming because each was believed in
+turn.** Tailwind's dev-time scan not reaching `CourseCard.tsx` (the ratio is a
+plain rule in `course.css` now, and failed the same way). The partial-sheet
+race of [[B184]] (the whole sheet is injected as one `?inline` string, and its
+self-check passes). A rule the cascade loses (it wins; nothing else declares
+it). A stale element from the file's first case (the query is scoped to this
+case's own container as of 2026-09-05, and a hero card would read 16/9 rather
+than `auto` anyway).
+
+**The hypothesis left, untested:** the element `getComputedStyle` is asked
+about is not participating in layout in that document at that moment -- a
+detached or not-yet-styled node returns initial values for every property,
+which is exactly `auto` and exactly a zero rect, and it would be indifferent to
+a stylesheet that is perfectly correct. The reading now carries `isConnected`,
+the tag, the match count in the document, the rect, the image's `complete` and
+`naturalWidth`, and the user agent, so the next CI failure says which.
+
+**What changed on 2026-09-05, and it is the part worth having regardless.** The
+probe that collected the evidence above was written as
+`expect({...}).toBe('DIAGNOSTIC')` -- an assertion that fails on **every** run,
+correct reading or not. It merged, and the `browser` job was red on `main` from
+then on, so the one signal the probe existed to collect was indistinguishable
+from the noise it made, and every branch behind it inherited a red base. It is
+now an ordinary assertion on the property, whose *failure message* carries the
+state. A diagnostic that only speaks when something is wrong costs the same and
+does not spend the signal it is collecting.
+
+The general form: **a probe that cannot pass is a broken gate wearing a
+question's clothes.** If the thing you want to know is only interesting when a
+test fails, put it in the failure message, not in the assertion.
+
 ### B160. Neither file reproduces, the quarantine is empty, and one of the two is a race
 
 **Quarantine emptied 2026-08-29.** `frontend/package.json`'s `test:browser:ci`
