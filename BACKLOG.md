@@ -891,6 +891,43 @@ it). A stale element from the file's first case (the query is scoped to this
 case's own container as of 2026-09-05, and a hero card would read 16/9 rather
 than `auto` anyway).
 
+**Corrected within the hour: it is INTERMITTENT, not deterministic, and the
+entry above said otherwise.** Measured 2026-09-06 on `main` at `eae5e24f` and
+on #363, which is rebased on exactly that commit:
+
+| run | browser job |
+|---|---|
+| `main` @ eae5e24f | **fails** the aspect case |
+| #363 @ eae5e24f + a frontend slice | **passes** |
+| the full suite locally, same code, 49 files | **passes**, 199/199 |
+
+The setup file's note that "in three consecutive CI runs the probe passed and
+the aspect case still read `auto`" reads as a deterministic failure and is not
+one; three failures in a row is what an intermittent defect looks like when
+nobody has yet seen it pass. The browser is not the variable either -- CI
+reports `HeadlessChrome/151.0.7922.34` and the local `playwright-core` launches
+**the same build**, checked rather than assumed.
+
+**What that does to the hypothesis below.** It stays, and it gets sharper: a
+race is exactly what "the rule is in `document.styleSheets`, it matches this
+element, and the computed value is the initial one" looks like, because
+`element.matches()` is pure selector matching and is indifferent to whether the
+sheet has been *applied*. Something -- a style recalculation, or the injected
+`<style>` reaching this element's tree -- has not happened yet at the moment the
+assertion reads. The setup's own `#root`/`opacity-0` probe passing does not rule
+that out; it proves the sheet applied to a `div` the setup made, not to a tree
+`render` mounted afterwards.
+
+**What not to do, and it is the tempting fix:** wait for the value. B184's
+predecessor did that, and its entry records why it was sent back -- a wait turns
+"the sheet is not applied" into "the sheet is not applied *yet*", which passes
+and leaves every other assertion in the suite reading an unstyled page for as
+long as the race lasts. The thing to find is what makes the two runs differ, and
+the cheapest next measurement is whether the failing run's `document.styleSheets`
+entries are `disabled`, since a disabled sheet enumerates its rules and does not
+apply them -- which is the one state consistent with every number collected so
+far.
+
 **The hypothesis left, untested:** the element `getComputedStyle` is asked
 about is not participating in layout in that document at that moment -- a
 detached or not-yet-styled node returns initial values for every property,

@@ -119,6 +119,23 @@ it('gives the art a declared aspect ratio rather than the image its own', async 
     complete: (element as HTMLImageElement).complete,
     naturalWidth: (element as HTMLImageElement).naturalWidth,
     agent: navigator.userAgent,
+    // **The one state consistent with every number collected so far**, and so
+    // the next thing to rule out: a sheet whose `disabled` is true enumerates
+    // its rules and does not apply them, and `element.matches()` is pure
+    // selector matching that cannot tell the difference. The 2026-09-03 run
+    // found the rule present AND matching with the computed value still
+    // `auto`, which is what that would look like from the outside. Reported
+    // per sheet rather than as a boolean because "which sheet" is the half
+    // that says whether it is the injected copy or the preview's.
+    sheets: Array.from(document.styleSheets).map((sheet, index) => {
+      let rules = -1
+      try {
+        rules = sheet.cssRules.length
+      } catch {
+        /* a CORS-blocked sheet, reported as -1 rather than thrown */
+      }
+      return `${index}: ${rules} rules, disabled=${String(sheet.disabled)}, media=${sheet.media.mediaText || 'all'}`
+    }),
   })
   expect(state(), JSON.stringify(state(), null, 2)).toMatchObject({ aspect: '3 / 2' })
 
