@@ -36,7 +36,12 @@ const askFrameDto = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('message'),
     message_id: z.string(),
-    kind: z.enum(['assistant', 'tool']),
+    // Three kinds, as the dialogue stream already has. A `remark` arrives
+    // with an empty `message_id` and a `{text}` payload; before B117 the
+    // route flattened it into an empty `assistant` frame, so a schema without
+    // this member would drop the frame silently in `parseFrame` rather than
+    // fail anywhere a reader could see.
+    kind: z.enum(['assistant', 'tool', 'remark']),
     payload: z.unknown(),
     // Absent on the route's fallback frame for note types added later, which
     // are never failures -- defaulting rather than requiring keeps those

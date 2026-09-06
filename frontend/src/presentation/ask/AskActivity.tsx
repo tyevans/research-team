@@ -152,6 +152,13 @@ export const activityRows = (activity: readonly ActivityFrame[]): readonly Activ
  * its own row. Kept because the rows that still reach this are the ones whose
  * calls could not be read at all, and a name is better than a kind. */
 export const activityName = (item: ActivityFrame): string => {
+  // A remark is not a message and carries no langchain body: its payload is
+  // `{text}`, so `frameData` reads nothing from it and the row was labelled
+  // with the bare word `remark`. Read before the narrowing rather than after
+  // it, because the row's whole content is that text.
+  const remark = remarkText(item)
+  if (remark !== null) return remark
+
   const data = frameData(item)
   if (data === null) return item.kind
 
@@ -162,6 +169,20 @@ export const activityName = (item: ActivityFrame): string => {
   if (first) return callSummary({ name: first.name, args: first.args })
 
   return item.kind
+}
+
+/** A remark's own text, or `null` for any other frame.
+ *
+ * Both surfaces send the same thing: `kind: "remark"`, an empty message id
+ * and `payload: {text}`. A frame claiming the kind with no text left in it
+ * degrades to the word `remark` above rather than drawing an empty row --
+ * which is the defect this whole path exists to remove, one level down. */
+const remarkText = (item: ActivityFrame): string | null => {
+  if (item.kind !== 'remark') return null
+  const payload = item.payload
+  if (typeof payload !== 'object' || payload === null) return null
+  const text = (payload as Record<string, unknown>)['text']
+  return typeof text === 'string' && text.trim() ? text : null
 }
 
 /** The `{type, data}` body of a frame, or `null` for a shape this cannot read. */
