@@ -1,5 +1,12 @@
 """Wiring components and lifecycle helpers for the composition root."""
 
+from research_team.wiring.builders import (
+    BuiltStores,
+    BuiltTools,
+    build_curation_tools,
+    build_stores,
+    build_tools,
+)
 from research_team.wiring.helpers import (
     _context_parts,
     _extraction_model,
@@ -28,6 +35,8 @@ from research_team.wiring.runners import (
 
 __all__ = [
     "_PARTIAL_BUILD_RESOURCES",
+    "BuiltStores",
+    "BuiltTools",
     "LazyAsyncResource",
     "_CatalogFeatureRunner",
     "_CourseRunner",
@@ -44,4 +53,7 @@ __all__ = [
     "_run_detached",
     "_subagents_for",
     "_swallowing",
+    "build_curation_tools",
+    "build_stores",
+    "build_tools",
 ]
