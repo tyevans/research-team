@@ -142,9 +142,35 @@ from research_team.application.components import (
     parse_document,
 )
 from research_team.application.entity_definitions import Citation
-from research_team.application.graph_export import ExportGraph, build_export
+from research_team.application.graph_export import ExportGraph
 from research_team.application.timeline_read import TimelineBand, TimelineInterval
-from research_team.interfaces.web.graph_html import color_for_type
+from research_team.interfaces.web.course_html_figures import (
+    MAX_FIGURE_BANDS as MAX_FIGURE_BANDS,
+)
+from research_team.interfaces.web.course_html_figures import (
+    MAX_FIGURE_NODES as MAX_FIGURE_NODES,
+)
+from research_team.interfaces.web.course_html_figures import (
+    _instant as _instant,
+)
+from research_team.interfaces.web.course_html_figures import (
+    _svg_graph as _svg_graph,
+)
+from research_team.interfaces.web.course_html_figures import (
+    _svg_timeline as _svg_timeline,
+)
+from research_team.interfaces.web.course_html_figures import (
+    figure_graph as figure_graph,
+)
+from research_team.interfaces.web.course_html_figures import (
+    parse_instant as parse_instant,
+)
+from research_team.interfaces.web.course_html_figures import (
+    render_graph_svg as render_graph_svg,
+)
+from research_team.interfaces.web.course_html_figures import (
+    render_timeline_svg as render_timeline_svg,
+)
 
 #: How much of a cited range is quoted into the page. Generous next to the
 #: passages this system actually produces -- a grounding chunk is a few
@@ -153,19 +179,6 @@ from research_team.interfaces.web.graph_html import color_for_type
 #: registry), so a mistyped `end` would otherwise inline a whole document.
 #: The cut is marked in the page with an ellipsis, never silent.
 MAX_QUOTE_CHARS = 1_200
-
-#: How many nodes a lesson figure draws. A `graph` component is one entity's
-#: neighbourhood and the registry already caps its depth at
-#: `MAX_NEIGHBORHOOD_DEPTH`, so this bites only on a hub entity -- where the
-#: honest outcome is a truncated figure that says so, rather than a page of
-#: overlapping dots. `build_export` carries the flag; `_svg_graph` prints it.
-MAX_FIGURE_NODES = 60
-
-#: How many bands a `timeline` figure draws, for `MAX_FIGURE_NODES`' reason.
-#: The registry lets an author ask for up to `MAX_TIMELINE_BANDS` (1,000),
-#: which is a legible request in a scrolling console pane and is not one in a
-#: fixed-height figure inside a lesson.
-MAX_FIGURE_BANDS = 40
 
 
 # --- what a course is, once it has been read ------------------------------
@@ -900,148 +913,9 @@ assert set(_RENDERERS) == set(REGISTRY), (
 
 # --- figures --------------------------------------------------------------
 
-
-def _svg_graph(graph: ExportGraph) -> str:
-    """A neighbourhood, drawn from `compute_layout`'s coordinates.
-
-    No JavaScript: the positions are decided on the server, so the figure is
-    markup. That is what makes it print, survive a mail client's HTML
-    sanitiser, and keep its labels as text a reader can select and a browser
-    can find with ctrl-F.
-    """
-    nodes = graph.nodes
-    if not nodes:
-        return '<p class="absent">Nothing to draw.</p>'
-    xs = [n.x for n in nodes]
-    ys = [n.y for n in nodes]
-    pad = 90.0
-    min_x, max_x = min(xs) - pad, max(xs) + pad
-    min_y, max_y = min(ys) - pad, max(ys) + pad
-    # `or 1`: a single node, or several at one point, spans zero -- and a
-    # zero-width viewBox renders as nothing at all, which reads as a broken
-    # export rather than as a small graph. The same guard `graph_html`'s
-    # `fit` makes, for the same reason.
-    width = (max_x - min_x) or 1.0
-    height = (max_y - min_y) or 1.0
-    at = {n.entity_id: (n.x, n.y) for n in nodes}
-
-    edges = []
-    for rel in graph.edges:
-        a, b = at.get(rel.source_id), at.get(rel.target_id)
-        if a is None or b is None:
-            continue
-        dash = ' stroke-dasharray="6 6"' if rel.inferred else ""
-        edges.append(
-            f'<line x1="{a[0]:.1f}" y1="{a[1]:.1f}" x2="{b[0]:.1f}" y2="{b[1]:.1f}"'
-            f' stroke="var(--edge)" stroke-width="2"{dash}></line>'
-        )
-
-    marks = []
-    for node in nodes:
-        color = color_for_type(node.entity_type)
-        # Hollow means synthesised rather than extracted, exactly as
-        # `graph_html` draws it -- a class node that drew like an extracted
-        # entity would assert a document said something no document said.
-        fill = "none" if node.inferred else color
-        label = node.name if len(node.name) <= 28 else node.name[:27] + "…"
-        marks.append(
-            f'<g><circle cx="{node.x:.1f}" cy="{node.y:.1f}" r="9" fill="{fill}"'
-            f' stroke="{color}" stroke-width="3"></circle>'
-            f'<text x="{node.x:.1f}" y="{node.y + 30:.1f}" text-anchor="middle"'
-            f' font-size="20" fill="var(--fg)">{esc(label)}</text>'
-            f"<title>{esc(node.name)} ({esc(node.entity_type)})</title></g>"
-        )
-
-    note = (
-        '<p class="quiet">Truncated: part of a larger neighbourhood, not all of it.</p>'
-        if graph.truncated
-        else ""
-    )
-    return (
-        '<div class="figure"><svg role="img" '
-        f'aria-label="{esc(graph.title)} neighbourhood" '
-        f'viewBox="{min_x:.1f} {min_y:.1f} {width:.1f} {height:.1f}" '
-        'preserveAspectRatio="xMidYMid meet">'
-        f"{''.join(edges)}{''.join(marks)}</svg></div>{note}"
-    )
-
-
-def _svg_timeline(bands: Sequence[TimelineBand], undated: int, truncated: bool) -> str:
-    """Dated entities on a shared axis, as bars.
-
-    Open ends run to the edge of the drawing rather than being clamped to the
-    axis minimum, which is what `TimelineBand.start`'s docstring asks for: a
-    `BEFORE` marker is a positive claim about an unbounded earlier time, and
-    a bar that started at the leftmost dated thing would be a claim the
-    extraction never made.
-    """
-    points: list[float] = []
-    for band in bands:
-        for value in (band.start, band.end):
-            moment = _instant(value)
-            if moment is not None:
-                points.append(moment)
-    if not points:
-        return '<p class="absent">These bands carry no drawable dates.</p>'
-    low, high = min(points), max(points)
-    span = (high - low) or 1.0
-    row = 34.0
-    left = 260.0
-    inner = 700.0
-    height = row * len(bands) + 30
-
-    rows = []
-    for index, band in enumerate(bands):
-        start = _instant(band.start)
-        end = _instant(band.end)
-        x1 = left if start is None else left + (start - low) / span * inner
-        x2 = left + inner if end is None else left + (end - low) / span * inner
-        # A point-in-time band (a day-precision date, or one whose start and
-        # end coincide) would otherwise be a zero-width rectangle, which
-        # draws nothing. Three pixels is a tick, and reads as an instant.
-        x2 = max(x2, x1 + 3.0)
-        y = 8 + index * row
-        color = color_for_type(band.entity_type)
-        faint = ' opacity="0.55"' if band.uncertainty not in ("EXACT", "") else ""
-        label = band.name if len(band.name) <= 30 else band.name[:29] + "…"
-        rows.append(
-            f'<text x="{left - 12:.0f}" y="{y + 15:.0f}" text-anchor="end" font-size="15"'
-            f' fill="var(--fg)">{esc(label)}</text>'
-            f'<rect x="{x1:.1f}" y="{y:.0f}" width="{x2 - x1:.1f}" height="18" rx="4"'
-            f' fill="{color}"{faint}><title>{esc(band.name)} — {esc(band.extent)}'
-            f" ({esc(band.uncertainty.lower())})</title></rect>"
-            f'<text x="{x2 + 8:.1f}" y="{y + 14:.0f}" font-size="13"'
-            f' fill="var(--fg-dim)">{esc(band.extent)}</text>'
-        )
-
-    notes = []
-    if undated:
-        notes.append(f"{undated} dated nothing, so they are not drawn.")
-    if truncated:
-        notes.append("Truncated: more bands fell in this window than are drawn.")
-    tail = f'<p class="quiet">{esc(" ".join(notes))}</p>' if notes else ""
-    return (
-        '<div class="figure"><svg role="img" aria-label="Timeline" '
-        f'viewBox="0 0 1060 {height:.0f}" preserveAspectRatio="xMidYMid meet">'
-        f"{''.join(rows)}</svg></div>{tail}"
-    )
-
-
-def _instant(value: str | None) -> float | None:
-    """An ISO instant as a sortable number, or `None` for an open end.
-
-    Swallows a parse failure into `None` rather than raising: the band came
-    from a projection over model-extracted dates, and an export that died on
-    one malformed instant would lose a whole course to a single bad date.
-    The band still renders -- with that end open, which is the honest reading
-    of "we do not know where this edge is".
-    """
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value).timestamp()
-    except (ValueError, OSError, OverflowError):
-        return None
+# SVG figure generation (graph neighbourhoods and timeline bars) has been moved
+# to `course_html_figures.py` and re-exported at module top for backward
+# compatibility.
 
 
 # --- the page -------------------------------------------------------------
@@ -1260,26 +1134,6 @@ async def resolve_citations(
             )
         )
     return tuple(passages)
-
-
-def figure_graph(
-    root: Any, entities: Sequence[Any], relationships: Sequence[Any]
-) -> ExportGraph:
-    """A neighbourhood laid out for a lesson figure.
-
-    `build_export` does the capping, the orphan-edge drop and the `truncated`
-    flag; all this adds is the root, which `Neighborhood` deliberately does
-    not include in `entities` -- a figure that dropped the entity it is named
-    after would be a drawing of everything around a hole. The same correction
-    `export_graph` makes for `scope=entity`.
-    """
-    return build_export(
-        (root, *entities),
-        relationships,
-        title=root.name,
-        scope="lesson",
-        limit=MAX_FIGURE_NODES,
-    )
 
 
 @dataclass(frozen=True)
