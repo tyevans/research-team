@@ -123,7 +123,6 @@ The one size ceiling this module does enforce is on quoted text --
 digit would otherwise paste an entire document into a lesson.
 """
 
-import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -170,6 +169,93 @@ from research_team.interfaces.web.course_html_figures import (
 )
 from research_team.interfaces.web.course_html_figures import (
     render_timeline_svg as render_timeline_svg,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _absent as _absent,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _checklist as _checklist,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _clock as _clock,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _cloze as _cloze,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _compare as _compare,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _definition as _definition,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _doc_href as _doc_href,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _evidence as _evidence,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _explorer as _explorer,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _flashcards as _flashcards,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _head as _head,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _mcq as _mcq,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _passages as _passages,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _project_href as _project_href,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    _quote as _quote,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    doc_href as doc_href,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    format_clock as format_clock,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    project_href as project_href,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_absent as render_absent,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_checklist as render_checklist,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_cloze as render_cloze,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_compare as render_compare,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_definition as render_definition,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_evidence as render_evidence,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_explorer as render_explorer,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_flashcards as render_flashcards,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_head as render_head,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_mcq as render_mcq,
+)
+from research_team.interfaces.web.course_html_widgets import (
+    render_passages as render_passages,
 )
 
 #: How much of a cited range is quoted into the page. Generous next to the
@@ -497,44 +583,8 @@ def _is_block_start(line: str) -> bool:
 
 # --- links back to the instance -------------------------------------------
 
-
-def _project_href(book: CourseBook, facet: str, ident: str | None = None) -> str:
-    """The console's own hash grammar (`routes.ts`'s `projectHref`), built
-    against the origin this export was requested from.
-
-    A fourth copy of that grammar and it is unavoidable: this file is opened
-    where the console is not, so it cannot import the builder, and a link
-    that dropped the `#/p/<id>` prefix would land a reader on the project
-    list instead of on the thing they clicked. `routes.ts` is the authority;
-    a change there needs a change here, which is why the shape is written out
-    rather than assembled from parts.
-    """
-    tail = f"/{facet}/{_quote(ident)}" if ident else f"/{facet}"
-    return f"{book.origin}/#/p/{_quote(str(book.project_id))}{tail}"
-
-
-def _doc_href(book: CourseBook, source_id: str, at_seconds: int | float | None) -> str:
-    href = _project_href(book, "doc", source_id)
-    return f"{href}?t={int(at_seconds)}" if at_seconds else href
-
-
-def _quote(value: str) -> str:
-    """`encodeURIComponent`, near enough, for a path segment in a hash."""
-    safe = "-_.!~*'()"
-    return "".join(
-        ch
-        if (ch.isalnum() and ch.isascii()) or ch in safe
-        else "".join(f"%{byte:02X}" for byte in ch.encode())
-        for ch in value
-    )
-
-
-def _clock(seconds: int) -> str:
-    """`252` as `4:12`. The model is told to write seconds precisely because a
-    clock is ambiguous to parse; a reader wants the clock back."""
-    hours, rest = divmod(int(seconds), 3600)
-    minutes, secs = divmod(rest, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+# Link generation and formatting helpers (_project_href, _doc_href, _clock, _quote)
+# have been moved to `course_html_widgets.py` and re-exported at module top.
 
 
 # --- components -----------------------------------------------------------
@@ -574,238 +624,9 @@ def _broken(block: ComponentBlock) -> str:
     )
 
 
-def _absent(what: str, detail: str, href: str | None = None) -> str:
-    """A named absence: what is missing, why, and where to see it live.
-
-    `presentation/lesson/ExplorerWidget.tsx:81`'s convention, kept
-    deliberately -- name the missing thing, never quote it as empty. An empty
-    box in an exported lesson is indistinguishable from an authoring mistake,
-    and the reader has no way to ask which it was.
-    """
-    link = f' <a href="{esc(href)}">See it on the live project.</a>' if href else ""
-    return f'<p class="absent"><strong>{esc(what)}</strong> — {esc(detail)}{link}</p>'
-
-
-def _head(label: str, title: object = None) -> str:
-    """A widget's kind, and its own title where it has one.
-
-    The kind is always printed. In the console a widget is recognisable by
-    its chrome; here every one of the ten sits in the same panel, so a reader
-    who cannot see the word "Question" has no way to tell an mcq from a
-    checklist until they have read it.
-    """
-    kind = f'<p class="w-kind">{esc(label)}</p>'
-    if not title:
-        return kind
-    return f'{kind}<p class="w-title">{esc(title)}</p>'
-
-
-def _mcq(block: ComponentBlock, _resolved: Resolution, book: CourseBook) -> str:
-    options = [o for o in block.data.get("options", []) if isinstance(o, Mapping)]
-    multiple = bool(block.data.get("multiple"))
-    kind = "checkbox" if multiple else "radio"
-    name = f"q-{esc(block.id)}"
-    rows = []
-    for index, option in enumerate(options):
-        feedback = option.get("feedback")
-        rows.append(
-            f'<li><label><input type="{kind}" name="{name}" value="{index}">'
-            f"<span>{esc(option.get('text'))}</span></label>"
-            # A `<div>`, not a `<p>`. `_markdown` returns block markup, and a
-            # `<p>` wrapping a `<p>` is closed by the parser at the inner
-            # one's start tag -- which puts the feedback *outside* the hidden
-            # element and prints the answer beside the options. Found by
-            # opening the file: the `hidden` attribute is in the markup
-            # exactly as a test asserted, on an element the feedback is no
-            # longer inside.
-            + (
-                f'<div class="fb" hidden>{_markdown(str(feedback), book)}</div>'
-                if feedback
-                else ""
-            )
-            + "</li>"
-        )
-    # The key travels as JSON in a data attribute rather than as a `correct`
-    # flag per option, so the grading code below is one comparison rather than
-    # a DOM walk -- and so that the attribute is the one obvious place a
-    # reader who goes looking will find it, instead of it being spread over
-    # every option where it might be mistaken for a rendering detail.
-    key = json.dumps([i for i, o in enumerate(options) if o.get("correct") is True])
-    rationale = block.data.get("rationale")
-    return (
-        f'<div class="w w-mcq" data-key=\'{esc(key)}\' data-multiple="{int(multiple)}">'
-        f"{_head('Question')}"
-        f"{_markdown(str(block.data.get('prompt', '')), book)}"
-        f'<ol class="opts">{"".join(rows)}</ol>'
-        f'<button type="button" class="check">Check</button>'
-        f'<p class="verdict" hidden></p>'
-        + (
-            f'<div class="rationale" hidden><p class="w-kind">Why</p>'
-            f"{_markdown(str(rationale), book)}</div>"
-            if rationale
-            else ""
-        )
-        + "</div>"
-    )
-
-
-def _cloze(block: ComponentBlock, _resolved: Resolution, book: CourseBook) -> str:
-    pieces = []
-    for segment in block.data.get("segments", []):
-        if "blank" in segment:
-            hint = segment.get("hint")
-            pieces.append(
-                f'<input class="blank" type="text" size="14" autocomplete="off"'
-                f' aria-label="Blank {int(segment["blank"]) + 1}"'
-                f' data-answer="{esc(segment.get("answer"))}"'
-                + (f' placeholder="{esc(hint)}"' if hint else "")
-                + ">"
-            )
-        else:
-            pieces.append(esc(segment.get("text", "")).replace("\n", "<br>"))
-    return (
-        '<div class="w w-cloze">'
-        f"{_head('Fill the blanks')}"
-        f'<p class="cloze-text">{"".join(pieces)}</p>'
-        '<button type="button" class="check">Check</button>'
-        '<p class="verdict" hidden></p>'
-        "</div>"
-    )
-
-
-def _flashcards(block: ComponentBlock, _resolved: Resolution, book: CourseBook) -> str:
-    cards = []
-    for card in block.data.get("cards", []):
-        if not isinstance(card, Mapping):
-            continue
-        cards.append(
-            '<li class="card"><button type="button" class="flip" aria-expanded="false">'
-            f"{esc(card.get('front'))}</button>"
-            f'<div class="back" hidden>{_markdown(str(card.get("back", "")), book)}</div></li>'
-        )
-    return (
-        '<div class="w w-cards">'
-        f"{_head('Flashcards', block.data.get('title'))}"
-        f'<ul class="cards">{"".join(cards)}</ul>'
-        "</div>"
-    )
-
-
-def _checklist(block: ComponentBlock, _resolved: Resolution, book: CourseBook) -> str:
-    items = []
-    for item in block.data.get("items", []):
-        if not isinstance(item, Mapping):
-            continue
-        note = item.get("note")
-        required = ' <span class="req">required</span>' if item.get("required") else ""
-        items.append(
-            f'<li><label><input type="checkbox"><span>{esc(item.get("text"))}'
-            f"{required}</span></label>"
-            + (f'<p class="note">{esc(note)}</p>' if note else "")
-            + "</li>"
-        )
-    return (
-        '<div class="w w-check">'
-        f"{_head('Checklist', block.data.get('title'))}"
-        f'<ul class="checks">{"".join(items)}</ul>'
-        '<p class="quiet">Ticks are not saved; this file has nowhere to keep them.</p>'
-        "</div>"
-    )
-
-
-def _compare(block: ComponentBlock, resolved: Resolution, book: CourseBook) -> str:
-    names = [str(n) for n in block.data.get("entities", [])]
-    found = dict(resolved.columns)
-    heads = []
-    for name in names:
-        entity_id = found.get(name)
-        heads.append(
-            "<th>"
-            + (
-                f'<a href="{esc(_project_href(book, "entity", entity_id))}">{esc(name)}</a>'
-                if entity_id
-                else esc(name)
-            )
-            + "</th>"
-        )
-    rows = []
-    for row in block.data.get("rows", []):
-        if not isinstance(row, Mapping):
-            continue
-        cells = [str(c) for c in row.get("cells", [])]
-        # Padded to the column count, matching the registry's promise that a
-        # short row is fine and that the blank is itself the comparison.
-        cells += [""] * (len(names) - len(cells))
-        body = "".join(f"<td>{esc(cell)}</td>" for cell in cells[: len(names)])
-        rows.append(f'<tr><th scope="row">{esc(row.get("label"))}</th>{body}</tr>')
-    return (
-        '<div class="w w-compare">'
-        f"{_head('Compare')}"
-        f'<div class="scroll"><table><thead><tr><td></td>{"".join(heads)}</tr></thead>'
-        f"<tbody>{''.join(rows)}</tbody></table></div>"
-        "</div>"
-    )
-
-
-def _definition(block: ComponentBlock, resolved: Resolution, book: CourseBook) -> str:
-    name = str(block.data.get("entity", ""))
-    if resolved.absent is not None:
-        return (
-            '<div class="w w-def">'
-            f"{_head('Definition', name)}"
-            + _absent(
-                name,
-                resolved.absent,
-                _project_href(book, "entity", resolved.entity_id)
-                if resolved.entity_id
-                else None,
-            )
-            + "</div>"
-        )
-    href = _project_href(book, "entity", resolved.entity_id) if resolved.entity_id else None
-    link = f'<p class="live"><a href="{esc(href)}">This entity, live</a></p>' if href else ""
-    return (
-        '<div class="w w-def">'
-        f"{_head('Definition', name)}"
-        f'<div class="def-text">{_markdown(resolved.definition or "", book)}</div>'
-        f"{_passages(resolved.passages, book)}"
-        f"{link}"
-        "</div>"
-    )
-
-
-def _evidence(block: ComponentBlock, resolved: Resolution, book: CourseBook) -> str:
-    claim = _markdown(str(block.data.get("claim", "")), book)
-    body = (
-        _absent("The cited passages", resolved.absent)
-        if resolved.absent is not None
-        else _passages(resolved.passages, book)
-    )
-    return (
-        '<div class="w w-evidence">'
-        f"{_head('Evidence')}"
-        f'<div class="claim">{claim}</div>{body}</div>'
-    )
-
-
-def _passages(passages: Sequence[Passage], book: CourseBook) -> str:
-    """Quoted source text, attributed and linked. The whole of provenance
-    offline: the reader compares the claim against the bytes without leaving
-    the file, and follows the link only if they want the rest."""
-    if not passages:
-        return _absent("No passage", "the export found nothing quotable behind this citation.")
-    items = []
-    for passage in passages:
-        moment = f" · {_clock(int(passage.at_seconds))}" if passage.at_seconds else ""
-        href = _doc_href(book, passage.source_id, passage.at_seconds)
-        ellipsis = "…" if passage.truncated else ""
-        items.append(
-            "<figure><blockquote>"
-            f"{esc(passage.text)}{ellipsis}</blockquote>"
-            f'<figcaption><a href="{esc(href)}">{esc(passage.title)}</a>'
-            f"{esc(moment)}</figcaption></figure>"
-        )
-    return f'<div class="quotes">{"".join(items)}</div>'
+# Interactive course widget renderers (_head, _absent, _mcq, _cloze,
+# _flashcards, _checklist, _compare, _definition, _evidence, _passages,
+# _explorer) have been moved to `course_html_widgets.py` and re-exported at module top.
 
 
 def _graph(block: ComponentBlock, resolved: Resolution, book: CourseBook) -> str:
@@ -850,41 +671,6 @@ def _timeline(block: ComponentBlock, resolved: Resolution, book: CourseBook) -> 
         f'<p class="live"><a href="{esc(_project_href(book, "timeline"))}">'
         "The timeline, live</a></p>"
         "</div>"
-    )
-
-
-def _explorer(block: ComponentBlock, _resolved: Resolution, book: CourseBook) -> str:
-    """The one type that cannot be frozen, rendered as what it was.
-
-    An explorer is an invitation to re-run a query with the controls moved,
-    and there is no server here to re-run it against. Rendering the *last*
-    result would be the tempting freeze and it is the dishonest one: it turns
-    an invitation to look into a figure the author never chose, indexed under
-    a prompt that asks the reader to change parameters they cannot see.
-
-    So it renders the author's prompt (which is the part worth keeping -- the
-    registry's craft note says the prompt is the whole difference between
-    this and a timeline), the parameters that were fixed, the axes the reader
-    was invited to move, and a link to where the controls exist.
-    """
-    fixed = [
-        f"<li><code>{esc(key)}</code>: {esc(block.data.get(key))}</li>"
-        for key in ("over", "entity_type", "from", "to", "limit")
-        if block.data.get(key) not in (None, "")
-    ]
-    axes = ", ".join(str(a) for a in block.data.get("vary", []))
-    return (
-        '<div class="w w-explorer">'
-        f"{_head('Explorer')}"
-        f"{_markdown(str(block.data.get('prompt', '')), book)}"
-        + _absent(
-            "The controls",
-            "an explorer is a query the reader re-runs, and this file has no server "
-            f"to run it against. It was set to vary {axes or 'nothing'}.",
-            _project_href(book, "timeline"),
-        )
-        + (f'<ul class="params">{"".join(fixed)}</ul>' if fixed else "")
-        + "</div>"
     )
 
 
