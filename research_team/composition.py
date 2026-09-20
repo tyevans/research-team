@@ -49,10 +49,6 @@ from research_team.application.ask import AskService, ConversationRegistry
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.course_authoring import CourseAuthor
-from research_team.application.course_catalog import (
-    CatalogService,
-)
-from research_team.application.course_realization import CourseService
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
@@ -109,7 +105,6 @@ from research_team.infrastructure.agent.topic_tools import (
     RepositoryTopics,
     build_topic_tools,
 )
-from research_team.infrastructure.knowledge.blurb_writer import ModelBlurbWriter
 from research_team.infrastructure.knowledge.catalog_recorder import (
     EventStoreCatalogFeatureRecorder,
 )
@@ -119,24 +114,19 @@ from research_team.infrastructure.knowledge.entity_embeddings import (
     refresh_project_embeddings,
 )
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
-from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.ontology_chunker import (
     MarkdownAwareDocumentChunker,
 )
 from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
-from research_team.infrastructure.knowledge.outline_writer import ModelOutlineWriter
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
-from research_team.infrastructure.knowledge.seeded_art import SeededArtProvider
 from research_team.infrastructure.knowledge.stores import (
     build_card_vector_store,
     build_chunk_store,
     build_graph_store,
     build_vector_store,
 )
-from research_team.infrastructure.knowledge.svg_artist import ModelSvgArtist
-from research_team.infrastructure.knowledge.type_plurality_grouper import TypePluralityGrouper
 from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.perception.readeverything_adapter import (
     build_perception_adapter,
@@ -154,13 +144,10 @@ from research_team.infrastructure.persistence.corpus_reader import ProjectCorpus
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.event_store import (
     build_course_authoring_run_repository,
-    build_course_repository,
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
-from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep
-from research_team.interfaces.web.blurb_sweep import BlurbSweep
 from research_team.wiring import (
     _PARTIAL_BUILD_RESOURCES,
     BuiltStores,
@@ -183,6 +170,7 @@ from research_team.wiring import (
     _subagents_for,
     _swallowing,
     build_ask_service,
+    build_catalog_services,
     build_content_pipeline,
     build_corpus_editor,
     build_curation_tools,
@@ -229,6 +217,7 @@ __all__ = [
     "build_application",
     "build_ask_conversation_repository",
     "build_ask_service",
+    "build_catalog_services",
     "build_content_pipeline",
     "build_corpus_editor",
     "build_corpus_repository",
@@ -1226,52 +1215,27 @@ def _build_application(
             repository.store, repository.publisher, target_project_id
         )
 
-    art_matcher = LibraryArtProvider(
+    catalog_services = build_catalog_services(
         art_store=art_store,
         candidate_art_store=candidate_art_store,
-        fallback=SeededArtProvider(),
-    )
-    catalog_service = CatalogService(
-        grouper=TypePluralityGrouper(),
-        art=art_matcher,
-        blurbs=blurb_cache,
-    )
-    # R5: constructed even though nothing calls `.write()` yet this
-    # increment -- see `Application.blurbs`'s own docstring for the reasoning
-    # (a caller-less port is the exact shape CLAUDE.md's co-mention section
-    # warns about, and building the object graph now turns the later
-    # increment into adding one call rather than a whole graph).
-    blurb_writer = ModelBlurbWriter(extraction_model)
-    outline_writer = ModelOutlineWriter(extraction_model)
-    # The same `extraction_model` `blurb_writer` above takes -- the brief's
-    # own instruction, and `ModelOutlineWriter`'s docstring gives the reason:
-    # a second model configuration would be a second thing to keep in sync
-    # with `config.model_name()` for no benefit, since both jobs want the
-    # same "reason less, answer in a fixed shape" trade-off extraction
-    # already makes.
-    # The sweep nothing called yet in increment 1 -- see `Application
-    # .blurb_sweep`'s docstring. Built over the same `blurb_cache` and
-    # `outline_cache` every other reader of either uses, so a sweep and an
-    # on-demand `catalog`/course-detail read of the same slug see one cache
-    # each, not two.
-    blurb_sweep = BlurbSweep(blurb_cache, outline_cache)
-    # Same `extraction_model` `blurb_writer` above takes -- no second model
-    # configuration, matching `outline_writer`'s own comment above on why.
-    art_generator = ModelSvgArtist(extraction_model)
-    art_sweep = ArtSweep(art_store, candidate_art_store)
-    art_reroll = ArtReroll(art_store, candidate_art_store)
-
-    # Unsnapshotted, over this application's own store and publisher, mirroring
-    # `media_proposal_repository` -- see `build_course_repository`'s own
-    # docstring for why no snapshot policy is warranted here.
-    course_repository = build_course_repository(repository.store, repository.publisher)
-    # `outline_writer` is not passed here: `CourseService` no longer calls a
-    # model at all -- see `course_realization.py`'s module docstring. It
-    # stays a local above only because `blurb_sweep` needs it.
-    course_service = CourseService(
-        realized=_RealizedCourses(course_runner, authoring),
+        blurb_cache=blurb_cache,
         outline_cache=outline_cache,
+        extraction_model=extraction_model,
+        course_runner=course_runner,
+        authoring=authoring,
+        store=repository.store,
+        publisher=repository.publisher,
     )
+    art_matcher = catalog_services.art_matcher
+    catalog_service = catalog_services.catalog_service
+    blurb_writer = catalog_services.blurb_writer
+    outline_writer = catalog_services.outline_writer
+    blurb_sweep = catalog_services.blurb_sweep
+    art_generator = catalog_services.art_generator
+    art_sweep = catalog_services.art_sweep
+    art_reroll = catalog_services.art_reroll
+    course_repository = catalog_services.course_repository
+    course_service = catalog_services.course_service
 
     async def start_run(
         run_id: UUID,

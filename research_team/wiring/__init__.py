@@ -7,6 +7,10 @@ from research_team.wiring.builders import (
     build_stores,
     build_tools,
 )
+from research_team.wiring.catalog_wiring import (
+    CatalogServices,
+    build_catalog_services,
+)
 from research_team.wiring.helpers import (
     _context_parts,
     _extraction_model,
@@ -46,6 +50,7 @@ __all__ = [
     "_PARTIAL_BUILD_RESOURCES",
     "BuiltStores",
     "BuiltTools",
+    "CatalogServices",
     "ContentPipeline",
     "LazyAsyncResource",
     "_CatalogFeatureRunner",
@@ -64,6 +69,7 @@ __all__ = [
     "_subagents_for",
     "_swallowing",
     "build_ask_service",
+    "build_catalog_services",
     "build_content_pipeline",
     "build_corpus_editor",
     "build_curation_tools",
