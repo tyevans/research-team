@@ -11,7 +11,7 @@ records why: replay counts an event no projection handles as applied, so a
 200 assertion passes with the projection deleted.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -411,7 +411,7 @@ async def test_summary_narrows_with_the_same_filters_events_takes(application):
     [
         "/api/interactions/health",
         "/api/interactions/sessions",
-        f"/api/interactions/sessions/{uuid4()}",
+        f"/api/interactions/sessions/{UUID(int=1)}",
         "/api/interactions/events",
         "/api/interactions/summary",
     ],

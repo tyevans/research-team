@@ -180,6 +180,7 @@ dev = [
     "hypothesis>=6.165.8",
     "mutmut>=3.0",
     "ruff==0.16.3",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.pytest.ini_options]

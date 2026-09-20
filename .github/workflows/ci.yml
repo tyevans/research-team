@@ -74,10 +74,13 @@ jobs:
 
       - run: uv sync --all-extras --locked
 
+      # Parallelised across runner cores with pytest-xdist. --dist=worksteal
+      # partitions upfront and rebalances when workers finish early, which
+      # measures faster than default chunked load distribution across this
+      # suite's mixed short/medium test durations.
       # No `-m` override: the default addopts already deselect `live` and
-      # `integration`. Naming a marker here would silently diverge from what
-      # the same command does on a developer's machine.
-      - run: uv run pytest
+      # `integration`.
+      - run: uv run pytest -n auto --dist=worksteal
 
   integration:
     name: pytest -m integration
@@ -140,6 +143,9 @@ jobs:
 
       # `live` stays deselected: it hits a real model endpoint, which this
       # runner has no way to reach.
+      # Runs serially: integration tests share singleton local Neo4j and
+      # PostgreSQL/PgVector services; concurrent writes and extension creation
+      # deadlock or collide when run in parallel.
       - run: uv run pytest -m "integration and not live"
 
   console:
