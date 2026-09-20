@@ -32,11 +32,21 @@ from research_team.wiring.runners import (
     _CourseRunner,
     _RealizedCourses,
 )
+from research_team.wiring.service_wiring import (
+    ContentPipeline,
+    build_ask_service,
+    build_content_pipeline,
+    build_corpus_editor,
+    build_document_extractor,
+    build_media_perceiver,
+    build_socratic_service,
+)
 
 __all__ = [
     "_PARTIAL_BUILD_RESOURCES",
     "BuiltStores",
     "BuiltTools",
+    "ContentPipeline",
     "LazyAsyncResource",
     "_CatalogFeatureRunner",
     "_CourseRunner",
@@ -53,7 +63,13 @@ __all__ = [
     "_run_detached",
     "_subagents_for",
     "_swallowing",
+    "build_ask_service",
+    "build_content_pipeline",
+    "build_corpus_editor",
     "build_curation_tools",
+    "build_document_extractor",
+    "build_media_perceiver",
+    "build_socratic_service",
     "build_stores",
     "build_tools",
 ]
