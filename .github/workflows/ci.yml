@@ -143,7 +143,10 @@ jobs:
 
       # `live` stays deselected: it hits a real model endpoint, which this
       # runner has no way to reach.
-      - run: uv run pytest -m "integration and not live" -n auto --dist=worksteal
+      # Runs serially: integration tests share singleton local Neo4j and
+      # PostgreSQL/PgVector services; concurrent writes and extension creation
+      # deadlock or collide when run in parallel.
+      - run: uv run pytest -m "integration and not live"
 
   console:
     name: frontend
