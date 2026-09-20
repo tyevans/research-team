@@ -19,8 +19,11 @@ back, and this is that something.
 """
 
 import asyncio
+import inspect
 import json
+import sys
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid5
 
 import aiosqlite
@@ -430,30 +433,34 @@ class SessionSummaryStore:
         await self._connection.close()
 
 
-class SessionSummaryRunner:
-    """Keeps the `/sessions` table following the log, and answers from it.
+class BaseProjectionRunner[TStore]:
+    """Base lifecycle manager for SQLite read model projections.
 
-    Satisfies the `SessionSummaries` port, so the service can hold it from the
-    moment it is constructed -- but the connection and the subscription behind
-    it are opened in `start()`, inside the event loop that will use them.
-    aiosqlite connections are bound to the loop that created them, so building
-    one at import or construction time is a bug waiting for a different loop.
+    Encapsulates database engine creation, checkpoint tracking, dead-letter queue (DLQ)
+    handling, subscription manager lifecycle, caught-up synchronization, and full rebuild
+    workflows across all read model runners.
     """
+
+    _label: str = "projection"
+    _store_class: type[Any] | None = None
+    _projection_class: type[Any] | None = None
+    _caught_up_aggregate_types: tuple[str, ...] | None = None
+    _caught_up_event_types: tuple[str, ...] | None = None
 
     def __init__(
         self,
         store: SQLiteEventStore,
         db_path: str,
         bus: InMemoryEventBus,
-        tracer=None,
-    ):
+        tracer: Any = None,
+    ) -> None:
         self._store = store
         self._db_path = db_path
         self._bus = bus
         self._tracer = tracer
-        self._summaries: SessionSummaryStore | None = None
+        self._store_instance: TStore | None = None
         self._manager: SubscriptionManager | None = None
-        self._subscription = None
+        self._subscription: Any = None
         self._checkpoints: SQLCheckpointRepository | None = None
         self._dlq: SQLDLQRepository | None = None
         self._engine: AsyncEngine | None = None
@@ -461,7 +468,73 @@ class SessionSummaryRunner:
     @property
     def projection_name(self) -> str:
         """The subscription's name, which is also its checkpoint and DLQ key."""
-        return SessionSummaryProjection.__name__
+        cls = self._resolve_projection_class()
+        if cls is not None:
+            return cls.__name__
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must define projection_name or _projection_class"
+        )
+
+    def _resolve_projection_class(self) -> type[Any] | None:
+        if self._projection_class is not None:
+            name = getattr(self._projection_class, "__name__", None)
+            if name:
+                mod = sys.modules.get(self._projection_class.__module__)
+                if mod and hasattr(mod, name):
+                    return getattr(mod, name)
+            return self._projection_class
+        return None
+
+    def _started(self) -> TStore:
+        """The open store, or a refusal naming what was not done."""
+        if self._store_instance is None:
+            raise RuntimeError(f"the {self._label} projection has not been started")
+        return self._store_instance
+
+    async def _open_store(
+        self,
+        db_path: str,
+        checkpoints: SQLCheckpointRepository,
+        dlq: SQLDLQRepository,
+        tracer: Any,
+    ) -> TStore:
+        """Hook to open the underlying read model store."""
+        if self._store_class is not None:
+            sig = inspect.signature(self._store_class.open)
+            params = sig.parameters
+            kwargs: dict[str, Any] = {}
+            if "checkpoints" in params:
+                kwargs["checkpoints"] = checkpoints
+            elif "checkpoint_repo" in params:
+                kwargs["checkpoint_repo"] = checkpoints
+            if "dlq" in params:
+                kwargs["dlq"] = dlq
+            elif "dlq_repo" in params:
+                kwargs["dlq_repo"] = dlq
+            if "tracer" in params:
+                kwargs["tracer"] = tracer
+            return await self._store_class.open(db_path, **kwargs)
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must define _store_class or override _open_store"
+        )
+
+    def _create_projection(
+        self,
+        store: TStore,
+        checkpoints: SQLCheckpointRepository,
+        dlq: SQLDLQRepository,
+        tracer: Any,
+    ) -> Any:
+        """Hook to construct the projection instance."""
+        if hasattr(store, "projection"):
+            return store.projection
+        cls = self._resolve_projection_class()
+        if cls is not None:
+            return cls(store, checkpoint_repo=checkpoints, dlq_repo=dlq, tracer=tracer)
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must define _projection_class "
+            "or override _create_projection"
+        )
 
     async def start(self) -> None:
         """Open the table and start following the log.
@@ -487,8 +560,11 @@ class SessionSummaryRunner:
         self._engine = engine
         self._checkpoints = SQLCheckpointRepository(engine)
         self._dlq = SQLDLQRepository(engine)
-        self._summaries = await SessionSummaryStore.open(
+        self._store_instance = await self._open_store(
             self._db_path, self._checkpoints, self._dlq, self._tracer
+        )
+        projection = self._create_projection(
+            self._store_instance, self._checkpoints, self._dlq, self._tracer
         )
         self._manager = SubscriptionManager(
             self._store,
@@ -498,12 +574,12 @@ class SessionSummaryRunner:
             tracer=self._tracer,
         )
         self._subscription = await self._manager.subscribe(
-            self._summaries.projection, SubscriptionConfig(start_from="checkpoint")
+            projection, SubscriptionConfig(start_from="checkpoint")
         )
         results = await self._manager.start()
         failures = {name: err for name, err in results.items() if err is not None}
         if failures:
-            raise RuntimeError(f"the /sessions projection failed to start: {failures}")
+            raise RuntimeError(f"the {self._label} projection failed to start: {failures}")
 
     async def failures(self, limit: int = 100) -> list[DLQEntry]:
         """Events this projection could not process.
@@ -517,6 +593,128 @@ class SessionSummaryRunner:
         return await self._dlq.get_failed_events(
             projection_name=self.projection_name, limit=limit
         )
+
+    async def _truncate_store(self) -> None:
+        """Hook to clear table(s) on rebuild. Subclasses can override."""
+        if hasattr(self._store_instance, "truncate"):
+            await self._store_instance.truncate()
+
+    async def rebuild(self) -> None:
+        """Throw the table away and derive it again from the log.
+
+        This is the repair for drift, and the reason drift is survivable at
+        all: the log is the only source of truth, so anything computed from it
+        can be discarded. Dropping the checkpoint with the rows is the part
+        that matters -- dropping the rows alone would leave the subscription
+        resuming from its old position over an empty table, which is a far
+        worse state than the one being repaired.
+
+        Runs the replay through a stopped subscription and starts it again
+        afterwards, so nothing is applying live events into a table that is
+        halfway through being rebuilt.
+        """
+        if self._manager is None or self._store_instance is None:
+            raise RuntimeError(f"the {self._label} projection has not been started")
+        await self._manager.stop()
+        # Resolve the outstanding failures first. They record events that were
+        # never applied *to the table being discarded*, so once it is gone they
+        # describe nothing -- and a health check that stays red after a
+        # successful repair is one people learn to ignore. Marked resolved
+        # rather than deleted, so the record that it happened survives. If the
+        # underlying bug is still there, the replay below files fresh entries.
+        for entry in await self.failures(limit=1000):
+            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
+        await self._truncate_store()
+        await self._checkpoints.reset_checkpoint(self.projection_name)
+        self._manager = None
+        self._subscription = None
+        if self._store_instance is not None:
+            await self._store_instance.close()
+            self._store_instance = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+        await self.start()
+        await self.caught_up()
+
+    def _caught_up_timeout_message(self, target: int | None, timeout: float) -> str:
+        if self._caught_up_aggregate_types is not None:
+            types_str = " and ".join(self._caught_up_aggregate_types)
+            return (
+                f"the {self._label} projection did not consume every {types_str} "
+                f"event within {timeout}s"
+            )
+        return f"the {self._label} projection did not reach {target} within {timeout}s"
+
+    async def caught_up(self, timeout: float = 10.0) -> None:
+        """Block until the projection has seen everything appended so far."""
+        if self._manager is None:
+            return
+        if self._caught_up_aggregate_types is not None:
+            deadline = asyncio.get_running_loop().time() + timeout
+            while asyncio.get_running_loop().time() < deadline:
+                remaining: list[Any] = []
+                for agg_type in self._caught_up_aggregate_types:
+                    envelopes = await collect(
+                        self._store.read_all(
+                            from_position=self._subscription.last_processed_position,
+                            options=FeedReadOptions(aggregate_type=agg_type),
+                        )
+                    )
+                    if self._caught_up_event_types is not None:
+                        envelopes = [
+                            e
+                            for e in envelopes
+                            if type(e.event).__name__ in self._caught_up_event_types
+                        ]
+                    remaining.extend(envelopes)
+                if not remaining:
+                    return
+                await asyncio.sleep(0.01)
+            raise TimeoutError(self._caught_up_timeout_message(None, timeout))
+        else:
+            target = await self._store.current_position()
+            if target is None:
+                return
+            deadline = asyncio.get_running_loop().time() + timeout
+            while asyncio.get_running_loop().time() < deadline:
+                reached = self._subscription.last_processed_position
+                if reached is not None and not reached < target:
+                    return
+                await asyncio.sleep(0.01)
+            raise TimeoutError(self._caught_up_timeout_message(target, timeout))
+
+    async def stop(self) -> None:
+        if self._manager is not None:
+            await self._manager.stop()
+            self._manager = None
+            self._subscription = None
+        if self._store_instance is not None:
+            await self._store_instance.close()
+            self._store_instance = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+
+
+class SessionSummaryRunner(BaseProjectionRunner[SessionSummaryStore]):
+    """Keeps the `/sessions` table following the log, and answers from it.
+
+    Satisfies the `SessionSummaries` port, so the service can hold it from the
+    moment it is constructed -- but the connection and the subscription behind
+    it are opened in `start()`, inside the event loop that will use them.
+    aiosqlite connections are bound to the loop that created them, so building
+    one at import or construction time is a bug waiting for a different loop.
+    """
+
+    _label = "/sessions"
+    _store_class = SessionSummaryStore
+    _projection_class = SessionSummaryProjection
+    _caught_up_aggregate_types = (Session.aggregate_type,)
+
+    @property
+    def _summaries(self) -> SessionSummaryStore | None:
+        return self._store_instance
 
     async def health(self) -> SummaryHealth:
         """Whether the table can currently be trusted.
@@ -535,100 +733,8 @@ class SessionSummaryRunner:
             behind=target is not None and (reached is None or reached < target),
         )
 
-    async def rebuild(self) -> None:
-        """Throw the table away and derive it again from the log.
-
-        This is the repair for drift, and the reason drift is survivable at
-        all: the log is the only source of truth, so anything computed from it
-        can be discarded. Dropping the checkpoint with the rows is the part
-        that matters -- dropping the rows alone would leave the subscription
-        resuming from its old position over an empty table, which is a far
-        worse state than the one being repaired.
-
-        Runs the replay through a stopped subscription and starts it again
-        afterwards, so nothing is applying live events into a table that is
-        halfway through being rebuilt.
-        """
-        if self._manager is None or self._summaries is None:
-            raise RuntimeError("the /sessions projection has not been started")
-        await self._manager.stop()
-        # Resolve the outstanding failures first. They record events that were
-        # never applied *to the table being discarded*, so once it is gone they
-        # describe nothing -- and a health check that stays red after a
-        # successful repair is one people learn to ignore. Marked resolved
-        # rather than deleted, so the record that it happened survives. If the
-        # underlying bug is still there, the replay below files fresh entries.
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._summaries.truncate()
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        self._manager = None
-        self._subscription = None
-        await self._summaries.close()
-        self._summaries = None
-        await self.start()
-        await self.caught_up()
-
     async def list(self) -> list[SessionSummary]:
-        if self._summaries is None:
-            raise RuntimeError("the /sessions projection has not been started")
-        return await self._summaries.list()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until the projection has seen everything appended so far.
-
-        The read model is eventually consistent on purpose, which is invisible
-        when a person clicks and maddening when a test asserts. Rather than
-        sleep and hope, this waits until nothing this projection consumes is
-        still unread -- so it waits exactly as long as it has to.
-
-        **It used to compare against `current_position()`, the store's global
-        end, and that was wrong in a way nothing could reach until now.** This
-        store is shared: `Project`, `Corpus`, `Topic` and redstring's own
-        streams live in it, while this subscription is scoped to
-        `Session`. Any append of another type moves the global end to a
-        position this projection will never reach, and the wait runs its full
-        timeout.
-
-        Starting a session is exactly that case, every time: `start_in_project`
-        ends with `JoinProject`, a `Project` append. So the last event in the
-        store after any session starts is one this projection must ignore, and
-        `caught_up` could only ever time out. It was survivable while sessions
-        could be created without a project; it cannot be now, which is what
-        turned an intermittent test failure into a certain one.
-
-        The remaining-work read is scoped and starts from what the
-        subscription has already processed, so it is empty in the common case
-        rather than a scan of the log.
-        """
-        if self._manager is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            remaining = await collect(
-                self._store.read_all(
-                    from_position=self._subscription.last_processed_position,
-                    options=FeedReadOptions(aggregate_type=Session.aggregate_type),
-                )
-            )
-            if not remaining:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            f"the /sessions projection did not consume every {Session.aggregate_type} "
-            f"event within {timeout}s"
-        )
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-        if self._summaries is not None:
-            await self._summaries.close()
-            self._summaries = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+        return await self._started().list()
 
 
 CORPUS_NAMESPACE = UUID("6f1f5f8e-0c4a-5c8f-9b3a-7d2f4c9e1a60")
@@ -1298,7 +1404,7 @@ class CorpusStore:
         await self._connection.close()
 
 
-class CorpusRunner:
+class CorpusRunner(BaseProjectionRunner[CorpusStore]):
     """Keeps the corpus table following the log, and answers from it.
 
     A second runner rather than a second projection on `SessionSummaryRunner`,
@@ -1328,154 +1434,35 @@ class CorpusRunner:
     projection name anyway.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._corpus: CorpusStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "corpus"
+    _store_class = CorpusStore
+    _projection_class = CorpusProjection
 
     @property
-    def projection_name(self) -> str:
-        """The subscription's name, which is also its checkpoint and DLQ key."""
-        return CorpusProjection.__name__
-
-    async def start(self) -> None:
-        """Open the table and start following the log.
-
-        Same shape as `SessionSummaryRunner.start`, including touching the
-        event store first: it creates the `projection_checkpoints` table on
-        first connection rather than at construction, so reaching for
-        checkpoints before anything has used the store finds no table at all.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        # Held so `stop()` can dispose it -- see `SessionSummaryRunner.start`.
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._corpus = await CorpusStore.open(
-            self._db_path, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            self._corpus.projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the corpus projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        """Events this projection could not process.
-
-        A non-empty list means a document is missing or stale in the table
-        while the log still holds it -- which reads downstream as a source that
-        cannot be quoted, not as an error.
-        """
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
+    def _corpus(self) -> CorpusStore | None:
+        return self._store_instance
 
     async def get(
         self, project_id: UUID, source_id: str, *, include_dropped: bool = False
     ) -> CorpusDocumentRow | None:
-        if self._corpus is None:
-            raise RuntimeError("the corpus projection has not been started")
-        return await self._corpus.get(project_id, source_id, include_dropped=include_dropped)
+        return await self._started().get(
+            project_id, source_id, include_dropped=include_dropped
+        )
 
     async def get_media(
         self, project_id: UUID, source_id: str, *, include_dropped: bool = False
     ) -> CorpusMediaRow | None:
-        if self._corpus is None:
-            raise RuntimeError("the corpus projection has not been started")
-        return await self._corpus.get_media(
+        return await self._started().get_media(
             project_id, source_id, include_dropped=include_dropped
         )
 
     async def list_all(
         self, project_id: UUID, *, include_dropped: bool = False
     ) -> "list[CorpusDocumentRow | CorpusMediaRow]":
-        if self._corpus is None:
-            raise RuntimeError("the corpus projection has not been started")
-        return await self._corpus.list_all(project_id, include_dropped=include_dropped)
+        return await self._started().list_all(project_id, include_dropped=include_dropped)
 
     async def list_text_uris(self, project_id: UUID) -> list[tuple[str, str]]:
-        if self._corpus is None:
-            raise RuntimeError("the corpus projection has not been started")
-        return await self._corpus.list_text_uris(project_id)
-
-    async def rebuild(self) -> None:
-        """Throw the table away and derive it again from the log.
-
-        Safe precisely because this table holds no original information: every
-        byte of every document is in the event that put it there. Dropping the
-        checkpoint alongside the rows is the part that matters -- rows without
-        the checkpoint would leave the subscription resuming over an empty
-        table, which is worse than the drift being repaired.
-        """
-        if self._manager is None or self._corpus is None:
-            raise RuntimeError("the corpus projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._corpus.truncate()
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        self._manager = None
-        self._subscription = None
-        await self._corpus.close()
-        self._corpus = None
-        await self.start()
-        await self.caught_up()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until the projection has seen everything appended so far.
-
-        Load-bearing beyond tests, unlike the `/sessions` equivalent: `remember`
-        stores a document and then wants to read it back to extract from it, and
-        the gap between the append and the row is exactly where that would find
-        nothing.
-        """
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(f"the corpus projection did not reach {target} within {timeout}s")
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-        if self._corpus is not None:
-            await self._corpus.close()
-            self._corpus = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+        return await self._started().list_text_uris(project_id)
 
 
 DEFINITION_NAMESPACE = UUID("8a2c1e6d-4b9f-5a71-9e3c-2d6f8b1a0c45")
@@ -1714,7 +1701,7 @@ class EntityDefinitionProjection(DeclarativeProjection):
             await self._definitions.delete(event.tenant_id, merged_id)
 
 
-class EntityDefinitionRunner:
+class EntityDefinitionRunner(BaseProjectionRunner[EntityDefinitionStore]):
     """Keeps the definition cache's staleness following the log.
 
     A third runner beside `CorpusRunner` and `SessionSummaryRunner`, for the
@@ -1728,95 +1715,15 @@ class EntityDefinitionRunner:
     would be destructive rather than merely wasteful.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._definitions: EntityDefinitionStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "entity definition"
+    _store_class = EntityDefinitionStore
+    _projection_class = EntityDefinitionProjection
 
     @property
-    def projection_name(self) -> str:
-        return EntityDefinitionProjection.__name__
+    def _definitions(self) -> EntityDefinitionStore | None:
+        return self._store_instance
 
-    async def start(self) -> None:
-        """Open the table and start following the log.
-
-        Same shape as `CorpusRunner.start`, including touching the event
-        store first so `projection_checkpoints` exists before anything reads
-        it.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._definitions = await EntityDefinitionStore.open(self._db_path, self._tracer)
-        projection = EntityDefinitionProjection(
-            self._definitions, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the entity definition projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    async def get(self, project_id: UUID, entity_id: UUID) -> EntityDefinitionRow | None:
-        """This project's cached definition of `entity_id`, if there is one.
-
-        Delegated the way `CorpusRunner.get` is, rather than handing the
-        `EntityDefinitionStore` out through a property, and the reason is
-        `rebuild()`: it closes the store and opens another one. A caller
-        holding the store would go on calling a closed connection, silently,
-        after a repair -- where a caller holding the runner reaches whichever
-        store is current on every call. That is also what keeps the route's
-        cache and this projection's invalidation the *same* table: there is
-        one owner of the connection, and it is this object.
-        """
-        if self._definitions is None:
-            raise RuntimeError("the entity definition projection has not been started")
-        return await self._definitions.get(project_id, entity_id)
-
-    async def put(self, row: EntityDefinitionRow) -> None:
-        """Store a generated definition, superseding whatever was cached.
-
-        The write half of `get`, for the same one-owner reason. This
-        projection never calls it -- see the class docstring on why
-        generation and invalidation are split -- but the generating service
-        reaches the table through here so that both halves go through one
-        connection rather than two that would each cache the other's stale
-        reads.
-        """
-        if self._definitions is None:
-            raise RuntimeError("the entity definition projection has not been started")
-        await self._definitions.put(row)
-
-    async def rebuild(self) -> None:
+    async def _truncate_store(self) -> None:
         """Reset the checkpoint and replay, without truncating the table.
 
         `CorpusRunner.rebuild` and its `/sessions` counterpart both truncate
@@ -1833,45 +1740,33 @@ class EntityDefinitionRunner:
         repair `CorpusRunner.rebuild` performs, minus the truncate that would
         make it destructive for this table.
         """
-        if self._manager is None:
-            raise RuntimeError("the entity definition projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        self._manager = None
-        self._subscription = None
-        await self._definitions.close()
-        self._definitions = None
-        await self.start()
-        await self.caught_up()
+        pass
 
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            f"the entity definition projection did not reach {target} within {timeout}s"
-        )
+    async def get(self, project_id: UUID, entity_id: UUID) -> EntityDefinitionRow | None:
+        """This project's cached definition of `entity_id`, if there is one.
 
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-        if self._definitions is not None:
-            await self._definitions.close()
-            self._definitions = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+        Delegated the way `CorpusRunner.get` is, rather than handing the
+        `EntityDefinitionStore` out through a property, and the reason is
+        `rebuild()`: it closes the store and opens another one. A caller
+        holding the store would go on calling a closed connection, silently,
+        after a repair -- where a caller holding the runner reaches whichever
+        store is current on every call. That is also what keeps the route's
+        cache and this projection's invalidation the *same* table: there is
+        one owner of the connection, and it is this object.
+        """
+        return await self._started().get(project_id, entity_id)
+
+    async def put(self, row: EntityDefinitionRow) -> None:
+        """Store a generated definition, superseding whatever was cached.
+
+        The write half of `get`, for the same one-owner reason. This
+        projection never calls it -- see the class docstring on why
+        generation and invalidation are split -- but the generating service
+        reaches the table through here so that both halves go through one
+        connection rather than two that would each cache the other's stale
+        reads.
+        """
+        await self._started().put(row)
 
 
 ONTOLOGY_NAMESPACE = UUID("3f7b21c9-6d84-5e02-a1b7-9c4e0f83d216")
@@ -2788,7 +2683,7 @@ class CourseProjection(DeclarativeProjection):
         await self._store.abandon(event.project_id, event.slug)
 
 
-class OntologyRunner:
+class OntologyRunner(BaseProjectionRunner[OntologyStore]):
     """Keeps the ontology tables following the log.
 
     A sixth runner, for the reasons `CorpusRunner`'s docstring gives for being
@@ -2797,74 +2692,26 @@ class OntologyRunner:
     not own.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._ontology: OntologyStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "ontology"
+    _store_class = OntologyStore
+    _projection_class = OntologyProjection
+    _caught_up_aggregate_types = (ONTOLOGY_AGGREGATE_TYPE, DOCUMENT_CATEGORY)
+    _caught_up_event_types = (OntologyDiscovered.__name__, DocumentExtracted.__name__)
 
     @property
-    def projection_name(self) -> str:
-        return OntologyProjection.__name__
+    def _ontology(self) -> OntologyStore | None:
+        return self._store_instance
 
-    async def start(self) -> None:
-        """Open the tables and start following the log.
-
-        Same shape as `CorpusRunner.start`, including touching the event store
-        first so `projection_checkpoints` exists before anything reads it.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._ontology = await OntologyStore.open(self._db_path, self._tracer)
-        projection = OntologyProjection(
-            self._ontology, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the ontology projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    def _started(self) -> OntologyStore:
-        """The open store, or a refusal naming what was not done.
-
-        Delegated the way `CorpusRunner.get` is rather than handing the store
-        out through a property, and for the same reason: `rebuild()` closes one
-        store and opens another, so a caller holding the store would go on
-        calling a closed connection, silently, after a repair.
-        """
-        if self._ontology is None:
-            raise RuntimeError("the ontology projection has not been started")
-        return self._ontology
+    async def _truncate_store(self) -> None:
+        """Truncate all three ontology tables on rebuild."""
+        async with aiosqlite.connect(self._db_path) as connection:
+            for table in (
+                OntologyClassRow.table_name(),
+                OntologyMembershipRow.table_name(),
+                OntologyExaminedRow.table_name(),
+            ):
+                await connection.execute(f"DELETE FROM {table}")
+            await connection.commit()
 
     async def classes_for(self, project_id: UUID) -> list[OntologyClassRow]:
         return await self._started().classes_for(project_id)
@@ -2874,109 +2721,6 @@ class OntologyRunner:
 
     async def sources_with_classes(self, project_id: UUID) -> set[str]:
         return await self._started().sources_with_classes(project_id)
-
-    async def rebuild(self) -> None:
-        """Truncate and replay.
-
-        The opposite of `EntityDefinitionRunner.rebuild`, which must not
-        truncate, and the difference is which columns come from the log. A
-        definition's `text` comes from a service's `put`, so replaying would
-        not restore it. Every column in these three tables is written by
-        `_on_discovered` from an event payload, so a replay reproduces them
-        exactly -- and the truncate is what removes rows for a class a
-        superseded event no longer carries, which a replay alone would leave
-        behind.
-        """
-        if self._manager is None:
-            raise RuntimeError("the ontology projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        async with aiosqlite.connect(self._db_path) as connection:
-            for table in (
-                OntologyClassRow.table_name(),
-                OntologyMembershipRow.table_name(),
-                OntologyExaminedRow.table_name(),
-            ):
-                await connection.execute(f"DELETE FROM {table}")
-            await connection.commit()
-        self._manager = None
-        self._subscription = None
-        await self._ontology.close()
-        self._ontology = None
-        await self.start()
-        await self.caught_up()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until this projection has consumed every event it subscribes to.
-
-        **Not a comparison against `current_position()`, the store's global
-        end**, which is what an earlier draft of this method did and what
-        `SessionSummaryRunner.caught_up` documents at length as wrong for a
-        scoped subscription: any append of a type this projection ignores moves
-        the end to a position it will never reach, and the wait then runs its
-        full timeout every time.
-
-        That draft justified the global comparison by arguing this projection
-        consumes both of the event types that move the store in ordinary use.
-        **It does not.** Storing a document appends `CorpusDocumentStored` and
-        redstring's `DocumentChunked`, neither of them subscribed here -- and
-        storing a document is the ordinary prelude to discovering an ontology
-        in it, so the mistake was on the main path rather than in a corner.
-        `tests/integration/test_ontology_wiring.py` caught it, because it
-        stores a document before running a pass; no unit test could, because
-        each builds its own store holding only the events it appended.
-
-        So this reads the remaining work per aggregate type instead, scoped and
-        starting from what the subscription has already processed -- empty in
-        the common case rather than a scan of the log. Two reads, because this
-        projection subscribes to two streams: its own `Ontology` events and
-        redstring's document category.
-
-        Filtered by event *type* as well, because the aggregate type is not
-        fine enough on its own: `DocumentChunked` shares the document category
-        with `DocumentExtracted` and is not handled here, so a scope-only read
-        would never drain and every wait would still time out -- the same
-        failure one level down, and the reason this is a filter rather than the
-        two-line version `SessionSummaryRunner` gets away with.
-        """
-        if self._manager is None:
-            return
-        handled = (OntologyDiscovered.__name__, DocumentExtracted.__name__)
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            remaining = []
-            for aggregate_type in (ONTOLOGY_AGGREGATE_TYPE, DOCUMENT_CATEGORY):
-                remaining += [
-                    envelope
-                    for envelope in await collect(
-                        self._store.read_all(
-                            from_position=self._subscription.last_processed_position,
-                            options=FeedReadOptions(aggregate_type=aggregate_type),
-                        )
-                    )
-                    if type(envelope.event).__name__ in handled
-                ]
-            if not remaining:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            f"the ontology projection did not consume every {ONTOLOGY_AGGREGATE_TYPE} "
-            f"and {DOCUMENT_CATEGORY} event within {timeout}s"
-        )
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-            self._subscription = None
-        if self._ontology is not None:
-            await self._ontology.close()
-            self._ontology = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
 
 
 MEDIA_PROPOSAL_NAMESPACE = UUID("d4a1c6e2-8f3b-5a90-9e7c-1b4d3f6a8c2e")
@@ -3402,7 +3146,7 @@ class MediaProposalStore:
         await self._connection.close()
 
 
-class MediaProposalRunner:
+class MediaProposalRunner(BaseProjectionRunner[MediaProposalStore]):
     """Keeps the proposal tables following the log, and answers from them.
 
     A distinct runner rather than another projection sharing an existing
@@ -3411,67 +3155,26 @@ class MediaProposalRunner:
     projection's drift also interrupted an unrelated one's reads.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._proposals: MediaProposalStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "media-proposal"
+    _store_class = MediaProposalStore
+    _projection_class = MediaProposalProjection
+    _caught_up_aggregate_types = ("MediaProposals",)
 
     @property
-    def projection_name(self) -> str:
-        return MediaProposalProjection.__name__
+    def _proposals(self) -> MediaProposalStore | None:
+        return self._store_instance
 
-    async def start(self) -> None:
-        """Open the tables and start following the log.
-
-        Same shape as `OntologyRunner.start`, including touching the event
-        store first so `projection_checkpoints` exists before anything reads
-        it.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._proposals = await MediaProposalStore.open(
-            self._db_path, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            self._proposals.projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the media-proposal projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    def _started(self) -> MediaProposalStore:
-        if self._proposals is None:
-            raise RuntimeError("the media-proposal projection has not been started")
-        return self._proposals
+    async def _truncate_store(self) -> None:
+        """Truncate all proposal tables on rebuild."""
+        async with aiosqlite.connect(self._db_path) as connection:
+            for table in (
+                MediaProposalRow.table_name(),
+                MediaNeedRow.table_name(),
+                MediaIgnoredAssetRow.table_name(),
+                MediaIgnoredHostRow.table_name(),
+            ):
+                await connection.execute(f"DELETE FROM {table}")
+            await connection.commit()
 
     async def for_project(self, project_id: UUID) -> list[MediaProposalRow]:
         return await self._started().for_project(project_id)
@@ -3511,75 +3214,6 @@ class MediaProposalRunner:
 
     async def ignored_hosts(self, project_id: UUID) -> set[str]:
         return await self._started().ignored_hosts(project_id)
-
-    async def rebuild(self) -> None:
-        """Truncate and replay -- mirrors `OntologyRunner.rebuild` exactly,
-        including why a truncate is needed and a replay alone would not be
-        enough: every column here comes from an event payload, so replaying
-        reproduces them, but a proposal whose stream no later event touches
-        again would otherwise never lose a row nothing still asserts.
-        """
-        if self._manager is None:
-            raise RuntimeError("the media-proposal projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        async with aiosqlite.connect(self._db_path) as connection:
-            for table in (
-                MediaProposalRow.table_name(),
-                MediaNeedRow.table_name(),
-                MediaIgnoredAssetRow.table_name(),
-                MediaIgnoredHostRow.table_name(),
-            ):
-                await connection.execute(f"DELETE FROM {table}")
-            await connection.commit()
-        self._manager = None
-        self._subscription = None
-        await self._proposals.close()
-        self._proposals = None
-        await self.start()
-        await self.caught_up()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until this projection has consumed every event on its own
-        stream type. Scoped by aggregate type alone, unlike
-        `OntologyRunner.caught_up` -- this projection subscribes to exactly
-        one stream category (`MediaProposals`) and every event on it is
-        handled, so there is no second, unhandled event type sharing the
-        category the way `DocumentChunked` shares `DOCUMENT_CATEGORY` with
-        `DocumentExtracted`. Mirrors `SessionSummaryRunner.caught_up`'s
-        simpler shape for exactly that reason.
-        """
-        if self._manager is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            remaining = await collect(
-                self._store.read_all(
-                    from_position=self._subscription.last_processed_position,
-                    options=FeedReadOptions(aggregate_type="MediaProposals"),
-                )
-            )
-            if not remaining:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            "the media-proposal projection did not consume every MediaProposals "
-            f"event within {timeout}s"
-        )
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-            self._subscription = None
-        if self._proposals is not None:
-            await self._proposals.close()
-            self._proposals = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
 
 
 ASK_NAMESPACE = UUID("b0d4f1a7-52c6-5f38-9d1e-7a3c806b45e9")
@@ -3811,7 +3445,7 @@ class AskConversationProjection(DeclarativeProjection):
         )
 
 
-class AskConversationRunner:
+class AskConversationRunner(BaseProjectionRunner[AskConversationStore]):
     """Keeps the ask tables following the log.
 
     A seventh runner, for the reasons `CorpusRunner`'s docstring gives for
@@ -3819,70 +3453,14 @@ class AskConversationRunner:
     alone, and a `rebuild()` that cannot truncate tables it does not own.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._asks: AskConversationStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "ask"
+    _store_class = AskConversationStore
+    _projection_class = AskConversationProjection
+    _caught_up_aggregate_types = (AskConversation.aggregate_type,)
 
     @property
-    def projection_name(self) -> str:
-        return AskConversationProjection.__name__
-
-    async def start(self) -> None:
-        """Open the tables and start following the log.
-
-        Same shape as `OntologyRunner.start`, including touching the event
-        store first so `projection_checkpoints` exists before anything reads
-        it.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._asks = await AskConversationStore.open(self._db_path, self._tracer)
-        projection = AskConversationProjection(
-            self._asks, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the ask projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    def _started(self) -> AskConversationStore:
-        """The open store, or a refusal naming what was not done -- delegated
-        rather than handed out, for `OntologyRunner._started`'s reason."""
-        if self._asks is None:
-            raise RuntimeError("the ask projection has not been started")
-        return self._asks
+    def _asks(self) -> AskConversationStore | None:
+        return self._store_instance
 
     async def get(self, conversation_id: UUID) -> AskConversationRow | None:
         return await self._started().get(conversation_id)
@@ -3892,73 +3470,6 @@ class AskConversationRunner:
 
     async def turns_for(self, conversation_id: UUID) -> list[AskTurnRow]:
         return await self._started().turns_for(conversation_id)
-
-    async def rebuild(self) -> None:
-        """Truncate and replay.
-
-        Allowed here, unlike `EntityDefinitionRunner.rebuild`, because every
-        column in both tables is written from an event payload -- including
-        `position`, which the projection derives in log order and therefore
-        reproduces.
-        """
-        if self._manager is None:
-            raise RuntimeError("the ask projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        await self._started().truncate()
-        self._manager = None
-        self._subscription = None
-        await self._asks.close()
-        self._asks = None
-        await self.start()
-        await self.caught_up()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until every `AskConversation` event appended so far is in the
-        tables.
-
-        Scoped by aggregate type and started from what the subscription has
-        already processed, **not** compared against the store's global end --
-        `SessionSummaryRunner.caught_up` documents at length why that
-        comparison runs its full timeout for a scoped subscription, and asks
-        share a store with sessions, the corpus and redstring's documents, any
-        of which moves the end to a position this projection never reaches.
-
-        No event-type filter, unlike `OntologyRunner.caught_up`: this
-        projection handles *both* event types on its aggregate, so the scope is
-        already exact.
-        """
-        if self._manager is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            remaining = await collect(
-                self._store.read_all(
-                    from_position=self._subscription.last_processed_position,
-                    options=FeedReadOptions(aggregate_type=AskConversation.aggregate_type),
-                )
-            )
-            if not remaining:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            f"the ask projection did not consume every "
-            f"{AskConversation.aggregate_type} event within {timeout}s"
-        )
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-            self._subscription = None
-        if self._asks is not None:
-            await self._asks.close()
-            self._asks = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
 
 
 SOCRATIC_NAMESPACE = UUID("e1c7a9d2-4b0f-4a6e-9c31-2f58d7b6e410")
@@ -4297,7 +3808,7 @@ class SocraticDialogueProjection(DeclarativeProjection):
         await self._dialogues.conclude(event.aggregate_id, reason=event.reason)
 
 
-class SocraticDialogueRunner:
+class SocraticDialogueRunner(BaseProjectionRunner[SocraticDialogueStore]):
     """Keeps the dialogue tables following the log.
 
     A ninth runner, for `AskConversationRunner`'s reason: a
@@ -4311,70 +3822,14 @@ class SocraticDialogueRunner:
     while telling the reader it continued.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._dialogues: SocraticDialogueStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "socratic"
+    _store_class = SocraticDialogueStore
+    _projection_class = SocraticDialogueProjection
+    _caught_up_aggregate_types = (SocraticDialogue.aggregate_type,)
 
     @property
-    def projection_name(self) -> str:
-        return SocraticDialogueProjection.__name__
-
-    async def start(self) -> None:
-        """Open the tables and start following the log.
-
-        Same shape as `AskConversationRunner.start`, including touching the
-        event store first so `projection_checkpoints` exists before anything
-        reads it.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._dialogues = await SocraticDialogueStore.open(self._db_path, self._tracer)
-        projection = SocraticDialogueProjection(
-            self._dialogues, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the socratic projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    def _started(self) -> SocraticDialogueStore:
-        """The open store, or a refusal naming what was not done -- delegated
-        rather than handed out, for `AskConversationRunner._started`'s reason."""
-        if self._dialogues is None:
-            raise RuntimeError("the socratic projection has not been started")
-        return self._dialogues
+    def _dialogues(self) -> SocraticDialogueStore | None:
+        return self._store_instance
 
     async def get(self, dialogue_id: UUID) -> SocraticDialogueRow | None:
         return await self._started().get(dialogue_id)
@@ -4384,90 +3839,6 @@ class SocraticDialogueRunner:
 
     async def turns_for(self, dialogue_id: UUID) -> list[SocraticTurnRow]:
         return await self._started().turns_for(dialogue_id)
-
-    async def rebuild(self) -> None:
-        """Truncate and replay.
-
-        Allowed here, as on `AskConversationRunner.rebuild`, because every
-        column in both tables is written from an event payload -- including
-        `position`, which the projection derives in log order and therefore
-        reproduces, and `pending_prompt`, which is derived from the newest
-        turn's `prompt` in that same order.
-        """
-        if self._manager is None:
-            raise RuntimeError("the socratic projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        await self._started().truncate()
-        self._manager = None
-        self._subscription = None
-        await self._dialogues.close()
-        self._dialogues = None
-        await self.start()
-        await self.caught_up()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until every `SocraticDialogue` event appended so far is in the
-        tables.
-
-        Scoped by aggregate type and started from what the subscription has
-        already processed, **not** compared against the store's global end --
-        `SessionSummaryRunner.caught_up` documents at length why that
-        comparison runs its full timeout for a scoped subscription, and
-        dialogues share a store with sessions, asks, the corpus and redstring's
-        documents, any of which moves the end to a position this projection
-        never reaches.
-
-        No event-type filter: this projection handles *all four* event types on
-        its aggregate, so the scope is already exact.
-
-        **A dropped `@handles` reports here as a timeout, not as a missing
-        row.** `SubscriptionConfig` leaves `event_types=None`, so
-        `EventFilter.from_subscriber` derives the filter from the projection's
-        `@handles` set -- remove one and that event is never delivered, so
-        `last_processed_position` never advances past it while this method
-        keeps reading it back as remaining, for the full timeout. The
-        diagnostic then names this method rather than the handler that went
-        missing. Measured on 2026-08-17;
-        `test_a_dialogue_whose_start_nothing_handles_is_silently_empty` is the
-        test that had to work around it, and its docstring carries the detail.
-
-        This shape is copied verbatim from `AskConversationRunner.caught_up`,
-        so the sibling has the same property. Left alone deliberately:
-        diverging one runner from the established shape for this alone buys
-        a better error message and costs a difference nobody expects.
-        """
-        if self._manager is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            remaining = await collect(
-                self._store.read_all(
-                    from_position=self._subscription.last_processed_position,
-                    options=FeedReadOptions(aggregate_type=SocraticDialogue.aggregate_type),
-                )
-            )
-            if not remaining:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            f"the socratic projection did not consume every "
-            f"{SocraticDialogue.aggregate_type} event within {timeout}s"
-        )
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-            self._subscription = None
-        if self._dialogues is not None:
-            await self._dialogues.close()
-            self._dialogues = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
 
 
 class AuthoringRunRow(ReadModel):
@@ -4727,7 +4098,7 @@ class AuthoringRunProjection(DeclarativeProjection):
         await self._runs.settle(event.aggregate_id, event.status)
 
 
-class AuthoringRunRunner:
+class AuthoringRunRunner(BaseProjectionRunner[AuthoringRunStore]):
     """Keeps the authoring-run table following the log, and answers from it.
 
     A tenth runner, for the reasons `CorpusRunner`'s docstring gives for being
@@ -4742,68 +4113,14 @@ class AuthoringRunRunner:
     `test_an_authoring_run_survives_a_restart.py` is what fails.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._runs: AuthoringRunStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "authoring"
+    _store_class = AuthoringRunStore
+    _projection_class = AuthoringRunProjection
+    _caught_up_aggregate_types = (COURSE_AUTHORING_RUN_AGGREGATE_TYPE,)
 
     @property
-    def projection_name(self) -> str:
-        return AuthoringRunProjection.__name__
-
-    async def start(self) -> None:
-        """Open the table and start following the log.
-
-        Same shape as `AskConversationRunner.start`, including touching the
-        event store first so `projection_checkpoints` exists before anything
-        reads it.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._runs = await AuthoringRunStore.open(self._db_path, self._tracer)
-        projection = AuthoringRunProjection(
-            self._runs, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the authoring projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    def _started(self) -> AuthoringRunStore:
-        if self._runs is None:
-            raise RuntimeError("the authoring projection has not been started")
-        return self._runs
+    def _runs(self) -> AuthoringRunStore | None:
+        return self._store_instance
 
     async def get(self, run_id: UUID) -> AuthoringRunRow | None:
         return await self._started().get(run_id)
@@ -4818,70 +4135,6 @@ class AuthoringRunRunner:
 
     async def authored_session_for(self, project_id: UUID, target: str) -> UUID | None:
         return await self._started().authored_session_for(project_id, target)
-
-    async def rebuild(self) -> None:
-        """Truncate and replay. Allowed here for `AskConversationRunner`'s
-        reason: every column comes from an event payload."""
-        if self._manager is None:
-            raise RuntimeError("the authoring projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        await self._started().truncate()
-        self._manager = None
-        self._subscription = None
-        await self._runs.close()
-        self._runs = None
-        await self.start()
-        await self.caught_up()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until every `CourseAuthoringRun` event appended so far is in
-        the table.
-
-        Scoped by aggregate type and started from what the subscription has
-        already processed, **not** compared against the store's global end --
-        `SessionSummaryRunner.caught_up` documents at length why that
-        comparison runs its full timeout for a scoped subscription, and
-        authoring runs share a store with sessions, the corpus and redstring's
-        documents, any of which moves the end to a position this projection
-        never reaches.
-
-        No event-type filter: this projection handles every event type on its
-        aggregate, so the scope is already exact.
-        """
-        if self._manager is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            remaining = await collect(
-                self._store.read_all(
-                    from_position=self._subscription.last_processed_position,
-                    options=FeedReadOptions(
-                        aggregate_type=COURSE_AUTHORING_RUN_AGGREGATE_TYPE
-                    ),
-                )
-            )
-            if not remaining:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            f"the authoring projection did not consume every "
-            f"{COURSE_AUTHORING_RUN_AGGREGATE_TYPE} event within {timeout}s"
-        )
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-            self._subscription = None
-        if self._runs is not None:
-            await self._runs.close()
-            self._runs = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
 
 
 class ArtRow(ReadModel):

@@ -14,6 +14,7 @@ from research_team.infrastructure.persistence.event_store import (
     build_topic_repository,
 )
 from research_team.infrastructure.persistence.read_models import (
+    BaseProjectionRunner,
     CorpusDocumentRow,
     CorpusMediaRow,
     CorpusProjection,
@@ -34,6 +35,7 @@ from research_team.infrastructure.persistence.topics import (
 
 __all__ = [
     "SNAPSHOT_THRESHOLD",
+    "BaseProjectionRunner",
     "CorpusDocumentRow",
     "CorpusMediaRow",
     "CorpusProjection",
