@@ -35,6 +35,30 @@ from research_team.application.ports import (
     TurnExecutor,
 )
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.project_sessions import (
+    ProjectSessions as ProjectSessions,
+)
+from research_team.application.project_sessions import (
+    catch_up_project_tip as catch_up_project_tip,
+)
+from research_team.application.project_sessions import (
+    delete_project_aggregate as delete_project_aggregate,
+)
+from research_team.application.project_sessions import (
+    ensure_session_project_attached as ensure_session_project_attached,
+)
+from research_team.application.project_sessions import (
+    fork_session_files as fork_session_files,
+)
+from research_team.application.project_sessions import (
+    release_session_project as release_session_project,
+)
+from research_team.application.project_sessions import (
+    resolve_project_files as resolve_project_files,
+)
+from research_team.application.project_sessions import (
+    start_session_in_project as start_session_in_project,
+)
 from research_team.application.retry import with_retry
 from research_team.application.summaries import SessionSummary
 from research_team.application.turn_runner import (
@@ -53,14 +77,11 @@ from research_team.application.turn_runner import (
     project_context as project_context,
 )
 from research_team.domain import (
-    AdvanceTip,
     AutonomyChanged,
     ChangeAutonomy,
     CompactConversation,
     CompleteTurn,
-    DeleteProject,
     FailTurn,
-    JoinProject,
     LearnerProgress,
     LearnerProgressState,
     Project,
@@ -73,7 +94,6 @@ from research_team.domain import (
     SendUserMessage,
     Session,
     SessionPurpose,
-    StartSession,
     WriteFile,
 )
 from research_team.domain.learner import initial_state as learner_initial_state
@@ -144,6 +164,15 @@ class SessionService:
         # nothing for `delete_project` to evict, so eviction is a no-op
         # rather than an attribute error on a caller that never wired one.
         self._graphs = graphs
+        self._project_sessions = ProjectSessions(
+            repository=repository,
+            projects=projects,
+            default_system_prompt=default_system_prompt,
+            knowledge_prompt=knowledge_prompt,
+            executor=executor,
+            attachment=attachment,
+            graphs=graphs,
+        )
 
     @property
     def tracer(self) -> Tracer:
@@ -249,7 +278,7 @@ class SessionService:
 
     async def list_projects(self) -> list[tuple[UUID, str]]:
         """Every project's id and name, for `/project`'s listing."""
-        return await self._repository.list_projects()
+        return await self._project_sessions.list_projects()
 
     async def project_state(self, project_id: UUID) -> ProjectState:
         """One project's folded state: who holds it, and where its tip is.
@@ -258,7 +287,7 @@ class SessionService:
         that decides what a user can do with a project next, and a UI that
         cannot see it can only offer an action and let it fail.
         """
-        return (await self._projects.load(project_id)).state
+        return await self._project_sessions.project_state(project_id)
 
     async def project_files(self, project_id: UUID) -> dict[str, dict[str, Any]]:
         """The project's filesystem, from whichever stream currently carries it.
@@ -302,14 +331,7 @@ class SessionService:
         divergence had to be reproduced synthetically. See that function's
         docstring for the paths.
         """
-        state = await self.project_state(project_id)
-        if state.active_session_id is not None:
-            session = await self.load(state.active_session_id)
-            return dict(session.state.files)
-        if state.tip_session_id is None or state.tip_at_event < 1:
-            return {}
-        session = await self.load(state.tip_session_id)
-        return dict(session.state.files)
+        return await self._project_sessions.project_files(project_id)
 
     async def delete_project(self, project_id: UUID) -> None:
         """Retire a project: no more joins, and gone from every listing.
@@ -333,11 +355,7 @@ class SessionService:
         first would have to be undone on every rejection path this or a
         future one grows.
         """
-        project = await self._projects.load(project_id)
-        project.execute(DeleteProject())
-        await self._projects.save(project)
-        if self._graphs is not None:
-            await self._graphs.close(project_id)
+        await self._project_sessions.delete_project(project_id)
 
     async def close(self) -> None:
         await self._repository.close()
@@ -430,48 +448,7 @@ class SessionService:
         copied from. See `_catch_up_tip` for what is being caught up and why
         there is anything to catch.
         """
-        project = await self._projects.load(project_id)
-        await self._catch_up_tip(project)
-        session_id = uuid4()
-        project.execute(JoinProject(session_id=session_id))
-
-        state = project.state
-        if state.tip_session_id is None:
-            session = self._repository.create(session_id)
-            session.execute(
-                StartSession(
-                    session_id=session_id,
-                    system_prompt=self._default_system_prompt
-                    + self._knowledge_prompt
-                    + project_context(state.name),
-                    model_name=self._executor.model_name,
-                    project_id=project_id,
-                    purpose=purpose,
-                )
-            )
-            await self._repository.save(session)
-        else:
-            await self._fork_files_from(
-                session_id,
-                source_session_id=state.tip_session_id,
-                at_event=state.tip_at_event,
-                project_id=project_id,
-                # Threaded rather than re-loaded inside the fork: this is the
-                # *second and later* session of a project, so a build that
-                # named the project only on the first-join branch would leave
-                # every project past its first session unnamed -- and every
-                # test that creates one session would pass.
-                project_name=state.name,
-                # Same shape of mistake as project_name above, and checked for
-                # the same reason: a build that threaded `purpose` only into
-                # the first-join branch would give every session past a
-                # project's first the default purpose, and every test that
-                # creates a single session would still pass.
-                purpose=purpose,
-            )
-
-        await self._projects.save(project)
-        return session_id
+        return await self._project_sessions.start_in_project(project_id, purpose)
 
     async def _catch_up_tip(self, project: Any) -> None:
         """Move the tip to the end of the stream it already names.
@@ -504,13 +481,7 @@ class SessionService:
         checks first so a join does not append a `ProjectTipAdvanced` saying
         nothing changed.
         """
-        state = project.state
-        if state.active_session_id is not None or state.tip_session_id is None:
-            return
-        at = len(await self.history(state.tip_session_id))
-        if at <= state.tip_at_event:
-            return
-        project.execute(AdvanceTip(session_id=state.tip_session_id, at_event=at))
+        await self._project_sessions.catch_up_tip(project)
 
     async def _fork_files_from(
         self,
@@ -533,31 +504,14 @@ class SessionService:
         project_id. Lineage is recorded the same way `fork()` records it, so
         `forked_from` still answers "whose filesystem is this".
         """
-        events = await self.history(source_session_id)
-        if not 1 <= at_event <= len(events):
-            raise ValueError(f"cannot inherit at {at_event}: source has {len(events)} events")
-
-        session = self._repository.create(session_id)
-        session.execute(
-            StartSession(
-                session_id=session_id,
-                system_prompt=self._default_system_prompt
-                + self._knowledge_prompt
-                + project_context(project_name),
-                model_name=self._executor.model_name,
-                project_id=project_id,
-                purpose=purpose,
-            )
+        await self._project_sessions.fork_files_from(
+            session_id,
+            source_session_id=source_session_id,
+            at_event=at_event,
+            project_id=project_id,
+            purpose=purpose,
+            project_name=project_name,
         )
-        for event in events[:at_event]:
-            if isinstance(event, _FILE_EVENT_TYPES):
-                session.create_event(
-                    type(event), **event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
-                )
-        session.execute(
-            RecordForkSource(source_session_id=source_session_id, at_event=at_event)
-        )
-        await self._repository.save(session)
 
     async def release_project(self, session_id: UUID) -> None:
         """Hand the project's filesystem tip back, if this session holds it.
@@ -572,14 +526,7 @@ class SessionService:
         session-switch path call this unconditionally, and keeps the
         rejection from ever escaping a caller's exit/cleanup path.
         """
-        session = await self._repository.load(session_id)
-        if session.state.project_id is None:
-            return
-        project = await self._projects.load(session.state.project_id)
-        if project.state.active_session_id != session_id:
-            return
-        project.execute(AdvanceTip(session_id=session_id, at_event=session.version))
-        await self._projects.save(project)
+        await self._project_sessions.release_project(session_id)
 
     async def record_autonomy_change(
         self, session_id: UUID, tool_name: str, level: str
@@ -651,12 +598,12 @@ class SessionService:
         here. This exists for callers that only need to know *whether* one is
         attached (a front end showing state, a test asserting on it).
         """
-        return self._attachment.current if self._attachment is not None else None
+        return self._project_sessions.current_knowledge
 
     @property
     def attached_project_id(self) -> UUID | None:
         """Which project's graph is attached right now, or None."""
-        return self._attachment.attached_project_id if self._attachment is not None else None
+        return self._project_sessions.attached_project_id
 
     async def ensure_project_attached(self, session_id: UUID) -> bool:
         """Make `session_id`'s own project the attached one. Returns whether it is.
@@ -675,14 +622,7 @@ class SessionService:
         not open -- the caller decides whether that is worth reporting, since
         a turn without knowledge tools is degraded but not broken.
         """
-        session = await self._repository.load(session_id)
-        project_id = session.state.project_id
-        if project_id is None:
-            return False
-        if self.attached_project_id == project_id:
-            return True
-        await self.attach_project(project_id)
-        return self.attached_project_id == project_id
+        return await self._project_sessions.ensure_project_attached(session_id)
 
     async def attach_project(self, project_id: UUID) -> None:
         """Open `project_id`'s knowledge graph and give the executor its tools.
@@ -696,8 +636,7 @@ class SessionService:
         Delegates to `KnowledgeAttachment` for the atomicity guarantee: if
         opening the graph fails, nothing here is left half-attached.
         """
-        if self._attachment is not None:
-            await self._attachment.attach(project_id)
+        await self._project_sessions.attach_project(project_id)
 
     async def detach_project(self) -> None:
         """Close whatever knowledge graph is attached and restore the plain tools.
@@ -706,8 +645,7 @@ class SessionService:
         a knowledge subsystem was wired at all -- so every caller leaving a
         project can call this unconditionally.
         """
-        if self._attachment is not None:
-            await self._attachment.detach()
+        await self._project_sessions.detach_project()
 
     # ---------------- turns ----------------
 

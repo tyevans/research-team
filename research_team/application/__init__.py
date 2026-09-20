@@ -56,6 +56,7 @@ from research_team.application.ports import (
     TurnResult,
 )
 from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.project_sessions import ProjectSessions
 from research_team.application.research_round import (
     ROUND_INSTRUCTIONS,
     TopicRoundRunner,
@@ -144,6 +145,7 @@ __all__ = [
     "OpenGraph",
     "PreparedContext",
     "ProjectGraphs",
+    "ProjectSessions",
     "RecordedMessage",
     "ResearchRunDriver",
     "ResearchSupervisor",
