@@ -28,7 +28,8 @@ from research_team.application.ask import (
 from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
 from research_team.domain.ask_conversation import AskConversation
 from research_team.infrastructure.persistence.read_models import AskConversationStore
-from research_team.interfaces.web.app import AskRequest, create_app
+from research_team.interfaces.web.app import create_app
+from research_team.interfaces.web.dialogues import AskRequest
 
 SOME_ANSWER = AskAnswer(text="an answer")
 """A module-level default because `ruff`'s B008 forbids the call in the
@@ -305,9 +306,16 @@ async def test_closing_the_stream_cancels_the_model_call():
             return SOME_ANSWER
 
     app = create_app(service=None, feed=None, turns=None, ask=ask_service(Parking()))
+    routes = [
+        sub
+        for route in app.routes
+        for sub in (
+            route.original_router.routes if hasattr(route, "original_router") else [route]
+        )
+    ]
     endpoint = next(
         route.endpoint
-        for route in app.routes
+        for route in routes
         if getattr(route, "path", "") == "/api/projects/{project_id}/ask"
         and "POST" in getattr(route, "methods", ())
     )
