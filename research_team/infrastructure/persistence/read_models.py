@@ -383,7 +383,32 @@ async def apply_schema(connection: aiosqlite.Connection, model: type[ReadModel])
     await connection.commit()
 
 
-class SessionSummaryStore:
+async def open_readmodel_connection(
+    db_path: str,
+    *row_classes: type[ReadModel],
+) -> aiosqlite.Connection:
+    connection = await aiosqlite.connect(db_path)
+    for rc in row_classes:
+        await apply_schema(connection, rc)
+    return connection
+
+
+class BaseReadModelStore:
+    """Base class providing connection lifecycle and table truncation for read model stores."""
+
+    def __init__(self, connection: aiosqlite.Connection) -> None:
+        self._connection = connection
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+    async def _truncate_tables(self, *row_classes: type[ReadModel]) -> None:
+        for rc in row_classes:
+            await self._connection.execute(f"DELETE FROM {rc.table_name()}")
+        await self._connection.commit()
+
+
+class SessionSummaryStore(BaseReadModelStore):
     """The `/sessions` table, its projection, and the connection they share.
 
     Opening it applies the model's own DDL, so there is no migration step to
@@ -397,7 +422,7 @@ class SessionSummaryStore:
         rows: ReadModelRepository[SessionSummaryRow],
         projection: SessionSummaryProjection,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
         self.projection = projection
 
@@ -405,8 +430,7 @@ class SessionSummaryStore:
     async def open(
         cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None
     ) -> "SessionSummaryStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, SessionSummaryRow)
+        connection = await open_readmodel_connection(db_path, SessionSummaryRow)
         rows = SQLiteReadModelRepository(connection, SessionSummaryRow, tracer)
         return cls(
             connection,
@@ -426,11 +450,7 @@ class SessionSummaryStore:
         a soft-deleted row would linger invisibly and collide with the row the
         replay is about to write for the same session.
         """
-        await self._connection.execute(f"DELETE FROM {SessionSummaryRow.table_name()}")
-        await self._connection.commit()
-
-    async def close(self) -> None:
-        await self._connection.close()
+        await self._truncate_tables(SessionSummaryRow)
 
 
 class BaseProjectionRunner[TStore]:
@@ -1206,7 +1226,7 @@ class CorpusProjection(DeclarativeProjection):
         return row
 
 
-class CorpusStore:
+class CorpusStore(BaseReadModelStore):
     """The corpus table, its projection, and the connection they share.
 
     Mirrors `SessionSummaryStore`: opening it applies the model's own DDL, so
@@ -1220,7 +1240,7 @@ class CorpusStore:
         media_rows: ReadModelRepository[CorpusMediaRow],
         projection: CorpusProjection,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
         self._media_rows = media_rows
         self.projection = projection
@@ -1229,9 +1249,9 @@ class CorpusStore:
     async def open(
         cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None
     ) -> "CorpusStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, CorpusDocumentRow)
-        await apply_schema(connection, CorpusMediaRow)
+        connection = await open_readmodel_connection(
+            db_path, CorpusDocumentRow, CorpusMediaRow
+        )
         # `apply_schema` reconciles columns and not indexes, so this stays: it
         # is not made redundant by the line above and deleting it would put
         # every project's reads back on a full scan.
@@ -1396,12 +1416,7 @@ class CorpusStore:
         `CorpusMediaStored` -- truncating only the document table would leave
         stale media rows the replay never revisits.
         """
-        await self._connection.execute(f"DELETE FROM {CorpusDocumentRow.table_name()}")
-        await self._connection.execute(f"DELETE FROM {CorpusMediaRow.table_name()}")
-        await self._connection.commit()
-
-    async def close(self) -> None:
-        await self._connection.close()
+        await self._truncate_tables(CorpusDocumentRow, CorpusMediaRow)
 
 
 class CorpusRunner(BaseProjectionRunner[CorpusStore]):
@@ -1510,7 +1525,7 @@ class EntityDefinitionRow(ReadModel):
         return uuid5(DEFINITION_NAMESPACE, f"{project_id}:{entity_id}")
 
 
-class EntityDefinitionStore:
+class EntityDefinitionStore(BaseReadModelStore):
     """The definition cache table and the connection it owns.
 
     No projection here, unlike `CorpusStore` and `SessionSummaryStore` --
@@ -1523,13 +1538,12 @@ class EntityDefinitionStore:
     """
 
     def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "EntityDefinitionStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, EntityDefinitionRow)
+        connection = await open_readmodel_connection(db_path, EntityDefinitionRow)
         # `apply_schema` reconciles columns, not indexes -- see the identical
         # note on `CorpusStore.open`. Every read here is project-scoped
         # (`get`, and `mark_stale`/`delete` before it), so an unindexed table
@@ -1616,9 +1630,6 @@ class EntityDefinitionStore:
         nothing will ever regenerate. A missing row is a no-op for the same
         reason `mark_stale`'s is."""
         await self._rows.delete(EntityDefinitionRow.row_id(project_id, entity_id))
-
-    async def close(self) -> None:
-        await self._connection.close()
 
 
 class EntityDefinitionProjection(DeclarativeProjection):
@@ -1883,7 +1894,7 @@ class OntologyExaminedRow(ReadModel):
         return uuid5(ONTOLOGY_NAMESPACE, f"examined:{project_id}:{source_id}")
 
 
-class OntologyStore:
+class OntologyStore(BaseReadModelStore):
     """The three ontology tables and the connection they share.
 
     One store rather than one per table, unlike the rest of this module,
@@ -1900,17 +1911,19 @@ class OntologyStore:
         members: ReadModelRepository[OntologyMembershipRow],
         examined: ReadModelRepository[OntologyExaminedRow],
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._classes = classes
         self._members = members
         self._examined = examined
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "OntologyStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, OntologyClassRow)
-        await apply_schema(connection, OntologyMembershipRow)
-        await apply_schema(connection, OntologyExaminedRow)
+        connection = await open_readmodel_connection(
+            db_path,
+            OntologyClassRow,
+            OntologyMembershipRow,
+            OntologyExaminedRow,
+        )
         # `apply_schema` reconciles columns and not indexes -- the same note as
         # on `EntityDefinitionStore.open`. `members_for` runs once per class on
         # every graph read, so an unindexed membership table would put a
@@ -2104,9 +2117,6 @@ class OntologyStore:
         )
         await self._connection.commit()
 
-    async def close(self) -> None:
-        await self._connection.close()
-
 
 class OntologyProjection(DeclarativeProjection):
     """Writes discovered classes, and stales them when extraction moves under them.
@@ -2235,7 +2245,7 @@ class CourseBlurbRow(ReadModel):
         return uuid5(CATALOG_NAMESPACE, f"blurb:{project_id}:{slug}")
 
 
-class CourseBlurbStore:
+class CourseBlurbStore(BaseReadModelStore):
     """The blurb cache table and the connection it owns.
 
     No projection here, matching `EntityDefinitionStore`: nothing on the
@@ -2244,13 +2254,12 @@ class CourseBlurbStore:
     """
 
     def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "CourseBlurbStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, CourseBlurbRow)
+        connection = await open_readmodel_connection(db_path, CourseBlurbRow)
         # `apply_schema` reconciles columns, not indexes -- the same note
         # `EntityDefinitionStore.open` carries, for the same reason: every
         # read here is project-scoped.
@@ -2316,9 +2325,6 @@ class CourseBlurbStore:
             )
         )
 
-    async def close(self) -> None:
-        await self._connection.close()
-
 
 class CourseOutlineRow(ReadModel):
     """One generated outline, cached against the cluster it describes.
@@ -2362,7 +2368,7 @@ class CourseOutlineRow(ReadModel):
         return uuid5(CATALOG_NAMESPACE, f"outline:{project_id}:{slug}")
 
 
-class CourseOutlineStore:
+class CourseOutlineStore(BaseReadModelStore):
     """The outline cache table and the connection it owns.
 
     No projection here, matching `CourseBlurbStore`: nothing on the event log
@@ -2371,13 +2377,12 @@ class CourseOutlineStore:
     """
 
     def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "CourseOutlineStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, CourseOutlineRow)
+        connection = await open_readmodel_connection(db_path, CourseOutlineRow)
         # `apply_schema` reconciles columns, not indexes -- the same note
         # `CourseBlurbStore.open` carries, for the same reason: every read
         # here is project-scoped.
@@ -2429,21 +2434,17 @@ class CourseOutlineStore:
             )
         )
 
-    async def close(self) -> None:
-        await self._connection.close()
 
-
-class CatalogFeatureStore:
+class CatalogFeatureStore(BaseReadModelStore):
     """The featured table and the connection it owns."""
 
     def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "CatalogFeatureStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, CatalogFeatureRow)
+        connection = await open_readmodel_connection(db_path, CatalogFeatureRow)
         # `apply_schema` reconciles columns, not indexes -- the same note
         # `EntityDefinitionStore.open` carries, for the same reason: every
         # read here is project-scoped.
@@ -2485,9 +2486,6 @@ class CatalogFeatureStore:
             return {row[0]: row[1] for row in await cursor.fetchall()}
         finally:
             await cursor.close()
-
-    async def close(self) -> None:
-        await self._connection.close()
 
 
 class CatalogFeatureProjection(DeclarativeProjection):
@@ -2560,17 +2558,16 @@ class CourseRow(ReadModel):
         return uuid5(CATALOG_NAMESPACE, f"course:{project_id}:{slug}")
 
 
-class CourseStore:
+class CourseStore(BaseReadModelStore):
     """The courses table and the connection it owns."""
 
     def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "CourseStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, CourseRow)
+        connection = await open_readmodel_connection(db_path, CourseRow)
         # `apply_schema` reconciles columns, not indexes -- the same note
         # `CourseBlurbStore.open` carries, for the same reason: every read
         # here is project-scoped.
@@ -2644,9 +2641,6 @@ class CourseStore:
         if row is None:
             return
         await self._rows.save(row.model_copy(update={"abandoned": True}))
-
-    async def close(self) -> None:
-        await self._connection.close()
 
 
 class CourseProjection(DeclarativeProjection):
@@ -3011,7 +3005,7 @@ class MediaProposalProjection(DeclarativeProjection):
         return row
 
 
-class MediaProposalStore:
+class MediaProposalStore(BaseReadModelStore):
     """The proposal table, its supporting tables, and the connection they
     share. Mirrors `OntologyStore`: one store over several tables that are
     written together, opened with `apply_schema` so there is no migration
@@ -3027,7 +3021,7 @@ class MediaProposalStore:
         ignored_hosts: ReadModelRepository[MediaIgnoredHostRow],
         projection: MediaProposalProjection,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
         self._needs = needs
         self._ignored_assets = ignored_assets
@@ -3038,11 +3032,13 @@ class MediaProposalStore:
     async def open(
         cls, db_path: str, checkpoint_repo=None, dlq_repo=None, tracer=None
     ) -> "MediaProposalStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, MediaProposalRow)
-        await apply_schema(connection, MediaNeedRow)
-        await apply_schema(connection, MediaIgnoredAssetRow)
-        await apply_schema(connection, MediaIgnoredHostRow)
+        connection = await open_readmodel_connection(
+            db_path,
+            MediaProposalRow,
+            MediaNeedRow,
+            MediaIgnoredAssetRow,
+            MediaIgnoredHostRow,
+        )
         # `apply_schema` reconciles columns and not indexes, so this stays --
         # the same note as `CorpusStore.open`. Every read here is by project.
         for statement in (
@@ -3141,9 +3137,6 @@ class MediaProposalStore:
             return {row[0] for row in await cursor.fetchall()}
         finally:
             await cursor.close()
-
-    async def close(self) -> None:
-        await self._connection.close()
 
 
 class MediaProposalRunner(BaseProjectionRunner[MediaProposalStore]):
@@ -3281,7 +3274,7 @@ class AskTurnRow(ReadModel):
         return uuid5(ASK_NAMESPACE, f"{conversation_id}:{position}")
 
 
-class AskConversationStore:
+class AskConversationStore(BaseReadModelStore):
     """The two ask tables and the connection they share.
 
     One store rather than one per table, for `OntologyStore`'s reason: a turn
@@ -3296,15 +3289,17 @@ class AskConversationStore:
         conversations: ReadModelRepository[AskConversationRow],
         turns: ReadModelRepository[AskTurnRow],
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._conversations = conversations
         self._turns = turns
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "AskConversationStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, AskConversationRow)
-        await apply_schema(connection, AskTurnRow)
+        connection = await open_readmodel_connection(
+            db_path,
+            AskConversationRow,
+            AskTurnRow,
+        )
         # `apply_schema` reconciles columns and not indexes -- the same note as
         # on `EntityDefinitionStore.open`. Both reads here are scoped: the
         # history list by project and one conversation's turns by conversation,
@@ -3397,12 +3392,7 @@ class AskConversationStore:
     async def truncate(self) -> None:
         """Empty both tables, for a rebuild to fill again -- a hard delete for
         `SessionSummaryStore.truncate`'s reason."""
-        for table in (AskConversationRow.table_name(), AskTurnRow.table_name()):
-            await self._connection.execute(f"DELETE FROM {table}")
-        await self._connection.commit()
-
-    async def close(self) -> None:
-        await self._connection.close()
+        await self._truncate_tables(AskConversationRow, AskTurnRow)
 
 
 class AskConversationProjection(DeclarativeProjection):
@@ -3576,7 +3566,7 @@ class SocraticTurnRow(ReadModel):
         return uuid5(SOCRATIC_NAMESPACE, f"{dialogue_id}:{position}")
 
 
-class SocraticDialogueStore:
+class SocraticDialogueStore(BaseReadModelStore):
     """The two dialogue tables and the connection they share.
 
     One store rather than one per table, for `AskConversationStore`'s reason: a
@@ -3591,15 +3581,17 @@ class SocraticDialogueStore:
         dialogues: ReadModelRepository[SocraticDialogueRow],
         turns: ReadModelRepository[SocraticTurnRow],
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._dialogues = dialogues
         self._turns = turns
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "SocraticDialogueStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, SocraticDialogueRow)
-        await apply_schema(connection, SocraticTurnRow)
+        connection = await open_readmodel_connection(
+            db_path,
+            SocraticDialogueRow,
+            SocraticTurnRow,
+        )
         # `apply_schema` reconciles columns and not indexes -- the same note as
         # on `AskConversationStore.open`. Both reads here are scoped: the
         # history list by project and one dialogue's turns by dialogue, so
@@ -3739,12 +3731,7 @@ class SocraticDialogueStore:
     async def truncate(self) -> None:
         """Empty both tables, for a rebuild to fill again -- a hard delete for
         `SessionSummaryStore.truncate`'s reason."""
-        for table in (SocraticDialogueRow.table_name(), SocraticTurnRow.table_name()):
-            await self._connection.execute(f"DELETE FROM {table}")
-        await self._connection.commit()
-
-    async def close(self) -> None:
-        await self._connection.close()
+        await self._truncate_tables(SocraticDialogueRow, SocraticTurnRow)
 
 
 class SocraticDialogueProjection(DeclarativeProjection):
@@ -3901,7 +3888,7 @@ class AuthoringRunRow(ReadModel):
         return value
 
 
-class AuthoringRunStore:
+class AuthoringRunStore(BaseReadModelStore):
     """The `authoring_runs` table and the connection it owns.
 
     Every column is written from an event payload, so `rebuild()` may truncate
@@ -3911,13 +3898,12 @@ class AuthoringRunStore:
     def __init__(
         self, connection: aiosqlite.Connection, rows: ReadModelRepository[AuthoringRunRow]
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "AuthoringRunStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, AuthoringRunRow)
+        connection = await open_readmodel_connection(db_path, AuthoringRunRow)
         # `apply_schema` reconciles columns and not indexes -- the same note as
         # on `EntityDefinitionStore.open`. The only read that is not by id is
         # `latest_for_project`, which runs on every open of the curriculum
@@ -4047,11 +4033,7 @@ class AuthoringRunStore:
         return None
 
     async def truncate(self) -> None:
-        await self._connection.execute(f"DELETE FROM {AuthoringRunRow.table_name()}")
-        await self._connection.commit()
-
-    async def close(self) -> None:
-        await self._connection.close()
+        await self._truncate_tables(AuthoringRunRow)
 
 
 class AuthoringRunProjection(DeclarativeProjection):
@@ -4196,7 +4178,7 @@ class ArtRow(ReadModel):
         return value
 
 
-class ArtStore:
+class ArtStore(BaseReadModelStore):
     """The art library table and the connection it owns.
 
     A cache, not a projection, for `CourseBlurbStore`'s exact reason: nothing
@@ -4209,13 +4191,12 @@ class ArtStore:
     """
 
     def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "ArtStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, ArtRow)
+        connection = await open_readmodel_connection(db_path, ArtRow)
         # `apply_schema` reconciles columns, not indexes -- the same note
         # every other store in this module carries. No index beyond the
         # primary key: `all()` is a full-table scan by design (the sibling
@@ -4223,7 +4204,6 @@ class ArtStore:
         # that to be fine, and the increment-3 spec's search section says why
         # an index meant to speed that up is premature before the corpus is
         # large enough to measure).
-        await connection.commit()
         rows = SQLiteReadModelRepository(connection, ArtRow, tracer)
         return cls(connection, rows)
 
@@ -4304,9 +4284,6 @@ class ArtStore:
         row.uses = max(0, row.uses - 1)
         await self._rows.save(row)
 
-    async def close(self) -> None:
-        await self._connection.close()
-
 
 class CandidateArtRow(ReadModel):
     """Which piece of art a candidate is assigned, keyed by `(project_id,
@@ -4351,7 +4328,7 @@ class CandidateArtRow(ReadModel):
         return uuid5(CATALOG_NAMESPACE, f"art:{project_id}:{slug}")
 
 
-class CandidateArtStore:
+class CandidateArtStore(BaseReadModelStore):
     """The candidate-to-art assignment table and the connection it owns.
 
     No projection, for `CourseBlurbStore`'s reason: nothing on the event log
@@ -4361,13 +4338,12 @@ class CandidateArtStore:
     """
 
     def __init__(self, connection: aiosqlite.Connection, rows: ReadModelRepository) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._rows = rows
 
     @classmethod
     async def open(cls, db_path: str, tracer=None) -> "CandidateArtStore":
-        connection = await aiosqlite.connect(db_path)
-        await apply_schema(connection, CandidateArtRow)
+        connection = await open_readmodel_connection(db_path, CandidateArtRow)
         # `apply_schema` reconciles columns, not indexes -- the same note
         # `CourseBlurbStore.open` carries, for the same reason: every read
         # here is project-scoped.
@@ -4414,6 +4390,3 @@ class CandidateArtStore:
                 membership_hash=membership_hash,
             )
         )
-
-    async def close(self) -> None:
-        await self._connection.close()
