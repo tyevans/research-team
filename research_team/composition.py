@@ -8,9 +8,7 @@ swapping any of them is an edit here and nowhere else.
 import functools
 import logging
 import random as random
-import time
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from uuid import UUID
 
 # Imported for its side effect as much as its names: redstring registers its
@@ -167,6 +165,7 @@ from research_team.wiring import (
     _PARTIAL_BUILD_RESOURCES,
     BuiltStores,
     BuiltTools,
+    ContentPipeline,
     LazyAsyncResource,
     _CatalogFeatureRunner,
     _close_every_step,
@@ -183,7 +182,13 @@ from research_team.wiring import (
     _run_detached,
     _subagents_for,
     _swallowing,
+    build_ask_service,
+    build_content_pipeline,
+    build_corpus_editor,
     build_curation_tools,
+    build_document_extractor,
+    build_media_perceiver,
+    build_socratic_service,
     build_stores,
     build_tools,
 )
@@ -192,10 +197,20 @@ from research_team.wiring.application import Application
 __all__ = [
     "_PARTIAL_BUILD_RESOURCES",
     "Application",
+    "AskService",
     "BuiltStores",
     "BuiltTools",
+    "ContentPipeline",
+    "ConversationRegistry",
+    "CorpusEditor",
+    "DeepAgentAskExecutor",
+    "DeepAgentSocraticExecutor",
+    "DialogueRegistry",
+    "DocumentExtractor",
     "EventStoreSessionRepository",
     "LazyAsyncResource",
+    "MediaPerceiver",
+    "SocraticDialogueService",
     "_CatalogFeatureRunner",
     "_CourseRunner",
     "_LazyArtStore",
@@ -212,8 +227,18 @@ __all__ = [
     "_subagents_for",
     "_swallowing",
     "build_application",
+    "build_ask_conversation_repository",
+    "build_ask_service",
+    "build_content_pipeline",
+    "build_corpus_editor",
+    "build_corpus_repository",
     "build_curation_tools",
+    "build_document_extractor",
+    "build_learner_progress_repository",
+    "build_media_perceiver",
     "build_service",
+    "build_socratic_dialogue_repository",
+    "build_socratic_service",
     "build_stores",
     "build_tools",
     "random",
@@ -1035,117 +1060,38 @@ def _build_application(
     # questions asked of them are durations -- how long a conversation has been
     # idle -- and a clock that can step backwards would evict a chat somebody
     # is in the middle of.
-    ask_service = AskService(
-        executor=DeepAgentAskExecutor(
-            model=resolved_model,
-            open_graph=open_graph,
-            project_files=service.project_files,
-        ),
-        conversations=ConversationRegistry(now=time.monotonic),
-        now=time.monotonic,
-        # The durable half of the same record. Wired here rather than
-        # defaulted inside the service for `progress`'s reason above: which
-        # store an aggregate lands in is the decision this root exists to
-        # make. No snapshot store -- see the builder's docstring.
-        transcripts=build_ask_conversation_repository(repository.store, repository.publisher),
+    ask_service = build_ask_service(
+        model=resolved_model,
+        open_graph=open_graph,
+        project_files=service.project_files,
+        store=repository.store,
+        publisher=repository.publisher,
     )
 
-    # Built here for `ask_service`'s reason: the executor takes the project
-    # tools `open_graph` assembles and keeps the readers, so it cannot be
-    # constructed anywhere a caller could reach.
-    #
-    # A second executor beside the ask's, differently prompted over identical
-    # plumbing -- which is the whole of what the design's §4 said this would
-    # cost, and it is these four lines.
-    #
-    # `read_model=dialogues` is the whole of resumption's wiring, and it is one
-    # keyword. A build that passed something else here -- or nothing -- would
-    # compose, serve, and start every resumed dialogue over.
-    socratic_service = SocraticDialogueService(
-        executor=DeepAgentSocraticExecutor(
-            model=resolved_model,
-            open_graph=open_graph,
-            project_files=service.project_files,
-        ),
-        dialogues=DialogueRegistry(now=time.monotonic),
-        read_model=dialogues,
-        now=time.monotonic,
-        transcripts=build_socratic_dialogue_repository(repository.store, repository.publisher),
-        clock=lambda: datetime.now(UTC),
-        # The same builder `SessionService` uses, over the same log. Keyed on
-        # the dialogue id here rather than a session id -- see
-        # `SocraticDialogueService.progress_for` and the design's §3 for why
-        # this surface can answer the identity question the ask path skipped.
-        # The two share a log and are kept apart by aggregate id, which is what
-        # `LearnerProgress` already does between sessions.
-        progress=build_learner_progress_repository(
-            repository.store, repository.publisher, snapshot_store=repository.snapshot_store
-        ),
-    )
-
-    # Built here for `ask_service`'s reason, and it is the same reason: this
-    # needs the `open_graph` closure above, which is assembled from this
-    # build's stores and cannot be reached from anywhere a caller could stand.
-    #
-    # `open_graph` returns the knowledge port *and* the project's tools; only
-    # the port is wanted here. Discarding the tools costs building them -- four
-    # tool sets constructed and dropped per extraction -- which is a handful of
-    # dataclasses against a call that is about to spend minutes of model time.
-    # The alternative is a second closure that opens a store and builds a
-    # `RedstringKnowledge` without them, and a second place that decides how an
-    # adapter is configured is exactly how the concurrency and chunker settings
-    # would come to differ between the agent's `remember` and this button.
-    async def open_knowledge(target_project_id: UUID) -> RedstringKnowledge:
-        knowledge, _tools = await open_graph(target_project_id)
-        return knowledge
-
-    document_extractor = DocumentExtractor(
-        open_knowledge=open_knowledge,
-        corpus_readers=corpus_readers,
-        # The same channel `remember` reports through, so a queued extraction
-        # and an agent's own land in one pane rather than two accounts of the
-        # same graph being written. None when nothing is listening, matching
-        # how `open_graph` binds the reporter for the knowledge tools.
-        reporters=extractions.reporter if extractions is not None else None,
-    )
-    # Built from the same `open_knowledge` closure and corpus reader factory
-    # `document_extractor` uses, plus an `AggregateRepository[Corpus]` of its
-    # own -- `corpus` in this scope is the `CorpusRunner` read model
-    # `ProjectCorpusReader` wraps, not the aggregate repository `drop` and
-    # `restore` need to execute `DropSourceDocument`/`StoreSourceDocument`
-    # against. Built the same three-argument way `open_graph` builds one for
-    # `RedstringKnowledge`, including the publisher: leaving it out is the
-    # silent-wiring failure that comment already explains, and a `drop` or
-    # `restore` that missed it would corrupt the corpus row and wake nothing.
-    #
-    # Held in a variable and handed to `perceiver` below too, rather than
-    # built a second time: `StoreDerivedText` and `DropSourceDocument` both
-    # execute against this same aggregate stream, and a second repository
-    # built the same three-argument way would still be one connection to one
-    # log -- but two objects that only happen to agree, where composition
-    # should have made them the same object outright.
-    corpus_repository = build_corpus_repository(
-        repository.store,
-        repository.publisher,
+    socratic_service = build_socratic_service(
+        model=resolved_model,
+        open_graph=open_graph,
+        project_files=service.project_files,
+        dialogues=dialogues,
+        store=repository.store,
+        publisher=repository.publisher,
         snapshot_store=repository.snapshot_store,
     )
-    editor = CorpusEditor(
-        open_knowledge=open_knowledge,
-        readers=corpus_readers,
-        corpus=corpus_repository,
-        blobs=blob_store,
-    )
-    # Constructed beside `document_extractor`, sharing its `corpus_readers`
-    # closure and the corpus repository `editor` holds -- see both comments
-    # above. `resolved_perception` is this build's port: a real
-    # `ReadEverythingPerception` unless a test injected a fake through
-    # `build_application(perception=...)`.
-    media_perceiver = MediaPerceiver(
-        port=resolved_perception,
+
+    content_pipeline = build_content_pipeline(
+        open_graph=open_graph,
         corpus_readers=corpus_readers,
-        corpus=corpus_repository,
-        max_chars=config.perception_max_chars,
+        store=repository.store,
+        publisher=repository.publisher,
+        snapshot_store=repository.snapshot_store,
+        blob_store=blob_store,
+        perception=resolved_perception,
+        perception_max_chars=config.perception_max_chars,
+        extractions=extractions,
     )
+    document_extractor = content_pipeline.document_extractor
+    editor = content_pipeline.editor
+    media_perceiver = content_pipeline.media_perceiver
     runs = build_research_run_repository(
         repository.store, repository.publisher, snapshot_store=repository.snapshot_store
     )
