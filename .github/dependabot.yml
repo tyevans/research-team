@@ -34,6 +34,15 @@ updates:
       - dependency-name: typescript
         update-types:
           - version-update:semver-major
+      # vitest 5.x has breaking changes with `@testing-library/jest-dom` matchers
+      # and is rejected by `vitest-browser-react@2.2.0` (peer `vitest@^4.0.0`).
+      # Ignore vitest semver-major until those upstream packages admit vitest 5.
+      - dependency-name: vitest
+        update-types:
+          - version-update:semver-major
+      - dependency-name: '@vitest/*'
+        update-types:
+          - version-update:semver-major
     groups:
       # The toolchain moves together and breaks together — a typescript-eslint
       # bump that needs a matching eslint bump is not reviewable in isolation.
