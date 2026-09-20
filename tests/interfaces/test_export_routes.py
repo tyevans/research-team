@@ -1,10 +1,9 @@
-"""`/api/projects/{id}/export/...`: the two ways work leaves this system.
+"""`/api/projects/{id}/export/course`: course export route tests.
 
 What can only break here is the wiring -- which run's sessions a course
-archive gathers from, which entities a scoped graph export contains, and
-whether the refusals are refusals rather than quietly empty files. The layout
-arithmetic and the three serialisations belong to
-`tests/application/test_graph_export.py`.
+archive gathers from, and whether the refusals are refusals rather than quietly
+empty files. Graph export route tests belong to
+`tests/interfaces/test_graph_export_routes.py`.
 
 The fixture is `test_curriculum_routes.py`'s, duplicated module-locally for
 that module's stated reason. It is duplicated with one addition: this module
@@ -18,11 +17,9 @@ import zipfile
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
-from xml.etree import ElementTree as ET
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from redstring import Entity, ExtractionMethod, Provenance, Relationship
 
 from research_team.application import SummaryProjects, WorkerRoster
 from research_team.application.curriculum import CurriculumService
@@ -84,52 +81,6 @@ async def _new_project(client) -> str:
     created = await client.post("/api/projects", json={"name": f"export-{uuid4()}"})
     assert created.status_code == 200
     return created.json()["id"]
-
-
-def _entity(tenant_id: UUID, name: str) -> Entity:
-    return Entity(
-        id=uuid4(),
-        tenant_id=tenant_id,
-        name=name,
-        normalized_name=name.lower(),
-        entity_type="concept",
-        provenance=Provenance(
-            observed_at=datetime(2026, 1, 1, tzinfo=UTC),
-            extraction_method=ExtractionMethod.MANUAL,
-            confidence=1.0,
-        ),
-    )
-
-
-async def _seed_two_clusters(application, project_id: str) -> dict[str, list[Entity]]:
-    """Two four-cliques joined by nothing: an unambiguous two-area graph.
-
-    Returned rather than discarded, so a scoped export can be checked against
-    the entities that are actually in each cluster instead of against a count.
-    """
-    tenant_id = UUID(project_id)
-    store = await application.graphs.open(tenant_id)
-    groups = {
-        "alpha": [_entity(tenant_id, f"Alpha {i}") for i in range(4)],
-        "beta": [_entity(tenant_id, f"Beta {i}") for i in range(4)],
-    }
-    await store.upsert_entities([e for group in groups.values() for e in group])
-    edges = []
-    for group in groups.values():
-        for i, left in enumerate(group):
-            for right in group[i + 1 :]:
-                edges.append(
-                    Relationship(
-                        id=uuid4(),
-                        tenant_id=tenant_id,
-                        source_entity_id=left.id,
-                        target_entity_id=right.id,
-                        relationship_type="relates_to",
-                        confidence=1.0,
-                    )
-                )
-    await store.upsert_relationships(edges)
-    return groups
 
 
 async def _authored(application, authoring, project_id: str, files: dict[str, dict[str, str]]):
@@ -532,126 +483,6 @@ async def test_an_unknown_course_format_is_refused_rather_than_defaulted(app_and
     response = await client.get(f"/api/projects/{project_id}/export/course?format=pdf")
 
     assert response.status_code == 422
-
-
-# ---- B. the graph ---------------------------------------------------------
-
-
-async def test_the_exported_html_is_one_file_that_names_the_entities(app_and_client):
-    client = app_and_client.client
-    project_id = await _new_project(client)
-    await _seed_two_clusters(app_and_client.application, project_id)
-
-    response = await client.get(f"/api/projects/{project_id}/export/graph")
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert "attachment" in response.headers["content-disposition"]
-    body = response.text
-    assert "Alpha 0" in body
-    assert "Beta 3" in body
-    assert "http://" not in body and "https://" not in body
-
-
-async def test_the_json_export_carries_positions_for_the_whole_graph(app_and_client):
-    client = app_and_client.client
-    project_id = await _new_project(client)
-    await _seed_two_clusters(app_and_client.application, project_id)
-
-    body = (await client.get(f"/api/projects/{project_id}/export/graph?format=json")).json()
-
-    assert len(body["nodes"]) == 8
-    assert {node["name"] for node in body["nodes"]} == {
-        f"{prefix} {i}" for prefix in ("Alpha", "Beta") for i in range(4)
-    }
-    assert all(isinstance(node["x"], (int, float)) for node in body["nodes"])
-    # Twelve: two four-cliques, six edges each.
-    assert len(body["edges"]) == 12
-
-
-async def test_an_area_export_holds_that_area_and_not_the_other(app_and_client):
-    """The assertion that a scope is a scope.
-
-    An export that quietly returned the whole project when asked for one area
-    is the failure worth testing: the file opens, draws, and is about the
-    wrong thing. Compares against the *other* cluster's names rather than
-    against a count, because two areas of four are the same count.
-    """
-    client = app_and_client.client
-    project_id = await _new_project(client)
-    await _seed_two_clusters(app_and_client.application, project_id)
-
-    areas = (await client.get(f"/api/projects/{project_id}/curriculum")).json()["areas"]
-    slug = next(
-        area["slug"]
-        for area in areas
-        if any(member["name"].startswith("Alpha") for member in area["members"])
-    )
-
-    body = (
-        await client.get(
-            f"/api/projects/{project_id}/export/graph?format=json&scope=area&area={slug}"
-        )
-    ).json()
-
-    names = {node["name"] for node in body["nodes"]}
-    assert names, "the area export is empty"
-    assert all(name.startswith("Alpha") for name in names), names
-
-
-async def test_an_entity_export_holds_the_entity_it_is_named_after(app_and_client):
-    """`Neighborhood.root` is not in `entities`, so an export that forwarded
-    only `entities` would draw everything around a hole."""
-    client = app_and_client.client
-    project_id = await _new_project(client)
-    groups = await _seed_two_clusters(app_and_client.application, project_id)
-    root = groups["alpha"][0]
-
-    body = (
-        await client.get(
-            f"/api/projects/{project_id}/export/graph"
-            f"?format=json&scope=entity&entity={root.id}&depth=1"
-        )
-    ).json()
-
-    assert str(root.id) in {node["id"] for node in body["nodes"]}
-    assert {node["name"] for node in body["nodes"]} == {f"Alpha {i}" for i in range(4)}
-
-
-async def test_the_graphml_export_parses_and_is_offered_as_a_download(app_and_client):
-    client = app_and_client.client
-    project_id = await _new_project(client)
-    await _seed_two_clusters(app_and_client.application, project_id)
-
-    response = await client.get(f"/api/projects/{project_id}/export/graph?format=graphml")
-
-    assert response.status_code == 200
-    assert ".graphml" in response.headers["content-disposition"]
-    document = ET.fromstring(response.text)
-    namespace = "{http://graphml.graphdrawing.org/xmlns}"
-    assert len(list(document.iter(f"{namespace}node"))) == 8
-
-
-async def test_an_unknown_format_is_refused_rather_than_defaulted(app_and_client):
-    """A typo that fell back to HTML would hand a browser a page when a script
-    asked for data, and the script would parse it as JSON and fail somewhere
-    else entirely."""
-    client = app_and_client.client
-    project_id = await _new_project(client)
-
-    response = await client.get(f"/api/projects/{project_id}/export/graph?format=gexf")
-
-    assert response.status_code == 422
-
-
-async def test_scope_area_without_an_area_is_refused(app_and_client):
-    client = app_and_client.client
-    project_id = await _new_project(client)
-
-    response = await client.get(f"/api/projects/{project_id}/export/graph?scope=area")
-
-    assert response.status_code == 422
-    assert "area" in response.json()["detail"]
 
 
 async def test_an_interrupted_run_is_exported_rather_than_refused(app_and_client):
