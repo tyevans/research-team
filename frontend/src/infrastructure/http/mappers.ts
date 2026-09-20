@@ -71,7 +71,7 @@ import { EventIndex } from '@domain/session/event-index.ts'
 import type { LogEntry } from '@domain/session/log-entry.ts'
 import type { ForkNode, SessionProjection, SessionSummary } from '@domain/session/session.ts'
 import type { TurnRange } from '@domain/session/turn.ts'
-import type { Roster } from '@domain/worker/worker.ts'
+import type { Roster, Worker } from '@domain/worker/worker.ts'
 import type { FileRevision, WorkspaceFile } from '@domain/workspace/workspace-file.ts'
 import { FilePath } from '@domain/shared/file-path.ts'
 import {
@@ -90,6 +90,31 @@ import type * as dto from './dto.ts'
 // A value import, unlike the type-only namespace above: `readExtractionFrame`
 // parses at run time because a live frame is JSON nobody has validated yet.
 import { extractionFrameDto } from './dto.ts'
+import {
+  brandOrNull,
+  enumWithDefault,
+  isOneOf,
+  mapValues,
+  optionalMap,
+  toEpoch,
+  toInstant,
+  toMaybeInstant,
+  toMap,
+  toRecordMap,
+} from './mapper-utils.ts'
+
+export {
+  brandOrNull,
+  enumWithDefault,
+  isOneOf,
+  mapValues,
+  optionalMap,
+  toEpoch,
+  toInstant,
+  toMaybeInstant,
+  toMap,
+  toRecordMap,
+}
 
 /** The anti-corruption layer: wire shapes in, domain objects out.
  *
@@ -111,17 +136,13 @@ export const toLogEntry = (raw: Dto<typeof dto.logEntryDto>): LogEntry => ({
   cancelled: raw.cancelled,
 })
 
-const ROLES: Readonly<Record<string, MessageRole>> = {
-  user: 'user',
-  assistant: 'assistant',
-  tool: 'tool',
-}
+const toRole = enumWithDefault<MessageRole>(['user', 'assistant', 'tool'], 'assistant')
 
 export const toMessage = (raw: Dto<typeof dto.messageDto>): Message => ({
   // An unrecognised role renders as an assistant turn rather than vanishing:
   // the backend maps langchain's names already, and a new one is far more
   // likely to be model output than anything else.
-  role: ROLES[raw.role] ?? 'assistant',
+  role: toRole(raw.role),
   content: raw.content,
   toolCalls: raw.tool_calls.map((call) => ({ name: call.name, args: call.args })),
   isError: raw.is_error,
@@ -140,14 +161,14 @@ export const toWorkspaceFile = (raw: Dto<typeof dto.workspaceFileDto>): Workspac
 
 export const toSession = (raw: Dto<typeof dto.sessionDto>): SessionProjection => ({
   id: SessionId(raw.id),
-  projectId: raw.project_id ? ProjectId(raw.project_id) : null,
+  projectId: brandOrNull(raw.project_id, ProjectId),
   holdsProject: raw.holds_project,
   knowledgeAttached: raw.knowledge_attached,
   modelName: raw.model_name,
   systemPrompt: raw.system_prompt,
   turnIndex: raw.turn_index,
   failedTurns: raw.failed_turns,
-  forkedFrom: raw.forked_from ? SessionId(raw.forked_from) : null,
+  forkedFrom: brandOrNull(raw.forked_from, SessionId),
   forkedAt: raw.forked_at,
   eventCount: raw.event_count,
   compactedThrough: raw.compacted_through,
@@ -164,7 +185,7 @@ export const toSessionSummary = (raw: Dto<typeof dto.sessionSummaryDto>): Sessio
   turns: raw.turns,
   files: raw.files,
   firstMessage: raw.first_message,
-  forkedFrom: raw.forked_from ? SessionId(raw.forked_from) : null,
+  forkedFrom: brandOrNull(raw.forked_from, SessionId),
   forkedAt: raw.forked_at,
   failedTurns: raw.failed_turns,
 })
@@ -215,10 +236,7 @@ export const toItemProgress = (raw: Dto<typeof dto.itemProgressDto>): ItemProgre
 
 export const toProgressMap = (
   raw: Dto<typeof dto.progressDto>,
-): ReadonlyMap<ComponentId, ItemProgress> =>
-  new Map(
-    Object.entries(raw.items).map(([id, record]) => [ComponentId(id), toItemProgress(record)]),
-  )
+): ReadonlyMap<ComponentId, ItemProgress> => toRecordMap(raw.items, toItemProgress, ComponentId)
 
 /** One `ReadonlyMap` per turn, keyed `turn/{position}`.
  *
@@ -229,14 +247,7 @@ export const toProgressMap = (
 export const toDialogueProgress = (
   raw: Dto<typeof dto.dialogueProgressDto>,
 ): Readonly<Record<string, ReadonlyMap<ComponentId, ItemProgress>>> =>
-  Object.fromEntries(
-    Object.entries(raw.items).map(([turn, items]) => [
-      turn,
-      new Map(
-        Object.entries(items).map(([id, record]) => [ComponentId(id), toItemProgress(record)]),
-      ),
-    ]),
-  )
+  mapValues(raw.items, (items) => toRecordMap(items, toItemProgress, ComponentId))
 
 export const toVerdict = (raw: Dto<typeof dto.verdictDto>): Verdict => ({
   correct: raw.correct,
@@ -249,7 +260,7 @@ export const toVerdict = (raw: Dto<typeof dto.verdictDto>): Verdict => ({
     correct: blank.correct,
     answer: blank.answer,
   })),
-  progress: raw.progress ? toItemProgress(raw.progress) : null,
+  progress: optionalMap(raw.progress, toItemProgress),
 })
 
 /** A turn reports exactly where it landed. Both bounds or nothing: a range with
@@ -273,9 +284,7 @@ export const toActivityEntry = (raw: Dto<typeof dto.activityEntryDto>): Activity
 })
 
 const KNOWN_DECISIONS: readonly ApprovalDecision[] = ['approve', 'edit', 'reject', 'respond']
-
-const isKnownDecision = (value: string): value is ApprovalDecision =>
-  (KNOWN_DECISIONS as readonly string[]).includes(value)
+const isKnownDecision = isOneOf(KNOWN_DECISIONS)
 
 export const toApproval = (raw: Dto<typeof dto.approvalDto>): Approval => ({
   id: ApprovalId(raw.id),
@@ -294,7 +303,7 @@ export const toApproval = (raw: Dto<typeof dto.approvalDto>): Approval => ({
 export const toProject = (raw: Dto<typeof dto.projectDto>): Project => ({
   id: ProjectId(raw.id),
   name: raw.name,
-  activeSessionId: raw.active_session_id ? SessionId(raw.active_session_id) : null,
+  activeSessionId: brandOrNull(raw.active_session_id, SessionId),
   tipAtEvent: raw.tip_at_event,
 })
 
@@ -326,19 +335,11 @@ export const toProjectListing = (raw: Dto<typeof dto.projectRowDto>): ProjectLis
  * is how they come apart over a field nobody meant to split. */
 export const toProjectDetail = (raw: Dto<typeof dto.projectDetailDto>): ProjectDetail => ({
   ...toProject(raw),
-  readingHeadSessionId: raw.reading_head_session_id ? SessionId(raw.reading_head_session_id) : null,
+  readingHeadSessionId: brandOrNull(raw.reading_head_session_id, SessionId),
 })
 
-/** An ISO-8601 timestamp as epoch milliseconds, or null.
- *
- * Null stays null rather than defaulting to now: a worker with no start time
- * would otherwise render as "0s elapsed", which reads as having just begun.
- */
-const toEpoch = (raw: string | null): number | null => {
-  if (!raw) return null
-  const parsed = Date.parse(raw)
-  return Number.isNaN(parsed) ? null : parsed
-}
+const WORKER_KINDS: readonly Worker['kind'][] = ['run', 'extraction', 'dispatch']
+const toWorkerKind = enumWithDefault(WORKER_KINDS, 'turn')
 
 export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
   projectId: ProjectId(raw.project_id),
@@ -353,29 +354,26 @@ export const toRoster = (raw: Dto<typeof dto.rosterDto>): Roster => ({
     // a turn on screen, which is a confident wrong answer rather than a vague
     // one. Anything genuinely unknown still lands on `turn`, and that remains
     // the weakest part of this mapping.
-    kind:
-      worker.kind === 'run' || worker.kind === 'extraction' || worker.kind === 'dispatch'
-        ? worker.kind
-        : 'turn',
+    kind: toWorkerKind(worker.kind),
     ref: worker.ref,
     detail: worker.detail,
-    sessionId: worker.session_id ? SessionId(worker.session_id) : null,
+    sessionId: brandOrNull(worker.session_id, SessionId),
     parent: worker.parent,
     startedAt: toEpoch(worker.started_at),
   })),
-  idleSessionIds: raw.idle_session_ids.map((id) => SessionId(id)),
+  idleSessionIds: raw.idle_session_ids.map(SessionId),
 })
 
 /** A `Map` rather than the record the wire sent, so a tool named `toString` or
  *  `constructor` cannot be answered by `Object.prototype` — a plain-object
  *  lookup would report a level for a tool the server never mentioned. */
 export const toAutonomy = (raw: Dto<typeof dto.autonomyDto>): AutonomyPolicyView => ({
-  levels: new Map(Object.entries(raw.levels)),
+  levels: toMap(raw.levels),
   gated: raw.gated,
 })
 
 export const toAutonomyChange = (raw: Dto<typeof dto.autonomyChangeDto>): AutonomyChange => ({
-  changed: new Map(Object.entries(raw.changed)),
+  changed: toMap(raw.changed),
   policy: toAutonomy(raw),
 })
 
@@ -401,8 +399,7 @@ const STAGES: readonly ExtractionStage[] = [
  * extraction: mistaking a stage this build has not heard of for a terminal one
  * would file a running extraction under "last" and freeze the pane on it. A
  * wrong non-terminal label is a cosmetic error; a wrong terminal one is not. */
-const toStage = (raw: string): ExtractionStage =>
-  STAGES.find((stage) => stage === raw) ?? 'extracting'
+const toStage = enumWithDefault(STAGES, 'extracting')
 
 export const toExtractionFrame = (raw: Dto<typeof dto.extractionFrameDto>): ExtractionFrame => ({
   type: 'Extraction',
@@ -438,8 +435,7 @@ const SEED_STATUSES: readonly SeedingStatus[] = ['running', 'done', 'failed']
  *  disabled and shows the run as still in flight, which is the safer
  *  misreading of the two -- a build talking to a server with a fourth status
  *  should stay cautious rather than declare an unknown outcome finished. */
-const toSeedStatus = (raw: string): SeedingStatus =>
-  SEED_STATUSES.find((status) => status === raw) ?? 'running'
+const toSeedStatus = enumWithDefault(SEED_STATUSES, 'running')
 
 export const toSeedingRun = (raw: Dto<typeof dto.seedingFrameDto>): SeedingRun => ({
   runId: raw.run_id,
@@ -466,8 +462,7 @@ const DISPATCH_STATUSES: readonly DispatchStatus[] = [
  * self-corrects is the cheaper mistake — the same reasoning `toSeedStatus`
  * applies to its own default.
  */
-const toDispatchStatus = (raw: string): DispatchStatus =>
-  DISPATCH_STATUSES.find((status) => status === raw) ?? 'running'
+const toDispatchStatus = enumWithDefault(DISPATCH_STATUSES, 'running')
 
 export const toDispatch = (raw: Dto<typeof dto.dispatchFrameDto>): Dispatch => ({
   dispatchId: raw.dispatch_id,
@@ -483,7 +478,7 @@ export const toDispatch = (raw: Dto<typeof dto.dispatchFrameDto>): Dispatch => (
 
 export const toTopicDocuments = (raw: Dto<typeof dto.topicDocumentsDto>): TopicDocuments => ({
   directory: raw.directory,
-  sessionId: raw.session_id ? SessionId(raw.session_id) : null,
+  sessionId: brandOrNull(raw.session_id, SessionId),
   documents: raw.documents.map((document) => ({
     path: FilePath.of(document.path),
     name: document.name,
@@ -506,8 +501,7 @@ const TOPIC_STATUSES: readonly TopicStatus[] = [
  * one would sink a live topic to the bottom of the queue, which is the wrong
  * direction to fail in — a topic that still needs a look belongs where it
  * will be seen. */
-const toTopicStatus = (raw: string): TopicStatus =>
-  TOPIC_STATUSES.find((status) => status === raw) ?? 'open'
+const toTopicStatus = enumWithDefault(TOPIC_STATUSES, 'open')
 
 export const toTopicView = (raw: Dto<typeof dto.topicDto>): TopicView => ({
   topicId: TopicId(raw.topic_id),
@@ -608,10 +602,7 @@ const KNOWN_MEDIA_PROPOSAL_STATUSES: readonly MediaProposalStatus[] = [
   'failed',
 ]
 
-const toMediaProposalStatus = (raw: string): MediaProposalStatus =>
-  (KNOWN_MEDIA_PROPOSAL_STATUSES as readonly string[]).includes(raw)
-    ? (raw as MediaProposalStatus)
-    : 'proposed'
+const toMediaProposalStatus = enumWithDefault(KNOWN_MEDIA_PROPOSAL_STATUSES, 'proposed')
 
 export const toMediaProposal = (raw: Dto<typeof dto.mediaProposalDto>): MediaProposal => ({
   proposalId: raw.proposal_id,
@@ -626,7 +617,7 @@ export const toMediaProposal = (raw: Dto<typeof dto.mediaProposalDto>): MediaPro
   query: raw.query,
   status: toMediaProposalStatus(raw.status),
   note: raw.note ?? '',
-  sourceId: raw.source_id === null ? null : SourceId(raw.source_id),
+  sourceId: brandOrNull(raw.source_id, SourceId),
   error: raw.error,
 })
 
@@ -656,7 +647,7 @@ export const toExtractionOutcome = (
 export const toExtractionQueueBoard = (
   raw: Dto<typeof dto.extractionQueueDto>,
 ): ExtractionQueueBoard => ({
-  running: raw.running === null ? null : SourceId(raw.running),
+  running: brandOrNull(raw.running, SourceId),
   queued: raw.queued.map(SourceId),
   finished: raw.finished.map(toExtractionOutcome),
 })
@@ -800,8 +791,8 @@ export const toAuthoringRun = (raw: Dto<typeof dto.authoringFrameDto>): Authorin
 })
 
 export const toAuthoringStatus = (raw: Dto<typeof dto.authoringStatusDto>): AuthoringStatus => ({
-  current: raw.current === null ? null : toAuthoringRun(raw.current),
-  last: raw.last === null ? null : toAuthoringRun(raw.last),
+  current: optionalMap(raw.current, toAuthoringRun),
+  last: optionalMap(raw.last, toAuthoringRun),
 })
 
 const toCandidateBlurb = (raw: Dto<typeof dto.candidateBlurbDto>): Blurb => ({
@@ -819,7 +810,7 @@ export const toCourseCandidate = (raw: Dto<typeof dto.courseCandidateDto>): Cour
   membershipHash: raw.membershipHash,
   anchors: raw.anchors.map(toAreaMember),
   art: raw.art,
-  blurb: raw.blurb === null ? null : toCandidateBlurb(raw.blurb),
+  blurb: optionalMap(raw.blurb, toCandidateBlurb),
   featuredRank: raw.featuredRank,
 })
 
@@ -835,7 +826,7 @@ export const toCatalog = (raw: Dto<typeof dto.catalogDto>): Catalog => ({
     highlights: raw.highlights.map(toCourseCandidate),
     filed: raw.filed.map(toCategory),
   },
-  categories: new Map(Object.entries(raw.categories)),
+  categories: toMap(raw.categories),
   unplaceableFeatured: raw.unplaceableFeatured,
   unnamedCount: raw.unnamedCount,
   orphanedCourses: raw.orphanedCourses,
@@ -887,21 +878,12 @@ export const toCourseText = (raw: Dto<typeof dto.courseTextDto>): CourseText => 
 
 export const toCourseDetail = (raw: Dto<typeof dto.courseDetailDto>): CourseDetail => ({
   candidate: toCourseCandidate(raw.candidate),
-  outline: raw.outline === null ? null : toOutline(raw.outline),
+  outline: optionalMap(raw.outline, toOutline),
   members: raw.members.map(toAreaMember),
-  course: raw.course === null ? null : toRealizedCourse(raw.course),
+  course: optionalMap(raw.course, toRealizedCourse),
 })
 
 /* The interaction log's read side. */
-
-/** A validated instant string to a `Date`.
- *
- * Total, because `dto.ts`'s `instant` refinement has already rejected
- * anything `Date.parse` cannot read -- the check is there rather than here so
- * the failure names the endpoint and the field. */
-const toInstant = (raw: string): Date => new Date(raw)
-
-const toMaybeInstant = (raw: string | null): Date | null => (raw === null ? null : new Date(raw))
 
 /** A `{name: count}` record to an ordered array.
  *
@@ -945,8 +927,8 @@ export const toLoggedInteraction = (
   view: raw.view,
   occurredAt: toInstant(raw.occurred_at),
   receivedAt: toMaybeInstant(raw.received_at),
-  projectId: raw.project_id === null ? null : ProjectId(raw.project_id),
-  sessionId: raw.session_id === null ? null : SessionId(raw.session_id),
+  projectId: brandOrNull(raw.project_id, ProjectId),
+  sessionId: brandOrNull(raw.session_id, SessionId),
   payload: raw.payload,
 })
 
@@ -1074,13 +1056,11 @@ export const toResolvedSetting = (raw: Dto<typeof dto.resolvedSettingDto>): Reso
   layer: raw.layer,
   scopeId: raw.scope_id,
   secret: raw.secret,
-  masked: raw.masked
-    ? {
-        present: raw.masked.present,
-        lastFour: raw.masked.last_four,
-        display: raw.masked.display,
-      }
-    : null,
+  masked: optionalMap(raw.masked, (m) => ({
+    present: m.present,
+    lastFour: m.last_four,
+    display: m.display,
+  })),
 })
 
 export const toResolvedSettings = (raw: Dto<typeof dto.resolvedSettingsDto>): ResolvedSettings => ({
