@@ -10,7 +10,7 @@ Everything in this guide was learned by executing real refactoring waves across 
 
 ### The Autonomy Contract
 1. **Continuous Momentum**: Never stop and ask whether to proceed once a wave is complete. When a batch of work feels done, that is the trigger to assess the codebase, identify the next highest-leverage targets, and launch the next wave.
-2. **Strict Concurrency Cap**: Maintain a **maximum of 3 parallel subagents** (or worktrees) simultaneously. Exceeding 3 saturates memory, CPU, and CI runner queues.
+2. **Strict Concurrency Cap**: Maintain a **maximum of 1 parallel subagent** (or worktree) at any given time due to API quota limits. Exceeding 1 subagent triggers rate limit throttling and provider quota exhaustion.
 3. **Offload Heavy Testing to CI**: Opening a draft PR early is preferred over running the entire 15-minute test matrix locally for every intermediate step. The developer box is shared across concurrent sessions. Run focused local unit tests, format/lint gates, push a draft PR, and let GitHub Actions run the full suite (`ruff`, `pytest`, `pytest -m integration`, `frontend`, `vitest --project browser`).
 4. **Queue Hygiene & Pause Mandate**: Never let open PRs pile up or leave broken CI unresolved. Pause new refactoring waves when open PRs require rebase, conflict resolution, or CI intervention. Get all open PRs 100% green and merged before launching subsequent refactoring waves.
 
