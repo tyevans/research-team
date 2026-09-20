@@ -26,15 +26,9 @@ import aiosqlite
 # nothing else would have pulled redstring in.
 import httpx
 import redstring.events  # noqa: F401
-from eventsource import (
-    InMemoryEventBus,
-    SQLCheckpointRepository,
-    SQLDLQRepository,
-    create_async_engine,
-)
+from eventsource import InMemoryEventBus
 from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
-from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
 from eventsource.observability import Tracer
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -216,6 +210,7 @@ from research_team.infrastructure.persistence.read_models import (
     ArtStore,
     AskConversationRunner,
     AuthoringRunRunner,
+    BaseProjectionRunner,
     CandidateArtRow,
     CandidateArtStore,
     CatalogFeatureProjection,
@@ -247,7 +242,7 @@ from research_team.interfaces.web.settings import SettingsDeps
 logger = logging.getLogger(__name__)
 
 
-class _CatalogFeatureRunner:
+class _CatalogFeatureRunner(BaseProjectionRunner[CatalogFeatureStore]):
     """Keeps `catalog_features` following the log, over the application's own
     event store and publisher rather than a second one -- catalog events
     (`CourseFeatured`/`CourseUnfeatured`) sit on their own aggregate type and
@@ -266,58 +261,22 @@ class _CatalogFeatureRunner:
     exactly that reason.
     """
 
+    _label = "catalog feature"
+    _store_class = CatalogFeatureStore
+    _projection_class = CatalogFeatureProjection
+
     def __init__(self, store: SQLiteEventStore, bus: InMemoryEventBus, db_path: str) -> None:
-        self._store = store
-        self._bus = bus
-        self._db_path = db_path
-        self.features: CatalogFeatureStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
+        super().__init__(store=store, db_path=db_path, bus=bus)
 
-    async def start(self) -> None:
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        checkpoints = SQLCheckpointRepository(engine)
-        dlq = SQLDLQRepository(engine)
-        self.features = await CatalogFeatureStore.open(self._db_path)
-        projection = CatalogFeatureProjection(self.features, checkpoints, dlq)
-        self._manager = SubscriptionManager(self._store, self._bus, checkpoints, dlq_repo=dlq)
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the catalog feature projection failed to start: {failures}")
+    @property
+    def features(self) -> CatalogFeatureStore | None:
+        return self._store_instance
 
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """A test affordance, matching `interaction_log_caught_up` and the rest:
-        waits until the projection has replayed everything appended so far,
-        rather than everything that will ever be appended."""
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            if self._subscription.last_processed_position is not None and (
-                self._subscription.last_processed_position >= target
-            ):
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError("the catalog feature projection did not catch up in time")
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-        if self.features is not None:
-            await self.features.close()
+    def _caught_up_timeout_message(self, target: int | None, timeout: float) -> str:
+        return "the catalog feature projection did not catch up in time"
 
 
-class _CourseRunner:
+class _CourseRunner(BaseProjectionRunner[CourseStore]):
     """Keeps `courses` following the log, mirroring `_CatalogFeatureRunner`
     exactly and for the same reason: `CourseStore.open` needs a running event
     loop, so it opens in `start()`, and `Application` is `frozen=True`
@@ -331,55 +290,19 @@ class _CourseRunner:
     writes over the same file.
     """
 
+    _label = "course"
+    _store_class = CourseStore
+    _projection_class = CourseProjection
+
     def __init__(self, store: SQLiteEventStore, bus: InMemoryEventBus, db_path: str) -> None:
-        self._store = store
-        self._bus = bus
-        self._db_path = db_path
-        self.courses: CourseStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
+        super().__init__(store=store, db_path=db_path, bus=bus)
 
-    async def start(self) -> None:
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        checkpoints = SQLCheckpointRepository(engine)
-        dlq = SQLDLQRepository(engine)
-        self.courses = await CourseStore.open(self._db_path)
-        projection = CourseProjection(self.courses, checkpoints, dlq)
-        self._manager = SubscriptionManager(self._store, self._bus, checkpoints, dlq_repo=dlq)
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the course projection failed to start: {failures}")
+    @property
+    def courses(self) -> CourseStore | None:
+        return self._store_instance
 
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """A test affordance, matching `_CatalogFeatureRunner.caught_up`:
-        waits until the projection has replayed everything appended so far,
-        rather than everything that will ever be appended."""
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            if self._subscription.last_processed_position is not None and (
-                self._subscription.last_processed_position >= target
-            ):
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError("the course projection did not catch up in time")
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-        if self.courses is not None:
-            await self.courses.close()
+    def _caught_up_timeout_message(self, target: int | None, timeout: float) -> str:
+        return "the course projection did not catch up in time"
 
 
 class LazyAsyncResource[T]:
