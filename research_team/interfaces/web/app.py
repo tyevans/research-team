@@ -36,7 +36,6 @@ from research_team.application import (
     SessionService,
     TurnSupervisor,
     WorkerRoster,
-    build_fork_tree,
 )
 from research_team.application.area_projection import GraphTooLarge
 from research_team.application.ask import AskService
@@ -132,11 +131,11 @@ from research_team.interfaces.web.presenters import (
     project_change,
     summary_view,
     topic_change,
-    tree_view,
 )
 from research_team.interfaces.web.seeding import SeedingActivity
 from research_team.interfaces.web.settings import SettingsDeps, settings_router
 from research_team.interfaces.web.sources import SourceDeps, source_router
+from research_team.interfaces.web.system import SystemDeps, system_router
 from research_team.interfaces.web.topics import (
     MAX_BULK_DISPATCH as MAX_BULK_DISPATCH,
 )
@@ -215,9 +214,6 @@ from .projects import (
     project_router as project_router,
 )
 from .projects import (
-    projects_router as projects_router,
-)
-from .projects import (
     require_project as require_project,
 )
 from .sessions import (
@@ -243,9 +239,6 @@ from .sessions import (
 )
 from .sessions import (
     session_router as session_router,
-)
-from .sessions import (
-    sessions_router as sessions_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -799,66 +792,7 @@ def create_app(
         )
     )
 
-    @app.get("/api/health")
-    async def health():
-        """Whether the derived views behind this API can be trusted.
-
-        `/sessions` is answered from a projection, so unlike a fold it can be
-        wrong -- and a wrong row looks exactly like a right one. This is where
-        a UI finds out to say so.
-        """
-        summaries = await service.summaries_health()
-        return {
-            "summaries": {
-                "healthy": summaries.healthy,
-                "failed_events": summaries.failed_events,
-                "following": summaries.following,
-                "behind": summaries.behind,
-            }
-        }
-
-    @app.post("/api/summaries/rebuild")
-    async def rebuild_summaries():
-        """Derive the session list from the log again, and report the result.
-
-        Exposed over HTTP because the browser is the primary surface and a
-        problem you can see but not fix is only half-reported. Safe to call at
-        any time: it discards derived data and recomputes it, so the worst case
-        is wasted work, and the log it derives from is never touched.
-        """
-        await service.rebuild_summaries()
-        health = await service.summaries_health()
-        return {"healthy": health.healthy, "failed_events": health.failed_events}
-
-    @app.post("/api/corpus/rebuild")
-    async def rebuild_corpus():
-        """Derive the corpus table from the log again, and say what it holds.
-
-        A sibling of `/api/summaries/rebuild` rather than part of it, for the
-        reason `CorpusRunner` is a second runner: rebuilding is a manual repair
-        that stops a manager, truncates a table and resets a checkpoint, and
-        two tables that can fail independently have to be repairable
-        independently. Repairing `/sessions` must not truncate the corpus.
-
-        Goes through the runner rather than a `SessionService` method, unlike
-        its sibling. `SessionSummaries` is a port the service already owns and
-        answers for; the corpus runner reaches this layer directly, and adding
-        a passthrough to the service would be a use case with nothing in it.
-
-        Safe at any time, and the same argument as its sibling: every byte it
-        discards is derivable from the event that put it there, so the worst
-        case is wasted work. It is also the only way to correct `extracted` on
-        a database written before that column existed -- see
-        `CorpusDocumentRow.extracted_at`, where the measurement is recorded.
-        """
-        if corpus is None:
-            raise HTTPException(status_code=503, detail="no corpus read model is configured")
-        await corpus.rebuild()
-        return {"rebuilt": True}
-
-    @app.get("/api/tree")
-    async def fork_tree():
-        return tree_view(build_fork_tree(await service.list_sessions()))
+    app.include_router(system_router(SystemDeps(service=service, corpus=corpus)))
 
     sessions_router = session_router(
         SessionDeps(
