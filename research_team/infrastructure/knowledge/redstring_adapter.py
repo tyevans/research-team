@@ -32,7 +32,6 @@ from eventsource.ports.snapshots import SnapshotStore
 from eventsource.ports.store import AggregateStore
 from redstring import (
     Adjudicator,
-    CandidateFinder,
     Chunker,
     ChunkStore,
     Consolidator,
@@ -78,14 +77,15 @@ from research_team.infrastructure.knowledge.entity_embeddings import (
     embed_entities,
     embed_entity_names,
 )
-from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
 from research_team.infrastructure.knowledge.rebuild import (
     CoMentionProjection,
     carries_entity_links,
 )
+from research_team.infrastructure.knowledge.redstring_consolidation import (
+    ConsolidationPipeline,
+)
 from research_team.infrastructure.knowledge.redstring_providers import (
-    _batches,
     _CountingProvider,
     _DatingProvider,
     _no_announcement,
@@ -998,222 +998,57 @@ class RedstringKnowledge:
         await with_retry(store, what=f"storing {source.source_id!r}")
         await self.index(source)
 
+    @property
+    def _consolidation_pipeline(self) -> ConsolidationPipeline:
+        return ConsolidationPipeline(
+            self._consolidator,
+            store=self._store,
+            vectors=self._vectors,
+            adjudicator=self._adjudicator,
+            judgements=self._judgements,
+            project_id=self._project_id,
+            concurrency=self._concurrency,
+            consolidation_batch=self._consolidation_batch,
+        )
+
     async def _judged_finder(self):
         """The candidate source for one `_consolidate` run, or None for the default.
 
-        **Built once per run, not once per entity.** An ingest resolves every
-        extracted entity in a loop, and a human cannot record a judgement
-        part-way through that loop, so loading the aggregate per entity would
-        be one event-store read each to re-learn something that cannot have
-        changed. `reconsolidate` is the case that makes the repository rather
-        than a captured state the right thing to hold: it is a separate entry
-        point and must see judgements made since the last ingest.
-
-        None when no repository was supplied. `resolve` reads that as "use my
-        own default finder", so the call site needs no branch -- and an empty
-        judgement set makes `JudgedCandidates` a passthrough anyway, so the two
-        paths agree on behaviour rather than merely on outcome.
-
-        `CandidateFinder` is constructed with the same arguments the
-        `Consolidator` was given: the store and the vector store, with
-        `weights` and `use_graph_signal` left at redstring's defaults.
-        Deliberately no `weights=` here -- 6c2ae4a withdrew a reweight for lack
-        of evidence, and a second one hidden inside the finder would be the
-        same mistake somewhere harder to find.
+        Delegates to :class:`ConsolidationPipeline`.
         """
-        if self._judgements is None:
-            return None
-        judgements = await self._judgements.load_or_create(self._project_id)
-        return JudgedCandidates(
-            CandidateFinder(self._store, vector_store=self._vectors),
-            graph_store=self._store,
-            tenant_id=self._project_id,
-            judgements=judgements.state,
-        )
+        return await self._consolidation_pipeline.build_finder()
 
     async def _consolidate(
         self, entities, *, announce=_no_announcement
     ) -> tuple[list[MergeRecord], int]:
         """Resolve the extracted entities in batches, not one at a time.
 
-        `resolve_many` is redstring's decide-then-emit pass: candidates are
-        scored concurrently, the whole batch's ambiguous band goes to the
-        adjudicator in **one** `adjudicate_many` call spanning subjects, and
-        the merges are emitted serially. The serial emit is not a limitation
-        to route around -- `ConsolidationLog` uses optimistic concurrency and
-        the stream *is* the tenant, so two concurrent merges within one
-        project collide by construction.
-
-        What this buys is the number `config.extraction_chunk_size`'s
-        docstring names as the one to watch: adjudicator calls per document.
-        Auto-merge is unreachable across documents (see the note above
-        `_CountingProvider`), so every cross-document duplicate is
-        adjudicated, and `Adjudicator.adjudicate` batches only *within* one
-        subject -- where the band is nearly always one pair. Per entity that
-        was one round trip each.
-        `test_batched_consolidation.py` counts it at the provider seam: three
-        duplicates cost `[1, 1, 1]` through the old loop and `[3]` through
-        this one.
-
-        `announce` defaults to silence because `reconsolidate` also calls this
-        and has no watcher. The progress it reports is now per *batch* rather
-        than per entity -- the pane renders `index/total`, and the counter
-        advances a batch at a time and then holds while phase 2 waits on the
-        model. That is a real loss of resolution against the per-entity loop
-        and it is the price of the batching: no per-subject callback can exist
-        when the whole point is that the subjects are decided together.
-
-        A batch that raises does not abandon the rest, for the reason it never
-        did: the extraction is already recorded and the merges that succeeded
-        are already folded. It is *retried entity by entity* first -- see
-        `_consolidate_one_by_one` for what that costs and why it is worth it.
+        Delegates to :class:`ConsolidationPipeline`.
         """
-        entities = list(entities)
-        merges: list[MergeRecord] = []
-        failures = 0
-        total = len(entities)
-        finder = await self._judged_finder()
-        # `subject.id` is what a report names, and `resolve_many` resolves each
-        # subject through aliases before deciding -- so the canonical entity of
-        # a merge is not always the entity that was passed in. Looked up by id
-        # rather than carried alongside, with the id itself as the fallback,
-        # because a `MergeRecord` naming the wrong entity is an audit trail
-        # that lies while looking complete.
-        names = {entity.id: entity.name for entity in entities}
-        done = 0
-        for batch in _batches(entities, self._consolidation_batch):
-            announce(
-                "consolidating",
-                index=done,
-                total=total,
-                detail=f"considering {len(batch)} entities",
-            )
-            try:
-                reports = await self._consolidator.resolve_many(
-                    batch,
-                    finder=finder,
-                    adjudicator=self._adjudicator,
-                    concurrency=self._concurrency,
-                )
-            except RedstringError:
-                # Deliberately not counted as `len(batch)` failures here: the
-                # retry below is what decides how many entities actually
-                # failed, and it is also the only thing that can say *which*.
-                logger.warning(
-                    "consolidating a batch of %d failed; retrying it one at a time",
-                    len(batch),
-                    exc_info=True,
-                )
-                batch_merges, batch_failures = await self._consolidate_one_by_one(
-                    batch,
-                    finder=finder,
-                    announce=announce,
-                    done=done,
-                    total=total,
-                    names=names,
-                )
-                merges += batch_merges
-                failures += batch_failures
-                done += len(batch)
-                continue
-            done += len(batch)
-            for report in reports:
-                merges.append(self._merge_record(report, names, announce, done, total))
-            # Announced again after the batch, not only before it. The pane
-            # renders `index/total`, and with only the leading announce the
-            # counter shows what was done *before* this batch and never
-            # reaches `total` -- a bar that stops at 0/2 on a two-entity
-            # document and then jumps straight to `consolidated`.
-            announce(
-                "consolidating",
-                index=done,
-                total=total,
-                detail=f"{len(merges)} merged so far",
-            )
-        return merges, failures
+        return await self._consolidation_pipeline.consolidate(entities, announce=announce)
 
     async def _consolidate_one_by_one(
         self, entities, *, finder, announce, done: int, total: int, names
     ) -> tuple[list[MergeRecord], int]:
         """The per-entity path, kept for the failure case only.
 
-        A batch fails as a batch -- one rate-limited adjudicator call takes
-        every subject in it down together, and the report can then say only
-        "some of these did not consolidate". `format_ingest_report` prints the
-        count, but the count was never the missing half: what a reader needs
-        is which entity and why, which is why
-        `test_a_consolidation_failure_says_which_entity_and_why` exists.
-
-        So a failed batch is re-tried entity by entity, and each entity that
-        fails is named in its own note.
-
-        **The cost, stated plainly:** against an endpoint that is failing for
-        a reason that will not clear -- a rate limit, an open circuit -- this
-        spends one call per entity *after* having already spent the batch's.
-        That is one call worse than the loop this branch replaced, in the case
-        where every call is going to fail anyway. It is accepted because the
-        happy path is where the calls actually are, and because a failure
-        nobody can attribute costs more than a call.
+        Delegates to :class:`ConsolidationPipeline`.
         """
-        merges: list[MergeRecord] = []
-        failures = 0
-        for position, entity in enumerate(entities, start=1):
-            announce("consolidating", index=done + position, total=total, detail=entity.name)
-            try:
-                # The finder built for the whole run, passed down rather
-                # than rebuilt here: `_judged_finder` is one event-store read
-                # to load an aggregate no entity in this loop can have
-                # changed, and its own docstring says once per run.
-                report = await self._consolidator.resolve(
-                    entity, adjudicator=self._adjudicator, finder=finder
-                )
-            except RedstringError as error:
-                # Only `ConsolidationInvariantError` is the benign
-                # "absorbed earlier in this same pass" case; `RedstringError`
-                # is redstring's base class and also covers `CircuitOpen`,
-                # `RateLimitExceeded`, `LlmProviderError`, `MissingEntityError`
-                # and `AliasCycleError`. Logged rather than raised so one
-                # genuine fault does not abandon the rest, but no longer
-                # indistinguishable from an ordinary absorbed entity.
-                failures += 1
-                logger.warning(
-                    "consolidating %r failed; carrying on with the rest",
-                    entity.name,
-                    exc_info=True,
-                )
-                announce(
-                    "consolidating",
-                    index=done + position,
-                    total=total,
-                    detail=f"{entity.name} could not be consolidated: {error}",
-                )
-                continue
-            if report is None:
-                continue
-            merges.append(self._merge_record(report, names, announce, done + position, total))
-        return merges, failures
+        return await self._consolidation_pipeline.consolidate_one_by_one(
+            entities,
+            finder=finder,
+            announce=announce,
+            done=done,
+            total=total,
+            names=names,
+        )
 
     def _merge_record(self, report, names, announce, index: int, total: int) -> MergeRecord:
-        """One report, announced and recorded. Shared by both paths above.
+        """One report, announced and recorded.
 
-        `absorbed_names` holds ids rather than names, as it always has -- the
-        field's name predates the report carrying ids and is not worth a
-        rename that would touch the agent-facing surface.
+        Delegates to :class:`ConsolidationPipeline`.
         """
-        canonical = names.get(report.canonical_entity_id, str(report.canonical_entity_id))
-        absorbed = tuple(str(i) for i in report.affected_entity_ids)
-        announce(
-            "consolidating",
-            index=index,
-            total=total,
-            detail=f"{canonical} absorbed {', '.join(absorbed)} -- {report.reason}",
-        )
-        return MergeRecord(
-            merge_id=report.event.event_id,
-            canonical_name=canonical,
-            absorbed_names=absorbed,
-            reason=report.reason,
-        )
+        return self._consolidation_pipeline.merge_record(report, names, announce, index, total)
 
     async def reconsolidate(self, source_id: str) -> tuple[tuple[MergeRecord, ...], int]:
         """Re-resolve the entities of one recorded extraction.
