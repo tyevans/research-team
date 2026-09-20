@@ -1,12 +1,4 @@
-"""Domain objects rendered as the JSON the browser consumes.
-
-The web equivalent of the CLI's formatters: pure functions, no I/O, and the
-only place that knows the wire shape. Keeping them here means the API can be
-reshaped for the UI without anything below noticing.
-
-This module acts as a facade re-exporting presenters decomposed into cohesive
-modules under `research_team.interfaces.web.presenter_modules`.
-"""
+"""Domain-specific presenter modules for web interfaces."""
 
 from research_team.interfaces.web.presenter_modules.curriculum import (
     ANCHOR_PREVIEW,
