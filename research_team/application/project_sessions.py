@@ -257,7 +257,10 @@ async def start_session_in_project(
     """
     project = await projects.load(project_id)
     await catch_up_project_tip(project, repository)
-    session_id = uuid4()
+    import research_team.application.session_service as _session_service
+
+    uuid_func = getattr(_session_service, "uuid4", uuid4)
+    session_id = uuid_func()
     project.execute(JoinProject(session_id=session_id))
 
     state = project.state
