@@ -382,6 +382,72 @@ class _CourseRunner:
             await self.courses.close()
 
 
+class LazyAsyncResource[T]:
+    """Coroutine-safe lazy async resource with double-checked locking.
+
+    Defers opening the underlying resource until its first use, ensuring that
+    resources requiring a running asyncio event loop (e.g. SQLite connections)
+    can be composed synchronously. Two concurrent callers will safely await
+    the same lock, and only one initialization will run.
+    """
+
+    def __init__(
+        self,
+        factory: Callable[[], Awaitable[T]] | Callable[[str], Awaitable[T]],
+        db_path: str | None = None,
+        close: Callable[[T], Awaitable[None]] | None = None,
+    ) -> None:
+        if db_path is not None:
+            self._factory: Callable[[], Awaitable[T]] = functools.partial(factory, db_path)  # type: ignore[assignment]
+        else:
+            self._factory = factory  # type: ignore[assignment]
+        self._close = close
+        self._resource: T | None = None
+        self._lock = asyncio.Lock()
+
+    @classmethod
+    def open_fn(
+        cls,
+        open_func: Callable[[str], Awaitable[T]],
+        db_path: str,
+        close: Callable[[T], Awaitable[None]] | None = None,
+    ) -> "LazyAsyncResource[T]":
+        """Build a `LazyAsyncResource` from an async opener taking a db_path."""
+        return cls(functools.partial(open_func, db_path), close=close)
+
+    async def get(self) -> T:
+        """Return the opened resource, creating it on first call."""
+        if self._resource is None:
+            async with self._lock:
+                if self._resource is None:
+                    self._resource = await self._factory()
+        return self._resource
+
+    @property
+    def is_opened(self) -> bool:
+        """Whether the resource has been opened."""
+        return self._resource is not None
+
+    async def opened(self) -> T:
+        """Alias for `get()`."""
+        return await self.get()
+
+    async def close(self) -> None:
+        """Close the underlying resource if it was opened."""
+        async with self._lock:
+            if self._resource is not None:
+                resource = self._resource
+                self._resource = None
+                if self._close is not None:
+                    await self._close(resource)
+                else:
+                    close_method = getattr(resource, "close", None)
+                    if callable(close_method):
+                        res = close_method()
+                        if isinstance(res, Awaitable):
+                            await res
+
+
 class _LazyBlurbCache:
     """`BlurbCachePort` over `CourseBlurbStore`, opened on first use.
 
@@ -396,16 +462,10 @@ class _LazyBlurbCache:
     """
 
     def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._store: CourseBlurbStore | None = None
-        self._lock = asyncio.Lock()
+        self._resource = LazyAsyncResource(CourseBlurbStore.open, db_path)
 
     async def _opened(self) -> CourseBlurbStore:
-        if self._store is None:
-            async with self._lock:
-                if self._store is None:
-                    self._store = await CourseBlurbStore.open(self._db_path)
-        return self._store
+        return await self._resource.get()
 
     async def get(self, project_id: UUID, slug: str) -> CachedBlurb | None:
         store = await self._opened()
@@ -448,8 +508,7 @@ class _LazyBlurbCache:
         await store.put(project_id, slug, title, text, membership_hash, model, generated_at)
 
     async def close(self) -> None:
-        if self._store is not None:
-            await self._store.close()
+        await self._resource.close()
 
 
 class _LazyArtStore:
@@ -487,16 +546,10 @@ class _LazyArtStore:
     """
 
     def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._store: ArtStore | None = None
-        self._lock = asyncio.Lock()
+        self._resource = LazyAsyncResource(ArtStore.open, db_path)
 
     async def _opened(self) -> ArtStore:
-        if self._store is None:
-            async with self._lock:
-                if self._store is None:
-                    self._store = await ArtStore.open(self._db_path)
-        return self._store
+        return await self._resource.get()
 
     async def get(self, art_id: UUID) -> ArtRow | None:
         store = await self._opened()
@@ -529,8 +582,7 @@ class _LazyArtStore:
         await store.decrement_uses(art_id)
 
     async def close(self) -> None:
-        if self._store is not None:
-            await self._store.close()
+        await self._resource.close()
 
 
 class _LazyProjectSummaries:
@@ -556,24 +608,18 @@ class _LazyProjectSummaries:
     """
 
     def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._connection: aiosqlite.Connection | None = None
-        self._lock = asyncio.Lock()
+        self._resource = LazyAsyncResource(aiosqlite.connect, db_path)
 
     async def _opened(self) -> SqliteProjectSummaries:
-        if self._connection is None:
-            async with self._lock:
-                if self._connection is None:
-                    self._connection = await aiosqlite.connect(self._db_path)
-        return SqliteProjectSummaries(self._connection)
+        connection = await self._resource.get()
+        return SqliteProjectSummaries(connection)
 
     async def all(self) -> dict[UUID, ProjectSummary]:
         reader = await self._opened()
         return await reader.all()
 
     async def close(self) -> None:
-        if self._connection is not None:
-            await self._connection.close()
+        await self._resource.close()
 
 
 class _LazyCandidateArtStore:
@@ -585,16 +631,10 @@ class _LazyCandidateArtStore:
     lazy wrapper one store to one class."""
 
     def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._store: CandidateArtStore | None = None
-        self._lock = asyncio.Lock()
+        self._resource = LazyAsyncResource(CandidateArtStore.open, db_path)
 
     async def _opened(self) -> CandidateArtStore:
-        if self._store is None:
-            async with self._lock:
-                if self._store is None:
-                    self._store = await CandidateArtStore.open(self._db_path)
-        return self._store
+        return await self._resource.get()
 
     async def get(self, project_id: UUID, slug: str) -> CandidateArtRow | None:
         store = await self._opened()
@@ -614,8 +654,7 @@ class _LazyCandidateArtStore:
         await store.put(project_id, slug, art_id, membership_hash)
 
     async def close(self) -> None:
-        if self._store is not None:
-            await self._store.close()
+        await self._resource.close()
 
 
 class _LazyOutlineCache:
@@ -632,16 +671,10 @@ class _LazyOutlineCache:
     """
 
     def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._store: CourseOutlineStore | None = None
-        self._lock = asyncio.Lock()
+        self._resource = LazyAsyncResource(CourseOutlineStore.open, db_path)
 
     async def _opened(self) -> CourseOutlineStore:
-        if self._store is None:
-            async with self._lock:
-                if self._store is None:
-                    self._store = await CourseOutlineStore.open(self._db_path)
-        return self._store
+        return await self._resource.get()
 
     async def get(self, project_id: UUID, slug: str) -> CachedOutline | None:
         store = await self._opened()
@@ -678,8 +711,7 @@ class _LazyOutlineCache:
         )
 
     async def close(self) -> None:
-        if self._store is not None:
-            await self._store.close()
+        await self._resource.close()
 
 
 class _RealizedCourses:
