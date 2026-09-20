@@ -6,7 +6,6 @@ swapping any of them is an edit here and nowhere else.
 """
 
 import asyncio
-import contextlib
 import functools
 import logging
 import random
@@ -15,8 +14,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
-
-import aiosqlite
 
 # Imported for its side effect as much as its names: redstring registers its
 # event types at import time, and the session store may hold them -- the
@@ -40,11 +37,8 @@ from research_team.application import (
     DEFAULT_SYSTEM_PROMPT,
     ApprovalPort,
     AutonomyPolicy,
-    ContextStrategy,
     DispatchesInFlight,
-    ElideToolResults,
     ExtractionChannel,
-    FullHistory,
     KnowledgeAttachment,
     LiveFeed,
     ProjectGraphs,
@@ -68,11 +62,9 @@ from research_team.application.blobs import BlobStorePort
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.course_authoring import CourseAuthor
 from research_team.application.course_catalog import (
-    CachedBlurb,
-    CachedOutline,
     CatalogService,
 )
-from research_team.application.course_realization import CourseService, RealizedCourse
+from research_team.application.course_realization import CourseService
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.effective import EffectiveSettings, SettingsRevision
 from research_team.application.entity_definitions import DefinitionService
@@ -89,7 +81,6 @@ from research_team.application.ontology_discovery import (
     OntologyDiscoveryService,
 )
 from research_team.application.perception import MediaPerceiver, PerceptionPort
-from research_team.application.project_summaries import ProjectSummary
 from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
 from research_team.application.topic_dispatch import TopicDispatcher
@@ -110,18 +101,12 @@ from research_team.infrastructure.agent import (
     build_model,
 )
 from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
-from research_team.infrastructure.agent.authoring_subagents import AUTHORING_SUBAGENTS
-from research_team.infrastructure.agent.compaction import SummarizingStrategy
 from research_team.infrastructure.agent.component_feedback import ComponentFeedback
 from research_team.infrastructure.agent.corpus_tools import (
     CORPUS_PROMPT,
     build_corpus_tools,
 )
 from research_team.infrastructure.agent.definition_model import ChatModelDefinitionText
-from research_team.infrastructure.agent.delegation import (
-    DEFAULT_SUBAGENTS,
-    DELEGATION_PROMPT,
-)
 from research_team.infrastructure.agent.fetch import (
     FETCH_CORPUS_PROMPT,
     FETCH_PROMPT,
@@ -202,23 +187,10 @@ from research_team.infrastructure.persistence.event_store import (
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
-from research_team.infrastructure.persistence.project_summaries import (
-    SqliteProjectSummaries,
-)
 from research_team.infrastructure.persistence.read_models import (
-    ArtRow,
-    ArtStore,
     AskConversationRunner,
     AuthoringRunRunner,
-    BaseProjectionRunner,
-    CandidateArtRow,
-    CandidateArtStore,
-    CatalogFeatureProjection,
     CatalogFeatureStore,
-    CourseBlurbStore,
-    CourseOutlineStore,
-    CourseProjection,
-    CourseRow,
     CourseStore,
     EntityDefinitionRunner,
     MediaProposalRunner,
@@ -238,452 +210,50 @@ from research_team.infrastructure.telemetry import build_tracer
 from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep
 from research_team.interfaces.web.blurb_sweep import BlurbSweep
 from research_team.interfaces.web.settings import SettingsDeps
+from research_team.wiring import (
+    _PARTIAL_BUILD_RESOURCES,
+    LazyAsyncResource,
+    _CatalogFeatureRunner,
+    _close_every_step,
+    _context_parts,
+    _CourseRunner,
+    _extraction_model,
+    _LazyArtStore,
+    _LazyBlurbCache,
+    _LazyCandidateArtStore,
+    _LazyOutlineCache,
+    _LazyProjectSummaries,
+    _partial_build_teardown,
+    _RealizedCourses,
+    _run_detached,
+    _subagents_for,
+    _swallowing,
+)
+
+__all__ = [
+    "_PARTIAL_BUILD_RESOURCES",
+    "Application",
+    "LazyAsyncResource",
+    "_CatalogFeatureRunner",
+    "_CourseRunner",
+    "_LazyArtStore",
+    "_LazyBlurbCache",
+    "_LazyCandidateArtStore",
+    "_LazyOutlineCache",
+    "_LazyProjectSummaries",
+    "_RealizedCourses",
+    "_close_every_step",
+    "_context_parts",
+    "_extraction_model",
+    "_partial_build_teardown",
+    "_run_detached",
+    "_subagents_for",
+    "_swallowing",
+    "build_application",
+    "build_service",
+]
 
 logger = logging.getLogger(__name__)
-
-
-class _CatalogFeatureRunner(BaseProjectionRunner[CatalogFeatureStore]):
-    """Keeps `catalog_features` following the log, over the application's own
-    event store and publisher rather than a second one -- catalog events
-    (`CourseFeatured`/`CourseUnfeatured`) sit on their own aggregate type and
-    stream, so this only ever needs to agree with `catalog_recorder`'s
-    writes over the same file, matching `CatalogFeatureProjection`'s own
-    reasoning.
-
-    Mirrors `OntologyRunner` in shape, but is not one: `Application` exposes
-    `catalog_features` as the `CatalogFeatureStore` itself, not a runner
-    wrapping it, per the contract Task 9's reviewer wrote down -- so this
-    class lives here instead, private, and `catalog_features` below is a
-    property reading through its `features` attribute. `Application` is
-    `frozen=True` (see `_initial_project_id`'s docstring), so `start()`
-    cannot rebind a field to the store once it is open; a property reading
-    through a mutable holder is what the rest of this class already does for
-    exactly that reason.
-    """
-
-    _label = "catalog feature"
-    _store_class = CatalogFeatureStore
-    _projection_class = CatalogFeatureProjection
-
-    def __init__(self, store: SQLiteEventStore, bus: InMemoryEventBus, db_path: str) -> None:
-        super().__init__(store=store, db_path=db_path, bus=bus)
-
-    @property
-    def features(self) -> CatalogFeatureStore | None:
-        return self._store_instance
-
-    def _caught_up_timeout_message(self, target: int | None, timeout: float) -> str:
-        return "the catalog feature projection did not catch up in time"
-
-
-class _CourseRunner(BaseProjectionRunner[CourseStore]):
-    """Keeps `courses` following the log, mirroring `_CatalogFeatureRunner`
-    exactly and for the same reason: `CourseStore.open` needs a running event
-    loop, so it opens in `start()`, and `Application` is `frozen=True`
-    (see `_initial_project_id`'s docstring), so `courses` below has to read
-    through this runner's mutable `courses` attribute rather than being a
-    field `start()` could rebind once the store is open.
-
-    Over the application's own event store and publisher, not a second one --
-    `CourseRealized`/`CourseAbandoned` sit on `Course`'s own aggregate type
-    and stream, so this only ever needs to agree with `course_repository`'s
-    writes over the same file.
-    """
-
-    _label = "course"
-    _store_class = CourseStore
-    _projection_class = CourseProjection
-
-    def __init__(self, store: SQLiteEventStore, bus: InMemoryEventBus, db_path: str) -> None:
-        super().__init__(store=store, db_path=db_path, bus=bus)
-
-    @property
-    def courses(self) -> CourseStore | None:
-        return self._store_instance
-
-    def _caught_up_timeout_message(self, target: int | None, timeout: float) -> str:
-        return "the course projection did not catch up in time"
-
-
-class LazyAsyncResource[T]:
-    """Coroutine-safe lazy async resource with double-checked locking.
-
-    Defers opening the underlying resource until its first use, ensuring that
-    resources requiring a running asyncio event loop (e.g. SQLite connections)
-    can be composed synchronously. Two concurrent callers will safely await
-    the same lock, and only one initialization will run.
-    """
-
-    def __init__(
-        self,
-        factory: Callable[[], Awaitable[T]] | Callable[[str], Awaitable[T]],
-        db_path: str | None = None,
-        close: Callable[[T], Awaitable[None]] | None = None,
-    ) -> None:
-        if db_path is not None:
-            self._factory: Callable[[], Awaitable[T]] = functools.partial(factory, db_path)  # type: ignore[assignment]
-        else:
-            self._factory = factory  # type: ignore[assignment]
-        self._close = close
-        self._resource: T | None = None
-        self._lock = asyncio.Lock()
-
-    @classmethod
-    def open_fn(
-        cls,
-        open_func: Callable[[str], Awaitable[T]],
-        db_path: str,
-        close: Callable[[T], Awaitable[None]] | None = None,
-    ) -> "LazyAsyncResource[T]":
-        """Build a `LazyAsyncResource` from an async opener taking a db_path."""
-        return cls(functools.partial(open_func, db_path), close=close)
-
-    async def get(self) -> T:
-        """Return the opened resource, creating it on first call."""
-        if self._resource is None:
-            async with self._lock:
-                if self._resource is None:
-                    self._resource = await self._factory()
-        return self._resource
-
-    @property
-    def is_opened(self) -> bool:
-        """Whether the resource has been opened."""
-        return self._resource is not None
-
-    async def opened(self) -> T:
-        """Alias for `get()`."""
-        return await self.get()
-
-    async def close(self) -> None:
-        """Close the underlying resource if it was opened."""
-        async with self._lock:
-            if self._resource is not None:
-                resource = self._resource
-                self._resource = None
-                if self._close is not None:
-                    await self._close(resource)
-                else:
-                    close_method = getattr(resource, "close", None)
-                    if callable(close_method):
-                        res = close_method()
-                        if isinstance(res, Awaitable):
-                            await res
-
-
-class _LazyBlurbCache:
-    """`BlurbCachePort` over `CourseBlurbStore`, opened on first use.
-
-    `CatalogService` is built inside `build_application`, before any event
-    loop is running -- `start()`'s own docstring says why nothing here can
-    open an aiosqlite connection until then. Unlike `catalog_features`, which
-    is read through a property because `catalog` itself (not this cache) is
-    what a route holds a reference to, this port is handed directly to
-    `CatalogService` at construction, so it has to defer the open internally
-    rather than being swapped in later. Guarded by a lock so two concurrent
-    card renders do not each open their own connection to the same file.
-    """
-
-    def __init__(self, db_path: str) -> None:
-        self._resource = LazyAsyncResource(CourseBlurbStore.open, db_path)
-
-    async def _opened(self) -> CourseBlurbStore:
-        return await self._resource.get()
-
-    async def get(self, project_id: UUID, slug: str) -> CachedBlurb | None:
-        store = await self._opened()
-        row = await store.get(project_id, slug)
-        if row is None:
-            return None
-        return CachedBlurb(
-            text=row.text,
-            title=row.title,
-            membership_hash=row.membership_hash,
-            model=row.model,
-            generated_at=datetime.fromisoformat(row.generated_at),
-        )
-
-    async def all_for_project(self, project_id: UUID) -> dict[str, CachedBlurb]:
-        store = await self._opened()
-        rows = await store.all_for_project(project_id)
-        return {
-            slug: CachedBlurb(
-                text=row.text,
-                title=row.title,
-                membership_hash=row.membership_hash,
-                model=row.model,
-                generated_at=datetime.fromisoformat(row.generated_at),
-            )
-            for slug, row in rows.items()
-        }
-
-    async def put(
-        self,
-        project_id: UUID,
-        slug: str,
-        title: str,
-        text: str,
-        membership_hash: str,
-        model: str,
-        generated_at: datetime,
-    ) -> None:
-        store = await self._opened()
-        await store.put(project_id, slug, title, text, membership_hash, model, generated_at)
-
-    async def close(self) -> None:
-        await self._resource.close()
-
-
-class _LazyArtStore:
-    """`ArtStore`, opened on first use -- `_LazyBlurbCache`'s exact shape and
-    reason, but exposing the store's own methods directly rather than a
-    narrower port. Nothing in this increment builds an `ArtGeneratorPort`
-    adapter yet (that is a sibling task's job), so there is no port to defer
-    behind; this exists solely so `create_app`'s `art_store` parameter has
-    something to serve `/api/art/{art_id}.svg` from without opening a
-    connection before uvicorn's event loop exists -- see `_LazyBlurbCache`'s
-    docstring for why that ordering matters.
-
-    **Every public method of `ArtStore` has to be forwarded, and that is not a
-    style rule.** This wrapper mirrors a concrete class rather than standing
-    behind a `Protocol`, so nothing declares what its surface should be: a
-    method added to `ArtStore` and used through this is an `AttributeError` at
-    the call, in a background task, on the one code path that reaches it.
-    `decrement_uses` shipped that way and ran in production. It is only called
-    when a candidate already *has* an assignment to drop -- the sweep's
-    membership-changed arm and every reroll -- so a fresh project sweeps clean
-    and the failure appears the first time somebody redoes art they already
-    have:
-
-        AttributeError: '_LazyArtStore' object has no attribute
-        'decrement_uses'. Did you mean: 'increment_uses'?
-
-    Nothing caught it. There is no Python typechecker in this repository's
-    gates, `ArtSweep.__init__` annotates `art_store: ArtStore` while
-    composition passes this, and every test of the sweep supplies its own fake
-    store rather than the wrapper. The three sibling wrappers were audited at
-    the same time and are complete -- the other two mirror `Protocol`s in
-    `application/course_catalog.py`, which is the difference.
-    `test_composition.py` now pins the surface against `ArtStore`'s own, so the
-    next method lands as a failing test rather than as a broken reroll.
-    """
-
-    def __init__(self, db_path: str) -> None:
-        self._resource = LazyAsyncResource(ArtStore.open, db_path)
-
-    async def _opened(self) -> ArtStore:
-        return await self._resource.get()
-
-    async def get(self, art_id: UUID) -> ArtRow | None:
-        store = await self._opened()
-        return await store.get(art_id)
-
-    async def put(
-        self,
-        art_id: UUID,
-        svg: str,
-        description: str,
-        tags: list[str],
-        palette: str,
-        created_at: datetime,
-        source: str,
-        uses: int = 0,
-    ) -> None:
-        store = await self._opened()
-        await store.put(art_id, svg, description, tags, palette, created_at, source, uses)
-
-    async def all(self) -> list[ArtRow]:
-        store = await self._opened()
-        return await store.all()
-
-    async def increment_uses(self, art_id: UUID) -> None:
-        store = await self._opened()
-        await store.increment_uses(art_id)
-
-    async def decrement_uses(self, art_id: UUID) -> None:
-        store = await self._opened()
-        await store.decrement_uses(art_id)
-
-    async def close(self) -> None:
-        await self._resource.close()
-
-
-class _LazyProjectSummaries:
-    """`ProjectSummaries`, over a connection opened on first use.
-
-    `_LazyArtStore`'s shape, and the same reason for it: `build_application`
-    is synchronous because `web.py` calls it before uvicorn has a loop, and an
-    aiosqlite connection made on one loop cannot be used from another.
-
-    **This one mirrors a `Protocol` rather than a concrete class**, which is
-    the distinction `_LazyArtStore`'s docstring draws after forwarding an
-    incomplete surface into production: `ProjectSummaries` declares exactly one
-    method, so a method added to the adapter and not forwarded here is a method
-    nothing is allowed to call through this type. There is no second surface to
-    drift from.
-
-    It opens its own connection rather than borrowing one of the runners',
-    which costs a file handle and buys the thing this reader most needs to be:
-    ignorant of the runners entirely. Every table it reads is owned by a
-    different runner, so borrowing would mean choosing one of four to depend
-    on, and the reader would then answer only while that one happened to be
-    wired.
-    """
-
-    def __init__(self, db_path: str) -> None:
-        self._resource = LazyAsyncResource(aiosqlite.connect, db_path)
-
-    async def _opened(self) -> SqliteProjectSummaries:
-        connection = await self._resource.get()
-        return SqliteProjectSummaries(connection)
-
-    async def all(self) -> dict[UUID, ProjectSummary]:
-        reader = await self._opened()
-        return await reader.all()
-
-    async def close(self) -> None:
-        await self._resource.close()
-
-
-class _LazyCandidateArtStore:
-    """`CandidateArtStore`, opened on first use -- `_LazyArtStore`'s exact
-    shape and reason. A second small wrapper rather than one class managing
-    both tables: `ArtStore` and `CandidateArtStore` are two different
-    connections to two different tables in `read_models.py` already, and
-    `_LazyOutlineCache`'s own docstring gives the precedent for keeping a
-    lazy wrapper one store to one class."""
-
-    def __init__(self, db_path: str) -> None:
-        self._resource = LazyAsyncResource(CandidateArtStore.open, db_path)
-
-    async def _opened(self) -> CandidateArtStore:
-        return await self._resource.get()
-
-    async def get(self, project_id: UUID, slug: str) -> CandidateArtRow | None:
-        store = await self._opened()
-        return await store.get(project_id, slug)
-
-    async def put(
-        self, project_id: UUID, slug: str, art_id: UUID, membership_hash: str
-    ) -> None:
-        # `membership_hash` is required here rather than defaulted, mirroring
-        # `CandidateArtStore.put`. An assignment recorded without the hash it
-        # was made against is exactly the row drift-detection can never
-        # refresh -- it would compare against `""`, never match, and either
-        # regenerate forever or never, depending on which way the comparison
-        # falls. A default would make that unreachable-by-accident state
-        # reachable by omission.
-        store = await self._opened()
-        await store.put(project_id, slug, art_id, membership_hash)
-
-    async def close(self) -> None:
-        await self._resource.close()
-
-
-class _LazyOutlineCache:
-    """`OutlineCachePort` over `CourseOutlineStore`, opened on first use.
-
-    `_LazyBlurbCache`'s shape exactly, and for the same reason: `CourseService`
-    is built inside `build_application`, before any event loop is running, so
-    the port handed to it at construction has to defer opening its own
-    connection rather than being swapped in once one exists. A separate class
-    rather than a generic wrapper over both stores -- the two stores' `get`/
-    `put` return different row shapes (`CourseOutlineRow.sections` is a list of
-    dicts; `CachedOutline.sections` is a tuple of pairs), so the translation is
-    the whole body of each method and sharing it would buy nothing.
-    """
-
-    def __init__(self, db_path: str) -> None:
-        self._resource = LazyAsyncResource(CourseOutlineStore.open, db_path)
-
-    async def _opened(self) -> CourseOutlineStore:
-        return await self._resource.get()
-
-    async def get(self, project_id: UUID, slug: str) -> CachedOutline | None:
-        store = await self._opened()
-        row = await store.get(project_id, slug)
-        if row is None:
-            return None
-        return CachedOutline(
-            promise=row.promise,
-            sections=tuple((s["heading"], s["summary"]) for s in row.sections),
-            membership_hash=row.membership_hash,
-            model=row.model,
-            generated_at=datetime.fromisoformat(row.generated_at),
-        )
-
-    async def put(
-        self,
-        project_id: UUID,
-        slug: str,
-        promise: str,
-        sections: tuple[tuple[str, str], ...],
-        membership_hash: str,
-        model: str,
-        generated_at: datetime,
-    ) -> None:
-        store = await self._opened()
-        await store.put(
-            project_id,
-            slug,
-            promise,
-            [{"heading": heading, "summary": summary} for heading, summary in sections],
-            membership_hash,
-            model,
-            generated_at,
-        )
-
-    async def close(self) -> None:
-        await self._resource.close()
-
-
-class _RealizedCourses:
-    """`RealizedCoursePort` joining `_CourseRunner`'s store with
-    `AuthoringRunRunner.authored_session_for` -- the join `RealizedCoursePort`'s
-    own docstring assigns to the adapter, not the port.
-
-    Reads through `_CourseRunner` lazily, the same way `CatalogService`'s
-    routes read through `catalog_features`: `CourseService` (this adapter's
-    only caller) is built before `start()` has opened `courses`, so a request
-    reaching this adapter before startup finishes raises rather than silently
-    answering "nothing realized" -- the distinction `_started()` on
-    `AuthoringRunRunner` already draws for the same reason.
-    """
-
-    def __init__(self, course_runner: _CourseRunner, authoring: AuthoringRunRunner) -> None:
-        self._course_runner = course_runner
-        self._authoring = authoring
-
-    def _store(self) -> CourseStore:
-        store = self._course_runner.courses
-        if store is None:
-            raise RuntimeError("the course projection has not been started")
-        return store
-
-    async def for_project(self, project_id: UUID) -> Sequence[RealizedCourse]:
-        rows = await self._store().for_project(project_id)
-        return tuple([await self._joined(project_id, row) for row in rows])
-
-    async def get(self, project_id: UUID, slug: str) -> RealizedCourse | None:
-        row = await self._store().get(project_id, slug)
-        if row is None or row.abandoned:
-            # `CourseStore.get` answers regardless of `abandoned` -- see its
-            # own docstring -- but `RealizedCoursePort`'s contract
-            # (`course_realization.py`) is that every implementation returns
-            # only non-abandoned rows, so that filter belongs here.
-            return None
-        return await self._joined(project_id, row)
-
-    async def _joined(self, project_id: UUID, row: CourseRow) -> RealizedCourse:
-        authored_session_id = await self._authoring.authored_session_for(project_id, row.slug)
-        return RealizedCourse(
-            slug=row.slug,
-            title=row.title,
-            member_entity_ids=tuple(row.member_entity_ids),
-            membership_hash=row.membership_hash,
-            realized_at=row.realized_at,
-            authored_session_id=authored_session_id,
-        )
 
 
 @dataclass(frozen=True)
@@ -1593,129 +1163,6 @@ class Application:
             # through `graphs` directly without ever attaching them.
             ("graphs", self.graphs.close_all),
         )
-
-
-async def _close_every_step(*steps: tuple[str, Callable[[], Awaitable[object]]]) -> None:
-    """Run every teardown step, then raise whatever any of them raised.
-
-    Shared by `Application.close` (B10) and `build_application`'s unwind
-    (B100), which want the same two properties and would otherwise each grow
-    their own `try/finally` ladder: nothing is skipped because something
-    earlier failed, and nothing is swallowed.
-
-    `BaseException` rather than `Exception`, deliberately: a teardown step that
-    is itself cancelled must not take the remaining steps down with it, which
-    is the case `Application.close` meets when a shutdown races a
-    `KeyboardInterrupt`. The cancellation is re-raised in the group at the end,
-    so it is not lost -- it just stops being a reason to leak a Neo4j driver.
-
-    Raises an `ExceptionGroup` even for a single failure. Uniform on purpose:
-    a caller that has to handle two shapes handles one of them wrong, and the
-    old behaviour -- one bare exception, and everything after it silently not
-    run -- is what this exists to end.
-    """
-    failures: list[BaseException] = []
-    for name, step in steps:
-        try:
-            await step()
-        except BaseException as error:  # noqa: BLE001 -- collected, then re-raised below
-            error.add_note(f"raised while closing: {name}")
-            failures.append(error)
-    if failures:
-        raise BaseExceptionGroup("teardown failed", failures)
-
-
-def _context_parts(
-    mode: str, model: BaseChatModel, system_prompt: str
-) -> tuple[ContextStrategy, tuple[dict, ...], str]:
-    """Turn a mode name into a strategy, subagents, and a prompt suffix.
-
-    The three modes treat the same problem differently: `elide` shortens what
-    is replayed, `compact` replaces it with a summary, and `delegate` keeps it
-    from accumulating by sending work to a fresh context. Only this function
-    knows the mapping; everything else takes what it is given.
-    """
-    if mode == "elide":
-        return (
-            ElideToolResults(
-                keep_results=config.context_keep_results(),
-                clear_over_chars=config.context_clear_over_chars(),
-            ),
-            (),
-            "",
-        )
-    if mode == "compact":
-        return (
-            SummarizingStrategy(
-                model,
-                trigger_tokens=config.context_trigger_tokens(),
-                keep_messages=config.context_keep_messages(),
-            ),
-            (),
-            "",
-        )
-    if mode == "delegate":
-        # Delegation does not transform the history -- there is simply less of
-        # it, because the expensive work happened somewhere else.
-        return FullHistory(), DEFAULT_SUBAGENTS, DELEGATION_PROMPT
-    return FullHistory(), (), ""
-
-
-def _subagents_for(session: Session, default: Sequence[dict]) -> Sequence[dict]:
-    """The roster this turn may dispatch.
-
-    Authoring is the only purpose with its own roster, and the check is on
-    purpose rather than on the presence of a course directory: a session's
-    purpose is fixed when it starts, where a directory appears partway through
-    the first phase, which would give phase 1 a different roster from phase 2.
-
-    **`default` is empty under the configuration this project actually runs.**
-    Only the `delegate` branch of `_context_parts` returns a non-empty tuple,
-    and `.env` sets `AGENT_CONTEXT=elide`, so the mode supplies no baseline
-    roster and this function is the only thing that will ever put a subagent in
-    an authoring turn. A reader who assumes the six are being *added* to
-    something is wrong; on the real configuration they are the whole list.
-    `test_a_chat_session_gets_the_modes_own_roster_and_no_authoring_one` is
-    parametrised over all three modes for that reason -- against `elide` alone
-    its assertion is `() == ()`, which the `delegate` case is there to redeem.
-
-    The seventh subagent is deliberate and could not be removed anyway.
-    deepagents inserts a `general-purpose` spec of its own unless the roster
-    already holds one; the `general_purpose_subagent=...` escape the library's
-    own docstring advertises (`graph.py:404`) is a *harness profile* field
-    derived from the model, and `create_deep_agent` in 0.7.6 takes no such
-    argument -- measured against the installed package on 2026-08-24, not read.
-    So an authoring turn gets seven, and the only way to have six would be to
-    ship a `general-purpose` spec of our own, which is still seven. What it
-    costs: the authoring prompts name six subagents and say when to use each,
-    and a parent that finds a nameless seventh may route work around the roster
-    -- past `prose-critic` and `unit-reviewer`, which exist because the plan is
-    expected to leak. `test_general_purpose_cannot_be_disabled_through_
-    create_deep_agent` fails on a version that adds the argument, which is when
-    to re-take this decision rather than inherit it.
-    """
-    if session.state.purpose is SessionPurpose.COURSE_AUTHORING:
-        return AUTHORING_SUBAGENTS
-    return default
-
-
-def _extraction_model(injected: BaseChatModel | None) -> BaseChatModel:
-    """The chat model knowledge extraction runs on, given what the caller passed.
-
-    An injected model is handed back untouched. `build_application(model=...)`
-    is how tests supply fakes, and a fake is not a `ChatOpenAI` -- it has no
-    `extra_body` to set, and rebuilding one here would quietly point extraction
-    at a real endpoint the test never asked for. Wrapping the injected model in
-    a copy carrying `extra_body` would be no better: nothing guarantees the
-    fake can be copied, and a caller who injects a model has said which model
-    they want used.
-
-    A model this project built for itself is a `ChatOpenAI` against
-    `config.base_url()`, so extraction gets its own with thinking turned off --
-    see `build_extraction_model`. The agent's model is deliberately left
-    alone; only extraction is measured to be better off not reasoning.
-    """
-    return injected if injected is not None else build_extraction_model()
 
 
 def _build_application(
@@ -3304,143 +2751,6 @@ def _build_application(
     )
 
 
-#: Every local in `_build_application` that owns something needing releasing,
-#: paired with how to release it, in `Application.close`'s order. A name list
-#: rather than duck-typing over the frame, because half the locals in there are
-#: caller-injected and closing a `media_http_client` a test still owns would
-#: turn one leak into a different bug.
-#:
-#: `resolved_media_http_client` is deliberately absent. `Application.close`
-#: closes it whether or not the caller supplied it -- correct there, because an
-#: `Application` exists and owns it for its lifetime -- but on a partial build
-#: no `Application` exists, and the caller's client is still the caller's.
-#: B98's ordering already means an un-injected one is never constructed before
-#: the return.
-#:
-#: **What breaks this, and why the failure is the worst possible shape.** These
-#: are the names of another function's local variables. Nothing in Python ties
-#: them to the assignments in `_build_application`: rename `corpus` there and
-#: this entry stops matching, `frame.f_locals.get` returns `None`, the resource
-#: is quietly dropped from the teardown, and the build still raises exactly as
-#: it did before. The leak comes back, silently, looking identical to the leak
-#: this constant exists to prevent -- and it comes back at the moment someone
-#: is refactoring, which is when they are least likely to be reading this.
-#:
-#: So the names are not left to a comment.
-#: `test_every_partial_build_resource_is_a_local_of_the_build` parses
-#: `_build_application` and asserts every name here is assigned in it, which
-#: turns a rename into a red test rather than a returned leak. Read that test
-#: before editing this tuple; it is the contract, and this paragraph is only
-#: the reason for it.
-#:
-#: The other direction is covered too, since B179, and this paragraph used to
-#: say it could not cheaply be. It can: the `Application(...)` call at the end
-#: of `_build_application` already maps each attribute to the local that filled
-#: it, so `test_every_close_step_has_a_partial_build_resource` resolves every
-#: `self.<attr>.<method>` step in `Application.close` back to a `(local,
-#: method)` pair and asserts it is declared here. Two steps deliberately do not
-#: resolve -- `_media_http_client.aclose` and `detach_project` -- and both are
-#: exempted by name with their reason, under an exemption-staleness test.
-#:
-#: That direction is the one that actually fired: a branch adding a resource to
-#: `close()` *conflicts* there, because `close()` is edited often, and does not
-#: conflict here, because it never touched this tuple -- so the merge machinery
-#: is silent about the half that matters. Order is still kept in step with
-#: `close()` deliberately, for the reader; the test is what enforces membership.
-_PARTIAL_BUILD_RESOURCES: tuple[tuple[str, str], ...] = (
-    ("research_supervisor", "stop_all"),
-    ("turns", "cancel_all"),
-    ("summaries", "stop"),
-    ("corpus", "stop"),
-    ("topics", "stop"),
-    ("definition_invalidation", "stop"),
-    ("ontology", "stop"),
-    # Beside the other sessions-store projections, mirroring `Application.close`
-    # -- the two lists are kept in the same order deliberately, since the
-    # comment above says the "in close but not here" direction has no compiler
-    # between them and ordering is the only thing a reader can diff by eye.
-    #
-    # Reachable but currently inert, and worth saying which: a `TenantRunner`
-    # holds nothing until `start()`, and `_build_application` only constructs
-    # it, so `stop()` on a partial build is a no-op today. It is listed anyway,
-    # because "this one happens to hold no resources yet" is a fact about this
-    # week rather than about the design, and the omission would be found the
-    # first time that changed -- by a hung interpreter, not by a test.
-    ("tenants", "stop"),
-    ("catalog_runner", "stop"),
-    ("course_runner", "stop"),
-    ("blurb_cache", "close"),
-    ("outline_cache", "close"),
-    ("art_store", "close"),
-    ("candidate_art_store", "close"),
-    ("project_summaries", "close"),
-    ("media_proposals", "stop"),
-    ("asks", "stop"),
-    ("authoring", "stop"),
-    ("dialogues", "stop"),
-    # In `close()`'s order, beside `dialogues` and before the interaction log,
-    # for the reason the `tenants` comment above gives: the two lists have no
-    # compiler between them, so matching order is the only thing a reader can
-    # diff by eye.
-    #
-    # Unlike `tenants`, this one is not inert. A started `UserRunner` holds an
-    # aiosqlite connection, a `SubscriptionManager` and a SQLAlchemy engine, so
-    # a build that raises after it is constructed abandons all three -- which
-    # presents as a hung interpreter at exit and nothing red. This was the
-    # third instance of the same omission in one day (a tenants runner and a
-    # project-summaries port preceded it) and the first one a test caught
-    # rather than a reader.
-    ("users", "stop"),
-    ("interaction_log", "stop"),
-    ("interaction_store", "close"),
-    # In `close()`'s order, between the interaction store and the service.
-    # Holds two aiosqlite connections, both opened lazily -- so a partial build
-    # that raises before either is touched abandons nothing, and one that
-    # raises after `open_graph` ran abandons two non-daemon worker threads.
-    # `SettingsDeps.close` is a no-op on an unopened store, which is what makes
-    # it safe to list unconditionally.
-    ("settings_deps", "close"),
-    ("service", "close"),
-    ("graphs", "close_all"),
-    # Last, and the one B100 is really about: `EventStoreSessionRepository`
-    # holds the SQLite event store, whose aiosqlite worker thread is
-    # non-daemon (B5). A partial build that abandons it does not merely leak
-    # memory -- it parks the interpreter in `threading._shutdown` waiting for
-    # a thread that will never finish, so a misconfiguration that should have
-    # raised cleanly hangs the process instead.
-    ("repository", "close"),
-)
-
-
-def _partial_build_teardown(
-    error: BaseException,
-) -> tuple[tuple[str, Callable[[], Awaitable[object]]], ...]:
-    """Everything `_build_application` had opened when it raised.
-
-    Read out of the raising frame's locals rather than from a registry the
-    function appends to as it builds. The registry is the tidier design and
-    was rejected on cost: it is a line at each of two dozen construction sites
-    spread over 1400 lines of a file three other branches are editing, where
-    this is one place. What it buys with that is honesty about its own
-    weakness -- a name that gets renamed silently stops being torn down, which
-    a registry could not do.
-    """
-    frame = None
-    traceback = error.__traceback__
-    while traceback is not None:
-        if traceback.tb_frame.f_code is _build_application.__code__:
-            frame = traceback.tb_frame
-        traceback = traceback.tb_next
-    if frame is None:
-        return ()
-    steps: list[tuple[str, Callable[[], Awaitable[object]]]] = []
-    for name, method in _PARTIAL_BUILD_RESOURCES:
-        resource = frame.f_locals.get(name)
-        if resource is not None and callable(getattr(resource, method, None)):
-            steps.append((name, getattr(resource, method)))
-    return tuple(steps)
-
-
 @functools.wraps(_build_application)
 def build_application(*args, **kwargs) -> Application:
     """`_build_application`, with a partial build unwound rather than leaked.
@@ -3470,42 +2780,10 @@ def build_application(*args, **kwargs) -> Application:
     try:
         return _build_application(*args, **kwargs)
     except BaseException as error:
-        steps = _partial_build_teardown(error)
+        steps = _partial_build_teardown(error, _build_application.__code__)
         if steps:
             _run_detached(_close_every_step(*steps))
         raise
-
-
-#: Strong references to in-flight detached teardowns; see `_run_detached`.
-_DETACHED_TEARDOWNS: set[asyncio.Task] = set()
-
-
-def _run_detached(work: Awaitable[None]) -> None:
-    """Run a teardown coroutine from synchronous code, loop or no loop.
-
-    Exceptions are swallowed here and nowhere else in this module: this runs
-    while another exception is already propagating, and a failure to close
-    something must not replace the misconfiguration the caller actually needs
-    to read. `_close_every_step` names each failed step in the group it
-    raises, so the detail is not gone -- it is just not this path's to report.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(_swallowing(work))
-        return
-    # Held in a module-level set until it finishes. `create_task` keeps only a
-    # weak reference, so a teardown task with no other owner can be collected
-    # mid-close -- which is the leak this function exists to prevent, arriving
-    # by a different door.
-    task = loop.create_task(_swallowing(work))
-    _DETACHED_TEARDOWNS.add(task)
-    task.add_done_callback(_DETACHED_TEARDOWNS.discard)
-
-
-async def _swallowing(work: Awaitable[None]) -> None:
-    with contextlib.suppress(BaseException):
-        await work
 
 
 def build_service(
