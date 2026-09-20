@@ -669,3 +669,124 @@ def test_every_close_step_exemption_is_still_needed() -> None:
         "`_PARTIAL_BUILD_RESOURCES` entry. Delete it -- an exemption kept past "
         "its reason exempts whatever is written on that expression next."
     )
+
+
+async def test_lazy_async_resource_defers_initialization_until_get() -> None:
+    import asyncio
+
+    from research_team.composition import LazyAsyncResource
+
+    calls = 0
+
+    class SampleResource:
+        async def close(self) -> None:
+            pass
+
+    async def factory() -> SampleResource:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.001)
+        return SampleResource()
+
+    resource = LazyAsyncResource(factory)
+    assert not resource.is_opened
+    assert calls == 0
+
+    first = await resource.get()
+    assert resource.is_opened
+    assert calls == 1
+    assert isinstance(first, SampleResource)
+
+    second = await resource.opened()
+    assert calls == 1
+    assert second is first
+
+
+async def test_lazy_async_resource_concurrent_calls_run_factory_once() -> None:
+    import asyncio
+
+    from research_team.composition import LazyAsyncResource
+
+    calls = 0
+
+    async def slow_factory() -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)
+        return {"key": "val"}
+
+    resource = LazyAsyncResource(slow_factory)
+
+    results = await asyncio.gather(*(resource.get() for _ in range(10)))
+    assert calls == 1
+    assert all(r is results[0] for r in results)
+
+
+async def test_lazy_async_resource_close_invokes_resource_close() -> None:
+    from research_team.composition import LazyAsyncResource
+
+    closed = False
+
+    class Closable:
+        async def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    async def make_closable() -> Closable:
+        return Closable()
+
+    resource = LazyAsyncResource(make_closable)
+    # Close before open is a no-op
+    await resource.close()
+    assert not closed
+
+    await resource.get()
+    await resource.close()
+    assert closed
+    assert not resource.is_opened
+
+    # Subsequent close is idempotent
+    await resource.close()
+
+
+async def test_lazy_async_resource_custom_close_callback() -> None:
+    from research_team.composition import LazyAsyncResource
+
+    closed_items: list[str] = []
+
+    async def factory() -> str:
+        return "custom-resource"
+
+    async def custom_close(item: str) -> None:
+        closed_items.append(item)
+
+    resource = LazyAsyncResource(factory, close=custom_close)
+    await resource.get()
+    await resource.close()
+
+    assert closed_items == ["custom-resource"]
+
+
+async def test_lazy_async_resource_with_db_path_and_open_fn() -> None:
+    from research_team.composition import LazyAsyncResource
+
+    opened_paths: list[str] = []
+
+    class Store:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        @classmethod
+        async def open(cls, path: str) -> "Store":
+            opened_paths.append(path)
+            return cls(path)
+
+    res1 = LazyAsyncResource(Store.open, "db/a.sqlite")
+    instance1 = await res1.get()
+    assert instance1.path == "db/a.sqlite"
+
+    res2 = LazyAsyncResource.open_fn(Store.open, "db/b.sqlite")
+    instance2 = await res2.get()
+    assert instance2.path == "db/b.sqlite"
+
+    assert opened_paths == ["db/a.sqlite", "db/b.sqlite"]
