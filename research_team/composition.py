@@ -21,8 +21,6 @@ from uuid import UUID
 # nothing else would have pulled redstring in.
 import httpx
 import redstring.events  # noqa: F401
-from eventsource import InMemoryEventBus
-from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer
 from langchain.agents.middleware import AgentMiddleware
@@ -50,11 +48,6 @@ from research_team.application import (
     WorkerRoster,
 )
 from research_team.application.ask import AskService, ConversationRegistry
-from research_team.application.authorization import (
-    Authorizer,
-    PermissiveAuthorizer,
-    RoleTableAuthorizer,
-)
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.course_authoring import CourseAuthor
@@ -63,7 +56,6 @@ from research_team.application.course_catalog import (
 )
 from research_team.application.course_realization import CourseService
 from research_team.application.document_extraction import DocumentExtractor
-from research_team.application.effective import EffectiveSettings, SettingsRevision
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef, source_id_for_url
@@ -71,14 +63,12 @@ from research_team.application.media_acquisition import (
     MediaAcceptReconciler,
     MediaAcceptWorker,
 )
-from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
 from research_team.application.ontology_discovery import (
     DISCOVERY_CHUNK_OVERLAP_CHARS,
     MAX_DISCOVERY_CHUNK_CHARS,
     OntologyDiscoveryService,
 )
 from research_team.application.perception import MediaPerceiver, PerceptionPort
-from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
 from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
@@ -103,7 +93,6 @@ from research_team.infrastructure.agent.corpus_tools import (
 from research_team.infrastructure.agent.definition_model import ChatModelDefinitionText
 from research_team.infrastructure.agent.fetch import (
     FETCH_CORPUS_PROMPT,
-    FETCH_PROMPT,
     build_fetch_tool,
 )
 from research_team.infrastructure.agent.fetch_media import build_fetch_media_tool
@@ -111,13 +100,9 @@ from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
-from research_team.infrastructure.agent.media_curation_adapter import build_curation_ports
 from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
-from research_team.infrastructure.agent.recall import PageMemo, Recall
 from research_team.infrastructure.agent.research_budget import ResearchBudget
 from research_team.infrastructure.agent.search import (
-    SEARCH_PROMPT,
-    SearchAttempts,
     build_search_tool,
 )
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
@@ -126,8 +111,6 @@ from research_team.infrastructure.agent.topic_tools import (
     RepositoryTopics,
     build_topic_tools,
 )
-from research_team.infrastructure.identity import EventStoreUserRecorder
-from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.blurb_writer import ModelBlurbWriter
 from research_team.infrastructure.knowledge.catalog_recorder import (
     EventStoreCatalogFeatureRecorder,
@@ -161,10 +144,7 @@ from research_team.infrastructure.perception.readeverything_adapter import (
     build_perception_adapter,
 )
 from research_team.infrastructure.persistence import (
-    CorpusRunner,
     EventStoreSessionRepository,
-    SessionSummaryRunner,
-    TopicRunner,
     build_ask_conversation_repository,
     build_corpus_repository,
     build_judgements_repository,
@@ -172,7 +152,6 @@ from research_team.infrastructure.persistence import (
     build_research_run_repository,
     build_topic_repository,
 )
-from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.event_store import (
@@ -180,30 +159,14 @@ from research_team.infrastructure.persistence.event_store import (
     build_course_repository,
     build_socratic_dialogue_repository,
 )
-from research_team.infrastructure.persistence.interaction_log import InteractionLogRunner
-from research_team.infrastructure.persistence.read_models import (
-    AskConversationRunner,
-    AuthoringRunRunner,
-    EntityDefinitionRunner,
-    MediaProposalRunner,
-    OntologyRunner,
-    SocraticDialogueRunner,
-)
-from research_team.infrastructure.persistence.tenants import TenantRunner
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
-from research_team.infrastructure.persistence.users import UserRunner
-from research_team.infrastructure.settings import (
-    HttpProviderProbe,
-    ModelProfileStore,
-    SettingsStore,
-    build_secret_box,
-)
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep
 from research_team.interfaces.web.blurb_sweep import BlurbSweep
-from research_team.interfaces.web.settings import SettingsDeps
 from research_team.wiring import (
     _PARTIAL_BUILD_RESOURCES,
+    BuiltStores,
+    BuiltTools,
     LazyAsyncResource,
     _CatalogFeatureRunner,
     _close_every_step,
@@ -220,12 +183,18 @@ from research_team.wiring import (
     _run_detached,
     _subagents_for,
     _swallowing,
+    build_curation_tools,
+    build_stores,
+    build_tools,
 )
 from research_team.wiring.application import Application
 
 __all__ = [
     "_PARTIAL_BUILD_RESOURCES",
     "Application",
+    "BuiltStores",
+    "BuiltTools",
+    "EventStoreSessionRepository",
     "LazyAsyncResource",
     "_CatalogFeatureRunner",
     "_CourseRunner",
@@ -243,7 +212,10 @@ __all__ = [
     "_subagents_for",
     "_swallowing",
     "build_application",
+    "build_curation_tools",
     "build_service",
+    "build_stores",
+    "build_tools",
     "random",
 ]
 
@@ -330,96 +302,24 @@ def _build_application(
     # function accepts is decided in one place.
     resolved_perception = perception if perception is not None else build_perception_adapter()
 
-    # Opened before the tools below so the knowledge adapter can share this
-    # connection's event store and snapshot store rather than opening its own
-    # (BACKLOG B5: a second `SQLiteSnapshotStore` leaks a non-daemon thread).
-    repository = EventStoreSessionRepository.open(resolved_path)
-
-    # Two tools leave the process, and they are withheld differently because
-    # there are two different things to withhold them with.
-    #
-    # `fetch` is registered unconditionally: there is no instance to leave
-    # unconfigured, and a research agent that can see five snippets and never
-    # read a page is not much of one. Its floor of `ask` is the switch instead
-    # -- present and discoverable, but it cannot reach anything until a person
-    # says so once. See `TOOL_FLOORS`.
-    #
-    # `web_search` keeps its configuration switch: an instance is a real thing
-    # someone has to stand up, and "unset means absent" is a stronger promise
-    # than any gate, so there is no reason to trade it for one.
-    # One memo for both network tools and for every session this application
-    # serves. Process-wide rather than per-session because `build_fetch_tool`
-    # is called once here -- and correct at that scope for the same reason it
-    # is safe: it holds only responses from public URLs, which are the same
-    # bytes whoever asked. Nothing project-scoped may ever go in it.
-    recall = Recall()
-    # One store, shared by both `fetch` builds exactly as `recall` is: it holds
-    # only bytes from public URLs, which are the same whoever asked. Nothing
-    # project-scoped may ever go in it.
-    pages = PageMemo()
-    tools: tuple[BaseTool, ...] = (build_fetch_tool(recall=recall, pages=pages),)
-    prompt_suffix += FETCH_PROMPT
-
-    # `None` when unconfigured, same as the tool itself -- `turn_middleware`
-    # below only installs `SearchAttemptsMiddleware` when this is not `None`,
-    # so a build with no SearXNG instance carries no middleware that resets a
-    # counter for a tool it never registered.
-    # Read once here rather than inside `turn_middleware`, which runs on every
-    # turn: a knob re-read per turn is a knob that can change mid-run, and a
-    # phase 3 bounded differently from the phase 1 above it is the kind of
-    # thing nothing would ever report.
     authoring_rounds = config.authoring_research_rounds()
-
-    search_attempts: SearchAttempts | None = None
     searxng = config.searxng_url()
-    if searxng is not None:
-        # One instance, handed to both the tool and the middleware below --
-        # not two `SearchAttempts()` calls. Two instances would mean the
-        # middleware resets a counter the tool never reads and the tool's own
-        # counter never resets, so an empty streak would silently outlive the
-        # turn that produced it and eventually wedge `web_search` for good.
-        search_attempts = SearchAttempts()
-        tools += (
-            build_search_tool(
-                searxng,
-                limit=config.searxng_results(),
-                recall=recall,
-                attempts=search_attempts,
-            ),
-        )
-        prompt_suffix += SEARCH_PROMPT
-    else:
-        prompt_suffix += NO_SEARCH_CLAUSE
 
-    # `None`/`None` when `searxng` is, matching `search_attempts` above: the
-    # curation chain's search port needs the same instance the agent's own
-    # `web_search` tool does, and a build with neither configured has nothing
-    # for `MediaCurationService` to search with either. The text port is
-    # gated the same way rather than built unconditionally, so the pair
-    # answers `create_app`'s 503 check together instead of one half being
-    # present for a service the other half can never actually run.
-    media_curation_text: MediaCurationTextPort | None = None
-    media_curation_search: MediaSearchPort | None = None
-    if searxng is not None:
-        # `extraction_model` -- the house pattern `ChatModelOntologyText` and
-        # `ChatModelDefinitionText` also follow: one already-built model
-        # instance, reused rather than constructing a second connection to
-        # the same provider. `model_name=config.curation_model()`, not
-        # `config.model_name()`, is the other half: `curation_model()` is a
-        # documented, tested user-facing knob (`AGENT_CURATION_MODEL`, see
-        # `docs/configuration.md`) that was never called anywhere, so setting
-        # it changed no behaviour. The name threaded through here is only
-        # ever used for `LangChainLlmProvider`'s tracing/logging label (see
-        # `ChatModelOntologyText` for the same split) -- it does not select a
-        # different model instance, since `extraction_model` is one shared
-        # client regardless -- but a label that never reflected the
-        # documented override was the bug, not the split itself.
-        media_curation_text, media_curation_search = build_curation_ports(
-            extraction_model,
-            model_name=config.curation_model(),
-            searxng_url=searxng,
-            limit=config.searxng_results(),
-        )
+    built_tools = build_tools(
+        searxng_url=searxng,
+        build_fetch=build_fetch_tool,
+        build_search=build_search_tool,
+    )
+    tools = built_tools.tools
+    recall = built_tools.recall
+    pages = built_tools.pages
+    search_attempts = built_tools.search_attempts
+    prompt_suffix += built_tools.prompt_suffix
+
+    media_curation_text, media_curation_search = build_curation_tools(
+        extraction_model,
+        searxng_url=searxng,
+    )
 
     if project_id is not None:
         # A `project_id=` at build time scopes the whole application to that
@@ -433,182 +333,39 @@ def _build_application(
         prompt_suffix += KNOWLEDGE_PROMPT + CORPUS_PROMPT + FETCH_CORPUS_PROMPT + TOPICS_PROMPT
 
     resolved_tracer = tracer if tracer is not None else build_tracer()
-    # Built here rather than beside `summaries` below because `open_graph`
-    # closes over it: the corpus tools are attached with a project, and the
-    # thing they read has to exist by the time that callable is defined.
-    corpus = CorpusRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # The one `FilesystemBlobStore` this process builds. Every
-    # `ProjectCorpusReader` below is handed this exact instance rather than
-    # building its own -- two instances would each hold their own root, and a
-    # test that repointed one would silently leave the other pointed at the
-    # real `~/.research-team/blobs`, which is a bug that only shows up as a
-    # test writing to a developer's home directory.
-    blob_store = FilesystemBlobStore(config.blob_root())
-    # Same reasoning as `corpus`: `open_graph` closes over it, so the thing the
-    # topic tools read has to exist by the time that callable is defined.
-    topics = TopicRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # The fourth projection over this store, built beside the other three so
-    # that all of them are constructed in one place and started by one line in
-    # `start()`: a projection wired somewhere else is a projection somebody
-    # forgets to start. It matters more here than for its
-    # neighbours: this runner is *both* the thing that marks a definition
-    # stale and the thing the read route caches through (see
-    # `definition_reader` below), so a second instance would give the route
-    # its own connection and its own view of `stale` -- the cache would then
-    # go on serving text the invalidator had already marked untrustworthy,
-    # which is precisely the state `stale` exists to make impossible.
-    # Not a projection, unlike its neighbours below -- see `SettingsStore` for
-    # why settings are current state rather than a fold -- and so it is built
-    # here only to be handed to `create_app` rather than to be started. The
-    # secret box is `None` when `AGENT_SETTINGS_KEY` is unset, which is the
-    # state every existing deployment is in: reads still resolve through the
-    # environment layer and writes of a *secret* refuse, naming the variable.
-    # One counter for both tables, not one each. A role's model can change
-    # without the override table being touched at all -- selecting a profile
-    # does it -- so a per-table counter would leave `EffectiveSettings`
-    # serving a stale bundle after exactly the write a user is most likely to
-    # make. Handed to the stores rather than to the routes, so a second write
-    # path added later invalidates the cache without knowing it exists.
-    settings_revision = SettingsRevision()
-    settings_store = SettingsStore(resolved_path, resolved_tracer, settings_revision)
-    # Its own store beside the override table rather than rows in it: a
-    # profile is a record whose provider and credential key are each
-    # validated, and none of that is a thing a `value` column does. Same
-    # database, same lazy open.
-    profile_store = ModelProfileStore(resolved_path, resolved_tracer, settings_revision)
-    settings_secrets = build_secret_box()
-    settings_deps = SettingsDeps(
-        store=settings_store,
-        secrets=settings_secrets,
-        probe=HttpProviderProbe(),
-        profiles=profile_store,
-    )
-    # What makes any of the above take effect. Everything below that builds a
-    # client for a *project* resolves through this rather than through
-    # `config`, which answers for the process and has no project to answer
-    # for. See `application/effective.py` for why the project id is the key
-    # and not a context variable.
-    effective_settings = EffectiveSettings(
-        store=settings_store,
-        secrets=settings_secrets,
-        profiles=profile_store,
-        revision=settings_revision,
-    )
-    definition_invalidation = EntityDefinitionRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # The fifth, and unlike its neighbour above it is *only* a projection: the
-    # discovery service writes through the event store, not through this
-    # runner, so the read route and the projection share a connection here for
-    # the ordinary reason rather than to keep a cache honest.
-    ontology = OntologyRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # The sixth, built here for the reason stated above `topics`: all the
-    # projections over this store are constructed in one place and started by
-    # one line in `start()`, and a projection wired somewhere else is a
-    # projection somebody forgets to start. Measured directly on this one --
-    # `EntityDefinitionRunner`'s absence once shipped a fully green suite
-    # behind an empty read model, and `tests/integration/
-    # test_media_proposals_reach_the_read_model.py` exists to catch the same
-    # failure here.
-    media_proposals = MediaProposalRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # The eighth, built here with the other seven for the same reason, and it
-    # is the one with the worst failure mode if it is not: an ask appends
-    # whether or not anything is following, so a build missing this line
-    # answers 200 with an empty history for every conversation anyone ever
-    # had, and nothing anywhere raises.
-    asks = AskConversationRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # The ninth, built here with the other eight and for the same reason, with
-    # a worse failure mode than any of them: a dialogue appends whether or not
-    # anything is following, so a build missing this line answers 200 with an
-    # empty history for every dialogue anyone ever held -- AND makes every
-    # resumed dialogue start over with a blank goal while telling the reader it
-    # continued. `test_a_dialogue_survives_a_restart.py` is what fails.
-    dialogues = SocraticDialogueRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # Built here with its neighbours for the reason stated above `topics`, and
-    # over `repository.store`/`.publisher` rather than a second store: a
-    # recorder appending through one store while a projection follows another
-    # is the shape that has made three read models in this file silently
-    # empty. The only writer of `UserSignedIn` is `user_recorder` below, built
-    # over the same pair.
-    users = UserRunner(repository.store, resolved_path, repository.publisher, resolved_tracer)
-    # The write half beside the read half, and the one production adapter of
-    # its (implicit) port -- so, per CLAUDE.md's co-mention section, the test
-    # that matters is the one driving both ends over real data rather than a
-    # unit test on either.
-    # `tests/integration/test_a_sign_in_reaches_the_user_read_model.py` is it:
-    # it appends through this recorder and asserts the *row*, never that
-    # nothing threw.
-    #
-    # Handed the runner rather than its store: `rebuild()` closes the store
-    # and opens another, and a recorder holding the first would compare new
-    # claims against a closed connection -- silently deciding that nothing had
-    # changed, because a failed read is indistinguishable from "no row yet".
-    user_recorder = EventStoreUserRecorder(repository.store, repository.publisher, users)
-    # The tenth, built here with the other nine and for the same reason, with
-    # the same failure mode as the ask's and a longer-lived consequence: an
-    # authoring run appends whether or not anything is following, so a build
-    # missing this line loses the area-to-session mapping for every course
-    # anyone ever wrote -- permanently, because the files stay on the log with
-    # nothing saying which session holds which area.
-    # `tests/integration/test_an_authoring_run_survives_a_restart.py` is what
-    # fails.
-    authoring = AuthoringRunRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
 
-    # A second store, and its own bus. Not a second projection over the
-    # sessions store: `eventsource` derives a store id from the database
-    # string and every position carries it, so nothing can order a position
-    # from one against the other -- which is the boundary this feature wants
-    # rather than an obstacle to it.
-    #
-    # Its own `InMemoryEventBus` for the same reason. Handing this runner the
-    # sessions bus would give its subscription wake-ups about a log it is not
-    # reading, and that fails as silence.
-    interaction_store = SQLiteEventStore(resolved_interaction_path)
-    interaction_bus = InMemoryEventBus()
-    interaction_log = InteractionLogRunner(
-        interaction_store,
-        resolved_interaction_path,
-        interaction_bus,
-        resolved_tracer,
+    stores = build_stores(
+        resolved_path=resolved_path,
+        resolved_interaction_path=resolved_interaction_path,
+        resolved_tracer=resolved_tracer,
     )
-    interaction_recorder = EventStoreInteractionRecorder(interaction_store, interaction_bus)
-
-    # The seventh projection over the sessions store, built beside the others
-    # for the reason stated above `topics`: a projection wired somewhere else is
-    # a projection somebody forgets to start, and this one's failure mode is the
-    # worst of the seven -- an empty membership table is indistinguishable from
-    # "this person has no role", so a build that never started it would refuse
-    # everybody with auth on and nobody would be able to say why.
-    tenants = TenantRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
-    # `AGENT_AUTH` off -- which is every configuration today, and every other
-    # workstream's -- selects the permissive adapter. Off is a real authorizer
-    # rather than an absent one so that the existing route tests keep running
-    # the real resolution path; see `PermissiveAuthorizer`.
-    #
-    # Slice B6 is what flips this default, and by then the marker will have been
-    # on every route for weeks with the checker answering "yes". If that goes
-    # wrong, the revert is this one line.
-    authorizer: Authorizer = (
-        RoleTableAuthorizer(tenants, config.admin_subjects())
-        if config.authorization_enabled()
-        else PermissiveAuthorizer()
-    )
+    repository = stores.repository
+    corpus = stores.corpus
+    blob_store = stores.blob_store
+    topics = stores.topics
+    settings_deps = stores.settings_deps
+    effective_settings = stores.effective_settings
+    definition_invalidation = stores.definition_invalidation
+    ontology = stores.ontology
+    media_proposals = stores.media_proposals
+    asks = stores.asks
+    dialogues = stores.dialogues
+    users = stores.users
+    user_recorder = stores.user_recorder
+    authoring = stores.authoring
+    interaction_store = stores.interaction_store
+    interaction_log = stores.interaction_log
+    interaction_recorder = stores.interaction_recorder
+    tenants = stores.tenants
+    authorizer = stores.authorizer
+    summaries = stores.summaries
+    catalog_runner = stores.catalog_runner
+    blurb_cache = stores.blurb_cache
+    art_store = stores.art_store
+    project_summaries = stores.project_summaries
+    candidate_art_store = stores.candidate_art_store
+    outline_cache = stores.outline_cache
+    course_runner = stores.course_runner
 
     async def granted_tools(session: Session) -> tuple[BaseTool, ...]:
         """A grant-bound `fetch`, for a session `resolved_grants` holds one for.
@@ -1224,9 +981,6 @@ def _build_application(
         close_graph=close_graph,
     )
 
-    summaries = SessionSummaryRunner(
-        repository.store, resolved_path, repository.publisher, resolved_tracer
-    )
     service = SessionService(
         repository,
         executor,
@@ -1526,32 +1280,6 @@ def _build_application(
             repository.store, repository.publisher, target_project_id
         )
 
-    # `_catalog_runner` follows the log over `repository.store`/`.publisher`
-    # -- the application's own store, not a second one -- which is the piece
-    # `tests/interfaces/test_catalog_routes.py`'s module docstring names as
-    # what Task 10 was left to thread through: that module builds a
-    # standalone `SQLiteEventStore`/`InMemoryEventBus` pair over the same
-    # file only because this wiring did not exist yet. Registered with
-    # `start()`/`close()` below beside every other projection, per
-    # `EntityDefinitionRunner`'s comment on why one built and never started
-    # is a projection nobody starts.
-    catalog_runner = _CatalogFeatureRunner(
-        repository.store, repository.publisher, resolved_path
-    )
-    # `TypePluralityGrouper` is the one production adapter `CategoryGrouper`
-    # has today -- see its own docstring for why. `ArtPort` now has two:
-    # `LibraryArtProvider` below is what `catalog_service` is built with,
-    # falling back to `SeededArtProvider` -- see `test_catalog_wiring.py` for
-    # the both-ends-over-real-data test CLAUDE.md's co-mention section
-    # demands of exactly this shape.
-    blurb_cache = _LazyBlurbCache(resolved_path)
-    # The art library's storage half. Opened lazily for `blurb_cache`'s
-    # exact reason -- no event loop yet -- and over the same `resolved_path`
-    # every other cache in this function reads, so a piece of art assigned
-    # by one request is visible to the very next one.
-    art_store = _LazyArtStore(resolved_path)
-    project_summaries = _LazyProjectSummaries(resolved_path)
-    candidate_art_store = _LazyCandidateArtStore(resolved_path)
     art_matcher = LibraryArtProvider(
         art_store=art_store,
         candidate_art_store=candidate_art_store,
@@ -1568,11 +1296,6 @@ def _build_application(
     # warns about, and building the object graph now turns the later
     # increment into adding one call rather than a whole graph).
     blurb_writer = ModelBlurbWriter(extraction_model)
-    # `outline_cache` is built here, ahead of `blurb_sweep` below, rather than
-    # down beside `course_service` where it used to live -- the sweep now
-    # writes outlines as well as copy (see `blurb_sweep.py`'s module
-    # docstring) and needs the same cache `course_service` reads.
-    outline_cache = _LazyOutlineCache(resolved_path)
     outline_writer = ModelOutlineWriter(extraction_model)
     # The same `extraction_model` `blurb_writer` above takes -- the brief's
     # own instruction, and `ModelOutlineWriter`'s docstring gives the reason:
@@ -1592,14 +1315,6 @@ def _build_application(
     art_sweep = ArtSweep(art_store, candidate_art_store)
     art_reroll = ArtReroll(art_store, candidate_art_store)
 
-    # `_course_runner` follows the log the same way `catalog_runner` does,
-    # over this application's own store and bus -- see its own docstring for
-    # why it is a runner (mutable `courses` attribute) rather than a plain
-    # field, and `CourseProjection`'s registration below is what
-    # `test-8-brief.md`'s failing test guards: an event no projection handles
-    # counts as applied, so an omitted registration would answer every
-    # request 200 with an empty table rather than raising anything.
-    course_runner = _CourseRunner(repository.store, repository.publisher, resolved_path)
     # Unsnapshotted, over this application's own store and publisher, mirroring
     # `media_proposal_repository` -- see `build_course_repository`'s own
     # docstring for why no snapshot policy is warranted here.
