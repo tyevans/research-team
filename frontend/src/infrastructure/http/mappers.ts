@@ -236,8 +236,7 @@ export const toItemProgress = (raw: Dto<typeof dto.itemProgressDto>): ItemProgre
 
 export const toProgressMap = (
   raw: Dto<typeof dto.progressDto>,
-): ReadonlyMap<ComponentId, ItemProgress> =>
-  toRecordMap(raw.items, toItemProgress, ComponentId)
+): ReadonlyMap<ComponentId, ItemProgress> => toRecordMap(raw.items, toItemProgress, ComponentId)
 
 /** One `ReadonlyMap` per turn, keyed `turn/{position}`.
  *

@@ -8,10 +8,8 @@
 /**
  * Maps a nullable or optional value using `fn`, returning `null` when the input is null or undefined.
  */
-export const optionalMap = <T, R>(
-  val: T | null | undefined,
-  fn: (value: T) => R,
-): R | null => (val == null ? null : fn(val))
+export const optionalMap = <T, R>(val: T | null | undefined, fn: (value: T) => R): R | null =>
+  val == null ? null : fn(val)
 
 /**
  * Wraps a string in a branded identifier constructor, or returns `null` if the
