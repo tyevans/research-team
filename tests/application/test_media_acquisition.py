@@ -27,8 +27,8 @@ from research_team.application.media_acquisition import (
     MediaAcceptWorker,
 )
 from research_team.application.perception import PerceptionUnavailable
-from research_team.domain.corpus import Corpus, MediaRecord
-from research_team.domain.media_proposals import (
+from research_team.domain.research.corpus import Corpus, MediaRecord
+from research_team.domain.research.media_proposals import (
     AcceptMediaProposal,
     MediaProposals,
     ProposeMedia,

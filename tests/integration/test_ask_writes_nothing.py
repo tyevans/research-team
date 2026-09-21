@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage
 
 from research_team.application.ask import AskAnswer, AskConversationOpened
 from research_team.domain import CreateProject, Project
-from research_team.domain.corpus import StoreSourceDocument
+from research_team.domain.research.corpus import StoreSourceDocument
 from tests.conftest import ToolAwareFakeChatModel
 
 

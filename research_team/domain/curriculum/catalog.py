@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 
-from research_team.domain.learning_area import AreaMember, LearningArea
+from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
 
 CategoryKey = str
 """A grouper's answer for one area. A `str` rather than an enum: the grouper is

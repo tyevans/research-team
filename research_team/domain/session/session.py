@@ -17,7 +17,7 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent
 from pydantic import BaseModel, Field
 
-from research_team.domain.commands import (
+from research_team.domain.session.commands import (
     ChangeAutonomy,
     CompactConversation,
     CompleteTurn,
@@ -34,7 +34,7 @@ from research_team.domain.commands import (
     StartSession,
     WriteFile,
 )
-from research_team.domain.events import (
+from research_team.domain.session.events import (
     AssistantMessageAdded,
     AutonomyChanged,
     ConversationCompacted,

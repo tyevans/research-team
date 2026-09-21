@@ -22,9 +22,9 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
-from research_team.domain.course import CourseFit
-from research_team.domain.course_catalog import ArtRef, CatalogSections, CourseCandidate
-from research_team.domain.learning_area import AreaMember
+from research_team.domain.curriculum.catalog import ArtRef, CatalogSections, CourseCandidate
+from research_team.domain.curriculum.course import CourseFit
+from research_team.domain.curriculum.learning_area import AreaMember
 from research_team.interfaces.web.presenters import (
     SUMMARY_LIMIT,
     catalog_view,

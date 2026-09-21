@@ -97,7 +97,7 @@ async def test_a_framing_the_model_botched_fails_the_begin_rather_than_the_dialo
     """
     from eventsource import collect
 
-    from research_team.domain.socratic_dialogue import SocraticDialogue
+    from research_team.domain.dialogue.socratic import SocraticDialogue
 
     application = build_application(
         model=ToolAwareFakeChatModel(

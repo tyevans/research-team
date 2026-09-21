@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.socratic_dialogue import (
+from research_team.domain.dialogue.socratic import (
     ConcludeSocraticDialogue,
     ObserveSocraticProgress,
     RecordSocraticTurn,

@@ -38,7 +38,7 @@ class SessionPurpose(StrEnum):
     first placed it: `session.py` imports the command classes from this module
     to match on in `decide`, so a `session.py -> commands.py` import already
     exists, and `commands.py` needing the enum from `session.py` in turn is a
-    real cycle, not a style choice -- `import research_team.domain.commands`
+    real cycle, not a style choice -- `import research_team.domain.session.commands`
     raised `ImportError: cannot import name 'ChangeAutonomy' from partially
     initialized module` the moment both sides tried it. This module has no
     dependency on `session.py`, so it is the one that can hold a type both

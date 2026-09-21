@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from research_team.domain.providers import ProbeOutcome, ProbeResult
+from research_team.domain.settings.providers import ProbeOutcome, ProbeResult
 from research_team.infrastructure.settings.profiles import ModelProfileStore
 from research_team.infrastructure.settings.secrets import AesGcmSecretBox
 from research_team.infrastructure.settings.store import SettingsStore

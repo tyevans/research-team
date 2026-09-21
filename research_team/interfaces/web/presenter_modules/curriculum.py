@@ -6,10 +6,10 @@ from typing import Any
 from research_team.application.course_catalog import CachedOutline, Catalog
 from research_team.application.course_realization import CourseDetail, RealizedCourse
 from research_team.application.curriculum import Curriculum
-from research_team.domain.course import CourseFit
-from research_team.domain.course_catalog import Category, CourseCandidate
-from research_team.domain.learner import LearnerProgressState
-from research_team.domain.learning_area import (
+from research_team.domain.curriculum.catalog import Category, CourseCandidate
+from research_team.domain.curriculum.course import CourseFit
+from research_team.domain.curriculum.learner import LearnerProgressState
+from research_team.domain.curriculum.learning_area import (
     AreaMember,
     LearningArea,
     LearningPath,

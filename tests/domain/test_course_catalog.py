@@ -1,12 +1,12 @@
 """The catalog's value objects, and the two derivations over them."""
 
-from research_team.domain.course_catalog import (
+from research_team.domain.curriculum.catalog import (
     ArtRef,
     CourseCandidate,
     membership_hash,
     prominence_of,
 )
-from research_team.domain.learning_area import AreaMember, LearningArea
+from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
 
 
 def _area(slug: str, *members: tuple[str, float]) -> LearningArea:

@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError, DomainEvent
 
-from research_team.domain.socratic_dialogue import (
+from research_team.domain.dialogue.socratic import (
     ConcludeSocraticDialogue,
     ObserveSocraticProgress,
     RecordSocraticTurn,
@@ -220,7 +220,7 @@ def test_evolve_ignores_an_event_it_has_no_rule_for():
     """Total, like every other fold here: an event from another aggregate that
     somehow reached this stream leaves the state alone rather than raising
     inside a replay."""
-    from research_team.domain.ask_conversation import AskTurnRecorded
+    from research_team.domain.dialogue.ask import AskTurnRecorded
 
     state = _with(STARTED)
 

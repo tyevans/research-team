@@ -24,7 +24,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from research_team.application.ports import ActivityDelta, ActivityMessage
 from research_team.application.socratic import SocraticFraming, SocraticPrompt
 from research_team.composition import build_application
-from research_team.domain.socratic_dialogue import (
+from research_team.domain.dialogue.socratic import (
     ConcludeSocraticDialogue,
     SocraticDialogue,
     SocraticProgressObserved,

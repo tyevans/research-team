@@ -49,7 +49,7 @@ from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import Session, SessionPurpose
-from research_team.domain.media_proposals import MediaProposals
+from research_team.domain.research.media_proposals import MediaProposals
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import (
     DeepAgentTurnExecutor,

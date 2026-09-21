@@ -20,7 +20,7 @@ from eventsource.ports.readmodels import ReadModelRepository
 from redstring import DocumentExtracted, EntitiesMerged
 from redstring.events.streams import DOCUMENT_CATEGORY
 
-from research_team.domain.ontology import (
+from research_team.domain.knowledge.ontology import (
     ONTOLOGY_AGGREGATE_TYPE,
     DiscoveredClass,
     OntologyDiscovered,

@@ -55,7 +55,7 @@ from research_team.application.authoring_dispatch import AUTHORING_DISPATCH_PROM
 from research_team.application.components import REGISTRY
 from research_team.application.session_service import SessionService
 from research_team.domain import SessionPurpose
-from research_team.domain.learning_area import LearningArea, LearningPath
+from research_team.domain.curriculum.learning_area import LearningArea, LearningPath
 
 #: How many of an area's anchors are named in a prompt.
 #:

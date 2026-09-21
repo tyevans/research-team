@@ -316,7 +316,7 @@ async def test_two_findings_recorded_at_once_both_land(tmp_path):
 
         # Opened straight through the aggregate: `open_topic` consults the
         # queue projection for its cap, and this test is about the writes.
-        from research_team.domain.topic import OpenTopic
+        from research_team.domain.research.topic import OpenTopic
 
         topic = topics.create_new(uuid4())
         topic.execute(
@@ -360,7 +360,7 @@ async def test_record_gap_does_not_change_the_topic_status(tmp_path):
     from eventsource.adapters.sqlite import SQLiteEventStore
     from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
-    from research_team.domain.topic import OpenTopic
+    from research_team.domain.research.topic import OpenTopic
     from research_team.infrastructure.agent.topic_tools import RepositoryTopics
     from research_team.infrastructure.persistence import build_topic_repository
 
@@ -406,7 +406,7 @@ async def test_record_gap_does_not_acknowledge_any_trigger(tmp_path):
     from eventsource.adapters.sqlite import SQLiteEventStore
     from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
-    from research_team.domain.topic import OpenTopic
+    from research_team.domain.research.topic import OpenTopic
     from research_team.infrastructure.agent.topic_tools import RepositoryTopics
     from research_team.infrastructure.persistence import build_topic_repository
 

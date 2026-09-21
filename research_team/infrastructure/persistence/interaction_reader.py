@@ -15,7 +15,7 @@ from uuid import UUID
 import aiosqlite
 from pydantic import BaseModel
 
-from research_team.domain.interaction import INTERACTION_EVENTS
+from research_team.domain.dialogue.interaction import INTERACTION_EVENTS
 
 if TYPE_CHECKING:
     from research_team.infrastructure.persistence.interaction_log import InteractionEventRow

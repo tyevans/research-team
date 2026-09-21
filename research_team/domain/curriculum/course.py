@@ -42,7 +42,7 @@ from eventsource import (
 )
 from pydantic import BaseModel, Field
 
-from research_team.domain.learning_area import LearningArea
+from research_team.domain.curriculum.learning_area import LearningArea
 
 COURSE_AGGREGATE_TYPE = "Course"
 

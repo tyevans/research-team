@@ -41,7 +41,11 @@ from typing import Protocol
 
 from research_team.application.graph_read import Graph, GraphEntity, GraphRelationship
 from research_team.application.name_shape import clause_shaped
-from research_team.domain.learning_area import AreaMember, AreaProjection, LearningArea
+from research_team.domain.curriculum.learning_area import (
+    AreaMember,
+    AreaProjection,
+    LearningArea,
+)
 
 #: Weight of one extracted relationship. The unit the other weights are
 #: expressed against, so it is 1.0 by definition rather than by tuning: a

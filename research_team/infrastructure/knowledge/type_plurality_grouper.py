@@ -21,8 +21,8 @@ is a port rather than this function.
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
-from research_team.domain.course_catalog import CategoryKey
-from research_team.domain.learning_area import LearningArea
+from research_team.domain.curriculum.catalog import CategoryKey
+from research_team.domain.curriculum.learning_area import LearningArea
 
 UNCLASSIFIED: CategoryKey = "unclassified"
 

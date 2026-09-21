@@ -26,7 +26,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
-from research_team.domain.ask_conversation import AskConversation
+from research_team.domain.dialogue.ask import AskConversation
 from research_team.infrastructure.persistence.read_models import AskConversationStore
 from research_team.interfaces.web.app import create_app
 from research_team.interfaces.web.dialogues import AskRequest

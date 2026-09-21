@@ -45,7 +45,7 @@ from research_team.application.perception import (
     PerceptionUnavailable,
     SourceDropped,
 )
-from research_team.domain.media_proposals import (
+from research_team.domain.research.media_proposals import (
     FailMediaProposal,
     MediaProposals,
     StoreMediaProposal,

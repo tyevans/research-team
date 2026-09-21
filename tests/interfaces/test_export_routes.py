@@ -25,7 +25,7 @@ from research_team.application import SummaryProjects, WorkerRoster
 from research_team.application.curriculum import CurriculumService
 from research_team.composition import build_application
 from research_team.domain import SessionPurpose
-from research_team.domain.course_authoring_run import (
+from research_team.domain.curriculum.authoring_run import (
     RecordAuthoredCourse,
     StartCourseAuthoringRun,
 )

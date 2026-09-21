@@ -35,7 +35,7 @@ from research_team.application.course_authoring import (
     evidence_prompt,
     learning_plan_prompt,
 )
-from research_team.domain.learning_area import AreaMember, LearningArea
+from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
 
 SLUG = "the-principate"
 UNIT = f"/course/areas/{SLUG}/unit.md"

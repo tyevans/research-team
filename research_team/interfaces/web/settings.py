@@ -39,7 +39,6 @@ from research_team.application.settings import (
     SettingsStorePort,
     StoredProfile,
 )
-from research_team.domain.providers import PROVIDERS, Provider, UnknownProvider, provider_for
 from research_team.domain.settings import (
     CONNECTIONS,
     PROVIDER_KEY_GROUP,
@@ -53,6 +52,12 @@ from research_team.domain.settings import (
     SettingError,
     SettingSpec,
     dynamic_specs,
+)
+from research_team.domain.settings.providers import (
+    PROVIDERS,
+    Provider,
+    UnknownProvider,
+    provider_for,
 )
 
 

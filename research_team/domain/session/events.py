@@ -33,7 +33,7 @@ from uuid import UUID
 
 from eventsource import DomainEvent, register_event
 
-from research_team.domain.commands import SessionPurpose
+from research_team.domain.session.commands import SessionPurpose
 
 
 @register_event

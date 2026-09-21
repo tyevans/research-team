@@ -21,7 +21,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityReporter
-from research_team.domain.ask_conversation import (
+from research_team.domain.dialogue.ask import (
     AskConversation,
     AskConversationStarted,
     AskTurnRecorded,

@@ -11,7 +11,7 @@ import pytest
 from redstring.consolidation.candidates import ScoredCandidate
 from redstring.domain.similarity import SimilarityFeatures
 
-from research_team.domain.judgements import (
+from research_team.domain.knowledge.judgements import (
     EntitiesHeldDistinct,
     EntitiesHeldSame,
     EntityKey,

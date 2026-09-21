@@ -22,7 +22,7 @@ from research_team.application.ask import (
     ConversationRegistry,
 )
 from research_team.application.ports import ActivityDelta, ActivityReporter
-from research_team.domain.ask_conversation import AskConversation
+from research_team.domain.dialogue.ask import AskConversation
 
 
 class FakeExecutor:

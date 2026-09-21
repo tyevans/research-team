@@ -48,7 +48,7 @@ from uuid import UUID, uuid4
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application import RunAlreadyActive
-from research_team.domain.course_authoring_run import (
+from research_team.domain.curriculum.authoring_run import (
     CourseAuthoringRun,
     RecordAuthoredCourse,
     RecordAuthoringFailure,

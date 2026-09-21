@@ -25,7 +25,11 @@ from research_team.application.area_projection import (
 )
 from research_team.application.graph_read import MAX_GRAPH_NODES, Graph, GraphReadPort
 from research_team.application.learning_paths import full_path, path_to
-from research_team.domain.learning_area import AreaProjection, LearningArea, LearningPath
+from research_team.domain.curriculum.learning_area import (
+    AreaProjection,
+    LearningArea,
+    LearningPath,
+)
 
 
 @dataclass(frozen=True)

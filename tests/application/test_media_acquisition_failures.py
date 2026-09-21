@@ -12,8 +12,8 @@ from research_team.application.media_acquisition import (
     AcceptedProposal,
     MediaAcceptWorker,
 )
-from research_team.domain.corpus import Corpus
-from research_team.domain.media_proposals import (
+from research_team.domain.research.corpus import Corpus
+from research_team.domain.research.media_proposals import (
     AcceptMediaProposal,
     MediaProposalFailed,
     MediaProposals,

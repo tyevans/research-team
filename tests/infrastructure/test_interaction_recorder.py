@@ -6,7 +6,10 @@ from uuid import uuid4
 from eventsource import InMemoryEventBus, StreamId
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.domain.interaction import BROWSER_SESSION_AGGREGATE_TYPE, ViewEntered
+from research_team.domain.dialogue.interaction import (
+    BROWSER_SESSION_AGGREGATE_TYPE,
+    ViewEntered,
+)
 from research_team.infrastructure.interaction.recorder import (
     EventStoreInteractionRecorder,
 )

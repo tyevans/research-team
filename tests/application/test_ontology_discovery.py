@@ -6,7 +6,7 @@ from research_team.application.ontology_discovery import (
     DocumentChunk,
     OntologyDiscoveryService,
 )
-from research_team.domain.corpus import TextRecord
+from research_team.domain.research.corpus import TextRecord
 
 SONGS = (
     "There are six difficulties available in the game: EASY, NORMAL, HARD, "

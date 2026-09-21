@@ -96,7 +96,7 @@ from research_team.domain import (
     SessionPurpose,
     WriteFile,
 )
-from research_team.domain.learner import initial_state as learner_initial_state
+from research_team.domain.curriculum.learner import initial_state as learner_initial_state
 
 logger = logging.getLogger(__name__)
 

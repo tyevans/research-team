@@ -15,7 +15,7 @@ from research_team.application.research_round import (
     round_prompt,
 )
 from research_team.application.topic_attention import TopicAttention
-from research_team.domain.topic import SubQuestion, TopicState
+from research_team.domain.research.topic import SubQuestion, TopicState
 
 
 def attention(*findings):

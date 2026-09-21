@@ -11,7 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from research_team.composition import build_application as _build_application
-from research_team.domain.corpus import StoreSourceMedia
+from research_team.domain.research.corpus import StoreSourceMedia
 from research_team.interfaces.web import app as app_module
 from research_team.interfaces.web.app import create_app
 

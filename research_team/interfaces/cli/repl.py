@@ -26,7 +26,7 @@ from research_team.application import (
 )
 from research_team.application.ports import ActivityNote
 from research_team.domain import CreateProject, SessionPurpose
-from research_team.domain.research_run import Budget
+from research_team.domain.research.run import Budget
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
     format_activity,

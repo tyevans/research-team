@@ -31,8 +31,8 @@ from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import MAX_OPEN_TOPICS
 from research_team.application.workers import WorkerRoster
-from research_team.domain.media_proposals import MediaProposals
-from research_team.domain.topic import (
+from research_team.domain.research.media_proposals import MediaProposals
+from research_team.domain.research.topic import (
     AddSubQuestion,
     ResolveSubQuestion,
     SetTopicStatus,

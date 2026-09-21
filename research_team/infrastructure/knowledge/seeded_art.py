@@ -20,7 +20,7 @@ from hashlib import sha256
 from urllib.parse import quote
 from uuid import UUID
 
-from research_team.domain.course_catalog import ArtRef, CategoryKey, CourseCandidate
+from research_team.domain.curriculum.catalog import ArtRef, CategoryKey, CourseCandidate
 
 # One palette per key the default grouper (type_plurality_grouper.CATEGORY_LABELS)
 # actually emits, so a category page reads as one family rather than a

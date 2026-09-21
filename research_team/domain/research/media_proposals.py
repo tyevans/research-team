@@ -41,7 +41,7 @@ from uuid import UUID
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
-from research_team.domain.urls import normalize_url
+from research_team.domain.research.urls import normalize_url
 
 
 @register_event

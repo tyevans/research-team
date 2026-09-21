@@ -34,7 +34,7 @@ than a round trip.
 
 import pytest
 
-from research_team.domain.providers import ProbeOutcome, provider_for
+from research_team.domain.settings.providers import ProbeOutcome, provider_for
 from research_team.infrastructure.settings.probe import HttpProviderProbe
 
 pytestmark = pytest.mark.integration

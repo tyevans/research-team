@@ -5,7 +5,17 @@ langchain, no deepagents, no SQLite, no environment. Everything above may
 import from here; nothing here imports from above.
 """
 
-from research_team.domain.ask_conversation import (
+from research_team.domain.curriculum import (
+    ItemRecord,
+    LearnerChecklistRecorded,
+    LearnerItemAnswered,
+    LearnerItemCompleted,
+    LearnerProgress,
+    LearnerProgressState,
+    RecordAttempt,
+    RecordChecklistState,
+)
+from research_team.domain.dialogue import (
     AskConversation,
     AskConversationCommand,
     AskConversationStarted,
@@ -15,55 +25,7 @@ from research_team.domain.ask_conversation import (
     RecordAskTurn,
     StartAskConversation,
 )
-from research_team.domain.commands import (
-    ChangeAutonomy,
-    CompactConversation,
-    CompleteTurn,
-    DeleteFile,
-    EditFile,
-    FailTurn,
-    RecordAssistantMessage,
-    RecordForkSource,
-    RecordToolDecision,
-    RecordToolResult,
-    SendUserMessage,
-    SessionCommand,
-    StartSession,
-    WriteFile,
-)
-from research_team.domain.corpus import (
-    UNREADABLE_DEGRADATIONS,
-    Corpus,
-    CorpusDerivedTextStored,
-    CorpusDocumentDropped,
-    CorpusDocumentStored,
-    CorpusMediaStored,
-    CorpusState,
-    DropSourceDocument,
-    MediaRecord,
-    SourceRecord,
-    StoreDerivedText,
-    StoreSourceDocument,
-    StoreSourceMedia,
-    TextRecord,
-)
-from research_team.domain.events import (
-    SESSION_EVENTS,
-    AssistantMessageAdded,
-    AutonomyChanged,
-    ConversationCompacted,
-    FileDeleted,
-    FileEdited,
-    FileWritten,
-    SessionForkedFrom,
-    SessionStarted,
-    ToolCallDecided,
-    ToolResultRecorded,
-    TurnCompleted,
-    TurnFailed,
-    UserMessageSent,
-)
-from research_team.domain.judgements import (
+from research_team.domain.knowledge import (
     EntitiesHeldDistinct,
     EntitiesHeldSame,
     EntityJudgements,
@@ -76,17 +38,63 @@ from research_team.domain.judgements import (
     JudgementWithdrawn,
     WithdrawJudgement,
 )
-from research_team.domain.learner import (
-    ItemRecord,
-    LearnerChecklistRecorded,
-    LearnerItemAnswered,
-    LearnerItemCompleted,
-    LearnerProgress,
-    LearnerProgressState,
-    RecordAttempt,
-    RecordChecklistState,
+from research_team.domain.research import (
+    UNREADABLE_DEGRADATIONS,
+    Budget,
+    Corpus,
+    CorpusDerivedTextStored,
+    CorpusDocumentDropped,
+    CorpusDocumentStored,
+    CorpusMediaStored,
+    CorpusState,
+    DropSourceDocument,
+    MediaRecord,
+    ResearchRun,
+    ResearchRunState,
+    SourceRecord,
+    StartRun,
+    StoreDerivedText,
+    StoreSourceDocument,
+    StoreSourceMedia,
+    TextRecord,
 )
-from research_team.domain.project import (
+from research_team.domain.session import (
+    SESSION_EVENTS,
+    AssistantMessageAdded,
+    AutonomyChanged,
+    ChangeAutonomy,
+    CompactConversation,
+    CompleteTurn,
+    ConversationCompacted,
+    DeleteFile,
+    EditFile,
+    FailTurn,
+    FileDeleted,
+    FileEdited,
+    FileWritten,
+    RecordAssistantMessage,
+    RecordForkSource,
+    RecordToolDecision,
+    RecordToolResult,
+    SendUserMessage,
+    Session,
+    SessionCommand,
+    SessionForkedFrom,
+    SessionPurpose,
+    SessionStarted,
+    SessionState,
+    StartSession,
+    ToolCallDecided,
+    ToolResultRecorded,
+    TurnCompleted,
+    TurnFailed,
+    UserMessageSent,
+    WriteFile,
+    decide,
+    evolve,
+    initial_state,
+)
+from research_team.domain.tenancy import (
     AdvanceTip,
     CreateProject,
     DeleteProject,
@@ -97,20 +105,6 @@ from research_team.domain.project import (
     ProjectSessionJoined,
     ProjectState,
     ProjectTipAdvanced,
-)
-from research_team.domain.research_run import (
-    Budget,
-    ResearchRun,
-    ResearchRunState,
-    StartRun,
-)
-from research_team.domain.session import (
-    Session,
-    SessionPurpose,
-    SessionState,
-    decide,
-    evolve,
-    initial_state,
 )
 
 __all__ = [

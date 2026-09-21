@@ -168,7 +168,7 @@ async def test_a_refusal_from_decide_answers_409_not_500_on_revise(
         f"/api/projects/{project}/sources", json={"source_id": "s1", "text": "hello"}
     )
 
-    from research_team.domain.corpus import CommandRejectedError, Corpus
+    from research_team.domain.research.corpus import CommandRejectedError, Corpus
 
     def _refuse(command, state):
         raise CommandRejectedError("decide refused for this test")
@@ -248,7 +248,7 @@ async def test_a_refusal_from_decide_answers_409_not_500_on_restore(
     )
     assert dropped.status_code == 200
 
-    from research_team.domain.corpus import CommandRejectedError, Corpus
+    from research_team.domain.research.corpus import CommandRejectedError, Corpus
 
     def _refuse(command, state):
         raise CommandRejectedError("decide refused for this test")

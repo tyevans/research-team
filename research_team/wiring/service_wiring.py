@@ -66,13 +66,13 @@ from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
-from research_team.domain.ask_conversation import AskConversation
-from research_team.domain.corpus import Corpus
-from research_team.domain.learner import LearnerProgress
-from research_team.domain.media_proposals import MediaProposals
-from research_team.domain.research_run import Budget, ResearchRun
-from research_team.domain.socratic_dialogue import SocraticDialogue
-from research_team.domain.topic import Topic
+from research_team.domain.curriculum.learner import LearnerProgress
+from research_team.domain.dialogue.ask import AskConversation
+from research_team.domain.dialogue.socratic import SocraticDialogue
+from research_team.domain.research.corpus import Corpus
+from research_team.domain.research.media_proposals import MediaProposals
+from research_team.domain.research.run import Budget, ResearchRun
+from research_team.domain.research.topic import Topic
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT

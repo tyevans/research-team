@@ -41,7 +41,7 @@ from eventsource.ports.readmodels import Query, ReadModelRepository
 from eventsource.ports.readmodels.query import Filter
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from research_team.domain.user import UserProfileChanged, UserSignedIn, stream_id_for
+from research_team.domain.tenancy.user import UserProfileChanged, UserSignedIn, stream_id_for
 from research_team.infrastructure.persistence.read_models import (
     LOCAL_RETRY_POLICY,
     apply_schema,

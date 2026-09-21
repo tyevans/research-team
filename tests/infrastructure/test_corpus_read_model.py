@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 
-from research_team.domain.corpus import (
+from research_team.domain.research.corpus import (
     Corpus,
     CorpusMediaStored,
     DropSourceDocument,

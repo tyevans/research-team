@@ -17,7 +17,7 @@ from research_team.application.entity_definitions import (
     ServedCitation,
     serve_citations,
 )
-from research_team.domain.corpus import TextRecord
+from research_team.domain.research.corpus import TextRecord
 
 
 def _map(*segments: tuple[int, int, dict[str, object]]) -> str:

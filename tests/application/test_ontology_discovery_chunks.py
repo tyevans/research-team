@@ -7,8 +7,8 @@ from research_team.application.ontology_discovery import (
     merge_classes,
     verify_classes,
 )
-from research_team.domain.corpus import TextRecord
-from research_team.domain.ontology import DiscoveredClass
+from research_team.domain.knowledge.ontology import DiscoveredClass
+from research_team.domain.research.corpus import TextRecord
 
 SONGS = (
     "There are six difficulties available in the game: EASY, NORMAL, HARD, "

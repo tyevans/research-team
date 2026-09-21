@@ -50,7 +50,7 @@ from research_team.application.course_authoring import (
     CourseAuthor,
 )
 from research_team.domain import SessionPurpose
-from research_team.domain.learning_area import AreaMember, LearningArea
+from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
 
 
 class Outcome:

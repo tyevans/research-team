@@ -13,7 +13,7 @@ from uuid import uuid4
 import pytest
 from eventsource import DomainEvent
 
-from research_team.domain.interaction import (
+from research_team.domain.dialogue.interaction import (
     BROWSER_SESSION_AGGREGATE_TYPE,
     INTERACTION_EVENTS,
     TEXT_BEARING_FIELDS,

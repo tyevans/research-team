@@ -31,7 +31,7 @@ from research_team.application.topics import (
     TopicSummary,
     format_topics,
 )
-from research_team.domain.topic import (
+from research_team.domain.research.topic import (
     LinkSource,
     OpenTopic,
     RecordFinding,

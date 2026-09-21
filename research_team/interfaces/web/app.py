@@ -64,9 +64,9 @@ from research_team.application.topic_dispatch import (
     TopicDispatcher,
 )
 from research_team.application.topic_seeding import TopicSeeder
-from research_team.domain.course import Course
-from research_team.domain.media_proposals import MediaProposals
-from research_team.domain.topic import Topic
+from research_team.domain.curriculum.course import Course
+from research_team.domain.research.media_proposals import MediaProposals
+from research_team.domain.research.topic import Topic
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader

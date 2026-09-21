@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from research_team.application.course_catalog import DraftArt
-from research_team.domain.learning_area import AreaMember
+from research_team.domain.curriculum.learning_area import AreaMember
 from research_team.interfaces.web.art_sweep import ArtReroll, RerollAlreadyActive
 
 

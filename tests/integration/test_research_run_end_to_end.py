@@ -21,8 +21,8 @@ from langchain_core.messages import AIMessage
 
 from research_team.application.autonomy import FETCH_TOOL
 from research_team.domain import CreateProject, SessionPurpose
-from research_team.domain.research_run import Budget
-from research_team.domain.topic import OpenTopic, Topic
+from research_team.domain.research.run import Budget
+from research_team.domain.research.topic import OpenTopic, Topic
 from research_team.infrastructure.persistence import build_topic_repository
 from tests.conftest import ToolAwareFakeChatModel
 

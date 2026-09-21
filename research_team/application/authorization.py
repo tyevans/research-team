@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
 
-from research_team.domain.tenant import ProjectRole, TenantRole
+from research_team.domain.tenancy.tenant import ProjectRole, TenantRole
 
 Permission = Literal[
     "project.read",

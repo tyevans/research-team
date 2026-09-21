@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
 from research_team.composition import build_application
-from research_team.domain.socratic_dialogue import (
+from research_team.domain.dialogue.socratic import (
     SocraticDialogue,
     SocraticDialogueConcluded,
     SocraticProgressObserved,
