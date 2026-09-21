@@ -261,3 +261,21 @@ async def test_setting_autonomy_on_an_unknown_session_is_a_404(client):
         json={"tool": "write_file", "level": "ask"},
     )
     assert response.status_code == 404
+
+
+async def test_restrict_all_moves_tools_to_ask_and_records_on_session(client, service):
+    session_id = await _new_session(client)
+    # First allow all
+    await client.post(f"/api/sessions/{session_id}/autonomy/allow-all")
+
+    # Now restrict all
+    response = await client.post(f"/api/sessions/{session_id}/autonomy/restrict-all")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["changed"]) == len(GATED_TOOLS)
+    for tool in GATED_TOOLS:
+        assert body["levels"][tool] == "ask"
+
+    events = await service.history(UUID(session_id))
+    changes = [event for event in events if isinstance(event, AutonomyChanged)]
+    assert any(change.level == "ask" for change in changes)

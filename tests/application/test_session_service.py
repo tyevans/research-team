@@ -165,6 +165,88 @@ async def test_forking_leaves_the_original_intact(service, session_id):
     assert original.version > 1, "forking must not destroy the original"
 
 
+async def test_fork_with_retargeted_purpose_closes_b101(service):
+    """B101: Forking a research round or workflow session can retarget purpose to CHAT."""
+    # Create a session with RESEARCH_ROUND purpose
+    source_id = uuid4()
+    session = service._repository.create(source_id)
+    session.execute(
+        StartSession(
+            session_id=source_id,
+            system_prompt="workflow prompt",
+            model_name="fake",
+            project_id=uuid4(),
+            purpose=SessionPurpose.RESEARCH_ROUND,
+        )
+    )
+    await service._repository.save(session)
+    await service.run_turn(source_id, "round task")
+
+    # Fork with purpose retargeted to CHAT
+    forked_id = await service.fork(source_id, at=1, purpose=SessionPurpose.CHAT)
+    forked = await service.load(forked_id)
+
+    assert forked.state.purpose is SessionPurpose.CHAT
+    original = await service.load(source_id)
+    assert original.state.purpose is SessionPurpose.RESEARCH_ROUND
+
+    forked_events = await service.history(forked_id)
+    fork_marker = forked_events[-1]
+    assert fork_marker.purpose is SessionPurpose.CHAT
+
+
+async def test_session_stats_queries(service, session_id):
+    stats = await service.session_stats(session_id)
+    assert stats.session_id == session_id
+    assert stats.turn_index == 0
+    assert stats.total_messages == 0
+    assert stats.file_count == 0
+
+    await service.write_file(session_id, "/hello.txt", "content")
+    await service.run_turn(session_id, "say hello")
+
+    stats_after = await service.session_stats(session_id)
+    assert stats_after.turn_index == 1
+    assert stats_after.total_messages > 0
+    assert stats_after.file_count == 1
+    assert "/hello.txt" in stats_after.file_paths
+
+
+async def test_find_messages_filtering(service, session_id):
+    await service.run_turn(session_id, "find me special keyword")
+
+    # Filter by role
+    human_msgs = await service.find_messages(session_id, role="human")
+    assert len(human_msgs) == 1
+    assert "special keyword" in str(human_msgs[0]["data"]["content"])
+
+    # Filter by query
+    found = await service.find_messages(session_id, query="keyword")
+    assert len(found) == 1
+
+    not_found = await service.find_messages(session_id, query="nonexistent_xyz")
+    assert len(not_found) == 0
+
+    # Limit
+    all_msgs = await service.find_messages(session_id, limit=1)
+    assert len(all_msgs) == 1
+
+
+async def test_diff_session_files(service, session_id):
+    other_id = await start_session(service)
+    await service.write_file(session_id, "/common.txt", "line1\nline2\n")
+    await service.write_file(session_id, "/only_s1.txt", "s1 only")
+
+    await service.write_file(other_id, "/common.txt", "line1\nline2 modified\nline3\n")
+    await service.write_file(other_id, "/only_s2.txt", "s2 only")
+
+    diff = await service.diff_session_files(session_id, other_id)
+    assert diff["added"] == ["/only_s2.txt"]
+    assert diff["removed"] == ["/only_s1.txt"]
+    assert "/common.txt" in diff["modified"]
+    assert diff["modified"]["/common.txt"]["added_lines"] >= 1
+
+
 async def test_turn_records_each_message_exactly_once(service, session_id):
     """Regression: a SystemMessage in the sent list shifted turn accounting,
     causing the user's own message to be re-recorded as an assistant message."""

@@ -152,6 +152,32 @@ class Excerpt:
             "uri": self.uri,
         }
 
+    @classmethod
+    def from_text(
+        cls,
+        source_id: str,
+        text: str,
+        start: int = 0,
+        end: int | None = None,
+        char_count: int | None = None,
+        title: str | None = None,
+        label: str | None = None,
+        uri: str | None = None,
+    ) -> "Excerpt":
+        actual_end = len(text) if end is None else end
+        actual_char_count = len(text) if char_count is None else char_count
+        snippet = text[start:actual_end]
+        return cls(
+            source_id=source_id,
+            title=title,
+            label=label,
+            start=start,
+            end=actual_end,
+            char_count=actual_char_count,
+            text=snippet,
+            uri=uri,
+        )
+
 
 @dataclass(frozen=True)
 class InventoryItem:
@@ -213,6 +239,18 @@ class Acknowledgement:
             "ok": self.ok,
         }
 
+    @classmethod
+    def success(
+        cls, action: str, subject: str, detail: str | None = None
+    ) -> "Acknowledgement":
+        return cls(action=action, subject=subject, detail=detail, ok=True)
+
+    @classmethod
+    def failure(
+        cls, action: str, subject: str, detail: str | None = None
+    ) -> "Acknowledgement":
+        return cls(action=action, subject=subject, detail=detail, ok=False)
+
 
 @dataclass(frozen=True)
 class FileChange:
@@ -236,6 +274,32 @@ class FileChange:
             "before": self.before,
             "after": self.after,
         }
+
+    @classmethod
+    def from_diff(
+        cls,
+        path: str,
+        before: str | None,
+        after: str | None,
+    ) -> "FileChange":
+        import difflib
+
+        before_lines = before.splitlines(keepends=True) if before else []
+        after_lines = after.splitlines(keepends=True) if after else []
+        diff = list(difflib.unified_diff(before_lines, after_lines))
+        added = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
+        removed = sum(
+            1 for line in diff if line.startswith("-") and not line.startswith("---")
+        )
+        total_lines = len(after_lines)
+        return cls(
+            path=path,
+            added=added,
+            removed=removed,
+            total_lines=total_lines,
+            before=before,
+            after=after,
+        )
 
 
 @dataclass(frozen=True)
@@ -292,3 +356,110 @@ Built from the classes rather than hand-written, because a hand-written list
 is documentation and the thing this needs to be is a contract -- see
 `test_the_registry_names_every_shape_class`.
 """
+
+
+def parse_artifact(data: dict[str, Any]) -> Any:
+    """Parse a serialized artifact dict back into its typed dataclass shape.
+
+    Returns None if `data` is not an artifact dict or has an unknown shape.
+    """
+    if not isinstance(data, dict):
+        return None
+    shape = data.get("shape")
+    match shape:
+        case HitList.SHAPE:
+            sources = tuple(
+                SourceHits(
+                    source_id=src["source_id"],
+                    title=src.get("title"),
+                    label=src.get("label"),
+                    char_count=src.get("char_count", 0),
+                    total=src.get("total", 0),
+                    hits=tuple(
+                        Hit(start=h["start"], end=h["end"], snippet=h.get("snippet", ""))
+                        for h in src.get("hits", [])
+                    ),
+                )
+                for src in data.get("sources", [])
+            )
+            return HitList(
+                pattern=data.get("pattern", ""),
+                total=data.get("total", 0),
+                suppressed=data.get("suppressed", 0),
+                sources=sources,
+            )
+        case EntityList.SHAPE:
+            entities = tuple(
+                EntityRef(
+                    entity_id=ent["entity_id"],
+                    name=ent["name"],
+                    entity_type=ent["entity_type"],
+                    relationship_count=ent.get("relationship_count", 0),
+                )
+                for ent in data.get("entities", [])
+            )
+            return EntityList(
+                query=data.get("query", ""),
+                entities=entities,
+                mode=data.get("mode", ""),
+            )
+        case Excerpt.SHAPE:
+            return Excerpt(
+                source_id=data["source_id"],
+                title=data.get("title"),
+                label=data.get("label"),
+                start=data.get("start", 0),
+                end=data.get("end", 0),
+                char_count=data.get("char_count", 0),
+                text=data.get("text", ""),
+                uri=data.get("uri"),
+            )
+        case Inventory.SHAPE:
+            items = tuple(
+                InventoryItem(
+                    item_id=it["item_id"],
+                    title=it.get("title"),
+                    label=it.get("label"),
+                    size=it.get("size", 0),
+                    detail=it.get("detail"),
+                )
+                for it in data.get("items", [])
+            )
+            return Inventory(
+                kind=data.get("kind", ""),
+                unit=data.get("unit", ""),
+                total=data.get("total", 0),
+                items=items,
+            )
+        case Acknowledgement.SHAPE:
+            return Acknowledgement(
+                action=data.get("action", ""),
+                subject=data.get("subject", ""),
+                detail=data.get("detail"),
+                ok=data.get("ok", True),
+            )
+        case FileChange.SHAPE:
+            return FileChange(
+                path=data.get("path", ""),
+                added=data.get("added", 0),
+                removed=data.get("removed", 0),
+                total_lines=data.get("total_lines", 0),
+                before=data.get("before"),
+                after=data.get("after"),
+            )
+        case Delegation.SHAPE:
+            workers = tuple(
+                Worker(
+                    name=w.get("name", ""),
+                    started_ms=w.get("started_ms", 0),
+                    duration_ms=w.get("duration_ms"),
+                    ok=w.get("ok", True),
+                )
+                for w in data.get("workers", [])
+            )
+            return Delegation(
+                task=data.get("task", ""),
+                workers=workers,
+            )
+        case _:
+            return None

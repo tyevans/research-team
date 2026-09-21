@@ -247,6 +247,18 @@ async def test_fork_out_of_range_is_400(client):
     assert response.status_code == 400
 
 
+async def test_fork_with_purpose_sets_child_purpose(client):
+    session_id = await _new_session(client)
+    response = await client.post(
+        f"/api/sessions/{session_id}/forks",
+        json={"at": 1, "purpose": "chat"},
+    )
+    assert response.status_code == 200
+    forked_id = response.json()["id"]
+    child = (await client.get(f"/api/sessions/{forked_id}")).json()
+    assert child["purpose"] == "chat"
+
+
 async def test_tree_nests_forks_under_their_parent(client):
     parent = await _new_session(client)
     await client.post(f"/api/sessions/{parent}/turns", json={"input": "hello"})

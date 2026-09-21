@@ -233,3 +233,111 @@ def test_relax_all_sweeps_it_in():
     """Intended, and stated rather than inherited: this is the first tool
     where "allow all" means megabytes and a perception pass."""
     assert FETCH_MEDIA_TOOL in AutonomyPolicy().relax_all()
+
+
+def test_restrict_all_moves_tools_to_ask_and_reports_changes():
+    policy = AutonomyPolicy(default="auto")
+    policy.relax_all()
+    # Now all are auto
+    changed = policy.restrict_all(level="ask")
+    assert len(changed) == len(GATED_TOOLS)
+    for tool in GATED_TOOLS:
+        assert policy.level_for(tool) == "ask"
+
+    # Calling restrict_all again with same level reports nothing
+    assert policy.restrict_all(level="ask") == {}
+
+    # Can restrict to deny
+    changed_deny = policy.restrict_all(level="deny")
+    assert len(changed_deny) == len(GATED_TOOLS)
+    for tool in GATED_TOOLS:
+        assert policy.level_for(tool) == "deny"
+
+    with pytest.raises(ValueError, match="unknown autonomy level"):
+        policy.restrict_all(level="invalid")  # type: ignore[arg-type]
+
+
+def test_reset_clears_explicit_levels():
+    policy = AutonomyPolicy(default="auto")
+    policy.set("write_file", "deny")
+    policy.set("edit_file", "ask")
+
+    # Reset single tool
+    changed = policy.reset("write_file")
+    assert changed == {"write_file": "auto"}
+    assert policy.level_for("write_file") == "auto"
+
+    # Reset all
+    changed_all = policy.reset()
+    assert changed_all == {"edit_file": "auto"}
+
+    with pytest.raises(ValueError, match="not a gated tool"):
+        policy.reset("read_file")
+
+
+def test_is_gated_predicate():
+    policy = AutonomyPolicy()
+    assert policy.is_gated("write_file") is True
+    assert policy.is_gated("read_file") is False
+    assert AutonomyPolicy.is_gated("delete_file") is True
+    assert AutonomyPolicy.is_gated("unknown_tool") is False
+
+
+def test_explain_autonomy_level():
+    policy = AutonomyPolicy(default="auto")
+    # Ungated tool
+    exp_ungated = policy.explain("read_file")
+    assert exp_ungated["gated"] is False
+    assert exp_ungated["level"] == "auto"
+
+    # Gated tool without override
+    exp_fetch = policy.explain("fetch")
+    assert exp_fetch["gated"] is True
+    assert exp_fetch["explicit"] is False
+    assert exp_fetch["floor"] == "ask"
+    assert exp_fetch["level"] == "ask"
+
+    # Gated tool with override
+    policy.set("fetch", "auto")
+    exp_fetch_override = policy.explain("fetch")
+    assert exp_fetch_override["explicit"] is True
+    assert exp_fetch_override["level"] == "auto"
+
+
+def test_copy_policy():
+    policy = AutonomyPolicy(default="ask")
+    policy.set("write_file", "deny")
+
+    cloned = policy.copy()
+    assert cloned.level_for("write_file") == "deny"
+    assert cloned.level_for("delete_file") == "ask"
+
+    # Mutations to clone do not touch original
+    cloned.set("write_file", "auto")
+    assert cloned.level_for("write_file") == "auto"
+    assert policy.level_for("write_file") == "deny"
+
+
+def test_scoped_autonomy_policy():
+    from research_team.session.application.autonomy import ScopedAutonomyPolicy
+
+    parent = AutonomyPolicy(default="auto")
+    scoped = ScopedAutonomyPolicy(parent)
+
+    # Initially matches parent
+    assert scoped.level_for("write_file") == "auto"
+    assert scoped.level_for("fetch") == "ask"
+
+    # Local override in scope
+    scoped.set("write_file", "deny")
+    assert scoped.level_for("write_file") == "deny"
+    assert parent.level_for("write_file") == "auto"
+
+    # Parent change reflected in scope if not locally overridden
+    parent.set("delete_file", "deny")
+    assert scoped.level_for("delete_file") == "deny"
+
+    # Scope levels() reflects combined view
+    levels = scoped.levels()
+    assert levels["write_file"] == "deny"
+    assert levels["delete_file"] == "deny"

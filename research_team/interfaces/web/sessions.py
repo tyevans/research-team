@@ -38,7 +38,9 @@ from research_team.session.application.turn_supervisor import (
     TurnAlreadyRunning,
     TurnCancelled,
     TurnSupervisor,
+    TurnTimeout,
 )
+from research_team.session.domain import SessionPurpose
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ class NewTurn(BaseModel):
 
 class NewFork(BaseModel):
     at: int
+    purpose: SessionPurpose | None = None
 
 
 class ChecklistState(BaseModel):
@@ -378,6 +381,8 @@ def session_router(deps: SessionDeps) -> APIRouter:
             # "client closed request" -- the closest thing to a standard code
             # for work abandoned on purpose.
             raise HTTPException(status_code=499, detail=str(error)) from error
+        except TurnTimeout as error:
+            raise HTTPException(status_code=504, detail=str(error)) from error
         except OptimisticLockError as error:
             # Another writer -- the REPL, or a second process -- got there
             # first. The log is append-only and the loser's events were
@@ -558,11 +563,23 @@ def session_router(deps: SessionDeps) -> APIRouter:
         await service.record_autonomy_changes(session_id, changed)
         return {"changed": changed} | autonomy_view(instance)
 
+    @router.post("/api/sessions/{session_id}/autonomy/restrict-all")
+    async def restrict_all_autonomy(session_id: UUID, level: str = "ask"):
+        """Require approval for all hazards (or set to specified level)."""
+        instance = _policy()
+        await _load(session_id)
+        try:
+            changed = instance.restrict_all(level)  # type: ignore[arg-type]
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        await service.record_autonomy_changes(session_id, changed)
+        return {"changed": changed} | autonomy_view(instance)
+
     @router.post("/api/sessions/{session_id}/forks")
     async def fork_session(session_id: UUID, body: NewFork):
         await _load(session_id)
         try:
-            return {"id": str(await service.fork(session_id, body.at))}
+            return {"id": str(await service.fork(session_id, body.at, purpose=body.purpose))}
         except (ValueError, CommandRejectedError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 

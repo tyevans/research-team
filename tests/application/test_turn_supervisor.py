@@ -500,3 +500,106 @@ async def test_a_supervisor_without_a_buffer_still_runs_turns(fast_supervisor):
     outcome = await supervisor.run(session_id, "hello")
 
     assert outcome.reply == "done"
+
+
+async def test_turn_timeout_cancels_and_raises(build_service, slow_model):
+    from research_team.session.application.turn_supervisor import TurnTimeout
+
+    service = await build_service(model=slow_model)
+    supervisor = TurnSupervisor(service, default_turn_timeout=0.05)
+    session_id = await start_session(service)
+
+    with pytest.raises(TurnTimeout) as exc:
+        await supervisor.run(session_id, "times out")
+
+    assert exc.value.session_id == session_id
+    assert exc.value.timeout_seconds == 0.05
+    assert not supervisor.is_running(session_id)
+
+
+async def test_turn_lifecycle_hooks(build_service, slow_model, failing_model):
+    from research_team.session.application.turn_supervisor import (
+        TurnLifecycleHook,
+        TurnOutcome,
+    )
+
+    class RecordingHook(TurnLifecycleHook):
+        def __init__(self) -> None:
+            self.started = []
+            self.completed = []
+            self.failed = []
+            self.cancelled = []
+
+        def on_turn_started(self, session_id: UUID, turn_index: int, user_input: str) -> None:
+            self.started.append((session_id, turn_index, user_input))
+
+        def on_turn_completed(
+            self, session_id: UUID, turn_index: int, outcome: TurnOutcome
+        ) -> None:
+            self.completed.append((session_id, turn_index, outcome.reply))
+
+        def on_turn_failed(
+            self, session_id: UUID, turn_index: int, error: BaseException
+        ) -> None:
+            self.failed.append((session_id, turn_index, str(error)))
+
+        def on_turn_cancelled(self, session_id: UUID, turn_index: int) -> None:
+            self.cancelled.append((session_id, turn_index))
+
+    hook = RecordingHook()
+    fast_model = ToolAwareFakeChatModel(responses=[AIMessage(content="fast reply", id="f1")])
+    service = await build_service(model=fast_model)
+    supervisor = TurnSupervisor(service, hooks=[hook])
+    session_id = await start_session(service)
+
+    # 1. Successful turn
+    outcome = await supervisor.run(session_id, "prompt 1")
+    assert outcome.reply == "fast reply"
+    assert len(hook.started) == 1
+    assert hook.started[0] == (session_id, 1, "prompt 1")
+    assert len(hook.completed) == 1
+    assert hook.completed[0] == (session_id, 1, "fast reply")
+
+    # 2. Cancelled turn
+    slow_service = await build_service(model=slow_model)
+    slow_supervisor = TurnSupervisor(slow_service)
+    slow_supervisor.add_hook(hook)
+    slow_session = await start_session(slow_service)
+    task = asyncio.create_task(slow_supervisor.run(slow_session, "slow prompt"))
+    await once_inside_the_model(slow_model)
+    await slow_supervisor.cancel(slow_session)
+    with pytest.raises(TurnCancelled):
+        await task
+    assert len(hook.cancelled) == 1
+    assert hook.cancelled[0][0] == slow_session
+
+    # 3. Failed turn
+    fail_service = await build_service(model=failing_model)
+    fail_supervisor = TurnSupervisor(fail_service, hooks=[hook])
+    fail_session = await start_session(fail_service)
+    with pytest.raises(RuntimeError):
+        await fail_supervisor.run(fail_session, "fail prompt")
+    assert len(hook.failed) == 1
+    assert hook.failed[0][0] == fail_session
+
+
+async def test_turn_supervisor_diagnostics_and_preview(build_service, slow_model):
+    service = await build_service(model=slow_model)
+    supervisor = TurnSupervisor(service)
+    session_id = await start_session(service)
+
+    task = asyncio.create_task(supervisor.run(session_id, "hello long running world"))
+    await once_inside_the_model(slow_model)
+
+    diag = supervisor.diagnostics()
+    assert diag["active_turns_count"] == 1
+    assert diag["running"][0]["session_id"] == str(session_id)
+    assert diag["running"][0]["user_input_preview"] == "hello long running world"
+    assert diag["running"][0]["elapsed_seconds"] >= 0
+
+    await supervisor.cancel(session_id)
+    with pytest.raises(TurnCancelled):
+        await task
+
+    diag_after = supervisor.diagnostics()
+    assert diag_after["active_turns_count"] == 0

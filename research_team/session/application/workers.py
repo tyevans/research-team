@@ -21,7 +21,7 @@ so a restart shows an empty roster, which is the truth: nothing is running.
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 WorkerKind = Literal["run", "turn", "extraction", "dispatch"]
@@ -95,6 +95,13 @@ class Worker:
     """The `ref` of the worker this one runs inside, when that is known."""
     started_at: datetime | None
 
+    def elapsed_seconds(self, now: datetime | None = None) -> float | None:
+        """How many seconds this worker has been active, or None if start unrecorded."""
+        if self.started_at is None:
+            return None
+        current = now or datetime.now(self.started_at.tzinfo)
+        return (current - self.started_at).total_seconds()
+
 
 @dataclass(frozen=True)
 class Roster:
@@ -109,6 +116,32 @@ class Roster:
     project_id: UUID
     workers: tuple[Worker, ...] = ()
     idle_session_ids: tuple[UUID, ...] = ()
+
+    @property
+    def is_idle(self) -> bool:
+        """True when no workers are currently running on this project."""
+        return len(self.workers) == 0
+
+    @property
+    def worker_count(self) -> int:
+        """How many workers are running."""
+        return len(self.workers)
+
+    @property
+    def idle_session_count(self) -> int:
+        """How many project sessions are currently idle."""
+        return len(self.idle_session_ids)
+
+    def has_kind(self, kind: WorkerKind) -> bool:
+        """Whether any worker of kind `kind` is currently active."""
+        return any(w.kind == kind for w in self.workers)
+
+    def workers_by_kind(self) -> dict[str, list[Worker]]:
+        """Active workers grouped by kind."""
+        grouped: dict[str, list[Worker]] = {}
+        for w in self.workers:
+            grouped.setdefault(w.kind, []).append(w)
+        return grouped
 
 
 class ProjectStates(Protocol):
@@ -366,6 +399,15 @@ class WorkerRoster:
             )
 
         return tuple([await self.on(project_id) for project_id in sorted(active, key=str)])
+
+    def diagnostics(self) -> dict[str, Any]:
+        """Diagnostic state of the supervisors wired into this roster."""
+        return {
+            "has_runs_supervisor": self._runs is not None,
+            "has_dispatches_supervisor": self._dispatches is not None,
+            "has_extractions_supervisor": self._extractions is not None,
+            "has_summaries_read_model": self._summaries is not None,
+        }
 
 
 def _dispatch_detail(snapshot: DispatchSnapshot) -> str:

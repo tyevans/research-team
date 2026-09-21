@@ -391,3 +391,27 @@ async def test_ordinary_events_carry_no_cancellation_flag(client):
     await client.post(f"/api/sessions/{session_id}/turns", json={"input": "hello"})
     events = (await client.get(f"/api/sessions/{session_id}/events")).json()
     assert all(row["cancelled"] is None for row in events)
+
+
+async def test_turn_timeout_returns_504(db_path):
+    slow_model = SlowModel(responses=[AIMessage(content="late", id="s1")], delay=1.0)
+    application = await _started(model=slow_model, db_path=db_path)
+    # Configure default_turn_timeout on supervisor to 0.05
+    application.turns._default_turn_timeout = 0.05
+    api = create_app(
+        application.service,
+        application.feed,
+        application.turns,
+        corpus=application.corpus,
+        blob_store=application.blob_store,
+    )
+    transport = ASGITransport(app=api)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        session_id = await _new_session(client)
+        response = await client.post(
+            f"/api/sessions/{session_id}/turns",
+            json={"input": "will time out"},
+        )
+        assert response.status_code == 504
+        assert "timed out after 0.05s" in response.json()["detail"]
+    await application.close()
