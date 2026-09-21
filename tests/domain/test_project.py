@@ -5,13 +5,21 @@ from eventsource import CommandRejectedError
 
 from research_team.tenancy.domain.project import (
     AdvanceTip,
+    ArchiveProject,
     CreateProject,
     DeleteProject,
     JoinProject,
+    ProjectArchived,
     ProjectCreated,
     ProjectDeleted,
+    ProjectMetadataUpdated,
+    ProjectRenamed,
     ProjectSessionJoined,
     ProjectTipAdvanced,
+    ProjectUnarchived,
+    RenameProject,
+    UnarchiveProject,
+    UpdateProjectMetadata,
     decide,
     evolve,
     initial_state,
@@ -242,3 +250,151 @@ def test_a_held_project_refuses_a_catch_up_from_the_old_tip():
 
     with pytest.raises(CommandRejectedError, match="does not hold"):
         decide(AdvanceTip(session_id=old_tip, at_event=12), state)
+
+
+# --- Archival and lifecycle transitions ---------------------------------------
+
+
+def test_archiving_a_project_emits_project_archived():
+    project_id = uuid4()
+    state = _created(project_id)
+
+    [event] = decide(ArchiveProject(), state)
+    assert isinstance(event, ProjectArchived)
+    assert event.aggregate_id == project_id
+
+    evolved = evolve(state, event)
+    assert evolved.status == "archived"
+
+
+def test_archiving_a_held_project_is_rejected():
+    project_id, holder = uuid4(), uuid4()
+    state = evolve(
+        _created(project_id),
+        ProjectSessionJoined(aggregate_id=project_id, session_id=holder, inherited_at=0),
+    )
+
+    with pytest.raises(CommandRejectedError, match=str(holder)):
+        decide(ArchiveProject(), state)
+
+
+def test_archiving_an_already_archived_project_is_rejected():
+    project_id = uuid4()
+    state = evolve(_created(project_id), ProjectArchived(aggregate_id=project_id))
+
+    with pytest.raises(CommandRejectedError, match="already archived"):
+        decide(ArchiveProject(), state)
+
+
+def test_archived_project_rejects_joins_and_tip_advances():
+    project_id = uuid4()
+    state = evolve(_created(project_id), ProjectArchived(aggregate_id=project_id))
+
+    with pytest.raises(CommandRejectedError, match="is archived"):
+        decide(JoinProject(session_id=uuid4()), state)
+
+    with pytest.raises(CommandRejectedError, match="is archived"):
+        decide(AdvanceTip(session_id=uuid4(), at_event=1), state)
+
+
+def test_unarchiving_an_archived_project_restores_active_standing():
+    project_id, session_id = uuid4(), uuid4()
+    state = evolve(
+        _created(project_id),
+        ProjectArchived(aggregate_id=project_id),
+    )
+
+    [event] = decide(UnarchiveProject(), state)
+    assert isinstance(event, ProjectUnarchived)
+    assert event.aggregate_id == project_id
+
+    active_state = evolve(state, event)
+    assert active_state.status == "created"
+
+    # Now joining succeeds
+    [join_event] = decide(JoinProject(session_id=session_id), active_state)
+    assert isinstance(join_event, ProjectSessionJoined)
+
+
+def test_unarchiving_a_non_archived_project_is_rejected():
+    project_id = uuid4()
+    state = _created(project_id)
+
+    with pytest.raises(CommandRejectedError, match="not archived"):
+        decide(UnarchiveProject(), state)
+
+
+def test_an_archived_project_can_be_deleted():
+    project_id = uuid4()
+    state = evolve(_created(project_id), ProjectArchived(aggregate_id=project_id))
+
+    [event] = decide(DeleteProject(), state)
+    assert isinstance(event, ProjectDeleted)
+    assert event.aggregate_id == project_id
+
+
+# --- Renaming and Metadata ---------------------------------------------------
+
+
+def test_renaming_a_project_emits_project_renamed():
+    project_id = uuid4()
+    state = _created(project_id, name="Old Name")
+
+    [event] = decide(RenameProject(name="New Name"), state)
+    assert isinstance(event, ProjectRenamed)
+    assert event.aggregate_id == project_id
+    assert event.name == "New Name"
+
+    evolved = evolve(state, event)
+    assert evolved.name == "New Name"
+
+
+def test_renaming_to_same_name_is_a_noop():
+    project_id = uuid4()
+    state = _created(project_id, name="Same Name")
+
+    events = decide(RenameProject(name="  Same Name  "), state)
+    assert events == []
+
+
+def test_renaming_to_empty_name_is_rejected():
+    project_id = uuid4()
+    state = _created(project_id, name="Name")
+
+    with pytest.raises(CommandRejectedError, match="cannot be empty"):
+        decide(RenameProject(name="   "), state)
+
+
+def test_updating_metadata_normalizes_tags_and_metadata():
+    project_id = uuid4()
+    state = _created(project_id)
+
+    [event] = decide(
+        UpdateProjectMetadata(
+            description="  A research project  ",
+            tags=["ML", " ml ", "NLP", "", "nlp"],
+            metadata={" priority ": " high ", "  ": "invalid", "category": "ai"},
+        ),
+        state,
+    )
+
+    assert isinstance(event, ProjectMetadataUpdated)
+    assert event.description == "A research project"
+    assert event.tags == ("ml", "nlp")
+    assert event.metadata == {"priority": "high", "category": "ai"}
+
+    evolved = evolve(state, event)
+    assert evolved.description == "A research project"
+    assert evolved.tags == ("ml", "nlp")
+    assert evolved.metadata == {"priority": "high", "category": "ai"}
+
+
+def test_archived_project_rejects_renaming_and_metadata_updates():
+    project_id = uuid4()
+    state = evolve(_created(project_id), ProjectArchived(aggregate_id=project_id))
+
+    with pytest.raises(CommandRejectedError, match="is archived"):
+        decide(RenameProject(name="New"), state)
+
+    with pytest.raises(CommandRejectedError, match="is archived"):
+        decide(UpdateProjectMetadata(description="desc"), state)

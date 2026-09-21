@@ -36,9 +36,12 @@ matters is a retention pass over this aggregate type, not a change to the
 shape here. See BACKLOG when that day arrives.
 """
 
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID, uuid5
 
-from eventsource import DomainEvent, register_event
+from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
+from pydantic import BaseModel
 
 USER_AGGREGATE_TYPE = "User"
 """The stream these are appended to, named rather than spelled twice.
@@ -135,3 +138,176 @@ class UserProfileChanged(DomainEvent):
     display_name: str = ""
     avatar_url: str = ""
     changed_at: str
+
+
+@dataclass(frozen=True)
+class RecordSignIn:
+    subject: str
+    tenant_id: str
+    email: str = ""
+    display_name: str = ""
+    avatar_url: str = ""
+    signed_in_at: str | None = None
+
+
+@dataclass(frozen=True)
+class UpdateUserProfile:
+    subject: str
+    tenant_id: str
+    email: str = ""
+    display_name: str = ""
+    avatar_url: str = ""
+    changed_at: str | None = None
+
+
+UserCommand = RecordSignIn | UpdateUserProfile
+
+
+class UserState(BaseModel):
+    """Everything derivable from a person's user stream."""
+
+    subject: str | None = None
+    tenant_id: str | None = None
+    email: str = ""
+    display_name: str = ""
+    avatar_url: str = ""
+    sign_in_count: int = 0
+    last_signed_in_at: str | None = None
+
+
+def initial_state() -> UserState:
+    return UserState()
+
+
+def decide(command: UserCommand, state: UserState) -> list[DomainEvent]:
+    """Which user observations are valid, and what facts they produce."""
+    match command:
+        case RecordSignIn(
+            subject=subj,
+            tenant_id=t_id,
+            email=email,
+            display_name=display_name,
+            avatar_url=avatar_url,
+            signed_in_at=signed_at,
+        ):
+            cleaned_subj = subj.strip()
+            if not cleaned_subj:
+                raise CommandRejectedError("subject cannot be empty")
+            if not t_id.strip():
+                raise CommandRejectedError("tenant_id cannot be empty")
+
+            now_iso = signed_at or datetime.now(UTC).isoformat()
+            stream_id = stream_id_for(cleaned_subj)
+            events: list[DomainEvent] = [
+                UserSignedIn(
+                    aggregate_id=stream_id,
+                    subject=cleaned_subj,
+                    tenant_id=t_id.strip(),
+                    email=email.strip(),
+                    display_name=display_name.strip(),
+                    avatar_url=avatar_url.strip(),
+                    signed_in_at=now_iso,
+                )
+            ]
+            if state.sign_in_count > 0:
+                differs = (
+                    email.strip() != state.email
+                    or display_name.strip() != state.display_name
+                    or avatar_url.strip() != state.avatar_url
+                )
+                if differs:
+                    events.append(
+                        UserProfileChanged(
+                            aggregate_id=stream_id,
+                            subject=cleaned_subj,
+                            tenant_id=t_id.strip(),
+                            email=email.strip(),
+                            display_name=display_name.strip(),
+                            avatar_url=avatar_url.strip(),
+                            changed_at=now_iso,
+                        )
+                    )
+            return events
+
+        case UpdateUserProfile(
+            subject=subj,
+            tenant_id=t_id,
+            email=email,
+            display_name=display_name,
+            avatar_url=avatar_url,
+            changed_at=changed_at,
+        ):
+            cleaned_subj = subj.strip()
+            if not cleaned_subj:
+                raise CommandRejectedError("subject cannot be empty")
+            stream_id = stream_id_for(cleaned_subj)
+            differs = (
+                email.strip() != state.email
+                or display_name.strip() != state.display_name
+                or avatar_url.strip() != state.avatar_url
+            )
+            if not differs:
+                return []
+            return [
+                UserProfileChanged(
+                    aggregate_id=stream_id,
+                    subject=cleaned_subj,
+                    tenant_id=t_id.strip(),
+                    email=email.strip(),
+                    display_name=display_name.strip(),
+                    avatar_url=avatar_url.strip(),
+                    changed_at=changed_at or datetime.now(UTC).isoformat(),
+                )
+            ]
+
+    raise CommandRejectedError(f"unhandled command {type(command).__name__}")
+
+
+def evolve(state: UserState, event: DomainEvent) -> UserState:
+    """Apply domain facts to UserState."""
+    match event:
+        case UserSignedIn(
+            subject=subj,
+            tenant_id=t_id,
+            email=email,
+            display_name=display_name,
+            avatar_url=avatar_url,
+            signed_in_at=signed_at,
+        ):
+            return state.model_copy(
+                update={
+                    "subject": subj,
+                    "tenant_id": t_id,
+                    "email": email,
+                    "display_name": display_name,
+                    "avatar_url": avatar_url,
+                    "sign_in_count": state.sign_in_count + 1,
+                    "last_signed_in_at": signed_at,
+                }
+            )
+
+        case UserProfileChanged(
+            email=email,
+            display_name=display_name,
+            avatar_url=avatar_url,
+        ):
+            return state.model_copy(
+                update={
+                    "email": email,
+                    "display_name": display_name,
+                    "avatar_url": avatar_url,
+                }
+            )
+
+        case _:
+            return state
+
+
+class User(DeciderAggregate[UserState, UserCommand]):
+    """The User aggregate imperative shell."""
+
+    aggregate_type = USER_AGGREGATE_TYPE
+
+    initial_state = staticmethod(initial_state)
+    decide = staticmethod(decide)
+    evolve = staticmethod(evolve)

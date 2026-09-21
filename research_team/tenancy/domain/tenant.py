@@ -50,11 +50,13 @@ for most rows and org ids for these. Nothing queries that column in this
 repository, and anything that starts to must filter by `aggregate_type` first.
 """
 
-from datetime import datetime
-from typing import Literal
-from uuid import UUID, uuid5
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, Literal
+from uuid import UUID, uuid4, uuid5
 
-from eventsource import DomainEvent, register_event
+from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
+from pydantic import BaseModel, Field
 
 TENANT_NAMESPACE = UUID("8c4a1e37-5b62-4d09-9f13-7a0e2d6b8c41")
 """Namespace for every id derived from a tenant id or a (tenant, subject) pair.
@@ -293,3 +295,454 @@ a handler fails `test_the_projection_handles_every_tenant_event` at collection
 rather than by leaving a read model silently empty (CLAUDE.md, "An event no
 projection handles counts as APPLIED, not rejected").
 """
+
+
+@dataclass(frozen=True)
+class CreateTenant:
+    tenant_id: str
+    name: str
+    kind: TenantKind = "shared"
+    created_by: str = LOCAL_SUBJECT
+
+
+@dataclass(frozen=True)
+class AddMember:
+    subject: str
+    role: TenantRole
+    granted_by: str = LOCAL_SUBJECT
+
+
+@dataclass(frozen=True)
+class ChangeMemberRole:
+    subject: str
+    role: TenantRole
+    changed_by: str = LOCAL_SUBJECT
+
+
+@dataclass(frozen=True)
+class RemoveMember:
+    subject: str
+    removed_by: str = LOCAL_SUBJECT
+
+
+@dataclass(frozen=True)
+class TransferOwnership:
+    from_subject: str
+    to_subject: str
+
+
+@dataclass(frozen=True)
+class AddProjectGrant:
+    project_id: UUID
+    subject: str
+    role: ProjectRole
+    granted_by: str = LOCAL_SUBJECT
+
+
+@dataclass(frozen=True)
+class RevokeProjectGrant:
+    project_id: UUID
+    subject: str
+    revoked_by: str = LOCAL_SUBJECT
+
+
+@dataclass(frozen=True)
+class CreateInvitation:
+    email: str
+    role: TenantRole
+    token: str
+    invited_by: str = LOCAL_SUBJECT
+    expires_at: datetime | None = None
+    invitation_id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class AcceptInvitation:
+    invitation_id: UUID
+    subject: str
+
+
+@dataclass(frozen=True)
+class RevokeInvitation:
+    invitation_id: UUID
+    revoked_by: str = LOCAL_SUBJECT
+
+
+TenantCommand = (
+    CreateTenant
+    | AddMember
+    | ChangeMemberRole
+    | RemoveMember
+    | TransferOwnership
+    | AddProjectGrant
+    | RevokeProjectGrant
+    | CreateInvitation
+    | AcceptInvitation
+    | RevokeInvitation
+)
+
+
+class TenantState(BaseModel):
+    """Derivable state from a tenant's event stream."""
+
+    tenant_id: str | None = None
+    name: str = ""
+    kind: TenantKind = "shared"
+    created_by: str = ""
+    is_created: bool = False
+    owner_subject: str | None = None
+    members: dict[str, TenantRole] = Field(default_factory=dict)
+    project_grants: dict[tuple[UUID, str], ProjectRole] = Field(default_factory=dict)
+    invitations: dict[UUID, dict[str, Any]] = Field(default_factory=dict)
+
+
+def initial_state() -> TenantState:
+    return TenantState()
+
+
+def decide(command: TenantCommand, state: TenantState) -> list[DomainEvent]:
+    """Which requests are legal on a tenant stream, and what facts they produce."""
+    match command, state:
+        case CreateTenant(
+            tenant_id=t_id, name=name, kind=kind, created_by=creator
+        ), TenantState(is_created=False):
+            cleaned_id = t_id.strip()
+            if not cleaned_id:
+                raise CommandRejectedError("tenant id cannot be empty")
+            cleaned_name = name.strip()
+            if not cleaned_name:
+                raise CommandRejectedError("tenant name cannot be empty")
+
+            agg_id = tenant_aggregate_id(cleaned_id)
+            events: list[DomainEvent] = [
+                TenantCreated(
+                    aggregate_id=agg_id,
+                    tenant_id=cleaned_id,
+                    name=cleaned_name,
+                    kind=kind,
+                    created_by=creator,
+                )
+            ]
+            if creator:
+                events.append(
+                    MemberAdded(
+                        aggregate_id=agg_id,
+                        tenant_id=cleaned_id,
+                        subject=creator,
+                        role="owner",
+                        granted_by=creator,
+                    )
+                )
+            return events
+
+        case CreateTenant(), _:
+            raise CommandRejectedError("tenant already created")
+
+        case _, TenantState(is_created=False):
+            raise CommandRejectedError("tenant not created")
+
+        case AddMember(subject=subj, role=role, granted_by=granter), _:
+            cleaned_sub = subj.strip()
+            if not cleaned_sub:
+                raise CommandRejectedError("subject cannot be empty")
+            if role == "owner":
+                raise CommandRejectedError("cannot add owner directly; use TransferOwnership")
+            if role not in ("admin", "member", "guest"):
+                raise CommandRejectedError(f"invalid tenant role: {role}")
+            if cleaned_sub in state.members:
+                raise CommandRejectedError(
+                    f"subject {cleaned_sub} is already a member; use ChangeMemberRole"
+                )
+
+            return [
+                MemberAdded(
+                    aggregate_id=tenant_aggregate_id(state.tenant_id or ""),
+                    tenant_id=state.tenant_id or "",
+                    subject=cleaned_sub,
+                    role=role,
+                    granted_by=granter,
+                )
+            ]
+
+        case ChangeMemberRole(subject=subj, role=role, changed_by=changer), _:
+            if subj not in state.members:
+                raise CommandRejectedError(f"subject {subj} is not a member")
+            if state.members[subj] == "owner":
+                raise CommandRejectedError(
+                    "cannot change role of owner directly; use TransferOwnership"
+                )
+            if role == "owner":
+                raise CommandRejectedError(
+                    "cannot change role to owner; use TransferOwnership"
+                )
+            if role not in ("admin", "member", "guest"):
+                raise CommandRejectedError(f"invalid tenant role: {role}")
+            if state.members[subj] == role:
+                raise CommandRejectedError(f"subject {subj} already has role {role}")
+
+            return [
+                MemberRoleChanged(
+                    aggregate_id=tenant_aggregate_id(state.tenant_id or ""),
+                    tenant_id=state.tenant_id or "",
+                    subject=subj,
+                    role=role,
+                    previous_role=state.members[subj],
+                    changed_by=changer,
+                )
+            ]
+
+        case RemoveMember(subject=subj, removed_by=remover), _:
+            if subj not in state.members:
+                raise CommandRejectedError(f"subject {subj} is not a member")
+            if state.members[subj] == "owner":
+                raise CommandRejectedError(
+                    "cannot remove the tenant owner; transfer ownership first"
+                )
+
+            t_id = state.tenant_id or ""
+            agg_id = tenant_aggregate_id(t_id)
+            events: list[DomainEvent] = [
+                MemberRemoved(
+                    aggregate_id=agg_id,
+                    tenant_id=t_id,
+                    subject=subj,
+                    removed_by=remover,
+                )
+            ]
+            for p_id, s in state.project_grants:
+                if s == subj:
+                    events.append(
+                        ProjectGrantRevoked(
+                            aggregate_id=agg_id,
+                            tenant_id=t_id,
+                            project_id=p_id,
+                            subject=subj,
+                            revoked_by=remover,
+                        )
+                    )
+            return events
+
+        case TransferOwnership(from_subject=from_subj, to_subject=to_subj), _:
+            if state.owner_subject != from_subj:
+                raise CommandRejectedError(f"{from_subj} is not the current owner")
+            cleaned_to = to_subj.strip()
+            if not cleaned_to:
+                raise CommandRejectedError("to_subject cannot be empty")
+            if cleaned_to == from_subj:
+                raise CommandRejectedError("cannot transfer ownership to current owner")
+
+            return [
+                OwnershipTransferred(
+                    aggregate_id=tenant_aggregate_id(state.tenant_id or ""),
+                    tenant_id=state.tenant_id or "",
+                    from_subject=from_subj,
+                    to_subject=cleaned_to,
+                )
+            ]
+
+        case AddProjectGrant(project_id=p_id, subject=subj, role=role, granted_by=granter), _:
+            cleaned_sub = subj.strip()
+            if not cleaned_sub:
+                raise CommandRejectedError("subject cannot be empty")
+            if role not in ("owner", "editor", "runner", "viewer"):
+                raise CommandRejectedError(f"invalid project role: {role}")
+
+            return [
+                ProjectGrantAdded(
+                    aggregate_id=tenant_aggregate_id(state.tenant_id or ""),
+                    tenant_id=state.tenant_id or "",
+                    project_id=p_id,
+                    subject=cleaned_sub,
+                    role=role,
+                    granted_by=granter,
+                )
+            ]
+
+        case RevokeProjectGrant(project_id=p_id, subject=subj, revoked_by=revoker), _:
+            if (p_id, subj) not in state.project_grants:
+                raise CommandRejectedError(
+                    f"no project grant for subject {subj} on project {p_id}"
+                )
+
+            return [
+                ProjectGrantRevoked(
+                    aggregate_id=tenant_aggregate_id(state.tenant_id or ""),
+                    tenant_id=state.tenant_id or "",
+                    project_id=p_id,
+                    subject=subj,
+                    revoked_by=revoker,
+                )
+            ]
+
+        case CreateInvitation(
+            email=email,
+            role=role,
+            token=token,
+            invited_by=inviter,
+            expires_at=exp,
+            invitation_id=iid,
+        ), _:
+            if role == "owner":
+                raise CommandRejectedError("cannot invite with owner role")
+            if role not in ("admin", "member", "guest"):
+                raise CommandRejectedError(f"invalid role: {role}")
+            norm_email = email.strip().lower()
+            if not norm_email:
+                raise CommandRejectedError("email cannot be empty")
+
+            for inv in state.invitations.values():
+                if inv.get("email") == norm_email and inv.get("status") == "open":
+                    raise CommandRejectedError(
+                        f"an active invitation already exists for {norm_email}"
+                    )
+
+            inv_id = iid or uuid4()
+            return [
+                InvitationCreated(
+                    aggregate_id=tenant_aggregate_id(state.tenant_id or ""),
+                    tenant_id=state.tenant_id or "",
+                    event_id=inv_id,
+                    email=norm_email,
+                    role=role,
+                    token=token,
+                    invited_by=inviter,
+                    expires_at=exp,
+                )
+            ]
+
+        case AcceptInvitation(invitation_id=iid, subject=subj), _:
+            if iid not in state.invitations:
+                raise CommandRejectedError(f"invitation {iid} not found")
+            inv = state.invitations[iid]
+            if inv.get("status") != "open":
+                raise CommandRejectedError(f"invitation {iid} is already {inv.get('status')}")
+            exp = inv.get("expires_at")
+            if exp is not None:
+                exp_dt = exp if isinstance(exp, datetime) else datetime.fromisoformat(str(exp))
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=UTC)
+                if datetime.now(UTC) > exp_dt:
+                    raise CommandRejectedError(f"invitation {iid} has expired")
+            cleaned_sub = subj.strip()
+            if not cleaned_sub:
+                raise CommandRejectedError("subject cannot be empty")
+
+            t_id = state.tenant_id or ""
+            agg_id = tenant_aggregate_id(t_id)
+            return [
+                InvitationAccepted(
+                    aggregate_id=agg_id,
+                    tenant_id=t_id,
+                    invitation_id=iid,
+                    subject=cleaned_sub,
+                ),
+                MemberAdded(
+                    aggregate_id=agg_id,
+                    tenant_id=t_id,
+                    subject=cleaned_sub,
+                    role=inv["role"],
+                    granted_by=inv.get("invited_by", LOCAL_SUBJECT),
+                ),
+            ]
+
+        case RevokeInvitation(invitation_id=iid, revoked_by=revoker), _:
+            if iid not in state.invitations:
+                raise CommandRejectedError(f"invitation {iid} not found")
+            inv = state.invitations[iid]
+            if inv.get("status") != "open":
+                raise CommandRejectedError(f"invitation {iid} is already {inv.get('status')}")
+
+            return [
+                InvitationRevoked(
+                    aggregate_id=tenant_aggregate_id(state.tenant_id or ""),
+                    tenant_id=state.tenant_id or "",
+                    invitation_id=iid,
+                    revoked_by=revoker,
+                )
+            ]
+
+    raise CommandRejectedError(f"unhandled command {type(command).__name__}")
+
+
+def evolve(state: TenantState, event: DomainEvent) -> TenantState:
+    """Apply domain facts to TenantState."""
+    match event:
+        case TenantCreated(tenant_id=t_id, name=name, kind=kind, created_by=creator):
+            return state.model_copy(
+                update={
+                    "is_created": True,
+                    "tenant_id": t_id,
+                    "name": name,
+                    "kind": kind,
+                    "created_by": creator,
+                }
+            )
+
+        case MemberAdded(subject=subj, role=role):
+            members = dict(state.members)
+            members[subj] = role
+            owner = subj if role == "owner" else state.owner_subject
+            return state.model_copy(update={"members": members, "owner_subject": owner})
+
+        case MemberRoleChanged(subject=subj, role=role):
+            members = dict(state.members)
+            members[subj] = role
+            return state.model_copy(update={"members": members})
+
+        case MemberRemoved(subject=subj):
+            members = {s: r for s, r in state.members.items() if s != subj}
+            grants = {(p, s): r for (p, s), r in state.project_grants.items() if s != subj}
+            return state.model_copy(update={"members": members, "project_grants": grants})
+
+        case OwnershipTransferred(from_subject=from_subj, to_subject=to_subj):
+            members = dict(state.members)
+            members[to_subj] = "owner"
+            members[from_subj] = "admin"
+            return state.model_copy(update={"members": members, "owner_subject": to_subj})
+
+        case ProjectGrantAdded(project_id=p_id, subject=subj, role=role):
+            grants = dict(state.project_grants)
+            grants[(p_id, subj)] = role
+            return state.model_copy(update={"project_grants": grants})
+
+        case ProjectGrantRevoked(project_id=p_id, subject=subj):
+            grants = {k: v for k, v in state.project_grants.items() if k != (p_id, subj)}
+            return state.model_copy(update={"project_grants": grants})
+
+        case InvitationCreated(
+            event_id=iid, email=email, role=role, expires_at=exp, invited_by=inviter
+        ):
+            invs = dict(state.invitations)
+            invs[iid] = {
+                "email": email,
+                "role": role,
+                "status": "open",
+                "expires_at": exp,
+                "invited_by": inviter,
+            }
+            return state.model_copy(update={"invitations": invs})
+
+        case InvitationAccepted(invitation_id=iid, subject=subj):
+            invs = dict(state.invitations)
+            if iid in invs:
+                invs[iid] = {**invs[iid], "status": "accepted", "accepted_by": subj}
+            return state.model_copy(update={"invitations": invs})
+
+        case InvitationRevoked(invitation_id=iid):
+            invs = dict(state.invitations)
+            if iid in invs:
+                invs[iid] = {**invs[iid], "status": "revoked"}
+            return state.model_copy(update={"invitations": invs})
+
+        case _:
+            return state
+
+
+class Tenant(DeciderAggregate[TenantState, TenantCommand]):
+    """The Tenant aggregate imperative shell."""
+
+    aggregate_type = TENANT_AGGREGATE_TYPE
+
+    initial_state = staticmethod(initial_state)
+    decide = staticmethod(decide)
+    evolve = staticmethod(evolve)
