@@ -167,11 +167,13 @@ __all__ = [
     "build_corpus_repository",
     "build_curation_tools",
     "build_document_extractor",
+    "build_fetch_tool",
     "build_graph_opener",
     "build_knowledge_attachment",
     "build_learner_progress_repository",
     "build_media_perceiver",
     "build_project_graphs",
+    "build_search_tool",
     "build_service",
     "build_socratic_dialogue_repository",
     "build_socratic_service",
@@ -348,7 +350,8 @@ def _build_application(
         search_attempts=search_attempts,
         authoring_rounds=authoring_rounds,
         effective_settings=effective_settings,
-        get_editor=lambda: editor,
+        get_attachment=lambda: attachment,
+        build_fetch=lambda **kw: build_fetch_tool(**kw),
     )
 
     wired_graphs = build_project_graphs(
@@ -373,6 +376,7 @@ def _build_application(
         get_media_http_client=lambda: resolved_media_http_client,
         get_editor=lambda: editor,
         embedding_provider=embedding_provider,
+        build_fetch=lambda **kw: build_fetch_tool(**kw),
     )
 
     attachment = build_knowledge_attachment(

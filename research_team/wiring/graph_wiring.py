@@ -180,6 +180,7 @@ def build_graph_opener(
     get_media_http_client: Callable[[], httpx.AsyncClient],
     get_editor: Callable[[], CorpusEditor],
     embedding_provider: Any | None,
+    build_fetch: Callable[..., BaseTool] = build_fetch_tool,
 ) -> Callable[[UUID], Awaitable[tuple[RedstringKnowledge, tuple[BaseTool, ...]]]]:
     """Construct the `open_graph` closure for a project attachment."""
 
@@ -231,7 +232,7 @@ def build_graph_opener(
             topics,
             target_project_id,
         )
-        project_fetch = build_fetch_tool(recall=recall, corpus=reader, pages=pages)
+        project_fetch = build_fetch(recall=recall, corpus=reader, pages=pages)
         fetch_media = build_fetch_media_tool(
             client=get_media_http_client(),
             editor=get_editor(),

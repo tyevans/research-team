@@ -7,6 +7,7 @@ model overrides out of composition.py.
 
 import logging
 from collections.abc import Callable, Sequence
+from typing import Any
 from uuid import UUID
 
 from langchain.agents.middleware import AgentMiddleware
@@ -22,10 +23,13 @@ from research_team.infrastructure.agent.search import SearchAttempts
 from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
-from research_team.knowledge.application import source_id_for_url
+from research_team.knowledge.application import (
+    KnowledgeError,
+    SourceRef,
+    source_id_for_url,
+)
 from research_team.platform.shared.blobs import BlobStorePort
 from research_team.platform.shared.ports import ApprovalPort
-from research_team.research.application.corpus_editing import CorpusEditor
 from research_team.session.application.autonomy import AutonomyPolicy
 from research_team.session.domain import Session, SessionPurpose
 from research_team.settings.application.effective import EffectiveSettings
@@ -51,24 +55,35 @@ def build_turn_executor(
     search_attempts: SearchAttempts | None,
     authoring_rounds: int,
     effective_settings: EffectiveSettings,
-    get_editor: Callable[[], CorpusEditor],
+    get_attachment: Callable[[], Any],
+    build_fetch: Callable[..., BaseTool] = build_fetch_tool,
 ) -> DeepAgentTurnExecutor:
     """Wire DeepAgentTurnExecutor with dynamic per-turn providers."""
 
     def _keeper(project_id: UUID):
         """Save a fetched page to project_id's corpus, without extracting it."""
 
-        async def keep(url: str, text: str) -> str | None:
+        async def keep(url: str) -> str | None:
+            retained = pages.get(url)
+            attachment = get_attachment() if get_attachment is not None else None
+            knowledge = attachment.current if attachment is not None else None
+            if retained is None or knowledge is None:
+                return None
+            if attachment.attached_project_id != project_id:
+                return None
             source_id = source_id_for_url(url)
             try:
-                await get_editor().store_source(
-                    target_project_id=project_id,
-                    source_id=source_id,
-                    title=url,
-                    url=url,
-                    text=text,
+                await knowledge.store_source(
+                    SourceRef(
+                        source_id=source_id,
+                        text=retained.text,
+                        uri=retained.uri,
+                        title=retained.title,
+                        published_at=retained.published_at,
+                        fetched_at=retained.fetched_at,
+                    )
                 )
-            except Exception:
+            except KnowledgeError:
                 logger.warning(
                     "could not keep %s for project %s", url, project_id, exc_info=True
                 )
@@ -83,7 +98,7 @@ def build_turn_executor(
             return ()
         project_id = session.state.project_id
         return (
-            build_fetch_tool(
+            build_fetch(
                 recall=recall,
                 corpus=(
                     ProjectCorpusReader(corpus, project_id, blob_store)
