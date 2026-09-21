@@ -130,6 +130,13 @@ class Resolved:
     masked: MaskedSecret | None = None
 
 
+def _order_chain(chain: Iterable[ScopeRef]) -> list[ScopeRef]:
+    """Order scope refs according to RESOLUTION_ORDER, deduplicating by scope."""
+    refs = list(chain)
+    by_scope = {ref.scope: ref for ref in refs}
+    return [by_scope[scope] for scope in RESOLUTION_ORDER if scope in by_scope]
+
+
 class SettingsResolver:
     """Reads settings for a scope chain. The one place resolution order lives.
 
@@ -144,6 +151,8 @@ class SettingsResolver:
     check belongs and where W-B will put it -- see
     `interfaces/web/settings.py`, which carries the same note at each route.
     """
+
+    _order_chain = staticmethod(_order_chain)
 
     def __init__(
         self,
@@ -189,9 +198,7 @@ class SettingsResolver:
         The batch form is the one the settings page uses, and it exists so a
         page of forty fields is one query rather than forty.
         """
-        refs = list(chain)
-        by_scope = {ref.scope: ref for ref in refs}
-        ordered = [by_scope[scope] for scope in RESOLUTION_ORDER if scope in by_scope]
+        ordered = self._order_chain(chain)
         stored = await self._stored(ordered)
 
         answers: list[Resolved] = []
@@ -279,9 +286,7 @@ class SettingsResolver:
         spec = resolve_spec(key)
         if not spec.secret:
             raise SettingError(f"{key} is not a secret setting")
-        refs = list(chain)
-        by_scope = {ref.scope: ref for ref in refs}
-        ordered = [by_scope[scope] for scope in RESOLUTION_ORDER if scope in by_scope]
+        ordered = self._order_chain(chain)
         stored = await self._stored(ordered)
         for ref in ordered:
             row = stored.get((ref.scope, spec.key))

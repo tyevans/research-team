@@ -3464,7 +3464,7 @@ sides landing on the same new value is the one case a one-line counter cannot
 turn into a merge conflict. Recorded here rather than in the marker's own
 comment because it is one observation, not yet a pattern.
 
-`research_team/application/effective.py` makes one bundle -- extraction --
+`research_team/settings/application/effective.py` makes one bundle -- extraction --
 resolve per project, and W-C2 stopped there deliberately rather than for lack
 of time. The remaining four roles each need a different seam, and three of them
 need a decision this branch had no grounds to make:

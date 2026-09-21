@@ -188,6 +188,40 @@ class EffectiveSettings:
         self._vision: dict[UUID | None, tuple[int, VisionSettings]] = {}
         self._embedding: dict[UUID | None, tuple[int, EmbeddingSettings]] = {}
 
+    def _prune_stale(self) -> None:
+        """Prune cached bundles whose revision does not match the current revision."""
+        current_rev = self._revision.value
+        for cache in (
+            self._extraction,
+            self._research,
+            self._curation,
+            self._vision,
+            self._embedding,
+        ):
+            stale_keys = [k for k, (rev, _) in cache.items() if rev != current_rev]
+            for k in stale_keys:
+                cache.pop(k, None)
+
+    def invalidate(self, project_id: UUID | None = None) -> None:
+        """Clear cached bundles.
+
+        If project_id is provided, invalidates the cache for that specific project.
+        If project_id is None, invalidates all cached bundles across all projects.
+        """
+        caches = (
+            self._extraction,
+            self._research,
+            self._curation,
+            self._vision,
+            self._embedding,
+        )
+        if project_id is None:
+            for cache in caches:
+                cache.clear()
+        else:
+            for cache in caches:
+                cache.pop(project_id, None)
+
     def _chain(self, project_id: UUID | None) -> list[ScopeRef]:
         """The scope chain for a project.
 
@@ -214,8 +248,10 @@ class EffectiveSettings:
         reading the model a run would use rather than by inspecting the cache.
         """
         cached = self._extraction.get(project_id)
-        if cached is not None and cached[0] == self._revision.value:
-            return cached[1]
+        if cached is not None:
+            if cached[0] == self._revision.value:
+                return cached[1]
+            self._prune_stale()
         resolved = await self._resolve_extraction(project_id)
         self._extraction[project_id] = (self._revision.value, resolved)
         return resolved
@@ -238,8 +274,10 @@ class EffectiveSettings:
         module's own docstring says the store is without a bundle to feed.
         """
         cached = self._research.get(project_id)
-        if cached is not None and cached[0] == self._revision.value:
-            return cached[1]
+        if cached is not None:
+            if cached[0] == self._revision.value:
+                return cached[1]
+            self._prune_stale()
         resolved = await self._resolve_research(project_id)
         self._research[project_id] = (self._revision.value, resolved)
         return resolved
@@ -247,8 +285,10 @@ class EffectiveSettings:
     async def curation(self, project_id: UUID | None) -> CurationSettings:
         """This project's media curation configuration."""
         cached = self._curation.get(project_id)
-        if cached is not None and cached[0] == self._revision.value:
-            return cached[1]
+        if cached is not None:
+            if cached[0] == self._revision.value:
+                return cached[1]
+            self._prune_stale()
         resolved = await self._resolve_curation(project_id)
         self._curation[project_id] = (self._revision.value, resolved)
         return resolved
@@ -256,8 +296,10 @@ class EffectiveSettings:
     async def vision(self, project_id: UUID | None) -> VisionSettings:
         """This project's vision perception configuration."""
         cached = self._vision.get(project_id)
-        if cached is not None and cached[0] == self._revision.value:
-            return cached[1]
+        if cached is not None:
+            if cached[0] == self._revision.value:
+                return cached[1]
+            self._prune_stale()
         resolved = await self._resolve_vision(project_id)
         self._vision[project_id] = (self._revision.value, resolved)
         return resolved
@@ -265,11 +307,33 @@ class EffectiveSettings:
     async def embedding(self, project_id: UUID | None) -> EmbeddingSettings:
         """This project's embedding configuration."""
         cached = self._embedding.get(project_id)
-        if cached is not None and cached[0] == self._revision.value:
-            return cached[1]
+        if cached is not None:
+            if cached[0] == self._revision.value:
+                return cached[1]
+            self._prune_stale()
         resolved = await self._resolve_embedding(project_id)
         self._embedding[project_id] = (self._revision.value, resolved)
         return resolved
+
+    async def _apply_profile(
+        self,
+        role: ModelRole,
+        chain: Iterable[ScopeRef],
+        resolver: SettingsResolver,
+        model: str | None,
+        base_url: str,
+        api_key: str | None,
+    ) -> tuple[str | None, str, str | None, ModelProfile | None]:
+        profile = await self._profile_for(role, chain, resolver)
+        if profile is not None:
+            model = profile.model
+            if profile.base_url:
+                base_url = profile.base_url
+            if profile.credential_key is not None:
+                credential = await resolver.secret(profile.credential_key, chain)
+                if credential is not None:
+                    api_key = credential
+        return model, base_url, api_key, profile
 
     async def _resolve_research(self, project_id: UUID | None) -> ResearchSettings:
         chain = self._chain(project_id)
@@ -285,18 +349,12 @@ class EffectiveSettings:
         # A selected profile wins, and carries all three together -- see
         # `_resolve_extraction`'s note for what taking them from two places
         # would send where.
-        profile = await self._profile_for(ModelRole.RESEARCH, chain, resolver)
-        if profile is not None:
-            model = profile.model
-            if profile.base_url:
-                base_url = profile.base_url
-            if profile.credential_key is not None:
-                credential = await resolver.secret(profile.credential_key, chain)
-                if credential is not None:
-                    api_key = credential
+        model, base_url, api_key, _ = await self._apply_profile(
+            ModelRole.RESEARCH, chain, resolver, model, base_url, api_key
+        )
 
         return ResearchSettings(
-            model=model,
+            model=str(model),
             base_url=base_url,
             api_key=str(api_key) if api_key is not None else "",
         )
@@ -331,15 +389,9 @@ class EffectiveSettings:
         # all three move together; taking the model name from a profile and
         # the key from the setting beside it would send an Anthropic model name
         # to a local vLLM with a key neither accepts.
-        profile = await self._profile_for(ModelRole.EXTRACTION, chain, resolver)
-        if profile is not None:
-            model = profile.model
-            if profile.base_url:
-                base_url = profile.base_url
-            if profile.credential_key is not None:
-                credential = await resolver.secret(profile.credential_key, chain)
-                if credential is not None:
-                    api_key = credential
+        model, base_url, api_key, _ = await self._apply_profile(
+            ModelRole.EXTRACTION, chain, resolver, str(model), base_url, api_key
+        )
 
         return ExtractionSettings(
             model=str(model),
@@ -363,15 +415,9 @@ class EffectiveSettings:
         base_url = str(answers["base_url"])
         api_key = await resolver.secret("api_key", chain)
 
-        profile = await self._profile_for(ModelRole.CURATION, chain, resolver)
-        if profile is not None:
-            model = profile.model
-            if profile.base_url:
-                base_url = profile.base_url
-            if profile.credential_key is not None:
-                credential = await resolver.secret(profile.credential_key, chain)
-                if credential is not None:
-                    api_key = credential
+        model, base_url, api_key, _ = await self._apply_profile(
+            ModelRole.CURATION, chain, resolver, str(model), base_url, api_key
+        )
 
         return CurationSettings(
             model=str(model),
@@ -391,15 +437,9 @@ class EffectiveSettings:
         base_url = str(answers["base_url"])
         api_key = await resolver.secret("api_key", chain)
 
-        profile = await self._profile_for(ModelRole.VISION, chain, resolver)
-        if profile is not None:
-            model = profile.model
-            if profile.base_url:
-                base_url = profile.base_url
-            if profile.credential_key is not None:
-                credential = await resolver.secret(profile.credential_key, chain)
-                if credential is not None:
-                    api_key = credential
+        model, base_url, api_key, _ = await self._apply_profile(
+            ModelRole.VISION, chain, resolver, model, base_url, api_key
+        )
 
         return VisionSettings(
             model=model,
@@ -421,21 +461,15 @@ class EffectiveSettings:
         if api_key is None:
             api_key = await resolver.secret("api_key", chain)
 
-        profile = await self._profile_for(ModelRole.EMBEDDING, chain, resolver)
-        if profile is not None:
-            model = profile.model
-            if profile.base_url:
-                base_url = profile.base_url
-            if profile.credential_key is not None:
-                credential = await resolver.secret(profile.credential_key, chain)
-                if credential is not None:
-                    api_key = credential
-            if "dimension" in profile.parameters:
-                with contextlib.suppress(ValueError, TypeError):
-                    dimension = int(profile.parameters["dimension"])  # type: ignore[arg-type]
+        model, base_url, api_key, profile = await self._apply_profile(
+            ModelRole.EMBEDDING, chain, resolver, model, base_url, api_key
+        )
+        if profile is not None and "dimension" in profile.parameters:
+            with contextlib.suppress(ValueError, TypeError):
+                dimension = int(profile.parameters["dimension"])  # type: ignore[arg-type]
 
         return EmbeddingSettings(
-            model=model,
+            model=str(model),
             dimension=dimension,
             base_url=base_url,
             api_key=str(api_key) if api_key is not None else "",

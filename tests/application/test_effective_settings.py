@@ -494,3 +494,138 @@ async def test_selecting_a_research_profile_does_not_move_extraction(effective, 
 
     assert (await effective.research(PROJECT_ID)).model == "gpt-4o"
     assert (await effective.extraction(PROJECT_ID)).model == config.extraction_model()
+
+
+# --- invalidation & pruning ------------------------------------------------
+
+
+async def test_invalidate_clears_cache_for_single_project(effective):
+    await effective.research(PROJECT_ID)
+    await effective.research(OTHER_ID)
+    await effective.extraction(PROJECT_ID)
+
+    assert PROJECT_ID in effective._research
+    assert OTHER_ID in effective._research
+    assert PROJECT_ID in effective._extraction
+
+    effective.invalidate(PROJECT_ID)
+
+    assert PROJECT_ID not in effective._research
+    assert PROJECT_ID not in effective._extraction
+    assert OTHER_ID in effective._research
+
+
+async def test_invalidate_clears_cache_for_all_projects_when_none(effective):
+    await effective.research(PROJECT_ID)
+    await effective.research(OTHER_ID)
+    await effective.extraction(None)
+
+    assert len(effective._research) == 2
+    assert len(effective._extraction) == 1
+
+    effective.invalidate()
+
+    assert len(effective._research) == 0
+    assert len(effective._extraction) == 0
+    assert len(effective._curation) == 0
+    assert len(effective._vision) == 0
+    assert len(effective._embedding) == 0
+
+
+async def test_lookup_detecting_outdated_revision_prunes_stale_entries(effective, revision):
+    await effective.research(PROJECT_ID)
+    await effective.extraction(PROJECT_ID)
+
+    assert PROJECT_ID in effective._research
+    assert PROJECT_ID in effective._extraction
+
+    revision.bump()
+
+    # Reading research detects the outdated revision and prunes stale entries
+    # across all caches. Research is re-populated with the new revision;
+    # extraction (which has not been re-read) is pruned.
+    await effective.research(PROJECT_ID)
+
+    assert PROJECT_ID in effective._research
+    assert effective._research[PROJECT_ID][0] == revision.value
+    assert PROJECT_ID not in effective._extraction
+
+
+# --- _apply_profile helper across roles -------------------------------------
+
+
+async def test_apply_profile_across_roles(effective, stores):
+    settings, profiles = stores
+    resolver = SettingsResolver(
+        settings, AesGcmSecretBox("a-test-key-nobody-uses-in-anger"), {}
+    )
+    chain = [PROJECT]
+
+    # Without profiles, _apply_profile preserves the defaults and returns profile=None
+    for role in (
+        ModelRole.RESEARCH,
+        ModelRole.EXTRACTION,
+        ModelRole.CURATION,
+        ModelRole.VISION,
+        ModelRole.EMBEDDING,
+    ):
+        model, base_url, api_key, prof = await effective._apply_profile(
+            role, chain, resolver, "default-model", "http://default/v1/", "sk-default"
+        )
+        assert model == "default-model"
+        assert base_url == "http://default/v1/"
+        assert api_key == "sk-default"
+        assert prof is None
+
+    # Write a credential
+    await resolver.write(PROJECT, "provider_key.openai", "sk-openai-custom")
+
+    # Put and select profiles for each role
+    for role, name, model_name in (
+        (ModelRole.RESEARCH, "p-research", "gpt-4o-research"),
+        (ModelRole.EXTRACTION, "p-extract", "gpt-4o-extract"),
+        (ModelRole.CURATION, "p-curate", "gpt-4o-curate"),
+        (ModelRole.VISION, "p-vision", "gpt-4o-vision"),
+        (ModelRole.EMBEDDING, "p-embed", "text-embedding-3-large"),
+    ):
+        params = {"dimension": 1536} if role is ModelRole.EMBEDDING else {}
+        await profiles.put_profile(
+            PROJECT,
+            ModelProfile(
+                name=name,
+                provider_id="openai",
+                model=model_name,
+                base_url=f"https://api.openai.com/v1/{role.value}/",
+                credential_key="provider_key.openai",
+                parameters=params,
+            ),
+        )
+        await profiles.select(PROJECT, role, name)
+
+        model, base_url, api_key, prof = await effective._apply_profile(
+            role, chain, resolver, "fallback-model", "http://fallback/v1/", "sk-fallback"
+        )
+        assert model == model_name
+        assert base_url == f"https://api.openai.com/v1/{role.value}/"
+        assert api_key == "sk-openai-custom"
+        assert prof is not None
+        assert prof.name == name
+        if role is ModelRole.EMBEDDING:
+            assert prof.parameters.get("dimension") == 1536
+
+    # Verify curation, vision, and embedding resolution methods use _apply_profile end-to-end
+    curation = await effective.curation(PROJECT_ID)
+    assert curation.model == "gpt-4o-curate"
+    assert curation.base_url == f"https://api.openai.com/v1/{ModelRole.CURATION.value}/"
+    assert curation.api_key == "sk-openai-custom"
+
+    vision = await effective.vision(PROJECT_ID)
+    assert vision.model == "gpt-4o-vision"
+    assert vision.base_url == f"https://api.openai.com/v1/{ModelRole.VISION.value}/"
+    assert vision.api_key == "sk-openai-custom"
+
+    embedding = await effective.embedding(PROJECT_ID)
+    assert embedding.model == "text-embedding-3-large"
+    assert embedding.dimension == 1536
+    assert embedding.base_url == f"https://api.openai.com/v1/{ModelRole.EMBEDDING.value}/"
+    assert embedding.api_key == "sk-openai-custom"
