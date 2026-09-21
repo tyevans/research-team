@@ -43,17 +43,10 @@ from research_team.application import (
 from research_team.application.ask import AskService, ConversationRegistry
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.document_extraction import DocumentExtractor
-from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef, source_id_for_url
-from research_team.application.ontology_discovery import (
-    DISCOVERY_CHUNK_OVERLAP_CHARS,
-    MAX_DISCOVERY_CHUNK_CHARS,
-    OntologyDiscoveryService,
-)
 from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
-from research_team.application.topic_read import TopicReadPort
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import Session, SessionPurpose
 from research_team.domain.media_proposals import MediaProposals
@@ -70,7 +63,6 @@ from research_team.infrastructure.agent.corpus_tools import (
     CORPUS_PROMPT,
     build_corpus_tools,
 )
-from research_team.infrastructure.agent.definition_model import ChatModelDefinitionText
 from research_team.infrastructure.agent.fetch import (
     FETCH_CORPUS_PROMPT,
     build_fetch_tool,
@@ -80,7 +72,6 @@ from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
     build_knowledge_tools,
 )
-from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
 from research_team.infrastructure.agent.research_budget import ResearchBudget
 from research_team.infrastructure.agent.search import (
     build_search_tool,
@@ -91,20 +82,12 @@ from research_team.infrastructure.agent.topic_tools import (
     RepositoryTopics,
     build_topic_tools,
 )
-from research_team.infrastructure.knowledge.catalog_recorder import (
-    EventStoreCatalogFeatureRecorder,
-)
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.entity_cards import index_cards
 from research_team.infrastructure.knowledge.entity_embeddings import (
     refresh_project_embeddings,
 )
-from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
-from research_team.infrastructure.knowledge.ontology_chunker import (
-    MarkdownAwareDocumentChunker,
-)
-from research_team.infrastructure.knowledge.ontology_recorder import EventStoreOntologyRecorder
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.knowledge.stores import (
@@ -113,7 +96,6 @@ from research_team.infrastructure.knowledge.stores import (
     build_graph_store,
     build_vector_store,
 )
-from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.perception.readeverything_adapter import (
     build_perception_adapter,
 )
@@ -127,12 +109,10 @@ from research_team.infrastructure.persistence import (
     build_topic_repository,
 )
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
-from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.event_store import (
     build_course_authoring_run_repository,
     build_socratic_dialogue_repository,
 )
-from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.wiring import (
     _PARTIAL_BUILD_RESOURCES,
@@ -163,6 +143,7 @@ from research_team.wiring import (
     build_document_extractor,
     build_media_acquisition,
     build_media_perceiver,
+    build_project_services,
     build_session_service,
     build_socratic_service,
     build_stores,
@@ -1066,110 +1047,21 @@ def _build_application(
     # somewhere else, or not at all, is a worker nobody notices is missing
     # until an accepted proposal never turns into a source.
 
-    def topic_reader(target_project_id: UUID) -> TopicReadPort:
-        """This project's `TopicReadPort`, over the one repository above.
-
-        Built per call rather than held, mirroring `ProjectCorpusReader`
-        above: the project is bound at construction so no caller can pass a
-        different one, and a call is cheap enough (three attribute reads and
-        an object) that there is no reason to cache it.
-        """
-        return ProjectTopicReader(
-            topics, topic_repository, topics.corpus_facts, target_project_id
-        )
-
-    async def definition_reader(target_project_id: UUID) -> DefinitionService | None:
-        """This project's `DefinitionService`, or `None` if it cannot be built.
-
-        Async and per-call, unlike `topic_reader` above, because two of the
-        three collaborators come from `graphs.open` -- which may open a store
-        and replay into it -- and none of them can be bound before a project
-        id exists. `ProjectGraphs` caches the stores, so the cost of building
-        one of these per request is the three adapter objects, not the opens.
-
-        **Two lifetimes meet here and they are deliberately different.** The
-        graph and chunk stores are per-project and owned by `graphs`. The
-        definition cache is one SQLite table for the whole process, keyed by
-        `(project_id, entity_id)`, owned by `definition_invalidation`; what is
-        per-project about it is only the id `ProjectDefinitionCache` binds, so
-        that no caller can reach another project's rows. Building a cache per
-        project would give each one its own connection to the same table --
-        the drift described where the runner is constructed.
-
-        `None` rather than a raise when there is no chunk store
-        (`AGENT_CHUNK_STORE=none`), matching what the usages route does with
-        the same absence: the caller renders it as 503 "not configured",
-        which is the truth. It costs nothing in definitions: with no chunk
-        store there are no passages, and `DefinitionService._generate`
-        refuses a passage-less entity before the model call, because a
-        definition assembled from edges alone cites nothing `_verified`
-        could check. A null usage reader here would buy the same `None`
-        one HTTP round trip later.
-        """
-        # `open` before `chunks`, and the order is the whole of a bug this
-        # had: `ProjectGraphs.chunks` answers `None` for a project whose
-        # store has not been opened yet -- it is built during `open`, in the
-        # same replay pass as the graph -- so asking first made the *first*
-        # request for any project 503 with "no chunk store is configured",
-        # and only that one. A reviewer's probe caught it; `_usage_reader` in
-        # `app.py` had the order right and this did not.
-        store = await graphs.open(target_project_id)
-        chunk_store = graphs.chunks(target_project_id)
-        if chunk_store is None:
-            return None
-        return DefinitionService(
-            graph=ProjectGraphReader(
-                project_id=target_project_id, store=store, ontology=ontology
-            ),
-            usages=UsageReader(store, chunk_store, target_project_id),
-            cache=ProjectDefinitionCache(definition_invalidation, target_project_id),
-            # The extraction model, not a second client -- see
-            # `ChatModelDefinitionText` for why, and for what that costs.
-            model=ChatModelDefinitionText(extraction_model, model_name=config.model_name()),
-        )
-
-    def ontology_discoverer(target_project_id: UUID) -> OntologyDiscoveryService:
-        """This project's `OntologyDiscoveryService`.
-
-        Synchronous and never `None`, unlike `definition_reader` above, and the
-        difference is what each one needs. A definition needs the graph and the
-        chunk store, so it has to await `graphs.open` and can fail when
-        chunking is off. Discovery needs the document text and a model: the
-        corpus reader is constructed from a runner that is already open, and
-        the recorder writes to the event store directly. Nothing here can be
-        absent, so there is no `None` for a route to render as 503.
-
-        That also means the `open`-before-`chunks` ordering bug documented on
-        `definition_reader` cannot occur here -- this factory does not touch
-        `graphs` at all. Checked rather than assumed.
-        """
-        return OntologyDiscoveryService(
-            corpus=ProjectCorpusReader(corpus, target_project_id, blob_store),
-            # The extraction model, not a second client -- see
-            # `ChatModelOntologyText` for why, and for what that costs.
-            model=ChatModelOntologyText(extraction_model, model_name=config.model_name()),
-            recorder=EventStoreOntologyRecorder(
-                repository.store, repository.publisher, target_project_id
-            ),
-            # The chunk size lives with the pass rather than with the chunker:
-            # it is derived from the model's context window, which is the
-            # application's constraint, and the chunker has no way to know it.
-            chunker=MarkdownAwareDocumentChunker(
-                chunk_chars=MAX_DISCOVERY_CHUNK_CHARS,
-                overlap_chars=DISCOVERY_CHUNK_OVERLAP_CHARS,
-            ),
-        )
-
-    def catalog_recorder(target_project_id: UUID) -> EventStoreCatalogFeatureRecorder:
-        """This project's write side for course featuring, over this
-        instance's own event store and publisher -- built the same way
-        `ontology_discoverer` builds its recorder, for the same reason:
-        catalog events have no aggregate to consult, so the factory closes
-        over the store directly rather than going through
-        `AggregateRepository`."""
-        return EventStoreCatalogFeatureRecorder(
-            repository.store, repository.publisher, target_project_id
-        )
+    project_services = build_project_services(
+        topics=topics,
+        topic_repository=topic_repository,
+        graphs=graphs,
+        ontology=ontology,
+        definition_invalidation=definition_invalidation,
+        corpus=corpus,
+        blob_store=blob_store,
+        extraction_model=extraction_model,
+        repository=repository,
+    )
+    topic_reader = project_services.topic_reader
+    definition_reader = project_services.definition_reader
+    ontology_discoverer = project_services.ontology_discoverer
+    catalog_recorder = project_services.catalog_recorder
 
     catalog_services = build_catalog_services(
         art_store=art_store,
