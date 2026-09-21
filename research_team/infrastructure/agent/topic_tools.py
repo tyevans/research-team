@@ -35,6 +35,7 @@ from research_team.research.domain.topic import (
     OpenTopic,
     RecordFinding,
     RecordGap,
+    RestateTopicQuestion,
     Topic,
 )
 from research_team.session.application.tool_artifacts import (
@@ -107,6 +108,16 @@ class RepositoryTopics(TopicPort):
         )
         await self._topics.save(topic)
         return topic.aggregate_id
+
+    async def restate_question(
+        self, topic_id: UUID, question: str, rationale: str = ""
+    ) -> None:
+        async def restate() -> None:
+            topic = await self._load(topic_id)
+            topic.execute(RestateTopicQuestion(question=question, rationale=rationale))
+            await self._topics.save(topic)
+
+        await with_retry(restate, what=f"restating question on {topic_id}")
 
     async def record_finding(
         self, topic_id: UUID, summary: str, source_ids: list[str]

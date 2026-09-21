@@ -26,10 +26,12 @@ from research_team.research.domain.topic import (
     RecordInvestigation,
     ResolveContest,
     ResolveSubQuestion,
+    RestateTopicQuestion,
     SetTopicStatus,
     Topic,
     TopicGapRecorded,
     TopicOpened,
+    TopicQuestionRestated,
     UnlinkSource,
     decide,
     evolve,
@@ -439,3 +441,44 @@ def test_the_aggregate_folds_its_own_events():
 
     assert topic.state.status == "open"
     assert topic.state.source_ids == ["s1"]
+
+
+def test_restating_a_question_updates_the_question_and_records_history():
+    state = opened(question="typical physical traits")
+    new_question = (
+        "What are the typical physical traits of a Nova Scotia Duck Tolling Retriever?"
+    )
+
+    events = decide(
+        RestateTopicQuestion(
+            question=new_question,
+            rationale="Make question self-contained per B39",
+        ),
+        state,
+    )
+    assert len(events) == 1
+    assert isinstance(events[0], TopicQuestionRestated)
+    assert events[0].question == new_question
+    assert events[0].previous_question == "typical physical traits"
+    assert events[0].rationale == "Make question self-contained per B39"
+
+    next_state = evolve(state, events[0])
+    assert next_state.question == new_question
+    assert next_state.previous_questions == ["typical physical traits"]
+
+
+def test_restating_to_the_same_question_is_a_noop():
+    state = opened(question="What is the speed of sound?")
+    events = decide(RestateTopicQuestion(question="What is the speed of sound?"), state)
+    assert events == []
+
+
+def test_restating_to_a_blank_question_is_refused():
+    state = opened(question="What is the speed of sound?")
+    with pytest.raises(CommandRejectedError, match="cannot be blank"):
+        decide(RestateTopicQuestion(question="   "), state)
+
+
+def test_restating_an_unopened_topic_is_refused():
+    with pytest.raises(CommandRejectedError, match="topic not opened"):
+        decide(RestateTopicQuestion(question="Valid question"), initial_state())

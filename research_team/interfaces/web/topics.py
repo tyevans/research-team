@@ -38,11 +38,12 @@ from research_team.research.application.topic_dispatch import (
 )
 from research_team.research.application.topic_read import TopicReadPort
 from research_team.research.application.topic_seeding import TopicSeeder
-from research_team.research.application.topics import MAX_OPEN_TOPICS
+from research_team.research.application.topics import MAX_OPEN_TOPICS, TopicService
 from research_team.research.domain.media_proposals import MediaProposals
 from research_team.research.domain.topic import (
     AddSubQuestion,
     ResolveSubQuestion,
+    RestateTopicQuestion,
     SetTopicStatus,
     Topic,
     TopicStatus,
@@ -83,6 +84,21 @@ class StatusChange(BaseModel):
         stripped = value.strip()
         if not stripped:
             raise ValueError("a status change requires a justification")
+        return stripped
+
+
+class QuestionRestatement(BaseModel):
+    """A human's decision to clarify or restate a topic's question."""
+
+    question: str = Field(min_length=1)
+    rationale: str = ""
+
+    @field_validator("question")
+    @classmethod
+    def _question_is_not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("a topic question cannot be blank")
         return stripped
 
 
@@ -189,6 +205,7 @@ class TopicDeps:
     require_project: Callable[[UUID], Awaitable[None]] | None = None
     topics: TopicReaders | None = None
     topic_repository: AggregateRepository[Topic] | None = None
+    topic_service: TopicService | None = None
     service: SessionService | None = None
     topic_seeder: TopicSeeder | None = None
     seeding: SeedingActivity | None = None
@@ -234,6 +251,18 @@ def topic_router(deps: TopicDeps) -> APIRouter:
         if deps.topic_repository is None:
             raise HTTPException(status_code=503, detail="no topic write model is configured")
         return deps.topic_repository
+
+    def _topic_service() -> TopicService:
+        """The `TopicService`, for operations that manage a topic's lifecycle.
+
+        503 rather than 404 when neither `topic_service` nor `topic_repository` was wired:
+        a build with no write model configured is a valid thing to serve read-only.
+        """
+        if deps.topic_service is not None:
+            return deps.topic_service
+        if deps.topic_repository is not None:
+            return TopicService(deps.topic_repository)
+        raise HTTPException(status_code=503, detail="no topic write model is configured")
 
     def _curation_service(project_id: UUID) -> MediaCurationService:
         """The three-stage chain, wired for one project's topics.
@@ -484,6 +513,22 @@ def topic_router(deps: TopicDeps) -> APIRouter:
                 "searched_empty": outcome.searched_empty,
                 "judged_out": outcome.judged_out,
             },
+        )
+
+    @router.patch("/api/projects/{project_id}/topics/{topic_id}/question")
+    async def restate_topic_question(
+        project_id: UUID, topic_id: UUID, body: QuestionRestatement
+    ):
+        """Restate or clarify a topic's question (B39).
+
+        Human-only, for the same reason `set_topic_status` is: shaping what a
+        topic is asking is a reader's editorial decision, not a finding an
+        autonomous run records.
+        """
+        return await _change_topic(
+            project_id,
+            topic_id,
+            RestateTopicQuestion(question=body.question, rationale=body.rationale),
         )
 
     @router.post("/api/projects/{project_id}/topics/{topic_id}/status")

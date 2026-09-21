@@ -12,8 +12,27 @@ belongs -- see `MAX_OPEN_TOPICS`.
 """
 
 from dataclasses import dataclass
-from typing import Protocol
-from uuid import UUID
+from typing import Any, Protocol
+from uuid import UUID, uuid4
+
+from research_team.research.domain.topic import (
+    AcknowledgeTrigger,
+    AddSubQuestion,
+    LinkEntity,
+    LinkSource,
+    OpenTopic,
+    RecordContest,
+    RecordFinding,
+    RecordGap,
+    RecordInvestigation,
+    ResolveContest,
+    ResolveSubQuestion,
+    RestateTopicQuestion,
+    SetTopicStatus,
+    Topic,
+    TopicStatus,
+    UnlinkSource,
+)
 
 LIST_TOPICS_TOOL = "list_topics"
 OPEN_TOPIC_TOOL = "open_topic"
@@ -109,6 +128,10 @@ class TopicPort(Protocol):
         self, project_id: UUID, question: str, rationale: str, scope: str = ""
     ) -> UUID: ...
 
+    async def restate_question(
+        self, topic_id: UUID, question: str, rationale: str = ""
+    ) -> None: ...
+
     async def record_finding(
         self, topic_id: UUID, summary: str, source_ids: list[str]
     ) -> None: ...
@@ -125,6 +148,140 @@ class TopicPort(Protocol):
         ...
 
     async def link_source(self, topic_id: UUID, source_id: str, note: str = "") -> None: ...
+
+
+class TopicService:
+    """Application service managing the lifecycle of project topics.
+
+    Coordinates command execution against the Topic aggregate repository and
+    provides a unified domain interface for web routes, CLI, and internal services.
+    """
+
+    def __init__(self, repository: Any) -> None:
+        self._repository = repository
+
+    async def open_topic(
+        self,
+        project_id: UUID,
+        question: str,
+        rationale: str,
+        scope: str = "",
+        *,
+        topic_id: UUID | None = None,
+    ) -> UUID:
+        assigned_id = topic_id or uuid4()
+        if hasattr(self._repository, "create_new"):
+            topic = self._repository.create_new(assigned_id)
+        else:
+            topic = Topic(assigned_id)
+        topic.execute(
+            OpenTopic(
+                topic_id=assigned_id,
+                project_id=project_id,
+                question=question,
+                rationale=rationale,
+                scope=scope,
+            )
+        )
+        await self._repository.save(topic)
+        return assigned_id
+
+    async def restate_question(
+        self, topic_id: UUID, question: str, rationale: str = ""
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(RestateTopicQuestion(question=question, rationale=rationale))
+        await self._repository.save(topic)
+
+    async def set_status(
+        self, topic_id: UUID, to_status: TopicStatus, justification: str
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(SetTopicStatus(to_status=to_status, justification=justification))
+        await self._repository.save(topic)
+
+    async def add_sub_question(self, topic_id: UUID, key: str, question: str) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(AddSubQuestion(key=key, question=question))
+        await self._repository.save(topic)
+
+    async def resolve_sub_question(self, topic_id: UUID, key: str, answer: str) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(ResolveSubQuestion(key=key, answer=answer))
+        await self._repository.save(topic)
+
+    async def link_source(
+        self, topic_id: UUID, source_id: str, relation: str = "supports", note: str = ""
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(LinkSource(source_id=source_id, relation=relation, note=note))
+        await self._repository.save(topic)
+
+    async def unlink_source(self, topic_id: UUID, source_id: str, reason: str) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(UnlinkSource(source_id=source_id, reason=reason))
+        await self._repository.save(topic)
+
+    async def link_entity(self, topic_id: UUID, entity_id: str, name: str = "") -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(LinkEntity(entity_id=entity_id, name=name))
+        await self._repository.save(topic)
+
+    async def record_finding(
+        self, topic_id: UUID, summary: str, source_ids: list[str]
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(RecordFinding(summary=summary, source_ids=source_ids))
+        await self._repository.save(topic)
+
+    async def record_gap(self, topic_id: UUID, looking_for: str, tried: list[str]) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(RecordGap(looking_for=looking_for, tried=tried))
+        await self._repository.save(topic)
+
+    async def record_investigation(
+        self,
+        topic_id: UUID,
+        at_position: str,
+        summary: str = "",
+        by_run_id: UUID | None = None,
+        outcome: str | None = None,
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(
+            RecordInvestigation(
+                at_position=at_position,
+                summary=summary,
+                by_run_id=by_run_id,
+                outcome=outcome,
+            )
+        )
+        await self._repository.save(topic)
+
+    async def record_contest(
+        self, topic_id: UUID, key: str, nature: str, source_ids: list[str]
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(RecordContest(key=key, nature=nature, source_ids=source_ids))
+        await self._repository.save(topic)
+
+    async def resolve_contest(
+        self, topic_id: UUID, key: str, resolution: str, justification: str
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(
+            ResolveContest(key=key, resolution=resolution, justification=justification)
+        )
+        await self._repository.save(topic)
+
+    async def acknowledge_trigger(
+        self, topic_id: UUID, trigger: str, reason: str, until_position: str
+    ) -> None:
+        topic = await self._repository.load(topic_id)
+        topic.execute(
+            AcknowledgeTrigger(trigger=trigger, reason=reason, until_position=until_position)
+        )
+        await self._repository.save(topic)
 
 
 def format_topics(summaries: list[TopicSummary]) -> str:
