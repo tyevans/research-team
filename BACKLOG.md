@@ -1667,7 +1667,13 @@ question, and the rationale. Exposed via `TopicService.restate_question`,
 `TopicRow.question` on receipt, keeping `list_topics` and dispatches aligned
 with the restated question.
 
-### B42. A malformed URL a human approves crashes the turn
+### B42. A malformed URL a human approves crashes the turn -- CLOSED 2026-09-21
+
+Closed on 2026-09-21 by guarding `urlsplit(url)` with `try/except ValueError:`
+in `research_team/infrastructure/agent/fetch.py` and returning the refusal prose
+acknowledgement rather than letting the exception escape and crash the turn.
+Pinned by `test_a_malformed_url_approved_by_a_human_is_refused_safely` in
+`tests/infrastructure/test_fetch.py`.
 
 `fetch.py`'s `urlsplit(url)` is unguarded. `urlsplit("https://[::1/x")` raises
 `ValueError: Invalid IPv6 URL`, and the tool's outer `try` has only a `finally`
