@@ -81,10 +81,20 @@ class RoundOutcome:
     findings: int = 0
     sources_linked: int = 0
     sub_questions_opened: int = 0
+    sub_questions_resolved: int = 0
+    gaps: int = 0
+    contests_resolved: int = 0
 
     @property
     def produced_nothing(self) -> bool:
-        return not (self.findings or self.sources_linked or self.sub_questions_opened)
+        return not (
+            self.findings
+            or self.sources_linked
+            or self.sub_questions_opened
+            or self.sub_questions_resolved
+            or self.gaps
+            or self.contests_resolved
+        )
 
 
 #: Runs one round's turn. Given the topic and why it was raised, returns what
@@ -107,6 +117,8 @@ class RunReport:
     rounds: int
     findings: int
     unexamined_topics: int
+    gaps: int = 0
+    sub_questions_resolved: int = 0
     detail: str = ""
 
     @property
@@ -313,6 +325,9 @@ class ResearchRunDriver:
                 findings=outcome.findings,
                 sources_linked=outcome.sources_linked,
                 sub_questions_opened=outcome.sub_questions_opened,
+                sub_questions_resolved=outcome.sub_questions_resolved,
+                gaps=outcome.gaps,
+                contests_resolved=outcome.contests_resolved,
             )
         )
         return outcome
@@ -382,6 +397,8 @@ class ResearchRunDriver:
             rounds=run.state.rounds,
             findings=run.state.findings,
             unexamined_topics=outstanding,
+            gaps=getattr(run.state, "gaps", 0),
+            sub_questions_resolved=getattr(run.state, "sub_questions_resolved", 0),
         )
 
 
@@ -396,4 +413,10 @@ def _summarize(outcome: RoundOutcome) -> str:
         parts.append(f"{outcome.sources_linked} source(s) linked")
     if outcome.sub_questions_opened:
         parts.append(f"{outcome.sub_questions_opened} sub-question(s) opened")
+    if outcome.sub_questions_resolved:
+        parts.append(f"{outcome.sub_questions_resolved} sub-question(s) resolved")
+    if outcome.gaps:
+        parts.append(f"{outcome.gaps} gap(s) recorded")
+    if outcome.contests_resolved:
+        parts.append(f"{outcome.contests_resolved} contest(s) resolved")
     return ", ".join(parts)

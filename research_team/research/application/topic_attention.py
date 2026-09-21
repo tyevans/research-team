@@ -387,7 +387,10 @@ def _rework_thrash(state: TopicState, corpus: CorpusFacts, params: dict) -> list
         (
             message,
             (),
-            "Change what you are asking; re-reading the same material is not working.",
+            (
+                "Restate the topic question or change what you are asking; "
+                "re-reading the same material is not working."
+            ),
         )
     ]
 

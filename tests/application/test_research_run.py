@@ -215,11 +215,21 @@ def test_a_round_that_appended_nothing_is_empty_however_it_described_itself():
         {"findings": 1},
         {"sources_linked": 1},
         {"sub_questions_opened": 1},
+        {"sub_questions_resolved": 1},
+        {"gaps": 1},
+        {"contests_resolved": 1},
     ],
-    ids=["finding", "source", "sub-question"],
+    ids=[
+        "finding",
+        "source",
+        "sub-question-opened",
+        "sub-question-resolved",
+        "gap",
+        "contest-resolved",
+    ],
 )
 def test_any_real_production_resets_novelty_decay(produced):
-    """Linking a source is progress too -- a run doing it is still learning."""
+    """Linking a source, recording a gap, resolving a sub-question/contest is progress too."""
     state = run_commands(
         started(),
         BeginRound(topic_id=uuid4(), triggers=["t"], evidence=[]),
@@ -240,10 +250,18 @@ def test_produced_nothing_reads_off_the_event_rather_than_the_narration():
     empty = ResearchRoundCompleted(aggregate_id=uuid4(), round_number=1, topic_id=uuid4())
     assert empty.produced_nothing
 
-    real = ResearchRoundCompleted(
+    assert not ResearchRoundCompleted(
         aggregate_id=uuid4(), round_number=1, topic_id=uuid4(), findings=1
-    )
-    assert not real.produced_nothing
+    ).produced_nothing
+    assert not ResearchRoundCompleted(
+        aggregate_id=uuid4(), round_number=1, topic_id=uuid4(), gaps=1
+    ).produced_nothing
+    assert not ResearchRoundCompleted(
+        aggregate_id=uuid4(), round_number=1, topic_id=uuid4(), sub_questions_resolved=1
+    ).produced_nothing
+    assert not ResearchRoundCompleted(
+        aggregate_id=uuid4(), round_number=1, topic_id=uuid4(), contests_resolved=1
+    ).produced_nothing
 
 
 # ---------------- stop conditions ----------------
@@ -415,6 +433,25 @@ async def test_a_run_works_the_queue_until_it_empties(runs):
     assert report.rounds == 3
     assert report.findings == 3
     assert len(topics.looks) == 3
+    assert report.finished_cleanly
+
+
+async def test_a_run_tracks_gaps_and_resolved_sub_questions_in_report(runs):
+    queue = FakeQueue(attention(), attention())
+    topics = FakeTopics()
+
+    async def work(topic_id, why):
+        queue.resolve(topic_id)
+        return RoundOutcome(gaps=1, sub_questions_resolved=2)
+
+    driver = ResearchRunDriver(runs, topics, queue, run_round=work)
+
+    report = await driver.run(uuid4(), uuid4())
+
+    assert report.reason == "queue_empty"
+    assert report.rounds == 2
+    assert report.gaps == 2
+    assert report.sub_questions_resolved == 4
     assert report.finished_cleanly
 
 

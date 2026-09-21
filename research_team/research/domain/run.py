@@ -156,10 +156,20 @@ class ResearchRoundCompleted(DomainEvent):
     findings: int = 0
     sources_linked: int = 0
     sub_questions_opened: int = 0
+    sub_questions_resolved: int = 0
+    gaps: int = 0
+    contests_resolved: int = 0
 
     @property
     def produced_nothing(self) -> bool:
-        return not (self.findings or self.sources_linked or self.sub_questions_opened)
+        return not (
+            self.findings
+            or self.sources_linked
+            or self.sub_questions_opened
+            or self.sub_questions_resolved
+            or self.gaps
+            or self.contests_resolved
+        )
 
 
 @register_event
@@ -194,6 +204,8 @@ class ResearchRunStopped(DomainEvent):
     detail: str = ""
     rounds: int = 0
     findings: int = 0
+    gaps: int = 0
+    sub_questions_resolved: int = 0
     unexamined_topics: int = 0
 
 
@@ -227,6 +239,9 @@ class CompleteRound:
     findings: int = 0
     sources_linked: int = 0
     sub_questions_opened: int = 0
+    sub_questions_resolved: int = 0
+    gaps: int = 0
+    contests_resolved: int = 0
 
 
 @dataclass(frozen=True)
@@ -275,6 +290,9 @@ class ResearchRunState(BaseModel):
     rounds: int = 0
     turns: int = 0
     findings: int = 0
+    gaps: int = 0
+    sub_questions_resolved: int = 0
+    contests_resolved: int = 0
     consecutive_quiet_rounds: int = 0
     consecutive_failures: int = 0
     in_flight_topic: UUID | None = None
@@ -379,6 +397,9 @@ def decide(command: ResearchRunCommand, state: ResearchRunState) -> list[DomainE
                     findings=command.findings,
                     sources_linked=command.sources_linked,
                     sub_questions_opened=command.sub_questions_opened,
+                    sub_questions_resolved=command.sub_questions_resolved,
+                    gaps=command.gaps,
+                    contests_resolved=command.contests_resolved,
                 )
             ]
 
@@ -403,6 +424,8 @@ def decide(command: ResearchRunCommand, state: ResearchRunState) -> list[DomainE
                     detail=detail,
                     rounds=state.rounds,
                     findings=state.findings,
+                    gaps=state.gaps,
+                    sub_questions_resolved=state.sub_questions_resolved,
                     unexamined_topics=unexamined,
                 )
             ]
@@ -440,14 +463,18 @@ def evolve(state: ResearchRunState, event: DomainEvent) -> ResearchRunState:
             )
 
         case ResearchRoundCompleted():
-            produced = bool(
-                event.findings or event.sources_linked or event.sub_questions_opened
-            )
+            produced = not event.produced_nothing
             return state.model_copy(
                 update={
                     "findings": state.findings + event.findings,
+                    "gaps": state.gaps + getattr(event, "gaps", 0),
+                    "sub_questions_resolved": state.sub_questions_resolved
+                    + getattr(event, "sub_questions_resolved", 0),
+                    "contests_resolved": state.contests_resolved
+                    + getattr(event, "contests_resolved", 0),
                     # Reset on any production, not just a finding: linking a
-                    # source or opening a sub-question is real progress, and a
+                    # source, opening/resolving a sub-question, recording a gap,
+                    # or resolving a contradiction is real progress, and a
                     # run doing that is still learning.
                     "consecutive_quiet_rounds": (
                         0 if produced else state.consecutive_quiet_rounds + 1

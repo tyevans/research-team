@@ -11,7 +11,7 @@ driver's novelty-decay stop rests on: a round that describes a breakthrough and
 appends nothing is an empty round, and it has to be counted as one by something
 the agent cannot influence with prose.
 
-Only three counts are taken, matching `RoundOutcome`, and each is chosen for
+Only six counts are taken, matching `RoundOutcome`, and each is chosen for
 being monotone under the events a round can append:
 
 - `findings` is a counter on `TopicState`, so the difference is exactly the
@@ -19,8 +19,10 @@ being monotone under the events a round can append:
 - `sources_linked` is the number of source ids that were not linked before,
   rather than the change in length -- a round that unlinks one and links
   another has done work, and a length difference of zero would hide it.
-- `sub_questions_opened` is the growth of the sub-question map. Keys are never
-  removed; resolving one fills in its answer, which is not what this counts.
+- `sub_questions_opened` is the growth of the sub-question map.
+- `sub_questions_resolved` counts sub-questions whose answer became non-None.
+- `gaps` is the difference in the topic's recorded gap count.
+- `contests_resolved` counts contradictions whose resolution became non-None.
 
 **The prompt says why the topic was raised, in the trigger's own words.** The
 findings that put it at the head of the queue are computed from the log, and
@@ -39,7 +41,10 @@ ROUND_INSTRUCTIONS = (
     "You are working one topic in an autonomous research round. Do the work "
     "and record it with the topic tools -- `record_finding` for something "
     "learned, `link_source` for a corpus document that bears on this topic, "
-    "`open_topic` for a genuinely new question you cannot answer here.\n\n"
+    "`open_topic` for a genuinely new question you cannot answer here, "
+    "`record_gap` for an answerable question you searched for without success, "
+    "`resolve_sub_question` for answering an open sub-question, or "
+    "`resolve_contest` for settling a contradiction.\n\n"
     "Two things this round is measured on, and neither is what you write "
     "here. Progress is counted from what reaches the topic's record, so a "
     "round that reads a great deal and records nothing has produced nothing. "
@@ -132,8 +137,23 @@ class TopicRoundRunner:
         before = (await self._topics.load(topic_id)).state
         await self._run_turn(round_prompt(attention, before.question, before.scope))
         after = (await self._topics.load(topic_id)).state
+        resolved_subs = sum(
+            1
+            for k, sub in after.sub_questions.items()
+            if sub.answer is not None
+            and (k not in before.sub_questions or before.sub_questions[k].answer is None)
+        )
+        resolved_contests = sum(
+            1
+            for k, c in after.contests.items()
+            if c.resolution is not None
+            and (k not in before.contests or before.contests[k].resolution is None)
+        )
         return RoundOutcome(
             findings=max(after.findings - before.findings, 0),
             sources_linked=len(set(after.source_ids) - set(before.source_ids)),
             sub_questions_opened=max(len(after.sub_questions) - len(before.sub_questions), 0),
+            sub_questions_resolved=resolved_subs,
+            gaps=max(after.gaps - before.gaps, 0),
+            contests_resolved=resolved_contests,
         )
