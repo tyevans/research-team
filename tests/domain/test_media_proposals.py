@@ -17,10 +17,12 @@ from research_team.research.domain.media_proposals import (
     MediaProposed,
     ProposeMedia,
     StoreMediaProposal,
+    _host_of,
     decide,
     evolve,
     initial_state,
 )
+from research_team.research.domain.urls import extract_hostname
 
 PROJECT_ID = str(uuid4())
 
@@ -290,3 +292,49 @@ def test_storing_an_already_stored_proposal_is_refused_not_idempotent():
             StoreMediaProposal(project_id=PROJECT_ID, proposal_id="p1", source_id="s1"),
             state,
         )
+
+
+def test_extract_hostname_and_host_of_safely_handle_malformed_urls():
+    malformed = [
+        "https://[::1/x",
+        "http://[invalid-ipv6",
+        "https://[:::1]:80/x",
+        "",
+        "   ",
+        "not a valid url",
+    ]
+    for url in malformed:
+        assert extract_hostname(url) == ""
+        assert _host_of(url) == ""
+
+
+def test_extract_hostname_and_host_of_valid_urls():
+    assert extract_hostname("https://EXAMPLE.com/path") == "example.com"
+    assert _host_of("https://EXAMPLE.com/path") == "example.com"
+    assert extract_hostname("http://sub.domain.test:8080/x") == "sub.domain.test"
+    assert _host_of("http://sub.domain.test:8080/x") == "sub.domain.test"
+    assert extract_hostname("http://[2001:db8::1]:8080/x") == "2001:db8::1"
+    assert _host_of("http://[2001:db8::1]:8080/x") == "2001:db8::1"
+
+
+def test_proposing_media_with_malformed_url_does_not_raise_value_error():
+    state = initial_state()
+    events = decide(
+        ProposeMedia(
+            project_id=PROJECT_ID,
+            proposal_id="p1",
+            need_id="n1",
+            topic_id="t1",
+            page_url="https://a.example/page",
+            asset_url="https://[::1/x",
+            thumbnail_url="",
+            kind="image",
+            title="a thing",
+            reason="on topic",
+            query="a query",
+        ),
+        state,
+    )
+    assert len(events) == 1
+    assert isinstance(events[0], MediaProposed)
+    assert events[0].asset_url == "https://[::1/x"

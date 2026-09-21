@@ -13,6 +13,19 @@ from urllib.parse import urlsplit, urlunsplit
 _DEFAULT_PORTS = {"http": "80", "https": "443"}
 
 
+def extract_hostname(url: str) -> str:
+    """Safely extracts the lowercased hostname from a URL.
+
+    Returns "" if malformed or if no hostname is present, guarding against
+    ValueError (which urlsplit raises on invalid bracketed IPv6 URLs like
+    'https://[::1/x').
+    """
+    try:
+        return (urlsplit(url.strip()).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 def normalize_url(url: str) -> str:
     """A URL, folded only where two spellings address the same resource.
 
