@@ -6,9 +6,9 @@ component guide alignment, and phase-specific prompting constraints.
 
 import pytest
 
-from research_team.application.authoring_checkpoints import lesson_paths
 from research_team.application.components import REGISTRY
-from research_team.application.course_authoring import (
+from research_team.application.curriculum.authoring_checkpoints import lesson_paths
+from research_team.application.curriculum.course_authoring import (
     COMPONENT_GUIDE,
     PROMPT_ANCHORS,
     assessment_prompt,

@@ -35,8 +35,11 @@ from eventsource.application.subscriptions import SubscriptionConfig, Subscripti
 from httpx import ASGITransport, AsyncClient
 from redstring import Entity, ExtractionMethod, Provenance, Relationship
 
-from research_team.application.course_catalog import CachedBlurb, CatalogService
 from research_team.application.curriculum import CurriculumService
+from research_team.application.curriculum.course_catalog import (
+    CachedBlurb,
+    CatalogService,
+)
 from research_team.composition import build_application
 from research_team.infrastructure.knowledge.catalog_recorder import (
     EventStoreCatalogFeatureRecorder,

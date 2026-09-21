@@ -15,16 +15,20 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from research_team.application.ask import (
+from research_team.application.components import parse_document
+from research_team.application.curriculum.grading import GradingError, grade
+from research_team.application.dialogue.ask import (
     AskAnswer,
     AskConversationOpened,
     AskInFlight,
     AskService,
 )
-from research_team.application.ask_components import answer_document
-from research_team.application.components import parse_document
-from research_team.application.grading import GradingError, grade
-from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
+from research_team.application.dialogue.ask_components import answer_document
+from research_team.application.shared.ports import (
+    ActivityDelta,
+    ActivityMessage,
+    ActivityRemark,
+)
 from research_team.infrastructure.persistence.read_models import AskConversationRunner
 
 __all__ = [

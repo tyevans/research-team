@@ -59,7 +59,10 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from research_team.application.course_catalog import ArtGeneratorPort, CourseCandidate
+from research_team.application.curriculum.course_catalog import (
+    ArtGeneratorPort,
+    CourseCandidate,
+)
 from research_team.infrastructure.config import catalog_sweep_concurrency
 from research_team.infrastructure.persistence.read_models import ArtStore, CandidateArtStore
 

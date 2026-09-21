@@ -11,7 +11,11 @@ from uuid import uuid4
 import pytest
 
 from research_team.application.curriculum import CurriculumService
-from research_team.application.graph_read import Graph, GraphEntity, GraphRelationship
+from research_team.application.knowledge.graph_read import (
+    Graph,
+    GraphEntity,
+    GraphRelationship,
+)
 
 
 def entity(eid: str) -> GraphEntity:

@@ -15,7 +15,7 @@ suite would notice.
 from uuid import uuid4
 
 from research_team.application import SEARCH_TOOL
-from research_team.application.autonomy import FETCH_TOOL
+from research_team.application.session.autonomy import FETCH_TOOL
 from research_team.domain import Session
 
 

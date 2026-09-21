@@ -23,7 +23,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from research_team.application.components import parse_document
-from research_team.application.grading import GradingError, grade
+from research_team.application.curriculum.grading import GradingError, grade
 
 MCQ = """\
 ```component:mcq

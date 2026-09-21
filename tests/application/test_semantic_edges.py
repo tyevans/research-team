@@ -14,7 +14,7 @@ weightings and tell nobody which one shipped.
 
 import pytest
 
-from research_team.application.area_projection import (
+from research_team.application.curriculum.area_projection import (
     EMBEDDING_WEIGHT,
     MIN_NEIGHBOUR_STANDOUT,
     STANDOUT_SPAN,
@@ -22,7 +22,11 @@ from research_team.application.area_projection import (
     _semantic_edges,
     project_areas,
 )
-from research_team.application.graph_read import Graph, GraphEntity, GraphRelationship
+from research_team.application.knowledge.graph_read import (
+    Graph,
+    GraphEntity,
+    GraphRelationship,
+)
 
 KNOWN = frozenset({"a", "b", "c"})
 

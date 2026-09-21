@@ -22,7 +22,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
-from research_team.application.corpus_read import (
+from research_team.application.research.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     REFERENCE_SYNTAX_PROMPT,
@@ -32,8 +32,8 @@ from research_team.application.corpus_read import (
     SourceListing,
     StoredDocument,
 )
-from research_team.application.corpus_spans import Span, chunk, quote
-from research_team.application.tool_artifacts import (
+from research_team.application.research.corpus_spans import Span, chunk, quote
+from research_team.application.session.tool_artifacts import (
     Acknowledgement,
     Excerpt,
     Hit,

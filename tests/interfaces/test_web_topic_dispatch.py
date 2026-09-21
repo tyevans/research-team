@@ -558,7 +558,7 @@ async def test_dispatch_frames_ride_the_stream_without_an_id(repository):
     `Last-Event-ID` asking the server to resume from a position the log does
     not have."""
     from research_team.application import LiveFeed
-    from research_team.application.topic_dispatch import DispatchRun
+    from research_team.application.research.topic_dispatch import DispatchRun
     from research_team.interfaces.web.app import _sse
 
     feed = LiveFeed(repository)

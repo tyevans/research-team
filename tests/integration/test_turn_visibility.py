@@ -14,7 +14,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.application import FeedEntry, TurnCancelled
-from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.application.shared.ports import ActivityDelta, ActivityMessage
 from research_team.domain import (
     AssistantMessageAdded,
     FileWritten,

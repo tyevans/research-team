@@ -27,7 +27,7 @@ from research_team.application import (
     TurnSupervisor,
 )
 from research_team.application.components import View, parse_document, project
-from research_team.application.grading import GradingError, grade
+from research_team.application.curriculum.grading import GradingError, grade
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.dialogues import Attempt

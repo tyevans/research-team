@@ -26,8 +26,8 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.perception import (
+from research_team.application.research.corpus_editing import CorpusEditor
+from research_team.application.research.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,

@@ -14,8 +14,7 @@ import hashlib
 
 import pytest
 
-from research_team.application.autonomy import GATED_TOOLS
-from research_team.application.corpus_read import (
+from research_team.application.research.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     REFERENCE_SYNTAX_PROMPT,
@@ -24,6 +23,7 @@ from research_team.application.corpus_read import (
     SourceListing,
     StoredDocument,
 )
+from research_team.application.session.autonomy import GATED_TOOLS
 from research_team.domain import MediaRecord, TextRecord
 from research_team.infrastructure.agent.corpus_tools import (
     CORPUS_PROMPT,

@@ -24,10 +24,10 @@ import trafilatura
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from trafilatura.metadata import extract_metadata
 
-from research_team.application.autonomy import FETCH_TOOL
-from research_team.application.corpus_read import CorpusReadError, CorpusReadPort
-from research_team.application.grants import FetchGrant
-from research_team.application.tool_artifacts import Acknowledgement, Excerpt
+from research_team.application.research.corpus_read import CorpusReadError, CorpusReadPort
+from research_team.application.session.autonomy import FETCH_TOOL
+from research_team.application.session.tool_artifacts import Acknowledgement, Excerpt
+from research_team.application.tenancy.grants import FetchGrant
 from research_team.infrastructure.agent.corpus_tools import (
     bounded,
     excerpt_artifact,

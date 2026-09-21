@@ -17,13 +17,13 @@ from uuid import UUID
 
 import pytest
 
-from research_team.application.effective import (
+from research_team.application.settings import SettingsResolver
+from research_team.application.settings.effective import (
     EffectiveSettings,
     ExtractionSettings,
     ResearchSettings,
     SettingsRevision,
 )
-from research_team.application.settings import SettingsResolver
 from research_team.domain.settings import ModelProfile, ModelRole, Scope, ScopeRef
 from research_team.infrastructure import config
 from research_team.infrastructure.settings.profiles import ModelProfileStore

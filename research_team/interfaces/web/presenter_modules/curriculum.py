@@ -3,9 +3,15 @@
 from collections.abc import Sequence
 from typing import Any
 
-from research_team.application.course_catalog import CachedOutline, Catalog
-from research_team.application.course_realization import CourseDetail, RealizedCourse
 from research_team.application.curriculum import Curriculum
+from research_team.application.curriculum.course_catalog import (
+    CachedOutline,
+    Catalog,
+)
+from research_team.application.curriculum.course_realization import (
+    CourseDetail,
+    RealizedCourse,
+)
 from research_team.domain.curriculum.catalog import Category, CourseCandidate
 from research_team.domain.curriculum.course import CourseFit
 from research_team.domain.curriculum.learner import LearnerProgressState

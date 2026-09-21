@@ -17,7 +17,7 @@ from eventsource import (
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import ReadModelRepository
 
-from research_team.application.media_acquisition import AcceptedProposal
+from research_team.application.research.media_acquisition import AcceptedProposal
 from research_team.domain.research.media_proposals import (
     MediaAssetIgnored,
     MediaAssetUnignored,

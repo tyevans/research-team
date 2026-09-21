@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 
-from research_team.application.autonomy import FETCH_TOOL
+from research_team.application.session.autonomy import FETCH_TOOL
 from research_team.domain import CreateProject, SessionPurpose
 from research_team.domain.research.run import Budget
 from research_team.domain.research.topic import OpenTopic, Topic

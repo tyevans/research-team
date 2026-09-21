@@ -24,7 +24,7 @@ from research_team.application import (
     RunAlreadyActive,
     SessionService,
 )
-from research_team.application.ports import ActivityNote
+from research_team.application.shared.ports import ActivityNote
 from research_team.domain import CreateProject, SessionPurpose
 from research_team.domain.research.run import Budget
 from research_team.infrastructure import config

@@ -47,7 +47,7 @@ from readeverything import (
     Transcriber as _Transcriber,
 )
 
-from research_team.application.perception import (
+from research_team.application.research.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,

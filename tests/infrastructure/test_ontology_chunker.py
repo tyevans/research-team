@@ -14,7 +14,7 @@ verbatim at `start_char`. Both are silent when wrong: a citation resolves,
 renders, and quotes the wrong words.
 """
 
-from research_team.application.ontology_discovery import verify_classes
+from research_team.application.knowledge.ontology_discovery import verify_classes
 from research_team.infrastructure.knowledge.ontology_chunker import (
     MarkdownAwareDocumentChunker,
 )

@@ -8,7 +8,7 @@ from research_team.application import (
     Roster,
     Worker,
 )
-from research_team.application.topic_read import TopicDetail, TopicView
+from research_team.application.research.topic_read import TopicDetail, TopicView
 from research_team.domain import ProjectState
 from research_team.interfaces.web.presenter_modules.sessions import reading_head
 

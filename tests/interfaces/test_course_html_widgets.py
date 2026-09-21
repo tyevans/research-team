@@ -4,9 +4,12 @@ import re
 from uuid import UUID, uuid4
 
 from research_team.application.components import ComponentBlock
-from research_team.application.graph_export import build_export
-from research_team.application.graph_read import GraphEntity, GraphRelationship
-from research_team.application.timeline_read import TimelineBand
+from research_team.application.knowledge.graph_export import build_export
+from research_team.application.knowledge.graph_read import (
+    GraphEntity,
+    GraphRelationship,
+)
+from research_team.application.knowledge.timeline_read import TimelineBand
 from research_team.interfaces.web import course_html
 from research_team.interfaces.web.course_html import (
     CourseArea,

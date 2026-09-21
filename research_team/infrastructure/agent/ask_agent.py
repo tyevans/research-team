@@ -14,17 +14,17 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool
 
-from research_team.application.ask import AskAnswer, AskMessage, Citation
-from research_team.application.ask_components import ASK_COMPONENT_TYPES
 from research_team.application.components import component_reference
-from research_team.application.corpus_read import (
+from research_team.application.dialogue.ask import AskAnswer, AskMessage, Citation
+from research_team.application.dialogue.ask_components import ASK_COMPONENT_TYPES
+from research_team.application.knowledge import GRAPH_SEARCH_TOOL
+from research_team.application.research.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     REFERENCE_SYNTAX_PROMPT,
 )
-from research_team.application.knowledge import GRAPH_SEARCH_TOOL
-from research_team.application.ports import ActivityReporter
-from research_team.application.topics import LIST_TOPICS_TOOL
+from research_team.application.research.topics import LIST_TOPICS_TOOL
+from research_team.application.shared.ports import ActivityReporter
 from research_team.infrastructure.agent.deep_agent import (
     to_activity_delta,
     to_activity_message,

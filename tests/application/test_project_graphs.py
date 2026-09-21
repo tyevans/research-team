@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.knowledge.project_graphs import ProjectGraphs
 
 
 class _FakeStore:

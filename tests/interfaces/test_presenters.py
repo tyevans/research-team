@@ -3,9 +3,15 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from research_team.application.corpus_read import SourceListing
-from research_team.application.course_catalog import CachedOutline, Catalog
-from research_team.application.course_realization import CourseDetail, RealizedCourse
+from research_team.application.curriculum.course_catalog import (
+    CachedOutline,
+    Catalog,
+)
+from research_team.application.curriculum.course_realization import (
+    CourseDetail,
+    RealizedCourse,
+)
+from research_team.application.research.corpus_read import SourceListing
 from research_team.domain import (
     AssistantMessageAdded,
     AutonomyChanged,

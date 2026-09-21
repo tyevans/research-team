@@ -31,7 +31,7 @@ from eventsource import ReadModel
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 
-from research_team.application.effective import SettingsRevision
+from research_team.application.settings.effective import SettingsRevision
 from research_team.domain.settings import Override, Scope, ScopeRef
 from research_team.infrastructure.persistence.read_models import apply_schema
 

@@ -21,7 +21,7 @@ from redstring import (
     TemporalExtent,
 )
 
-from research_team.application.graph_read import MAX_INFERRED_EDGES
+from research_team.application.knowledge.graph_read import MAX_INFERRED_EDGES
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 
 TENANT_ID = uuid4()

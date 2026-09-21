@@ -42,7 +42,7 @@ from eventsource.ports.readmodels.query import Filter
 from pydantic import Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from research_team.application.topic_attention import (
+from research_team.application.research.topic_attention import (
     CorpusFacts,
     TopicAttention,
     attention_for,

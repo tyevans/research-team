@@ -16,7 +16,7 @@ from uuid import UUID
 
 from redstring import rank_chunks, tokenize
 
-from research_team.application.usages import Usage
+from research_team.application.knowledge.usages import Usage
 from research_team.infrastructure.knowledge.aliases import known_names
 from research_team.infrastructure.knowledge.markdown_table_chunker import original_text
 

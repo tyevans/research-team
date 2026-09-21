@@ -22,7 +22,7 @@ from uuid import uuid4
 import pytest
 from redstring import FakeEmbeddingProvider, SourceDocument, build_graph
 
-from research_team.application.project_graphs import ProjectGraphs
+from research_team.application.knowledge.project_graphs import ProjectGraphs
 from research_team.infrastructure.knowledge.stores import build_graph_store, build_vector_store
 from tests.conftest import fake_provider
 

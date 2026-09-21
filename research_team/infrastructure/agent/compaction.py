@@ -12,7 +12,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
 
-from research_team.application.context import Compaction, PreparedContext
+from research_team.application.shared.context import Compaction, PreparedContext
 from research_team.domain import SessionState
 
 logger = logging.getLogger(__name__)

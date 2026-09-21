@@ -6,7 +6,7 @@ from uuid import UUID
 from eventsource import DomainEvent
 
 from research_team.application import ForkNode, SessionSummary
-from research_team.application.project_summaries import ProjectSummary
+from research_team.application.tenancy.project_summaries import ProjectSummary
 from research_team.domain import FileEdited, ProjectState, Session
 from research_team.interfaces.web.presenter_modules.events import (
     FILE_EVENTS,

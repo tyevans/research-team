@@ -9,7 +9,7 @@ once rather than twice downstream.
 import httpx
 import pytest
 
-from research_team.application.media_acquisition import (
+from research_team.application.research.media_acquisition import (
     MediaMoved,
     MediaTooLarge,
     UnsupportedMedia,

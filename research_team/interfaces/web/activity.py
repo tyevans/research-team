@@ -20,7 +20,7 @@ import asyncio
 from typing import Any
 from uuid import UUID
 
-from research_team.application.ports import (
+from research_team.application.shared.ports import (
     ActivityMessage,
     ActivityNote,
     ActivityRemark,

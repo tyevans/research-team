@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from langchain_core.language_models import BaseChatModel
 
-from research_team.application.context import (
+from research_team.application.shared.context import (
     ContextStrategy,
     ElideToolResults,
     FullHistory,

@@ -7,8 +7,8 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.media_acquisition import (
+from research_team.application.research.corpus_editing import CorpusEditor
+from research_team.application.research.media_acquisition import (
     AcceptedProposal,
     MediaAcceptWorker,
 )

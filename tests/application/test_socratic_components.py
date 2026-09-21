@@ -15,7 +15,7 @@ direction the dependency runs -- an `application/` test reaching into
 `infrastructure/` for the one assertion that touches a real prompt.
 """
 
-from research_team.application.socratic_components import (
+from research_team.application.dialogue.socratic_components import (
     SOCRATIC_COMPONENT_TYPES,
     dialogue_document,
 )

@@ -16,12 +16,12 @@ exactly that: a fresh hit is returned, a miss and a stale hit both answer
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from research_team.application.course_catalog import CachedOutline
-from research_team.application.course_realization import (
+from research_team.application.curriculum import Curriculum
+from research_team.application.curriculum.course_catalog import CachedOutline
+from research_team.application.curriculum.course_realization import (
     CourseService,
     RealizedCourse,
 )
-from research_team.application.curriculum import Curriculum
 from research_team.domain.curriculum.learning_area import (
     AreaMember,
     AreaProjection,

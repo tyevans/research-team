@@ -382,7 +382,7 @@ def test_remember_page_is_absent_without_a_page_memo():
 def test_remember_page_is_gated():
     """A commit is a commit however the bytes arrived. An ungated by-reference
     path would be a way around the gate on the by-value one."""
-    from research_team.application.autonomy import GATED_TOOLS, REMEMBER_PAGE_TOOL
+    from research_team.application.session.autonomy import GATED_TOOLS, REMEMBER_PAGE_TOOL
 
     assert REMEMBER_PAGE_TOOL in GATED_TOOLS
 

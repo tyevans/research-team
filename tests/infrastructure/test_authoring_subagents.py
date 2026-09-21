@@ -15,13 +15,15 @@ import pytest
 from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from research_team.application.authoring_checkpoints import (
+from research_team.application.curriculum.authoring_checkpoints import (
     BUILDS_TOWARD_FIELD,
     COMPONENT_FENCE,
 )
-from research_team.application.authoring_dispatch import AUTHORING_SUBAGENT_NAMES
-from research_team.application.course_authoring import COMPONENT_GUIDE
-from research_team.application.prose_rubric import critic_reporting_contract
+from research_team.application.curriculum.authoring_dispatch import (
+    AUTHORING_SUBAGENT_NAMES,
+)
+from research_team.application.curriculum.course_authoring import COMPONENT_GUIDE
+from research_team.application.curriculum.prose_rubric import critic_reporting_contract
 from research_team.infrastructure.agent.authoring_subagents import (
     AUTHORING_DISPATCH_PROMPT,
     AUTHORING_SUBAGENTS,

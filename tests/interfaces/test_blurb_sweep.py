@@ -21,7 +21,10 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.course_catalog import DraftBlurb, DraftOutline
+from research_team.application.curriculum.course_catalog import (
+    DraftBlurb,
+    DraftOutline,
+)
 from research_team.domain.curriculum.learning_area import AreaMember
 from research_team.interfaces.web.blurb_sweep import BlurbSweep, SweepAlreadyActive
 

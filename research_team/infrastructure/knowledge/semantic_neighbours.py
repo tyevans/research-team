@@ -33,7 +33,7 @@ from uuid import UUID
 
 import numpy as np
 
-from research_team.application.area_projection import (
+from research_team.application.curriculum.area_projection import (
     EMBEDDING_NEIGHBOURS,
     MIN_NEIGHBOUR_STANDOUT,
 )

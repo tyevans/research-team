@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from research_team.application import SessionSummary
-from research_team.application.project_summaries import ProjectSummary
+from research_team.application.tenancy.project_summaries import ProjectSummary
 from research_team.domain import SessionPurpose
 from research_team.domain.tenancy.project import ProjectState
 from research_team.interfaces.web.presenters import (

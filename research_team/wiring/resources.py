@@ -8,8 +8,11 @@ from uuid import UUID
 
 import aiosqlite
 
-from research_team.application.course_catalog import CachedBlurb, CachedOutline
-from research_team.application.project_summaries import ProjectSummary
+from research_team.application.curriculum.course_catalog import (
+    CachedBlurb,
+    CachedOutline,
+)
+from research_team.application.tenancy.project_summaries import ProjectSummary
 from research_team.infrastructure.persistence.project_summaries import (
     SqliteProjectSummaries,
 )

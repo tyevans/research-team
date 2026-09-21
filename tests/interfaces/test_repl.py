@@ -3,7 +3,11 @@ from uuid import UUID, uuid4
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage, message_to_dict
 
-from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
+from research_team.application.shared.ports import (
+    ActivityDelta,
+    ActivityMessage,
+    ActivityRemark,
+)
 from research_team.domain import (
     FileEdited,
     FileWritten,
@@ -394,7 +398,7 @@ async def test_resume_by_a_prefix_that_is_all_digits(current, monkeypatch):
     Those were unresolvable by prefix, because a digit string was always read
     as a list position -- and a position that large is always out of range.
     """
-    from research_team.application import session_service
+    from research_team.application.session import session_service
 
     digity = UUID("12345678-0000-4000-8000-00000000abcd")
     monkeypatch.setattr(session_service, "uuid4", lambda: digity)
@@ -428,7 +432,7 @@ async def test_a_short_number_is_never_read_as_an_id_prefix(current, monkeypatch
     """Otherwise the command's behaviour depends on the random ids in the
     database: `/resume 97` would usually report a bad position, and about one
     run in a hundred would resume a session that happened to start with "97"."""
-    from research_team.application import session_service
+    from research_team.application.session import session_service
 
     monkeypatch.setattr(
         session_service, "uuid4", lambda: UUID("97000000-0000-4000-8000-00000000dddd")
@@ -445,7 +449,7 @@ async def test_a_short_number_is_never_read_as_an_id_prefix(current, monkeypatch
 
 async def test_a_long_enough_prefix_is_still_a_prefix(current, monkeypatch):
     """The rule must not undo the fix it sits next to."""
-    from research_team.application import session_service
+    from research_team.application.session import session_service
 
     target = UUID("97001234-0000-4000-8000-00000000eeee")
     monkeypatch.setattr(session_service, "uuid4", lambda: target)

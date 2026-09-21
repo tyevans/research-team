@@ -18,7 +18,7 @@ from redstring import (
     TemporalExtent,
 )
 
-from research_team.application.graph_read import (
+from research_team.application.knowledge.graph_read import (
     MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
     Graph,

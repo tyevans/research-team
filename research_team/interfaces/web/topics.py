@@ -15,22 +15,22 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from research_team.application.media_curation import (
+from research_team.application.research.media_curation import (
     CurationUnavailable,
     MediaCurationService,
     MediaCurationTextPort,
     MediaSearchPort,
 )
-from research_team.application.session_service import SessionService
-from research_team.application.topic_dispatch import (
+from research_team.application.research.topic_dispatch import (
     DISPATCH_ACTIONS,
     TopicDispatcher,
     topic_directory,
 )
-from research_team.application.topic_read import TopicReadPort
-from research_team.application.topic_seeding import TopicSeeder
-from research_team.application.topics import MAX_OPEN_TOPICS
-from research_team.application.workers import WorkerRoster
+from research_team.application.research.topic_read import TopicReadPort
+from research_team.application.research.topic_seeding import TopicSeeder
+from research_team.application.research.topics import MAX_OPEN_TOPICS
+from research_team.application.session.session_service import SessionService
+from research_team.application.session.workers import WorkerRoster
 from research_team.domain.research.media_proposals import MediaProposals
 from research_team.domain.research.topic import (
     AddSubQuestion,

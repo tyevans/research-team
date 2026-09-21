@@ -18,9 +18,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from research_team.application.components import parse_document
-from research_team.application.grading import GradingError, grade
-from research_team.application.ports import ActivityDelta, ActivityMessage, ActivityRemark
-from research_team.application.socratic import (
+from research_team.application.curriculum.grading import GradingError, grade
+from research_team.application.dialogue.socratic import (
     DialogueConcluded,
     DialogueInFlight,
     SocraticDialogueOpened,
@@ -28,7 +27,12 @@ from research_team.application.socratic import (
     SocraticPrompt,
     UnknownDialogue,
 )
-from research_team.application.socratic_components import dialogue_document
+from research_team.application.dialogue.socratic_components import dialogue_document
+from research_team.application.shared.ports import (
+    ActivityDelta,
+    ActivityMessage,
+    ActivityRemark,
+)
 from research_team.infrastructure.persistence.read_models import (
     SocraticDialogueRow,
     SocraticDialogueRunner,

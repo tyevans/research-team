@@ -15,14 +15,14 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from redstring import FakeLlmProvider, InMemoryGraphStore
 
-from research_team.application.corpus_read import (
+from research_team.application.knowledge import SourceRef
+from research_team.application.research.corpus_read import (
     CorpusReadError,
     SourceListing,
     StoredDocument,
     TextSourceUri,
 )
-from research_team.application.knowledge import SourceRef
-from research_team.application.topics import TopicError
+from research_team.application.research.topics import TopicError
 from research_team.domain.research.corpus import Corpus, StoreSourceDocument
 from research_team.infrastructure.agent.corpus_tools import build_corpus_tools
 from research_team.infrastructure.agent.fetch import build_fetch_tool

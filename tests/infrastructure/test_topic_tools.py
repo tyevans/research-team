@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.topics import (
+from research_team.application.research.topics import (
     MAX_OPEN_TOPICS,
     TopicError,
     TopicSummary,

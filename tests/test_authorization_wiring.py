@@ -25,7 +25,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.authorization import (
+from research_team.application.tenancy.authorization import (
     PermissiveAuthorizer,
     Resource,
     RoleTableAuthorizer,

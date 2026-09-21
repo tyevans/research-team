@@ -18,7 +18,10 @@ shapes; an adapter is what that is.
 import json
 from uuid import UUID
 
-from research_team.application.entity_definitions import Citation, Definition
+from research_team.application.knowledge.entity_definitions import (
+    Citation,
+    Definition,
+)
 from research_team.infrastructure.persistence.read_models import (
     EntityDefinitionRow,
     EntityDefinitionRunner,

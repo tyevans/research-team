@@ -19,14 +19,14 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application import media_acquisition
-from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.media_acquisition import (
+from research_team.application.research import media_acquisition
+from research_team.application.research.corpus_editing import CorpusEditor
+from research_team.application.research.media_acquisition import (
     AcceptedProposal,
     MediaAcceptReconciler,
     MediaAcceptWorker,
 )
-from research_team.application.perception import PerceptionUnavailable
+from research_team.application.research.perception import PerceptionUnavailable
 from research_team.domain.research.corpus import Corpus, MediaRecord
 from research_team.domain.research.media_proposals import (
     AcceptMediaProposal,

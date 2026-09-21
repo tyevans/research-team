@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.corpus_read import MediaHandle, SourceListing
+from research_team.application.research.corpus_read import MediaHandle, SourceListing
 from research_team.domain.research.corpus import (
     Corpus,
     StoreDerivedText,

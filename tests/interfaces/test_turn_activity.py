@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.application.ports import (
+from research_team.application.shared.ports import (
     ActivityDelta,
     ActivityMessage,
     ActivityRemark,

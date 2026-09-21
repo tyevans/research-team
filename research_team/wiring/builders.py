@@ -10,14 +10,20 @@ from eventsource.observability import Tracer
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from research_team.application.authorization import (
+from research_team.application.research.media_curation import (
+    MediaCurationTextPort,
+    MediaSearchPort,
+)
+from research_team.application.session.session_service import NO_SEARCH_CLAUSE
+from research_team.application.settings.effective import (
+    EffectiveSettings,
+    SettingsRevision,
+)
+from research_team.application.tenancy.authorization import (
     Authorizer,
     PermissiveAuthorizer,
     RoleTableAuthorizer,
 )
-from research_team.application.effective import EffectiveSettings, SettingsRevision
-from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
-from research_team.application.session_service import NO_SEARCH_CLAUSE
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.fetch import (
     FETCH_PROMPT,

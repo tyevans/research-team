@@ -15,7 +15,7 @@ from pathlib import Path
 
 import aiofiles
 
-from research_team.application.blobs import BlobStat
+from research_team.application.shared.blobs import BlobStat
 
 CHUNK_SIZE = 1024 * 1024
 """How much is read per `open` iteration. A megabyte is large enough that a

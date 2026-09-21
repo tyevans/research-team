@@ -12,8 +12,8 @@ wrote no lesson returns a reply like any other. Only the files tell the truth.
 
 import pytest
 
-from research_team.application import authoring_checkpoints
-from research_team.application.authoring_checkpoints import (
+from research_team.application.curriculum import authoring_checkpoints
+from research_team.application.curriculum.authoring_checkpoints import (
     CHECKPOINT_MARKERS,
     ESSENTIAL_QUESTIONS_HEADING,
     EVIDENCE_HEADING,
@@ -29,7 +29,7 @@ from research_team.application.authoring_checkpoints import (
     lesson_paths,
     unit_text,
 )
-from research_team.application.course_authoring import (
+from research_team.application.curriculum.course_authoring import (
     assessment_prompt,
     desired_results_prompt,
     evidence_prompt,

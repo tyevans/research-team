@@ -76,7 +76,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from research_team.application.course_catalog import (
+from research_team.application.curriculum.course_catalog import (
     BlurbCachePort,
     DraftBlurb,
     DraftOutline,

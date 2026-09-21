@@ -12,7 +12,7 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.ask import (
+from research_team.application.dialogue.ask import (
     AskAnswer,
     AskConversationOpened,
     AskInFlight,
@@ -21,7 +21,7 @@ from research_team.application.ask import (
     Citation,
     ConversationRegistry,
 )
-from research_team.application.ports import ActivityDelta, ActivityReporter
+from research_team.application.shared.ports import ActivityDelta, ActivityReporter
 from research_team.domain.dialogue.ask import AskConversation
 
 

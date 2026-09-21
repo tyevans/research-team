@@ -107,7 +107,7 @@ def test_the_c_yaml_loader_is_used_when_the_extension_is_available():
     the decision that produced the speedup, which is the durable part."""
     import yaml
 
-    from research_team.application.components import _YAML_LOADER
+    from research_team.application.components.components import _YAML_LOADER
 
     if hasattr(yaml, "CSafeLoader"):
         assert _YAML_LOADER is yaml.CSafeLoader

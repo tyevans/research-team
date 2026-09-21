@@ -5,7 +5,7 @@ from research_team.application.components import (
     parse_document,
     project,
 )
-from research_team.application.timeline_read import MAX_TIMELINE_BANDS
+from research_team.application.knowledge.timeline_read import MAX_TIMELINE_BANDS
 
 EXPLORER = """\
 ```component:explorer

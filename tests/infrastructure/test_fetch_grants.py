@@ -12,13 +12,13 @@ import httpx
 import pytest
 
 from research_team.application import AutonomyPolicy
-from research_team.application.autonomy import FETCH_TOOL, GATED_TOOLS
-from research_team.application.corpus_read import (
+from research_team.application.research.corpus_read import (
     SourceListing,
     StoredDocument,
     TextSourceUri,
 )
-from research_team.application.grants import FetchGrant, GrantRegistry
+from research_team.application.session.autonomy import FETCH_TOOL, GATED_TOOLS
+from research_team.application.tenancy.grants import FetchGrant, GrantRegistry
 from research_team.domain import TextRecord
 from research_team.infrastructure.agent import fetch as fetch_module
 from research_team.infrastructure.agent.approval import interrupt_config

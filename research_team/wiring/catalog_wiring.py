@@ -13,8 +13,8 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from langchain_core.language_models import BaseChatModel
 
-from research_team.application.course_catalog import CatalogService
-from research_team.application.course_realization import CourseService
+from research_team.application.curriculum.course_catalog import CatalogService
+from research_team.application.curriculum.course_realization import CourseService
 from research_team.infrastructure.knowledge.blurb_writer import ModelBlurbWriter
 from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.knowledge.outline_writer import ModelOutlineWriter

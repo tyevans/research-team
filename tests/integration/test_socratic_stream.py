@@ -19,8 +19,8 @@ from eventsource import StreamId, collect
 from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
-from research_team.application.ports import ActivityRemark
-from research_team.application.socratic import SocraticFraming, SocraticPrompt
+from research_team.application.dialogue.socratic import SocraticFraming, SocraticPrompt
+from research_team.application.shared.ports import ActivityRemark
 from research_team.composition import build_application
 from research_team.domain.dialogue.socratic import (
     SocraticDialogue,
