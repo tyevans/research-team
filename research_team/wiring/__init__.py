@@ -11,6 +11,13 @@ from research_team.wiring.catalog_wiring import (
     CatalogServices,
     build_catalog_services,
 )
+from research_team.wiring.executor_wiring import build_turn_executor
+from research_team.wiring.graph_wiring import (
+    WiredGraphs,
+    build_graph_opener,
+    build_knowledge_attachment,
+    build_project_graphs,
+)
 from research_team.wiring.helpers import (
     _context_parts,
     _extraction_model,
@@ -65,6 +72,7 @@ __all__ = [
     "ProjectServiceFactories",
     "SessionWiring",
     "SupervisorWiring",
+    "WiredGraphs",
     "_CatalogFeatureRunner",
     "_CourseRunner",
     "_LazyArtStore",
@@ -86,12 +94,16 @@ __all__ = [
     "build_corpus_editor",
     "build_curation_tools",
     "build_document_extractor",
+    "build_graph_opener",
+    "build_knowledge_attachment",
     "build_media_acquisition",
     "build_media_perceiver",
+    "build_project_graphs",
     "build_project_services",
     "build_session_service",
     "build_socratic_service",
     "build_stores",
     "build_supervisor_roster",
     "build_tools",
+    "build_turn_executor",
 ]
