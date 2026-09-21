@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from eventsource.domain.exceptions import AggregateNotFoundError
+
 from research_team.research.domain.topic import (
     AcknowledgeTrigger,
     AddSubQuestion,
@@ -30,11 +32,13 @@ from research_team.research.domain.topic import (
     RestateTopicQuestion,
     SetTopicStatus,
     Topic,
+    TopicState,
     TopicStatus,
     UnlinkSource,
 )
 
 LIST_TOPICS_TOOL = "list_topics"
+GET_TOPIC_TOOL = "get_topic"
 OPEN_TOPIC_TOOL = "open_topic"
 RESTATE_QUESTION_TOOL = "restate_question"
 RECORD_FINDING_TOOL = "record_finding"
@@ -125,6 +129,10 @@ class TopicPort(Protocol):
 
     async def list_topics(self, project_id: UUID) -> list[TopicSummary]: ...
 
+    async def get_topic(self, topic_id: UUID) -> TopicState | None:
+        """Read the state of one topic without modifying it (B52)."""
+        ...
+
     async def open_topic(
         self, project_id: UUID, question: str, rationale: str, scope: str = ""
     ) -> UUID: ...
@@ -160,6 +168,16 @@ class TopicService:
 
     def __init__(self, repository: Any) -> None:
         self._repository = repository
+
+    async def get_topic(self, topic_id: UUID) -> TopicState | None:
+        """Read the state of one topic, or None if it does not exist."""
+        try:
+            topic = await self._repository.load(topic_id)
+            if topic.state.topic_id is None:
+                return None
+            return topic.state
+        except (AggregateNotFoundError, KeyError):
+            return None
 
     async def open_topic(
         self,
@@ -311,6 +329,28 @@ def format_topics(summaries: list[TopicSummary]) -> str:
         lines.append(f"{len(quiet)} topic(s) are quiet:")
         for summary in quiet:
             lines.append(f"  {summary.topic_id} -- {summary.question} ({summary.status})")
+    return "\n".join(lines)
+
+
+def format_topic(state: TopicState) -> str:
+    """Format a single topic's state for agent inspection (B52)."""
+    lines = [
+        f"Topic {state.topic_id}: {state.question}",
+        f"Status: {state.status}",
+    ]
+    if state.rationale:
+        lines.append(f"Rationale: {state.rationale}")
+    if state.scope:
+        lines.append(f"Scope: {state.scope}")
+    if state.source_ids:
+        lines.append(f"Linked Sources: {', '.join(state.source_ids)}")
+    if state.findings:
+        lines.append(f"Findings count: {state.findings}")
+    if state.sub_questions:
+        lines.append(f"Sub-questions ({len(state.sub_questions)}):")
+        for key, sub in state.sub_questions.items():
+            ans = f" -> {sub.answer}" if sub.answer else " (open)"
+            lines.append(f"  - [{key}] {sub.question}{ans}")
     return "\n".join(lines)
 
 

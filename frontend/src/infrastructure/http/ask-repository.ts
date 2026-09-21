@@ -26,10 +26,11 @@ import { verdictDto } from './dto.ts'
 import { seg } from './http-client.ts'
 import { toVerdict } from './mappers.ts'
 
-// Source-only: the tool that would have produced a topic citation created
-// topics rather than read them and left this read-only page's tool set, so a
-// server cannot send any other kind. See `Citation` in the domain.
-const citationDto = z.object({ kind: z.literal('source'), id: z.string() })
+// Source or topic: see `Citation` in the domain (B52).
+const citationDto = z.object({
+  kind: z.union([z.literal('source'), z.literal('topic')]),
+  id: z.string(),
+})
 
 const askFrameDto = z.discriminatedUnion('type', [
   // The stream's own first frame, naming the conversation the server stored

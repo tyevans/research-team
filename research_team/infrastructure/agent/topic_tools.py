@@ -15,10 +15,12 @@ failure being guarded against is precisely a run with nobody watching it.
 from typing import Any
 from uuid import UUID, uuid4
 
+from eventsource.domain.exceptions import AggregateNotFoundError
 from langchain_core.tools import BaseTool, tool
 
 from research_team.platform.shared.retry import with_retry
 from research_team.research.application.topics import (
+    GET_TOPIC_TOOL,
     LINK_SOURCE_TOOL,
     LIST_TOPICS_TOOL,
     MAX_OPEN_TOPICS,
@@ -29,6 +31,7 @@ from research_team.research.application.topics import (
     TopicError,
     TopicPort,
     TopicSummary,
+    format_topic,
     format_topics,
 )
 from research_team.research.domain.topic import (
@@ -38,6 +41,7 @@ from research_team.research.domain.topic import (
     RecordGap,
     RestateTopicQuestion,
     Topic,
+    TopicState,
 )
 from research_team.session.application.tool_artifacts import (
     Acknowledgement,
@@ -80,6 +84,21 @@ class RepositoryTopics(TopicPort):
                 )
             )
         return summaries
+
+    async def get_topic(self, topic_id: UUID) -> TopicState | None:
+        """Read one topic's state without modifying it (B52)."""
+        row = await self._queue.get(topic_id)
+        if row is not None:
+            if row.project_id != self._project_id:
+                return None
+            return row.to_state()
+        try:
+            topic = await self._topics.load(topic_id)
+            if topic.state.topic_id is None or topic.state.project_id != self._project_id:
+                return None
+            return topic.state
+        except (AggregateNotFoundError, KeyError):
+            return None
 
     async def open_topic(
         self, project_id: UUID, question: str, rationale: str, scope: str = ""
@@ -268,6 +287,38 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
         )
         return f"Tracking {topic_id}: {question}", artifact.as_artifact()
 
+    @tool(GET_TOPIC_TOOL, response_format="content_and_artifact")
+    async def get_topic(topic_id: str) -> tuple[str, dict[str, Any]]:
+        """Read the details of one topic without creating or modifying it (B52)."""
+        parsed = _parse_id(topic_id)
+        if parsed is None:
+            text_out = f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            return text_out, Acknowledgement(
+                action=GET_TOPIC_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
+        topic = await topics.get_topic(parsed)
+        if topic is None:
+            text_out = (
+                f"no topic {parsed} in this project. Use `list_topics` to see what is tracked."
+            )
+            return text_out, Acknowledgement(
+                action=GET_TOPIC_TOOL, subject=str(parsed), detail=text_out, ok=False
+            ).as_artifact()
+        artifact = topic_inventory_artifact(
+            "topic",
+            [
+                TopicSummary(
+                    topic_id=topic.topic_id or parsed,
+                    question=topic.question,
+                    status=topic.status,
+                    sources=len(topic.source_ids),
+                    findings=topic.findings,
+                    open_sub_questions=len(topic.open_sub_questions),
+                )
+            ],
+        )
+        return format_topic(topic), artifact.as_artifact()
+
     @tool(RESTATE_QUESTION_TOOL, response_format="content_and_artifact")
     async def restate_question(
         topic_id: str, question: str, rationale: str = ""
@@ -390,6 +441,7 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
     return (
         list_topics,
         open_topic,
+        get_topic,
         restate_question,
         record_finding,
         record_gap,

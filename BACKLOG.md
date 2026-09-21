@@ -3611,7 +3611,13 @@ Worth measuring before building: it is unknown how wide a question has to be
 before this hurts, and the fix is substantial (a second executor shape,
 per-subagent activity frames on the stream, citations merged across children).
 
-### B52. No admitted tool reads one identified topic, so topics are not citable
+### B52. No admitted tool reads one identified topic, so topics are not citable -- CLOSED 2026-09-21
+
+Closed on 2026-09-21 by introducing the read-only `get_topic` tool to `TopicPort`,
+`TopicService`, and `RepositoryTopics`, registering it in `READ_ONLY_TOOLS` and
+`CITED_BY_TOOL` on the ask agent, widening `Citation.kind` to `Literal["source", "topic"]`
+(and `'source' | 'topic'` across frontend repositories/types), and linking topic
+citations to `projectHref(projectId, { facet: 'topic', id })` in `CitationList.tsx`.
 
 `open_topic` was in the read-only tool set until review found that it _creates_
 topics — `RepositoryTopics.open_topic` executes an `OpenTopic` command, so

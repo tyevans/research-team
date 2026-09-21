@@ -6,13 +6,10 @@ import { projectHref } from '../routing/routes.ts'
 /** What an answer stood on, as links back into the project.
  *
  * Links rather than labels, because the whole value of a citation is being
- * able to go and read the thing -- an answer that names a source you cannot
+ * able to go and read the thing -- an answer that names a source or topic you cannot
  * open is asking to be taken on trust.
  *
- * One kind, `source`. `Citation` says why there is no longer a topic kind, and
- * this renders nothing for one because there is nothing to render: a `kind`
- * with one member needs no branch, and a branch for a case the type forbids is
- * dead code that reads as a missing feature.
+ * Cites sources or topics (B52): links to the project's `doc` facet or `topic` facet.
  */
 export const CitationList = ({
   projectId,
@@ -36,14 +33,17 @@ export const CitationList = ({
           this list. */}
       <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
         {citations.map((citation) => (
-          <li key={citation.id}>
-            {/* The project's document facet, not a bare id: the reader is on
+          <li key={`${citation.kind}-${citation.id}`}>
+            {/* The project's document or topic facet, not a bare id: the reader is on
                 the project page already, and this keeps them on it. */}
             <a
               className="font-mono text-sm"
-              href={projectHref(projectId, { facet: 'doc', id: citation.id })}
+              href={projectHref(projectId, {
+                facet: citation.kind === 'topic' ? 'topic' : 'doc',
+                id: citation.id,
+              })}
             >
-              {citation.id}
+              {citation.kind === 'topic' ? `topic:${citation.id}` : citation.id}
             </a>
           </li>
         ))}

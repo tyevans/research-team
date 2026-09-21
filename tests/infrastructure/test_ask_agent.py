@@ -33,14 +33,27 @@ def named(name: str):
     return _stub
 
 
-def test_the_admitted_tools_are_exactly_the_four_readers():
+def test_the_admitted_tools_are_the_readers():
     """This set is the security boundary; a change to it should be deliberate."""
     # Expected on the left because ruff's SIM300 reads an ALL_CAPS name as the
     # literal half of the comparison; the assertion is unchanged either way.
     assert (
-        frozenset({"list_sources", "read_source", "graph_search", "list_topics"})
+        frozenset({"list_sources", "read_source", "graph_search", "list_topics", "get_topic"})
         == READ_ONLY_TOOLS
     )
+
+
+def test_a_get_topic_call_becomes_a_topic_citation():
+    """A citation records a read, and this is what reading a topic looks like (B52)."""
+    messages = [
+        HumanMessage(content="what is our status on the threshold?"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "get_topic", "args": {"topic_id": "t1"}, "id": "call_1"}],
+        ),
+    ]
+
+    assert citations(messages) == (Citation(kind="topic", id="t1"),)
 
 
 def test_every_mutating_project_tool_is_filtered_out():

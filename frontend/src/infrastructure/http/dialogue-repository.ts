@@ -36,9 +36,11 @@ import { dialogueProgressDto, verdictDto } from './dto.ts'
 import { seg } from './http-client.ts'
 import { toDialogueProgress, toVerdict } from './mappers.ts'
 
-// Source-only, as on the ask: the citations a dialogue carries come from the
-// same retrieval tools, and no server surface mints another kind.
-const citationDto = z.object({ kind: z.literal('source'), id: z.string() })
+// Source or topic: see `Citation` in the domain (B52).
+const citationDto = z.object({
+  kind: z.union([z.literal('source'), z.literal('topic')]),
+  id: z.string(),
+})
 
 const dialogueFrameDto = z.discriminatedUnion('type', [
   z.object({
