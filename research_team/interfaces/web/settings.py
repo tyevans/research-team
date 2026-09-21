@@ -204,6 +204,7 @@ def _role_view(resolved: ResolvedRole) -> dict:
         "setting_key": resolved.setting_key,
         "profile": None if resolved.profile is None else resolved.profile.name,
         "dangling": resolved.dangling,
+        "incompatible": resolved.incompatible,
     }
 
 
@@ -339,6 +340,40 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
             "settings": [_resolved_view(answer) for answer in answers],
         }
 
+    @router.get("/settings/diagnostics")
+    async def settings_diagnostics(
+        project: str | None = None,
+        user: str | None = None,
+        tenant: str | None = None,
+    ) -> dict:
+        """Run diagnostics on settings and profiles for this scope chain.
+
+        W-B: authorize `project`, `user` and `tenant` here before reading.
+        """
+        chain = _chain(project, user, tenant)
+        diagnostics = await _resolver().diagnose(chain, _profiles())
+        return {
+            "scope_chain": [
+                {"scope": ref.scope.value, "scope_id": ref.scope_id} for ref in chain
+            ],
+            "healthy": diagnostics.healthy,
+            "error_count": diagnostics.error_count,
+            "warning_count": diagnostics.warning_count,
+            "issues": [
+                {
+                    "code": issue.code,
+                    "severity": issue.severity.value,
+                    "message": issue.message,
+                    "key": issue.key,
+                    "scope": issue.scope,
+                    "scope_id": issue.scope_id,
+                    "role": issue.role,
+                    "profile": issue.profile,
+                }
+                for issue in diagnostics.issues
+            ],
+        }
+
     @router.put("/settings/{scope}/{scope_id}/{key}")
     async def write_override(scope: str, scope_id: str, key: str, body: SettingValue) -> dict:
         """Set one override.
@@ -463,14 +498,25 @@ def settings_router(deps: SettingsDeps) -> APIRouter:
         return Response(status_code=204)
 
     @router.put("/profiles/{scope}/{scope_id}/roles/{role}")
-    async def select_role(scope: str, scope_id: str, role: str, body: RoleBody) -> dict:
+    async def select_role(
+        scope: str,
+        scope_id: str,
+        role: str,
+        body: RoleBody,
+        project: str | None = None,
+        user: str | None = None,
+        tenant: str | None = None,
+    ) -> dict:
         """Point a role at a profile.
 
         W-B: authorize `scope`/`scope_id` here before writing.
         """
         ref = _scope_ref(scope, scope_id)
+        chain = _chain(project, user, tenant)
         try:
-            await _profiles().select(ref, _role(role), body.profile)
+            await _profiles().select(
+                ref, _role(role), body.profile, chain=chain if chain else None
+            )
         except SettingError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return {

@@ -44,6 +44,7 @@ the store adapters themselves -- the single production writers for both tables
 without knowing the cache exists.
 """
 
+import contextlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
@@ -128,6 +129,34 @@ class ResearchSettings:
     api_key: str
 
 
+@dataclass(frozen=True)
+class CurationSettings:
+    """Everything one project's media curation is configured by."""
+
+    model: str
+    base_url: str
+    api_key: str
+
+
+@dataclass(frozen=True)
+class VisionSettings:
+    """Everything one project's vision perception is configured by."""
+
+    model: str | None
+    base_url: str
+    api_key: str
+
+
+@dataclass(frozen=True)
+class EmbeddingSettings:
+    """Everything one project's vector embedding is configured by."""
+
+    model: str
+    dimension: int
+    base_url: str
+    api_key: str
+
+
 class EffectiveSettings:
     """Resolved bundles, per project, cached until something is written.
 
@@ -155,6 +184,9 @@ class EffectiveSettings:
         self._revision = revision if revision is not None else SettingsRevision()
         self._extraction: dict[UUID | None, tuple[int, ExtractionSettings]] = {}
         self._research: dict[UUID | None, tuple[int, ResearchSettings]] = {}
+        self._curation: dict[UUID | None, tuple[int, CurationSettings]] = {}
+        self._vision: dict[UUID | None, tuple[int, VisionSettings]] = {}
+        self._embedding: dict[UUID | None, tuple[int, EmbeddingSettings]] = {}
 
     def _chain(self, project_id: UUID | None) -> list[ScopeRef]:
         """The scope chain for a project.
@@ -210,6 +242,33 @@ class EffectiveSettings:
             return cached[1]
         resolved = await self._resolve_research(project_id)
         self._research[project_id] = (self._revision.value, resolved)
+        return resolved
+
+    async def curation(self, project_id: UUID | None) -> CurationSettings:
+        """This project's media curation configuration."""
+        cached = self._curation.get(project_id)
+        if cached is not None and cached[0] == self._revision.value:
+            return cached[1]
+        resolved = await self._resolve_curation(project_id)
+        self._curation[project_id] = (self._revision.value, resolved)
+        return resolved
+
+    async def vision(self, project_id: UUID | None) -> VisionSettings:
+        """This project's vision perception configuration."""
+        cached = self._vision.get(project_id)
+        if cached is not None and cached[0] == self._revision.value:
+            return cached[1]
+        resolved = await self._resolve_vision(project_id)
+        self._vision[project_id] = (self._revision.value, resolved)
+        return resolved
+
+    async def embedding(self, project_id: UUID | None) -> EmbeddingSettings:
+        """This project's embedding configuration."""
+        cached = self._embedding.get(project_id)
+        if cached is not None and cached[0] == self._revision.value:
+            return cached[1]
+        resolved = await self._resolve_embedding(project_id)
+        self._embedding[project_id] = (self._revision.value, resolved)
         return resolved
 
     async def _resolve_research(self, project_id: UUID | None) -> ResearchSettings:
@@ -291,6 +350,95 @@ class EffectiveSettings:
             chunk_size=int(answers["extraction_chunk_size"]),  # type: ignore[arg-type]
             consolidation_batch=int(answers["consolidation_batch"]),  # type: ignore[arg-type]
             knowledge_domain=str(answers["knowledge_domain"]),
+        )
+
+    async def _resolve_curation(self, project_id: UUID | None) -> CurationSettings:
+        chain = self._chain(project_id)
+        resolver = self._resolver()
+        keys = ("curation_model", "model", "base_url")
+        answers = {
+            answer.key: answer.value for answer in await resolver.resolve_all(keys, chain)
+        }
+        model = answers["curation_model"] or answers["model"]
+        base_url = str(answers["base_url"])
+        api_key = await resolver.secret("api_key", chain)
+
+        profile = await self._profile_for(ModelRole.CURATION, chain, resolver)
+        if profile is not None:
+            model = profile.model
+            if profile.base_url:
+                base_url = profile.base_url
+            if profile.credential_key is not None:
+                credential = await resolver.secret(profile.credential_key, chain)
+                if credential is not None:
+                    api_key = credential
+
+        return CurationSettings(
+            model=str(model),
+            base_url=base_url,
+            api_key=str(api_key) if api_key is not None else "",
+        )
+
+    async def _resolve_vision(self, project_id: UUID | None) -> VisionSettings:
+        chain = self._chain(project_id)
+        resolver = self._resolver()
+        keys = ("vision_model", "base_url")
+        answers = {
+            answer.key: answer.value for answer in await resolver.resolve_all(keys, chain)
+        }
+        raw_model = answers["vision_model"]
+        model = str(raw_model) if raw_model else None
+        base_url = str(answers["base_url"])
+        api_key = await resolver.secret("api_key", chain)
+
+        profile = await self._profile_for(ModelRole.VISION, chain, resolver)
+        if profile is not None:
+            model = profile.model
+            if profile.base_url:
+                base_url = profile.base_url
+            if profile.credential_key is not None:
+                credential = await resolver.secret(profile.credential_key, chain)
+                if credential is not None:
+                    api_key = credential
+
+        return VisionSettings(
+            model=model,
+            base_url=base_url,
+            api_key=str(api_key) if api_key is not None else "",
+        )
+
+    async def _resolve_embedding(self, project_id: UUID | None) -> EmbeddingSettings:
+        chain = self._chain(project_id)
+        resolver = self._resolver()
+        keys = ("embedding_model", "embedding_dimension", "embedding_base_url", "base_url")
+        answers = {
+            answer.key: answer.value for answer in await resolver.resolve_all(keys, chain)
+        }
+        model = str(answers["embedding_model"])
+        dimension = int(answers["embedding_dimension"])  # type: ignore[arg-type]
+        base_url = str(answers["embedding_base_url"] or answers["base_url"])
+        api_key = await resolver.secret("embedding_api_key", chain)
+        if api_key is None:
+            api_key = await resolver.secret("api_key", chain)
+
+        profile = await self._profile_for(ModelRole.EMBEDDING, chain, resolver)
+        if profile is not None:
+            model = profile.model
+            if profile.base_url:
+                base_url = profile.base_url
+            if profile.credential_key is not None:
+                credential = await resolver.secret(profile.credential_key, chain)
+                if credential is not None:
+                    api_key = credential
+            if "dimension" in profile.parameters:
+                with contextlib.suppress(ValueError, TypeError):
+                    dimension = int(profile.parameters["dimension"])  # type: ignore[arg-type]
+
+        return EmbeddingSettings(
+            model=model,
+            dimension=dimension,
+            base_url=base_url,
+            api_key=str(api_key) if api_key is not None else "",
         )
 
     async def _profile_for(

@@ -13,7 +13,12 @@ __all__ = [
     "Connection",
     "ModelProfile",
     "ModelRole",
+    "SettingError",
 ]
+
+
+class SettingError(ValueError):
+    """Refusal of a setting or profile value: wrong type, out of range, unrecognised choice."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,31 @@ class ModelProfile:
     credential_key: str | None = None
     base_url: str | None = None
     parameters: dict[str, object] = field(default_factory=dict)
+
+    def validate(self) -> None:
+        """Assert that this profile is structurally valid.
+
+        Raises SettingError on validation failures.
+        """
+        if not self.name or not self.name.strip():
+            raise SettingError("a profile needs a name")
+        if not self.provider_id or not self.provider_id.strip():
+            raise SettingError("a profile needs a provider_id")
+        if not self.model or not self.model.strip():
+            raise SettingError("a profile needs a model")
+        if self.base_url is not None:
+            stripped = self.base_url.strip()
+            if stripped and not (
+                stripped.startswith("http://") or stripped.startswith("https://")
+            ):
+                raise SettingError(
+                    f"profile base_url {self.base_url!r} must start with http:// or https://"
+                )
+        if not isinstance(self.parameters, dict):
+            raise SettingError("profile parameters must be a dictionary")
+        for key in self.parameters:
+            if not isinstance(key, str) or not key.strip():
+                raise SettingError("profile parameter keys must be non-empty strings")
 
 
 class ModelRole(StrEnum):

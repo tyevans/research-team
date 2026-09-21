@@ -38,12 +38,24 @@ an infrastructure adapter over `ProviderProbePort`.
 from dataclasses import dataclass
 from enum import StrEnum
 
+from research_team.settings.domain.models import ModelRole
+
 
 class Capability(StrEnum):
     CHAT = "chat"
     EMBEDDINGS = "embeddings"
     VISION = "vision"
     TOOLS = "tools"
+
+
+#: Which capability a provider must declare for each role.
+ROLE_CAPABILITIES: dict[ModelRole, Capability] = {
+    ModelRole.RESEARCH: Capability.CHAT,
+    ModelRole.EXTRACTION: Capability.CHAT,
+    ModelRole.CURATION: Capability.CHAT,
+    ModelRole.EMBEDDING: Capability.EMBEDDINGS,
+    ModelRole.VISION: Capability.VISION,
+}
 
 
 class Auth(StrEnum):
@@ -317,6 +329,14 @@ def provider_for(provider_id: str) -> Provider:
         return BY_ID[provider_id]
     except KeyError as error:
         raise UnknownProvider(f"no provider named {provider_id!r}") from error
+
+
+def provider_supports_role(provider: Provider, role: ModelRole) -> bool:
+    """Whether a provider declares the capability required for a role."""
+    required = ROLE_CAPABILITIES.get(role)
+    if required is None:
+        return True
+    return required in provider.capabilities
 
 
 class ProbeOutcome(StrEnum):

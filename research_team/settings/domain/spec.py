@@ -44,6 +44,9 @@ from research_team.settings.domain.models import (
 from research_team.settings.domain.models import (
     ModelRole as ModelRole,
 )
+from research_team.settings.domain.models import (
+    SettingError as SettingError,
+)
 
 
 class Scope(StrEnum):
@@ -81,15 +84,6 @@ class SettingType(StrEnum):
     NUMBER = "number"
     BOOLEAN = "boolean"
     ENUM = "enum"
-
-
-class SettingError(ValueError):
-    """A value that is not valid for its declaration.
-
-    Its own type so the HTTP layer can answer 422 without matching on message
-    text, and so a bad *stored* value -- one written before a declaration
-    narrowed -- is distinguishable from a bug.
-    """
 
 
 #: What `AGENT_TRACING` and friends have always accepted. Kept as the one
