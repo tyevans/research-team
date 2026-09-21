@@ -218,7 +218,12 @@ ExtractionReporter = Callable[[ExtractionNote], None]
 
 @dataclass(frozen=True)
 class MergeRecord:
-    """One consolidation, in a form the agent can read and reverse."""
+    """One consolidation, in a form the agent can read and reverse.
+
+    `reason` describes why the merge was made. On an `undo_merge` record,
+    `reason` is documented as `None` because the consolidator's undo reverses
+    an existing merge rather than creating a new merge rationale (B6).
+    """
 
     merge_id: UUID
     canonical_name: str
