@@ -260,3 +260,30 @@ def test_the_quiz_writer_is_told_the_floor_the_checkpoint_enforces():
     """
     writer = next(s for s in AUTHORING_SUBAGENTS if s["name"] == "quiz-writer")
     assert "APPEND AT LEAST ONE ITEM." in writer["system_prompt"]
+
+
+def test_self_review_separation_invariants():
+    """B155: Critics judge without editing; drafters produce without self-evaluating.
+
+    Prevents boundary erosion where critics attempt to rewrite prose without knowing
+    the lesson slot context, or drafters dilute lesson content with self-reviews.
+    """
+    by_name = {spec["name"]: spec for spec in AUTHORING_SUBAGENTS}
+
+    # prose-critic must not rewrite lesson prose
+    prose_critic = by_name["prose-critic"]["system_prompt"]
+    assert "DO NOT REWRITE THE LESSON" in prose_critic
+    assert "Write nothing" in prose_critic
+
+    # unit-reviewer writes review.md and must not edit lesson prose
+    unit_reviewer = by_name["unit-reviewer"]["system_prompt"]
+    assert "Do not edit a lesson" in unit_reviewer
+    assert "Write `review.md` and nothing else" in unit_reviewer
+
+    # lesson-drafter must leave judging to critics
+    drafter = by_name["lesson-drafter"]["system_prompt"]
+    assert "judging your own draft is not your job" in drafter
+
+    # quiz-writer must append only and not touch prose
+    quiz_writer = by_name["quiz-writer"]["system_prompt"]
+    assert "Do not edit the lesson's prose" in quiz_writer

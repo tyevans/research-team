@@ -5,11 +5,13 @@ Course modeling, catalogs, learning paths, and learner progress.
 
 from research_team.curriculum.domain.authoring_run import (
     CourseAuthored,
+    CourseAuthoringCheckpointEvaluated,
     CourseAuthoringFailed,
     CourseAuthoringRunSettled,
     CourseAuthoringRunStarted,
     RecordAuthoredCourse,
     RecordAuthoringFailure,
+    RecordCheckpointEvaluation,
     SettleCourseAuthoringRun,
     StartCourseAuthoringRun,
 )
@@ -66,6 +68,7 @@ __all__ = [
     "Course",
     "CourseAbandoned",
     "CourseAuthored",
+    "CourseAuthoringCheckpointEvaluated",
     "CourseAuthoringFailed",
     "CourseAuthoringRunSettled",
     "CourseAuthoringRunStarted",
@@ -89,6 +92,7 @@ __all__ = [
     "RecordAuthoredCourse",
     "RecordAuthoringFailure",
     "RecordChecklistState",
+    "RecordCheckpointEvaluation",
     "SettleCourseAuthoringRun",
     "StartCourseAuthoringRun",
     "course_stream_id",

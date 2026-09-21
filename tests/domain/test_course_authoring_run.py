@@ -16,9 +16,12 @@ from eventsource import CommandRejectedError
 
 from research_team.curriculum.domain.authoring_run import (
     CourseAuthored,
+    CourseAuthoringCheckpointEvaluated,
+    CourseAuthoringFailed,
     CourseAuthoringRunSettled,
     RecordAuthoredCourse,
     RecordAuthoringFailure,
+    RecordCheckpointEvaluation,
     SettleCourseAuthoringRun,
     StartCourseAuthoringRun,
     decide,
@@ -176,3 +179,39 @@ def test_the_fold_ignores_an_event_from_another_aggregate():
     )
 
     assert evolve(state, unrelated) == state
+
+
+def test_checkpoint_evaluation_records_telemetry_and_evolves_state():
+    """B154: Checkpoint telemetry recorded with phase, target, passed, and detail."""
+    state = _started()
+    event = decide(
+        RecordCheckpointEvaluation(RUN, "stage_one", "rome", True, detail=""),
+        state,
+    )[0]
+
+    assert isinstance(event, CourseAuthoringCheckpointEvaluated)
+    assert event.phase == "stage_one"
+    assert event.target == "rome"
+    assert event.passed is True
+    assert event.detail == ""
+
+    evolved = evolve(state, event)
+    assert evolved.checkpoints == [("stage_one", "rome", True, "")]
+
+
+def test_authoring_failure_records_session_id_when_provided():
+    """B178: Failure records session_id for resumption when available."""
+    state = _started()
+    session_id = uuid4()
+    event = decide(
+        RecordAuthoringFailure(RUN, "rome", "timeout", session_id=session_id),
+        state,
+    )[0]
+
+    assert isinstance(event, CourseAuthoringFailed)
+    assert event.target == "rome"
+    assert event.detail == "timeout"
+    assert event.session_id == session_id
+
+    evolved = evolve(state, event)
+    assert evolved.failures == [("rome", "timeout", session_id)]

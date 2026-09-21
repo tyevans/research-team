@@ -51,6 +51,7 @@ from research_team.curriculum.domain.authoring_run import (
     CourseAuthoringRun,
     RecordAuthoredCourse,
     RecordAuthoringFailure,
+    RecordCheckpointEvaluation,
     SettleCourseAuthoringRun,
     StartCourseAuthoringRun,
 )
@@ -237,14 +238,52 @@ class AuthoringActivity:
                 # would have succeeded, and the person watching cannot
                 # tell a refusal from a crash. Failures are collected and
                 # reported per target instead.
-                failures.append({"target": target, "detail": str(error)})
-                await self._record(run_id, RecordAuthoringFailure(run_id, target, str(error)))
+                failed_session_id = getattr(error, "session_id", None)
+                failures.append(
+                    {
+                        "target": target,
+                        "detail": str(error),
+                        **(
+                            {"session_id": str(failed_session_id)} if failed_session_id else {}
+                        ),
+                    }
+                )
+                await self._record(
+                    run_id,
+                    RecordAuthoringFailure(
+                        run_id, target, str(error), session_id=failed_session_id
+                    ),
+                )
+                if hasattr(error, "checkpoints") and error.checkpoints:
+                    for cp in error.checkpoints:
+                        await self._record(
+                            run_id,
+                            RecordCheckpointEvaluation(
+                                run_id,
+                                cp.phase,
+                                cp.target,
+                                cp.passed,
+                                cp.reason,
+                            ),
+                        )
             else:
                 completed.append(target)
                 sessions.append(str(outcome.session_id))
                 await self._record(
                     run_id, RecordAuthoredCourse(run_id, target, outcome.session_id)
                 )
+                if hasattr(outcome, "checkpoints") and outcome.checkpoints:
+                    for cp in outcome.checkpoints:
+                        await self._record(
+                            run_id,
+                            RecordCheckpointEvaluation(
+                                run_id,
+                                cp.phase,
+                                cp.target,
+                                cp.passed,
+                                cp.reason,
+                            ),
+                        )
             finally:
                 self._inflight.pop(project_id, None)
 

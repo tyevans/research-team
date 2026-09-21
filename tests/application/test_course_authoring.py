@@ -284,6 +284,11 @@ async def test_a_phase_that_wrote_nothing_fails_the_run():
     assert len(turns.prompts) == 2, "the run continued past a failed phase"
     assert turns.prompts[1].startswith(RETRY_PREFACE[:40])
     assert "Stage 2" not in turns.prompts[1]
+    assert caught.value.session_id is not None, "B178: session_id must be attached on failure"
+    assert len(caught.value.checkpoints) == 2, (
+        "B154: checkpoints must track initial attempt and retry"
+    )
+    assert all(not cp.passed for cp in caught.value.checkpoints)
 
 
 @pytest.mark.asyncio
@@ -337,9 +342,19 @@ async def test_the_four_phases_run_in_order():
     )
     author = CourseAuthor(FakeSessions(turns.files), turns)
 
-    await author.author_area(uuid4(), AREA, "Rome")
+    authored = await author.author_area(uuid4(), AREA, "Rome")
 
     assert len(turns.prompts) == 4
+    assert len(authored.checkpoints) == 4, (
+        "B154: all 4 phases must record checkpoint evaluations"
+    )
+    assert all(cp.passed for cp in authored.checkpoints)
+    assert [cp.phase for cp in authored.checkpoints] == [
+        "stage_one",
+        "stage_two",
+        "lessons",
+        "assessment",
+    ]
     # Phase 1 has no prior stage to be faithful to. Asserted as the absence of
     # any earlier *reply* rather than of the heading text: since 2026-08-24
     # `desired_results_prompt` names `## Enduring Understandings` itself, so

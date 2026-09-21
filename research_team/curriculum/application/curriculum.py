@@ -16,6 +16,7 @@ graph rather than once per view.
 """
 
 from dataclasses import dataclass
+from hashlib import sha256
 from uuid import UUID
 
 from research_team.curriculum.application.area_projection import (
@@ -34,6 +35,20 @@ from research_team.knowledge.application.graph_read import (
     Graph,
     GraphReadPort,
 )
+
+
+def graph_fingerprint(graph: Graph) -> str:
+    """A deterministic fingerprint of the entities and relationships in `graph`.
+
+    Detects changes to entity membership, names, or relationships even when
+    counts remain identical (B127).
+    """
+    entity_tokens = sorted(f"{e.entity_id}:{e.name}:{e.entity_type}" for e in graph.entities)
+    rel_tokens = sorted(
+        f"{r.source_id}->{r.target_id}:{r.relationship_type}" for r in graph.relationships
+    )
+    payload = "\n".join(entity_tokens) + "\n---\n" + "\n".join(rel_tokens)
+    return sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
@@ -61,27 +76,15 @@ class Curriculum:
 class CurriculumService:
     """Builds a project's curriculum, and remembers the last one it built.
 
-    The cache is keyed on `(project_id, entity_count, relationship_count)`
-    rather than on the project alone, and that pair is the whole of the
-    invalidation strategy. It is deliberately crude and deliberately
-    *conservative in the right direction*: a graph that has grown produces a
-    different key and is reprojected, while a graph that has changed without
-    changing either count -- a consolidation that merged two entities and
-    dropped an edge, say -- serves a stale projection until the next
-    extraction moves a count.
-
-    A subscription to the log would be exact. It is not written because the
-    failure it prevents is bounded and visible: the projection carries
-    `entity_count`, every surface shows it, and a reader looking at a stale
-    map can see the number it was built from disagree with the graph page.
-    An exact invalidation that was subtly wrong would be neither bounded nor
-    visible, and this is a cache in front of a pure function rather than a
-    read model anything writes to.
+    The cache is keyed on `(entity_count, relationship_count, fingerprint)`
+    (B127) rather than counts alone: a graph whose membership or structure
+    changes without shifting either count is detected and reprojected, while
+    an unchanged graph uses the cached result.
     """
 
     def __init__(self) -> None:
         self._cache: dict[
-            UUID, tuple[tuple[int, int], Curriculum, Graph, list[frozenset[str]]]
+            UUID, tuple[tuple[int, int, str], Curriculum, Graph, list[frozenset[str]]]
         ] = {}
 
     async def build(
@@ -92,6 +95,7 @@ class CurriculumService:
         semantic: SemanticPort | None = None,
         *,
         limit: int = MAX_GRAPH_NODES,
+        force_refresh: bool = False,
     ) -> Curriculum:
         """This project's areas and the path through them.
 
@@ -102,18 +106,12 @@ class CurriculumService:
         and drew nothing from it is recorded as `used_embeddings=False` on the
         projection, so "configured" and "used" stay distinguishable.
 
-        **The cache key does not include whether embeddings were available.**
-        A project whose vectors arrive between two calls keeps its cached
-        graph-only curriculum until an extraction moves the entity or
-        relationship count. That is the same conservative staleness the class
-        docstring describes for consolidation, and it has the same escape
-        hatch: `forget`, which the re-embed route calls for exactly this
-        reason.
+        `force_refresh` forces a fresh reprojection even when the cached key matches.
         """
         graph = await graph_reader.whole(limit=limit)
-        key = (len(graph.entities), len(graph.relationships))
+        key = (len(graph.entities), len(graph.relationships), graph_fingerprint(graph))
         cached = self._cache.get(project_id)
-        if cached is not None and cached[0] == key:
+        if not force_refresh and cached is not None and cached[0] == key:
             return cached[1]
 
         ids = sorted(e.entity_id for e in graph.entities)

@@ -22,12 +22,15 @@ from research_team.curriculum.application.authoring_checkpoints import (
     UNDERSTANDINGS_HEADING,
     CheckpointFailed,
     check_assessment,
+    check_component_integrity,
     check_lessons,
     check_stage_one,
     check_stage_two,
     component_counts,
+    evaluate_checkpoint,
     lesson_paths,
     unit_text,
+    unit_title,
 )
 from research_team.curriculum.application.course_authoring import (
     assessment_prompt,
@@ -384,3 +387,91 @@ def test_lesson_paths_are_zero_padded_and_one_based():
 
 def test_unit_text_is_empty_when_the_unit_is_absent():
     assert unit_text({}, SLUG) == ""
+
+
+def test_unit_title_extraction():
+    """B139: unit_title extracts title from frontmatter or first heading."""
+    text_with_frontmatter = "---\ntitle: The Principate Course\n---\n# Ignored Heading\n"
+    assert unit_title(files(**{UNIT: text_with_frontmatter}), SLUG) == "The Principate Course"
+
+    text_with_heading = "# The Principate\n## Enduring Understandings\n"
+    assert unit_title(files(**{UNIT: text_with_heading}), SLUG) == "The Principate"
+
+    assert unit_title({}, SLUG) is None
+
+
+def test_evaluate_checkpoint_captures_pass_and_failure():
+    """B154: evaluate_checkpoint captures outcome without raising CheckpointFailed."""
+    ev_pass = evaluate_checkpoint(
+        "stage_one", SLUG, lambda f: check_stage_one(f, SLUG), files(**{UNIT: STAGE_ONE})
+    )
+    assert ev_pass.passed is True
+    assert ev_pass.phase == "stage_one"
+    assert ev_pass.target == SLUG
+    assert ev_pass.reason == ""
+
+    ev_fail = evaluate_checkpoint("stage_one", SLUG, lambda f: check_stage_one(f, SLUG), {})
+    assert ev_fail.passed is False
+    assert ev_fail.phase == "stage_one"
+    assert ev_fail.target == SLUG
+    assert "unit.md" in ev_fail.reason
+
+
+def test_check_component_integrity_detects_duplicate_component_ids():
+    """B128: duplicate component IDs across lessons are refused."""
+    l1, l2 = lesson_paths(SLUG, 2)
+    content1 = (
+        "builds_toward: x\n"
+        "```component:mcq\n"
+        "id: quiz-1\n"
+        "question: Q1\n"
+        "options:\n  - A\ncorrect: 0\n"
+        "```\n"
+    )
+    content2 = (
+        "builds_toward: y\n"
+        "```component:mcq\n"
+        "id: quiz-1\n"
+        "question: Q2\n"
+        "options:\n  - B\ncorrect: 0\n"
+        "```\n"
+    )
+    with pytest.raises(CheckpointFailed) as caught:
+        check_component_integrity(files(**{l1: content1, l2: content2}), SLUG, 2)
+    assert "duplicate component id 'quiz-1'" in caught.value.reason
+
+
+def test_check_component_integrity_detects_unparseable_yaml():
+    """B128: component with malformed YAML syntax is refused."""
+    l1 = lesson_paths(SLUG, 1)[0]
+    bad_yaml = (
+        "builds_toward: x\n```component:mcq\nid: quiz-1\nquestion: [unclosed list\n```\n"
+    )
+    with pytest.raises(CheckpointFailed) as caught:
+        check_component_integrity(files(**{l1: bad_yaml}), SLUG, 1)
+    assert "unparseable YAML" in caught.value.reason
+
+
+def test_check_component_integrity_validates_known_entity_ids():
+    """B128: components referencing unknown entity_ids are refused when area is provided."""
+    area = LearningArea(
+        slug=SLUG,
+        title="The Principate",
+        members=(
+            AreaMember(
+                entity_id="augustus-1", name="Augustus", entity_type="person", centrality=1.0
+            ),
+        ),
+    )
+    l1 = lesson_paths(SLUG, 1)[0]
+    valid_content = (
+        "builds_toward: x\n```component:definition\nid: def-1\nentity_id: augustus-1\n```\n"
+    )
+    check_component_integrity(files(**{l1: valid_content}), SLUG, 1, area=area)
+
+    invalid_content = (
+        "builds_toward: x\n```component:definition\nid: def-2\nentity_id: unknown-99\n```\n"
+    )
+    with pytest.raises(CheckpointFailed) as caught:
+        check_component_integrity(files(**{l1: invalid_content}), SLUG, 1, area=area)
+    assert "unknown entity_id 'unknown-99'" in caught.value.reason
