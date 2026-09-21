@@ -39,7 +39,14 @@ entries are deleted, and a stale claim must not outlive its entry as a gate).
 
 ## Code quality
 
-### B1. `Project`'s class docstring says little that its module does not
+### B1. `Project`'s class docstring says little that its module does not -- CLOSED 2026-09-21
+
+Closed on 2026-09-21: Enhanced the `Project` aggregate class docstring in
+`research_team/tenancy/domain/project.py` to explicitly articulate its
+architectural distinction from `Session` — while `Session` is the aggregate
+of turns and file mutations, `Project` is the aggregate of cross-session
+lineage pointers (`tip_session_id`, `tip_at_event`), exclusive holding leases
+(`active_session_id`), and lifecycle states (`created`, `archived`, `deleted`).
 
 `research_team/domain/project.py`. The class docstring is near-verbatim from
 `Session`'s — "the imperative shell, holds no rules, delegates all
