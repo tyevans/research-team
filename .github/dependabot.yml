@@ -45,6 +45,8 @@ updates:
       - dependency-name: "@vitest/*"
         update-types:
           - version-update:semver-major
+      - dependency-name: jsdom
+        versions: ["30.1.0"]
     groups:
       # The toolchain moves together and breaks together — a typescript-eslint
       # bump that needs a matching eslint bump is not reviewable in isolation.
