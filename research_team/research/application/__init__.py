@@ -45,6 +45,12 @@ from research_team.research.application.topic_read import (
 )
 from research_team.research.application.topic_seeding import TopicSeeder
 from research_team.research.application.topics import (
+    LINK_SOURCE_TOOL,
+    LIST_TOPICS_TOOL,
+    OPEN_TOPIC_TOOL,
+    RECORD_FINDING_TOOL,
+    RECORD_GAP_TOOL,
+    RESTATE_QUESTION_TOOL,
     TopicError,
     TopicPort,
     TopicService,
@@ -52,6 +58,12 @@ from research_team.research.application.topics import (
 )
 
 __all__ = [
+    "LINK_SOURCE_TOOL",
+    "LIST_TOPICS_TOOL",
+    "OPEN_TOPIC_TOOL",
+    "RECORD_FINDING_TOOL",
+    "RECORD_GAP_TOOL",
+    "RESTATE_QUESTION_TOOL",
     "CorpusEditor",
     "CorpusFacts",
     "CorpusReadPort",

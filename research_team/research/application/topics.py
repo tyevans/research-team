@@ -36,6 +36,7 @@ from research_team.research.domain.topic import (
 
 LIST_TOPICS_TOOL = "list_topics"
 OPEN_TOPIC_TOOL = "open_topic"
+RESTATE_QUESTION_TOOL = "restate_question"
 RECORD_FINDING_TOOL = "record_finding"
 RECORD_GAP_TOOL = "record_gap"
 LINK_SOURCE_TOOL = "link_source"
@@ -330,6 +331,9 @@ TOPICS_PROMPT = (
     "Do not open topics to look busy: an unanswered question you invented is "
     "worse than none, because it makes the queue longer without making the "
     "project better understood.\n\n"
+    "`restate_question` clarifies or re-frames a question whose current wording "
+    "is too broad, too narrow, or misdirected. State the new self-contained "
+    "question and provide a rationale explaining why the rephrasing is better.\n\n"
     "`record_gap` is for when you looked and found nothing: say what an answer "
     "would have looked like and what you actually tried. A gap is not a way to "
     "close a question -- the topic stays open and stays in the queue. What a "

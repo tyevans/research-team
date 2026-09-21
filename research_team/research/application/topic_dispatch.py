@@ -162,19 +162,9 @@ def refinement_path(position: int, question: str) -> str:
     over one file per topic. Overwritten by a later refinement for
     `understanding_path`'s reason exactly.
 
-    **This file is `refine`'s only durable output, and that is a smaller claim
-    than the design makes.** §3.2 says refine "writes through the topic's
-    existing events (the question and its sub-questions are already editable
-    through `TopicManagePane`'s routes)". Half of that is wrong: sub-questions
-    are editable (`AddSubQuestion`, and a route for it), but **the question is
-    not** -- there is no command, no event and no route that rewrites a
-    `TopicOpened.question`, and `build_topic_tools` gives the agent five tools
-    of which none touches either. So a refine turn cannot rewrite the question
-    it was asked to rewrite. Rather than inventing an event to close the gap
-    -- which this design explicitly forbids itself -- the turn writes its
-    diagnosis and its proposed wording here, where a person applies it from
-    `TopicManagePane`. See the report on this branch; the missing tool is the
-    next thing to build, not something to fake.
+    The turn writes its diagnosis, reasoning, and proposed wording here.
+    When a question should be updated or clarified, the agent can also
+    restate it directly using `restate_question`.
     """
     return f"{topic_directory(position, question)}/refinement.md"
 
@@ -269,16 +259,15 @@ REFINE_PROMPT = (
     "Do not fetch, do not search, and do not open new topics. Do not record "
     "findings -- a finding is something learned about the subject, and this "
     "turn learns something about the question. Propose the new wording in "
-    "the file; a person applies it."
+    "the file, and you may restate the question directly using "
+    "`restate_question` when narrowing or clarifying it."
 )
 """What a refine turn is for, and the four endings it may reach.
 
-**It proposes rather than applies, and that is a limitation rather than a
-design choice.** See `refinement_path`: nothing in this system can rewrite a
-topic's question, so "rewrites the question" -- which is what §3.2 asks for --
-is not available to any tool this turn holds. The enumeration of four verdicts
-is what makes the proposal usable anyway: a person reading the file gets a
-decision to accept or reject, not an essay to interpret.
+The enumeration of four verdicts is what makes the proposal usable: a person
+reading the file gets a decision to accept or reject, not an essay to interpret.
+`restate_question` allows the agent to update the question in place when
+the diagnosis calls for sharpening.
 
 Forbidding `record_finding` is deliberate and costs something: a turn that
 genuinely learns about the subject while reading has nowhere to put it. The
