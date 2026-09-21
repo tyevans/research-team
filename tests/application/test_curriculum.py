@@ -216,3 +216,109 @@ def test_graph_fingerprint_changes_on_entity_or_relationship_mutation():
     )
     fp2 = graph_fingerprint(g2)
     assert fp1 != fp2
+
+
+@pytest.mark.asyncio
+async def test_cache_eviction_respects_max_cache_size_and_preserves_lru():
+    """Cache bounds to max_cache_size and preserves most recently accessed entries."""
+    reader = StubGraphReader(*two_cliques())
+    co = StubCoMentions()
+    service = CurriculumService(max_cache_size=3)
+
+    p1, p2, p3, p4 = uuid4(), uuid4(), uuid4(), uuid4()
+
+    # Fill cache to capacity (3)
+    await service.build(p1, reader, co)
+    await service.build(p2, reader, co)
+    await service.build(p3, reader, co)
+    assert len(service._cache) == 3
+    assert co.calls == 3
+
+    # Access p1, making p2 the least recently used
+    await service.build(p1, reader, co)
+    assert co.calls == 3  # Cache hit
+
+    # Add p4: capacity exceeded, p2 should be evicted
+    await service.build(p4, reader, co)
+    assert len(service._cache) == 3
+    assert co.calls == 4
+    assert p1 in service._cache
+    assert p2 not in service._cache
+    assert p3 in service._cache
+    assert p4 in service._cache
+
+    # Building p1 is still a cache hit
+    await service.build(p1, reader, co)
+    assert co.calls == 4
+
+    # Building evicted p2 requires recomputation
+    await service.build(p2, reader, co)
+    assert co.calls == 5
+    assert len(service._cache) == 3
+
+
+def test_default_max_cache_size_is_32():
+    service = CurriculumService()
+    assert service.max_cache_size == 32
+
+
+def test_forget_safely_handles_nonexistent_or_evicted_project():
+    service = CurriculumService(max_cache_size=2)
+    # Never-cached project
+    service.forget(uuid4())
+
+    p1 = uuid4()
+    service._cache[p1] = (("key",), None, None, None)  # type: ignore[assignment]
+    assert p1 in service._cache
+
+    service.forget(p1)
+    assert p1 not in service._cache
+
+    # Forgetting again does not raise
+    service.forget(p1)
+
+
+@pytest.mark.asyncio
+async def test_path_toward_survives_eviction_between_build_and_lookup():
+    """Defensively rebuilds if entry is evicted between build and lookup
+    without bare KeyError.
+    """
+    reader = StubGraphReader(*two_cliques())
+    co = StubCoMentions()
+    service = CurriculumService(max_cache_size=2)
+    project = uuid4()
+
+    original_build = service.build
+    evicted_once = False
+
+    async def build_and_evict(*args, **kwargs):
+        res = await original_build(*args, **kwargs)
+        nonlocal evicted_once
+        if not evicted_once:
+            service.forget(project)
+            evicted_once = True
+        return res
+
+    service.build = build_and_evict  # type: ignore[method-assign]
+    complete = await original_build(project, reader, co)
+    target_slug = complete.path.area_slugs[0]
+
+    # path_toward will see cache miss after initial build, fall back to rebuild, and succeed
+    path = await service.path_toward(project, target_slug, reader, co)
+    assert path is not None
+    assert path.area_slugs[0] == target_slug
+    assert evicted_once
+
+
+@pytest.mark.asyncio
+async def test_path_toward_handles_persistent_cache_miss_gracefully():
+    """If cache remains empty (e.g. max_cache_size=0), path_toward returns None
+    without KeyError.
+    """
+    reader = StubGraphReader(*two_cliques())
+    co = StubCoMentions()
+    service = CurriculumService(max_cache_size=0)
+    project = uuid4()
+
+    path = await service.path_toward(project, "any-area", reader, co)
+    assert path is None

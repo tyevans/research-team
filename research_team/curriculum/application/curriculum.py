@@ -15,6 +15,7 @@ nothing can answer. The cost is real -- a clustering pass per request -- and
 graph rather than once per view.
 """
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
 from uuid import UUID
@@ -82,10 +83,11 @@ class CurriculumService:
     an unchanged graph uses the cached result.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[
+    def __init__(self, max_cache_size: int = 32) -> None:
+        self.max_cache_size = max_cache_size
+        self._cache: OrderedDict[
             UUID, tuple[tuple[int, int, str], Curriculum, Graph, list[frozenset[str]]]
-        ] = {}
+        ] = OrderedDict()
 
     async def build(
         self,
@@ -112,6 +114,7 @@ class CurriculumService:
         key = (len(graph.entities), len(graph.relationships), graph_fingerprint(graph))
         cached = self._cache.get(project_id)
         if not force_refresh and cached is not None and cached[0] == key:
+            self._cache.move_to_end(project_id)
             return cached[1]
 
         ids = sorted(e.entity_id for e in graph.entities)
@@ -123,6 +126,9 @@ class CurriculumService:
             path=full_path(projection.areas, graph.relationships, passages),
         )
         self._cache[project_id] = (key, curriculum, graph, passages)
+        self._cache.move_to_end(project_id)
+        while len(self._cache) > self.max_cache_size:
+            self._cache.popitem(last=False)
         return curriculum
 
     async def path_toward(
@@ -141,7 +147,16 @@ class CurriculumService:
         be told two incompatible things with no way to choose.
         """
         await self.build(project_id, graph_reader, co_mentions, semantic)
-        _, curriculum, graph, passages = self._cache[project_id]
+        cached = self._cache.get(project_id)
+        if cached is None:
+            await self.build(project_id, graph_reader, co_mentions, semantic)
+            cached = self._cache.get(project_id)
+
+        if cached is None:
+            return None
+
+        self._cache.move_to_end(project_id)
+        _, curriculum, graph, passages = cached
         return path_to(destination, curriculum.projection.areas, graph.relationships, passages)
 
     def forget(self, project_id: UUID) -> None:
