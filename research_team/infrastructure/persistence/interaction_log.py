@@ -24,7 +24,6 @@ queries are known. Today there is no consumer, and guessing at its shape is
 what this design is arranged to avoid.
 """
 
-import asyncio
 import json
 from datetime import datetime
 from typing import Any
@@ -34,20 +33,14 @@ import aiosqlite
 from eventsource import (
     DeclarativeProjection,
     DomainEvent,
-    InMemoryEventBus,
     ReadModel,
     SQLCheckpointRepository,
     SQLDLQRepository,
-    create_async_engine,
     handles,
 )
-from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
-from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
-from eventsource.ports.dlq import DLQEntry
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 from pydantic import Field, field_validator
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.dialogue.domain.interaction import (
     ActionRetried,
@@ -93,6 +86,7 @@ from research_team.infrastructure.persistence.read_models import (
     LOCAL_RETRY_POLICY,
     apply_schema,
 )
+from research_team.infrastructure.persistence.store_base import BaseProjectionRunner
 
 INTERACTION_LOG_NAMESPACE = UUID("6f1d9b02-3e7c-4a58-9c31-0d5b7a8e4f12")
 
@@ -409,7 +403,7 @@ class InteractionLogProjection(DeclarativeProjection):
         await self._record(event)
 
 
-class InteractionLogRunner:
+class InteractionLogRunner(BaseProjectionRunner[InteractionLogStore]):
     """Keeps `interaction_events` following the interaction log.
 
     Takes its own store and its own bus. Passing the sessions store's bus
@@ -435,74 +429,22 @@ class InteractionLogRunner:
     rediscovered.
     """
 
-    def __init__(
+    _label = "interaction log"
+    _store_class = InteractionLogStore
+    _projection_class = InteractionLogProjection
+
+    def _create_projection(
         self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ) -> None:
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._log: InteractionLogStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+        store: InteractionLogStore,
+        checkpoints: SQLCheckpointRepository,
+        dlq: SQLDLQRepository,
+        tracer: Any,
+    ) -> Any:
+        return InteractionLogProjection(store.rows, checkpoints, dlq, tracer)
 
     @property
-    def projection_name(self) -> str:
-        """The subscription's name, which is also its checkpoint and DLQ key."""
-        return InteractionLogProjection.__name__
-
-    async def start(self) -> None:
-        """Open the table and start following the log.
-
-        Touches the event store first for the reason the other runners do: it
-        creates `projection_checkpoints` on first connection rather than at
-        construction, so reaching for checkpoints before anything has used the
-        store finds no table at all.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        # Held so `stop()` can dispose it -- see `CheckTelemetryRunner.start`.
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._log = await InteractionLogStore.open(
-            self._db_path, self._checkpoints, self._dlq, self._tracer
-        )
-        projection = InteractionLogProjection(
-            self._log.rows, self._checkpoints, self._dlq, self._tracer
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the interaction log projection failed to start: {failures}")
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        """Events this projection could not process.
-
-        A non-empty list means interactions the browser reported are missing
-        from the table, with nothing else surfacing that -- an instrument that
-        under-reports quietly is the failure worth surfacing here.
-        """
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
+    def _log(self) -> InteractionLogStore | None:
+        return self._store_instance
 
     @property
     def reader(self) -> InteractionLogReader:
@@ -511,80 +453,10 @@ class InteractionLogRunner:
         `failures()` stays here because the DLQ is the runner's; everything
         else the explorer asks for is a query over the table.
         """
-        if self._log is None:
-            raise RuntimeError("the interaction log projection has not been started")
-        return self._log.reader
+        return self.store.reader
 
     async def events(self, browser_session_id: UUID) -> list[InteractionEventRow]:
-        if self._log is None:
-            raise RuntimeError("the interaction log projection has not been started")
-        return await self._log.events(browser_session_id)
+        return await self.store.events(browser_session_id)
 
     async def count(self) -> int:
-        if self._log is None:
-            raise RuntimeError("the interaction log projection has not been started")
-        return await self._log.count()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Wait until every appended event has reached the table.
-
-        Compares global positions rather than filtering the feed by aggregate
-        type, and that is only correct because of a precondition: this store
-        holds `browser_session` and nothing else. The scoped variants
-        elsewhere in this repository exist because `sessions.db` is shared by
-        eight aggregate types, and a global wait there never drains.
-
-        **The moment a second category lands in this store, this must become
-        the scoped form** -- see `CheckTelemetryRunner.caught_up`, which
-        filters by event type because aggregate type alone was not fine
-        enough there. The failure mode of getting it wrong is a 10s
-        `TimeoutError` naming nothing about the cause.
-        """
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(
-            f"the interaction log projection did not reach {target} within {timeout}s"
-        )
-
-    async def rebuild(self) -> None:
-        """Throw the table away and derive it again from the log.
-
-        Safe because the table holds no original information: every row comes
-        from an event that is still there. Dropping the checkpoint alongside
-        the rows is the part that matters -- rows without the checkpoint would
-        leave the subscription resuming over an empty table, which is worse
-        than the drift being repaired.
-        """
-        if self._manager is None or self._log is None:
-            raise RuntimeError("the interaction log projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._log.truncate()
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        self._manager = None
-        self._subscription = None
-        await self._log.close()
-        self._log = None
-        await self.start()
-        await self.caught_up()
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-        if self._log is not None:
-            await self._log.close()
-            self._log = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+        return await self.store.count()
