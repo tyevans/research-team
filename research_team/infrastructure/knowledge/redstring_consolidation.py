@@ -5,7 +5,10 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
+from eventsource import collect
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.domain.tenant_context import tenant_scope
+from eventsource.ports.store import AggregateStore
 from redstring import (
     Adjudicator,
     CandidateFinder,
@@ -14,8 +17,9 @@ from redstring import (
     RedstringError,
     VectorStore,
 )
+from redstring.events.streams import document_stream
 
-from research_team.application.knowledge import MergeRecord
+from research_team.application.knowledge import KnowledgeError, MergeRecord
 from research_team.domain import EntityJudgements
 from research_team.infrastructure.config import DEFAULT_CONSOLIDATION_BATCH
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
@@ -178,6 +182,7 @@ class ConsolidationPipeline:
         project_id: UUID,
         concurrency: int = 1,
         consolidation_batch: int = DEFAULT_CONSOLIDATION_BATCH,
+        event_store: AggregateStore | None = None,
     ) -> None:
         self._consolidator = consolidator
         self._store = store
@@ -187,6 +192,12 @@ class ConsolidationPipeline:
         self._project_id = project_id
         self._concurrency = concurrency
         self._consolidation_batch = consolidation_batch
+        self._event_store = event_store
+
+    @property
+    def remembers_merges_across_restarts(self) -> bool:
+        """Whether `undo_merge` survives a restart. False means the log is in-memory."""
+        return self._consolidator.remembers_merges_across_restarts
 
     async def build_finder(self) -> JudgedCandidates | None:
         """The candidate source for one consolidation run, or None for the default."""
@@ -195,6 +206,94 @@ class ConsolidationPipeline:
             vectors=self._vectors,
             judgements=self._judgements,
             project_id=self._project_id,
+        )
+
+    async def entities_for(self, source_id: str) -> tuple:
+        """The entities the last recorded extraction of `source_id` found.
+
+        Read off the event rather than the graph: the event is what the repair
+        path replays, so this is the same set `reconsolidate` would act on.
+        """
+        if self._event_store is None:
+            raise KnowledgeError(
+                f"no event store configured to read extraction for {source_id!r}"
+            )
+        stream = document_stream(tenant_id=self._project_id, source_id=source_id)
+        envelopes = await collect(self._event_store.read_stream(stream))
+        extractions = [
+            envelope
+            for envelope in envelopes
+            if type(envelope.event).__name__ == "DocumentExtracted"
+        ]
+        if not extractions:
+            raise KnowledgeError(f"no extraction recorded for source_id {source_id!r}")
+        return tuple(extractions[-1].event.entities)
+
+    async def reconsolidate(self, source_id: str) -> tuple[tuple[MergeRecord, ...], int]:
+        """Re-resolve the entities of one recorded extraction.
+
+        The repair path for an ingest whose consolidation was interrupted. It
+        is keyed by `source_id` and bounded by that document, because redstring
+        marks no entity as unconsolidated (upstream R2) -- the only alternative
+        is paging every entity in the project and redoing settled work at every
+        open.
+
+        Re-resolving an already-consolidated entity is safe: `resolve` returns
+        None when there is nothing to merge, and raises when the entity has
+        already been absorbed, which `_consolidate` counts rather than
+        propagates.
+        """
+        entities = await self.entities_for(source_id)
+        async with tenant_scope(self._project_id):
+            merges, failures = await self.consolidate(entities)
+        return tuple(merges), failures
+
+    async def undo_merge(self, merge_id: UUID) -> MergeRecord:
+        """Reverse a consolidation.
+
+        `UnknownMergeError` covers "never happened", "already undone" and "made
+        by a different consolidator" as one case, so this cannot report which --
+        it says what it knows.
+        """
+        try:
+            async with tenant_scope(self._project_id):
+                report = await self._consolidator.undo(
+                    tenant_id=self._project_id, merge_event_id=merge_id
+                )
+        except RedstringError as error:
+            raise KnowledgeError(f"no merge in effect has id {merge_id}: {error}") from error
+
+        return MergeRecord(
+            merge_id=merge_id,
+            canonical_name=str(report.canonical_entity_id),
+            absorbed_names=tuple(str(i) for i in report.affected_entity_ids),
+            reason=report.reason,
+        )
+
+    async def merge_entities(
+        self, *, canonical: UUID, absorbed: list[UUID], reason: str
+    ) -> MergeRecord:
+        """Merge entities whose identity is already decided elsewhere.
+
+        The explicit path -- no blocking, no scoring, no model call. Exposed
+        because a caller that already knows two ids are one thing should not
+        have to go through similarity scoring to say so.
+        """
+        try:
+            async with tenant_scope(self._project_id):
+                report = await self._consolidator.merge(
+                    tenant_id=self._project_id,
+                    canonical_entity_id=canonical,
+                    merged_entity_ids=absorbed,
+                    merge_reason=reason,
+                )
+        except RedstringError as error:
+            raise KnowledgeError(str(error)) from error
+        return MergeRecord(
+            merge_id=report.event.event_id,
+            canonical_name=str(report.canonical_entity_id),
+            absorbed_names=tuple(str(i) for i in report.affected_entity_ids),
+            reason=report.reason,
         )
 
     def merge_record(

@@ -859,6 +859,7 @@ class RedstringKnowledge:
             project_id=self._project_id,
             concurrency=self._concurrency,
             consolidation_batch=self._consolidation_batch,
+            event_store=self._event_store,
         )
 
     async def _judged_finder(self):
@@ -903,23 +904,8 @@ class RedstringKnowledge:
     async def reconsolidate(self, source_id: str) -> tuple[tuple[MergeRecord, ...], int]:
         """Re-resolve the entities of one recorded extraction.
 
-        The repair path for an ingest whose consolidation was interrupted. It
-        is keyed by `source_id` and bounded by that document, because redstring
-        marks no entity as unconsolidated (upstream R2) -- the only alternative
-        is paging every entity in the project and redoing settled work at every
-        open.
-
-        Re-resolving an already-consolidated entity is safe: `resolve` returns
-        None when there is nothing to merge, and raises when the entity has
-        already been absorbed, which `_consolidate` counts rather than
-        propagates.
+        The repair path for an ingest whose consolidation was interrupted.
         """
-        # Through `entities_for` rather than reading the stream again. The two
-        # had the same three lines and the same latent defect -- the last event
-        # on a document's stream is a `DocumentChunked` now, not the extraction
-        # -- and one of them was fixed alone first. `entities_for`'s docstring
-        # already promised this is "the same set `reconsolidate` would act on";
-        # it is now the same call.
         entities = await self.entities_for(source_id)
         async with tenant_scope(self._project_id):
             merges, failures = await self._consolidate(entities)
@@ -928,34 +914,14 @@ class RedstringKnowledge:
     async def entities_for(self, source_id: str) -> tuple:
         """The entities the last recorded extraction of `source_id` found.
 
-        Read off the event rather than the graph: the event is what the repair
-        path replays, so this is the same set `reconsolidate` would act on.
+        Delegates to :class:`ConsolidationPipeline`.
         """
-        stream = document_stream(tenant_id=self._project_id, source_id=source_id)
-        envelopes = await collect(self._event_store.read_stream(stream))
-        # The last `DocumentExtracted`, not the last event. This stream carries
-        # three event types -- extraction, chunking and embeddings -- and it
-        # used to carry one in practice, because `index` was a no-op with no
-        # chunk store and `build_graph` was given no event store. Both changed
-        # with the co-mention repair: `build_graph` records a `DocumentChunked`
-        # whenever it has a log, *whether or not* it was given a chunk store
-        # (its own docstring says so), so the last event on this stream is now
-        # routinely not an extraction. `envelopes[-1].event.entities` then
-        # raises `AttributeError` from inside pydantic, which names the wrong
-        # attribute rather than the wrong event.
-        extractions = [
-            envelope
-            for envelope in envelopes
-            if type(envelope.event).__name__ == "DocumentExtracted"
-        ]
-        if not extractions:
-            raise KnowledgeError(f"no extraction recorded for source_id {source_id!r}")
-        return tuple(extractions[-1].event.entities)
+        return await self._consolidation_pipeline.entities_for(source_id)
 
     @property
     def remembers_merges_across_restarts(self) -> bool:
         """Whether `undo_merge` survives a restart. False means the log is in-memory."""
-        return self._consolidator.remembers_merges_across_restarts
+        return self._consolidation_pipeline.remembers_merges_across_restarts
 
     async def search(self, query: str, *, limit: int = 10) -> SearchOutcome:
         """Entities matching `query`, best first.
@@ -985,47 +951,17 @@ class RedstringKnowledge:
     async def undo_merge(self, merge_id: UUID) -> MergeRecord:
         """Reverse a consolidation.
 
-        `UnknownMergeError` covers "never happened", "already undone" and "made
-        by a different consolidator" as one case, so this cannot report which --
-        it says what it knows.
+        Delegates to :class:`ConsolidationPipeline`.
         """
-        try:
-            async with tenant_scope(self._project_id):
-                report = await self._consolidator.undo(
-                    tenant_id=self._project_id, merge_event_id=merge_id
-                )
-        except RedstringError as error:
-            raise KnowledgeError(f"no merge in effect has id {merge_id}: {error}") from error
-
-        return MergeRecord(
-            merge_id=merge_id,
-            canonical_name=str(report.canonical_entity_id),
-            absorbed_names=tuple(str(i) for i in report.affected_entity_ids),
-            reason=report.reason,
-        )
+        return await self._consolidation_pipeline.undo_merge(merge_id)
 
     async def merge_entities(
         self, *, canonical: UUID, absorbed: list[UUID], reason: str
     ) -> MergeRecord:
         """Merge entities whose identity is already decided elsewhere.
 
-        The explicit path -- no blocking, no scoring, no model call. Exposed
-        because a caller that already knows two ids are one thing should not
-        have to go through similarity scoring to say so.
+        Delegates to :class:`ConsolidationPipeline`.
         """
-        try:
-            async with tenant_scope(self._project_id):
-                report = await self._consolidator.merge(
-                    tenant_id=self._project_id,
-                    canonical_entity_id=canonical,
-                    merged_entity_ids=absorbed,
-                    merge_reason=reason,
-                )
-        except RedstringError as error:
-            raise KnowledgeError(str(error)) from error
-        return MergeRecord(
-            merge_id=report.event.event_id,
-            canonical_name=str(report.canonical_entity_id),
-            absorbed_names=tuple(str(i) for i in report.affected_entity_ids),
-            reason=report.reason,
+        return await self._consolidation_pipeline.merge_entities(
+            canonical=canonical, absorbed=absorbed, reason=reason
         )
