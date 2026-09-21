@@ -464,3 +464,68 @@ async def test_everywhere_counts_a_dispatch_as_something_running():
 
     assert [r.project_id for r in rosters] == [project_id]
     assert "dispatch" in [w.kind for w in rosters[0].workers]
+
+
+def test_roster_query_properties_and_diagnostics():
+    from research_team.session.application.workers import Roster, Worker
+
+    t0 = datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
+    t1 = datetime(2026, 9, 20, 10, 1, tzinfo=UTC)
+
+    w1 = Worker(
+        kind="turn",
+        ref="ref1",
+        detail="turn 1",
+        session_id=uuid4(),
+        parent=None,
+        started_at=t0,
+    )
+    assert w1.elapsed_seconds(t1) == 60.0
+
+    w_nostart = Worker(
+        kind="run",
+        ref="ref2",
+        detail="run 1",
+        session_id=None,
+        parent=None,
+        started_at=None,
+    )
+    assert w_nostart.elapsed_seconds(t1) is None
+
+    empty_roster = Roster(project_id=uuid4())
+    assert empty_roster.is_idle is True
+    assert empty_roster.worker_count == 0
+    assert empty_roster.idle_session_count == 0
+    assert empty_roster.has_kind("turn") is False
+    assert empty_roster.workers_by_kind() == {}
+
+    busy_roster = Roster(
+        project_id=uuid4(),
+        workers=(w1, w_nostart),
+        idle_session_ids=(uuid4(), uuid4()),
+    )
+    assert busy_roster.is_idle is False
+    assert busy_roster.worker_count == 2
+    assert busy_roster.idle_session_count == 2
+    assert busy_roster.has_kind("turn") is True
+    assert busy_roster.has_kind("run") is True
+    assert busy_roster.has_kind("dispatch") is False
+    by_kind = busy_roster.workers_by_kind()
+    assert len(by_kind["turn"]) == 1
+    assert len(by_kind["run"]) == 1
+
+
+def test_worker_roster_diagnostics():
+    roster = WorkerRoster(
+        FakeProjects(state_with(uuid4(), [])),
+        turns=FakeTurns({}),
+        runs=None,
+        extractions=None,
+        dispatches=None,
+        summaries=None,
+    )
+    diag = roster.diagnostics()
+    assert diag["has_runs_supervisor"] is False
+    assert diag["has_dispatches_supervisor"] is False
+    assert diag["has_extractions_supervisor"] is False
+    assert diag["has_summaries_read_model"] is False

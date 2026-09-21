@@ -122,3 +122,110 @@ def test_a_session_remembers_what_kind_of_work_it_is_for(session_id):
         )
     )
     assert session.state.purpose is SessionPurpose.RESEARCH_ROUND
+
+
+def test_session_state_queries_and_helpers(session_id):
+    session = Session(session_id)
+    assert session.state.is_empty is True
+    assert session.state.file_paths == []
+    assert session.state.total_messages == 0
+    assert session.state.has_file("/test.py") is False
+    assert session.state.file_content("/test.py") is None
+
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
+            purpose=SessionPurpose.CHAT,
+        )
+    )
+    assert session.state.is_empty is True
+
+    session.execute(WriteFile(path="/test.py", file_data={"content": "hello\nworld"}))
+    assert session.state.has_file("/test.py") is True
+    assert session.state.file_content("/test.py") == "hello\nworld"
+    assert session.state.file_paths == ["/test.py"]
+
+    session.execute(
+        SendUserMessage(message={"type": "human", "data": {"content": "User question"}})
+    )
+    assert session.state.is_empty is False
+    assert session.state.total_messages == 1
+    assert session.state.last_user_message == "User question"
+    assert session.state.last_assistant_message is None
+
+    # Add assistant message with tool call
+    from research_team.session.domain import (
+        CompactConversation,
+        RecordAssistantMessage,
+        RecordToolResult,
+    )
+
+    session.execute(
+        RecordAssistantMessage(
+            message={
+                "type": "ai",
+                "data": {
+                    "content": "Assistant answer",
+                    "tool_calls": [{"id": "call_123", "name": "fetch", "args": {}}],
+                },
+            }
+        )
+    )
+    assert session.state.last_assistant_message == "Assistant answer"
+    assert session.state.outstanding_tool_calls == {"call_123"}
+
+    # Record tool result
+    session.execute(
+        RecordToolResult(
+            message={
+                "type": "tool",
+                "data": {"tool_call_id": "call_123", "content": "Tool output"},
+            }
+        )
+    )
+    assert session.state.outstanding_tool_calls == set()
+    assert session.state.total_messages == 3
+    counts = session.state.message_counts_by_type()
+    assert counts == {"human": 1, "ai": 1, "tool": 1}
+
+    # Test effective messages after compaction
+    session.execute(
+        CompactConversation(
+            summary="Earlier discussion summary",
+            through_index=2,
+            strategy="summary",
+        )
+    )
+    assert len(session.state.effective_messages) == 1
+    assert session.state.effective_messages[0]["type"] == "tool"
+
+
+def test_session_fork_with_retargeted_purpose(session_id):
+    session = Session(session_id)
+    session.execute(
+        StartSession(
+            session_id=session.aggregate_id,
+            system_prompt=SYSTEM_PROMPT,
+            model_name=MODEL_NAME,
+            project_id=uuid4(),
+            purpose=SessionPurpose.RESEARCH_ROUND,
+        )
+    )
+    assert session.state.purpose is SessionPurpose.RESEARCH_ROUND
+
+    from research_team.session.domain import RecordForkSource, SessionForkedFrom
+
+    session.execute(
+        RecordForkSource(
+            source_session_id=uuid4(),
+            at_event=1,
+            purpose=SessionPurpose.CHAT,
+        )
+    )
+    assert session.state.purpose is SessionPurpose.CHAT
+    fork_event = session.uncommitted_events[-1]
+    assert isinstance(fork_event, SessionForkedFrom)
+    assert fork_event.purpose is SessionPurpose.CHAT

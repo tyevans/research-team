@@ -52,6 +52,7 @@ def session_view(
         # the branch is unreachable in practice; it is kept because the
         # alternative renders the string "None" if it ever is reached.
         "project_id": str(state.project_id) if state.project_id else None,
+        "purpose": state.purpose,
         "holds_project": holds_project,
         "knowledge_attached": knowledge_attached,
         "system_prompt": state.system_prompt,

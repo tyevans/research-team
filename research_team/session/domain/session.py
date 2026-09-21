@@ -104,6 +104,73 @@ class SessionState(BaseModel):
     compaction_summary: str = ""
     """The summary itself. The messages it replaces are still in `messages`."""
 
+    @property
+    def is_empty(self) -> bool:
+        """True when the session has had no turns and has no messages."""
+        return self.turn_index == 0 and len(self.messages) == 0
+
+    @property
+    def file_paths(self) -> list[str]:
+        """All paths currently in the session filesystem, sorted."""
+        return sorted(self.files.keys())
+
+    @property
+    def total_messages(self) -> int:
+        """Count of all recorded messages."""
+        return len(self.messages)
+
+    @property
+    def effective_messages(self) -> list[dict[str, Any]]:
+        """The messages visible to the model after compaction."""
+        return self.messages[self.compacted_through :]
+
+    @property
+    def last_user_message(self) -> str | None:
+        """The text content of the latest user message, or None."""
+        for msg in reversed(self.messages):
+            if msg.get("type") == "human":
+                content = msg.get("data", {}).get("content")
+                if isinstance(content, str):
+                    return content
+                return str(content) if content is not None else None
+        return None
+
+    @property
+    def last_assistant_message(self) -> str | None:
+        """The text content of the latest assistant message, or None."""
+        for msg in reversed(self.messages):
+            if msg.get("type") == "ai":
+                content = msg.get("data", {}).get("content")
+                if isinstance(content, str):
+                    return content
+                return str(content) if content is not None else None
+        return None
+
+    @property
+    def outstanding_tool_calls(self) -> set[str]:
+        """Tool call ids requested by the last AI message but not yet answered."""
+        return outstanding_tool_call_ids(self.messages)
+
+    def has_file(self, path: str) -> bool:
+        """Whether `path` currently exists in the session filesystem."""
+        return path in self.files
+
+    def file_content(self, path: str) -> str | None:
+        """Content of `path` if it exists, otherwise None."""
+        entry = self.files.get(path)
+        if entry is None:
+            return None
+        content = entry.get("content")
+        return str(content) if content is not None else None
+
+    def message_counts_by_type(self) -> dict[str, int]:
+        """Count messages grouped by their 'type' ('human', 'ai', 'tool', etc.)."""
+        counts: dict[str, int] = {}
+        for msg in self.messages:
+            msg_type = msg.get("type", "unknown")
+            counts[msg_type] = counts.get(msg_type, 0) + 1
+        return counts
+
 
 def initial_state() -> SessionState:
     """A session before anything has happened to it."""
@@ -224,10 +291,13 @@ def decide(command: SessionCommand, state: SessionState) -> list[DomainEvent]:
             ]
 
         # ---- lineage ----
-        case RecordForkSource(source_session_id=source, at_event=at), _:
+        case RecordForkSource(source_session_id=source, at_event=at, purpose=purpose), _:
             return [
                 SessionForkedFrom(
-                    aggregate_id=session_id, source_session_id=source, at_event=at
+                    aggregate_id=session_id,
+                    source_session_id=source,
+                    at_event=at,
+                    purpose=purpose,
                 )
             ]
 
@@ -336,8 +406,11 @@ def evolve(state: SessionState, event: DomainEvent) -> SessionState:
                 update={"compacted_through": through, "compaction_summary": summary}
             )
 
-        case SessionForkedFrom(source_session_id=source, at_event=at):
-            return state.model_copy(update={"forked_from": source, "forked_at": at})
+        case SessionForkedFrom(source_session_id=source, at_event=at, purpose=purpose):
+            updates: dict[str, Any] = {"forked_from": source, "forked_at": at}
+            if purpose is not None:
+                updates["purpose"] = purpose
+            return state.model_copy(update=updates)
 
         case (
             FileWritten(path=path, file_data=file_data)

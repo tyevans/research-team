@@ -162,6 +162,7 @@ class CompactConversation(Command):
 class RecordForkSource(Command):
     source_session_id: UUID
     at_event: int
+    purpose: SessionPurpose | None = None
 
 
 class WriteFile(Command):

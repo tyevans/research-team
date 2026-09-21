@@ -166,6 +166,7 @@ class SessionForkedFrom(DomainEvent):
     aggregate_type: str = "Session"
     source_session_id: UUID
     at_event: int
+    purpose: SessionPurpose | None = None
 
 
 @register_event

@@ -11,7 +11,7 @@ importing nothing but `eventsource`, and the closure that adapts this to
 langchain's `when` predicate lives in `infrastructure` instead.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from research_team.knowledge.application import (
     REMEMBER_PAGE_TOOL,
@@ -152,3 +152,103 @@ class AutonomyPolicy:
     def levels(self) -> dict[str, Level]:
         """Every gated tool's current level, for display."""
         return {tool: self.level_for(tool) for tool in GATED_TOOLS}
+
+    def restrict_all(self, level: Level = "ask") -> dict[str, Level]:
+        """Set all gated tools to `level` (default 'ask'), and report what changed.
+
+        The natural counterpart to `relax_all()`: someone who wants full
+        supervision across hazards switches everything back to `ask` (or `deny`).
+        Only tools whose effective level actually changed are returned.
+        """
+        if level not in LEVELS:
+            raise ValueError(f"unknown autonomy level: {level!r}")
+        changed: dict[str, Level] = {}
+        for tool in GATED_TOOLS:
+            current = self.level_for(tool)
+            if current != level:
+                self.set(tool, level)
+                changed[tool] = level
+        return changed
+
+    def reset(self, tool_name: str | None = None) -> dict[str, Level]:
+        """Reset one or all explicit tool overrides back to policy default/floor.
+
+        Reports which tools changed their effective level as a result.
+        """
+        changed: dict[str, Level] = {}
+        if tool_name is not None:
+            if tool_name not in GATED_TOOLS:
+                raise ValueError(f"not a gated tool: {tool_name!r}")
+            if tool_name in self._levels:
+                old_level = self._levels.pop(tool_name)
+                new_level = self.level_for(tool_name)
+                if old_level != new_level:
+                    changed[tool_name] = new_level
+            return changed
+
+        for tool in list(self._levels):
+            old_level = self._levels.pop(tool)
+            new_level = self.level_for(tool)
+            if old_level != new_level:
+                changed[tool] = new_level
+        return changed
+
+    @staticmethod
+    def is_gated(tool_name: str) -> bool:
+        """Whether `tool_name` is in the gated tools registry."""
+        return tool_name in GATED_TOOLS
+
+    def explain(self, tool_name: str) -> dict[str, Any]:
+        """Explain how the autonomy level for `tool_name` is determined."""
+        if not self.is_gated(tool_name):
+            return {
+                "tool_name": tool_name,
+                "level": "auto",
+                "gated": False,
+                "explicit": False,
+                "floor": None,
+                "default": self._default,
+            }
+        explicit = tool_name in self._levels
+        level = self.level_for(tool_name)
+        floor = TOOL_FLOORS.get(tool_name)
+        return {
+            "tool_name": tool_name,
+            "level": level,
+            "gated": True,
+            "explicit": explicit,
+            "floor": floor,
+            "default": self._default,
+        }
+
+    def copy(self) -> "AutonomyPolicy":
+        """Create an independent copy of this policy with identical settings."""
+        cloned = AutonomyPolicy(default=self._default)
+        cloned._levels = dict(self._levels)
+        return cloned
+
+
+class ScopedAutonomyPolicy(AutonomyPolicy):
+    """A session- or context-scoped policy layered over a parent policy.
+
+    Queries fall through to `parent` unless explicitly set in this scope.
+    Changes made via `set()`, `relax_all()`, or `restrict_all()` stay process-local
+    to this scope and do not mutate the parent.
+    """
+
+    def __init__(self, parent: AutonomyPolicy) -> None:
+        super().__init__(default=parent._default)
+        self._parent = parent
+
+    def level_for(self, tool_name: str) -> Level:
+        if tool_name not in GATED_TOOLS:
+            return "auto"
+        if tool_name in self._levels:
+            return self._levels[tool_name]
+        return self._parent.level_for(tool_name)
+
+    def levels(self) -> dict[str, Level]:
+        combined = self._parent.levels()
+        for tool, level in self._levels.items():
+            combined[tool] = level
+        return combined

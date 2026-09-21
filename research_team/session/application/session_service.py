@@ -10,8 +10,10 @@ one, and a web server has one per request -- so it belongs to the caller.
 """
 
 import asyncio
+import difflib
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -73,6 +75,7 @@ from research_team.session.domain import (
     SendUserMessage,
     Session,
     SessionPurpose,
+    SessionStarted,
     WriteFile,
 )
 from research_team.tenancy.application.project_sessions import (
@@ -123,6 +126,24 @@ Says what is missing rather than "there is no network", which stopped being
 true when `fetch` became unconditional. The distinction matters to the model:
 without search it cannot *find* a page, but it can still read one a person
 pastes into the conversation, and a model told it is offline will not try."""
+
+
+@dataclass(frozen=True)
+class SessionStats:
+    """High-level derived state and metrics for one session."""
+
+    session_id: UUID
+    project_id: UUID | None
+    status: str
+    purpose: SessionPurpose
+    turn_index: int
+    failed_turns: int
+    total_messages: int
+    compacted_through: int
+    file_count: int
+    file_paths: tuple[str, ...]
+    forked_from: UUID | None
+    forked_at: int | None
 
 
 class SessionService:
@@ -412,6 +433,98 @@ class SessionService:
     async def rebuild_summaries(self) -> None:
         """Derive the session list from the log again. Safe at any time."""
         await self._summaries.rebuild()
+
+    async def session_stats(self, session_id: UUID) -> SessionStats:
+        """High-level summary metrics for a session."""
+        session = await self.load(session_id)
+        state = session.state
+        return SessionStats(
+            session_id=session_id,
+            project_id=state.project_id,
+            status=state.status,
+            purpose=state.purpose,
+            turn_index=state.turn_index,
+            failed_turns=state.failed_turns,
+            total_messages=len(state.messages),
+            compacted_through=state.compacted_through,
+            file_count=len(state.files),
+            file_paths=tuple(sorted(state.files.keys())),
+            forked_from=state.forked_from,
+            forked_at=state.forked_at,
+        )
+
+    async def find_messages(
+        self,
+        session_id: UUID,
+        *,
+        role: str | None = None,
+        query: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search and filter messages recorded in a session."""
+        session = await self.load(session_id)
+        messages = session.state.messages
+        results: list[dict[str, Any]] = []
+        for msg in messages:
+            if role is not None and msg.get("type") != role:
+                continue
+            if query is not None:
+                text = str(msg.get("data", {}).get("content", "")).lower()
+                if query.lower() not in text:
+                    continue
+            results.append(msg)
+            if limit is not None and len(results) >= limit:
+                break
+        return results
+
+    async def diff_session_files(
+        self, session_id: UUID, other_session_id: UUID
+    ) -> dict[str, Any]:
+        """Diff files between two sessions.
+
+        Returns added, removed, modified, and unchanged file paths along with
+        line change metrics for modified files.
+        """
+        s1 = await self.load(session_id)
+        s2 = await self.load(other_session_id)
+        files1 = s1.state.files
+        files2 = s2.state.files
+        keys1 = set(files1.keys())
+        keys2 = set(files2.keys())
+
+        added = sorted(keys2 - keys1)
+        removed = sorted(keys1 - keys2)
+        common = sorted(keys1 & keys2)
+
+        modified: dict[str, dict[str, Any]] = {}
+        unchanged: list[str] = []
+
+        for path in common:
+            c1 = str(files1[path].get("content", ""))
+            c2 = str(files2[path].get("content", ""))
+            if c1 == c2:
+                unchanged.append(path)
+            else:
+                lines1 = c1.splitlines(keepends=True)
+                lines2 = c2.splitlines(keepends=True)
+                diff = list(difflib.unified_diff(lines1, lines2))
+                add_count = sum(
+                    1 for line in diff if line.startswith("+") and not line.startswith("+++")
+                )
+                del_count = sum(
+                    1 for line in diff if line.startswith("-") and not line.startswith("---")
+                )
+                modified[path] = {
+                    "added_lines": add_count,
+                    "removed_lines": del_count,
+                }
+
+        return {
+            "added": added,
+            "removed": removed,
+            "modified": modified,
+            "unchanged": unchanged,
+        }
 
     # ---------------- lifecycle ----------------
 
@@ -877,8 +990,19 @@ class SessionService:
 
     # ---------------- time travel ----------------
 
-    async def fork(self, session_id: UUID, at: int) -> UUID:
-        """Replay the first `at` events onto a fresh stream. Nothing is destroyed."""
+    async def fork(
+        self,
+        session_id: UUID,
+        at: int,
+        *,
+        purpose: SessionPurpose | None = None,
+    ) -> UUID:
+        """Replay the first `at` events onto a fresh stream. Nothing is destroyed.
+
+        If `purpose` is specified, the forked session is retargeted to that
+        purpose (e.g. converting a RESEARCH_ROUND session to CHAT for an
+        interactive human console session, resolving B101).
+        """
         events = await self.history(session_id)
         if not 1 <= at <= len(events):
             raise ValueError(f"cannot fork at {at}: session has {len(events)} events")
@@ -886,9 +1010,12 @@ class SessionService:
         new_id = uuid4()
         forked = self._repository.create(new_id)
         for event in events[:at]:
-            forked.create_event(
-                type(event), **event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
-            )
-        forked.execute(RecordForkSource(source_session_id=session_id, at_event=at))
+            payload = event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
+            if isinstance(event, SessionStarted) and purpose is not None:
+                payload["purpose"] = purpose
+            forked.create_event(type(event), **payload)
+        forked.execute(
+            RecordForkSource(source_session_id=session_id, at_event=at, purpose=purpose)
+        )
         await self._repository.save(forked)
         return new_id
