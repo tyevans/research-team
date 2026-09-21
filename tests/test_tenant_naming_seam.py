@@ -33,7 +33,6 @@ COLLAPSED = re.compile(r"\btenant_id\s*=\s*tenant_id\b")
 `tenant_id = tenant_id` in a call is the same hazard formatted differently."""
 
 DEFERRED_TO_THE_B2_SWEEP: dict[str, int] = {
-    "research_team/composition.py": 1,
     "research_team/infrastructure/knowledge/entity_cards.py": 2,
     "research_team/infrastructure/knowledge/entity_embeddings.py": 9,
 }

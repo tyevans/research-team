@@ -8,7 +8,6 @@ swapping any of them is an edit here and nowhere else.
 import functools
 import logging
 import random as random
-from collections.abc import Sequence
 from uuid import UUID
 
 # Imported for its side effect as much as its names: redstring registers its
@@ -21,11 +20,7 @@ import httpx
 import redstring.events  # noqa: F401
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer
-from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.tools import BaseTool
-from redstring import SlidingWindowChunker
-from redstring.llm.adapters.langchain import LangChainLlmProvider
 
 from research_team.dialogue.application.ask import AskService, ConversationRegistry
 from research_team.dialogue.application.socratic import (
@@ -34,50 +29,23 @@ from research_team.dialogue.application.socratic import (
 )
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import (
-    DeepAgentTurnExecutor,
-    build_embedding_provider,
-    build_extraction_model,
     build_model,
 )
 from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
-from research_team.infrastructure.agent.component_feedback import ComponentFeedback
 from research_team.infrastructure.agent.corpus_tools import (
     CORPUS_PROMPT,
-    build_corpus_tools,
 )
 from research_team.infrastructure.agent.fetch import (
     FETCH_CORPUS_PROMPT,
     build_fetch_tool,
 )
-from research_team.infrastructure.agent.fetch_media import build_fetch_media_tool
 from research_team.infrastructure.agent.knowledge_tools import (
     KNOWLEDGE_PROMPT,
-    build_knowledge_tools,
 )
-from research_team.infrastructure.agent.research_budget import ResearchBudget
 from research_team.infrastructure.agent.search import (
     build_search_tool,
 )
-from research_team.infrastructure.agent.search_middleware import SearchAttemptsMiddleware
 from research_team.infrastructure.agent.socratic_agent import DeepAgentSocraticExecutor
-from research_team.infrastructure.agent.topic_tools import (
-    RepositoryTopics,
-    build_topic_tools,
-)
-from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
-from research_team.infrastructure.knowledge.entity_cards import index_cards
-from research_team.infrastructure.knowledge.entity_embeddings import (
-    refresh_project_embeddings,
-)
-from research_team.infrastructure.knowledge.markdown_table_chunker import MarkdownTableChunker
-from research_team.infrastructure.knowledge.rebuild import rebuild_graph
-from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
-from research_team.infrastructure.knowledge.stores import (
-    build_card_vector_store,
-    build_chunk_store,
-    build_graph_store,
-    build_vector_store,
-)
 from research_team.infrastructure.perception.readeverything_adapter import (
     build_perception_adapter,
 )
@@ -85,7 +53,6 @@ from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     build_ask_conversation_repository,
     build_corpus_repository,
-    build_judgements_repository,
     build_learner_progress_repository,
     build_research_run_repository,
     build_topic_repository,
@@ -96,13 +63,6 @@ from research_team.infrastructure.persistence.event_store import (
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.telemetry import build_tracer
-from research_team.knowledge.application import (
-    KnowledgeError,
-    SourceRef,
-    source_id_for_url,
-)
-from research_team.knowledge.application.knowledge_attachment import KnowledgeAttachment
-from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.platform.shared.live_feed import LiveFeed
 from research_team.platform.shared.ports import (
     ApprovalPort,
@@ -122,10 +82,6 @@ from research_team.session.application.workers import (
     DispatchesInFlight,
     ExtractionChannel,
     WorkerRoster,
-)
-from research_team.session.domain import (
-    Session,
-    SessionPurpose,
 )
 from research_team.tenancy.application.grants import GrantRegistry
 from research_team.wiring import (
@@ -155,14 +111,18 @@ from research_team.wiring import (
     build_corpus_editor,
     build_curation_tools,
     build_document_extractor,
+    build_graph_opener,
+    build_knowledge_attachment,
     build_media_acquisition,
     build_media_perceiver,
+    build_project_graphs,
     build_project_services,
     build_session_service,
     build_socratic_service,
     build_stores,
     build_supervisor_roster,
     build_tools,
+    build_turn_executor,
 )
 from research_team.wiring.application import Application
 
@@ -207,13 +167,19 @@ __all__ = [
     "build_corpus_repository",
     "build_curation_tools",
     "build_document_extractor",
+    "build_fetch_tool",
+    "build_graph_opener",
+    "build_knowledge_attachment",
     "build_learner_progress_repository",
     "build_media_perceiver",
+    "build_project_graphs",
+    "build_search_tool",
     "build_service",
     "build_socratic_dialogue_repository",
     "build_socratic_service",
     "build_stores",
     "build_tools",
+    "build_turn_executor",
     "random",
 ]
 
@@ -365,618 +331,58 @@ def _build_application(
     outline_cache = stores.outline_cache
     course_runner = stores.course_runner
 
-    async def granted_tools(session: Session) -> tuple[BaseTool, ...]:
-        """A grant-bound `fetch`, for a session `resolved_grants` holds one for.
-
-        Resolved per turn, from the one `GrantRegistry` this build shares
-        with the approval gate (`interrupt_config`, below) and the driver
-        that registers a run's grant when it starts (`start_run`) -- three
-        consumers of one instance, which is the whole of what keeps the gate
-        and this tool from disagreeing about the same call. Two registries
-        would let a run's grant exist for the gate and not for the tool, or
-        the reverse, and every unit test would still pass; see
-        `application/grants.py` and the note beside `resolved_grants` above.
-
-        `None` from `resolved_grants.get` means this session is not a
-        registered run's session at all -- a person's own turn, or a run
-        that has already stopped -- and the answer is nothing, leaving
-        `fetch` (or, once a project is attached, `project_fetch`) exactly as
-        it was. Shadowing here with an ungranted, grant-bound tool would turn
-        off redirect-following and add a spend check to a session that was
-        never a party to any of this.
-
-        A *registered* session with an empty grant still gets one: an empty
-        `FetchGrant` covers no host, so nothing new becomes reachable, but
-        the tool built here also disables redirect-following for every call
-        it makes (`fetch.py`'s `grant is not None` branch) -- a property an
-        unattended run should have whether or not a person actually granted
-        it hosts, not only once they do.
-
-        Built with this project's corpus reader, mirroring `project_fetch`
-        below -- otherwise a covered fetch under a grant would stop finding
-        pages this project already has, for the whole time a grant is
-        attached, which is a regression `_compose`'s shadowing would otherwise
-        hide until someone noticed stale corpus reads.
-
-        **The reader and the keeper key off `session.state.project_id` and
-        nothing else.** They once came out of a fold that also required the
-        project to have selected a preset, which reads as harmless and is not:
-        it silently made both conditional on that selection, so a run on a
-        project that had made none fetched with no corpus and saved nothing.
-        A fetch is a fetch on the strength of the project alone.
-        """
-        grant = resolved_grants.get(session.aggregate_id)
-        if grant is None:
-            return ()
-        project_id = session.state.project_id
-        return (
-            build_fetch_tool(
-                recall=recall,
-                corpus=(
-                    ProjectCorpusReader(corpus, project_id, blob_store)
-                    if project_id is not None
-                    else None
-                ),
-                pages=pages,
-                grant=grant,
-                keep=_keeper(project_id) if project_id is not None else None,
-            ),
-        )
-
-    def _keeper(project_id: UUID):
-        """Save a fetched page to `project_id`'s corpus, without extracting it.
-
-        Built here and nowhere else, which is what makes automatic saving a
-        property of the *unattended run* rather than of fetching. This closure
-        is only reached past `granted_tools`' `grant is None` check, and a
-        registered grant is already this codebase's definition of a session
-        nobody is watching (`GrantRegistry.is_unattended`). A person's own
-        fetches keep the existing arrangement, where saving is a judgement the
-        model makes with `remember_page` and `KNOWLEDGE_PROMPT` tells it not to
-        save everything it happened to look at. Nobody is there to make that
-        judgement in a run, and a page not saved before the round ends is gone.
-
-        **`store_source`, not `ingest`.** An ingest is store-extract-
-        consolidate and runs for minutes; calling it here would put that
-        inside every `fetch`, and multiply extraction load by every page read
-        rather than every page kept. The text is what cannot be recovered
-        later -- the graph can always be built from it, by a `remember_page`
-        on a page that proves to matter or by `/rebuild` -- so this saves the
-        irrecoverable half at seconds rather than minutes and leaves the rest
-        to a decision made with more information than "the page loaded".
-
-        **The `source_id` is derived from the url, not the url.** This used to
-        read "the url is the `source_id`", on the reasoning that the url is
-        already what the page is and a prettier id would invent identity. The
-        argument is sound and the consequence was not: a url contains `/`,
-        `{source_id}` is one path segment, and uvicorn decodes the path before
-        Starlette routes it -- so every per-source route 404'd for every page
-        this closure ever kept. See `source_id_for_url` for the measurement.
-
-        The cost of deriving it is that the model no longer knows the id from
-        having typed the url, and `link_source` does not check that the id it
-        is given exists -- so a model citing the url would write a dangling
-        link, silently. `keep` returns the id for that reason and `fetch` puts
-        it in the citation block; that return value is not decoration, it is
-        what keeps the cite-immediately property the old id had for free.
-
-        A later `remember_page` stores a second record of the same bytes, which
-        `_store_document` allows deliberately -- worth knowing, since here it is
-        one URI under two ids rather than the two-URIs case that rule was
-        written for. `remember_page` now derives its id the same way, so the
-        two ids agree and the second record is the same document rather than a
-        differently-named one.
-        """
-
-        async def keep(url: str) -> str | None:
-            retained = pages.get(url)
-            # The attachment is process-wide and last-join-wins (see the web
-            # layer's join), so `current` may belong to a project that is not
-            # this run's. Without the guard a run's pages would land in
-            # whichever project joined most recently -- silently, and visible
-            # only as documents in the wrong corpus.
-            knowledge = attachment.current
-            if retained is None or knowledge is None:
-                return None
-            if attachment.attached_project_id != project_id:
-                return None
-            source_id = source_id_for_url(url)
-            try:
-                await knowledge.store_source(
-                    SourceRef(
-                        source_id=source_id,
-                        text=retained.text,
-                        uri=retained.uri,
-                        title=retained.title,
-                        published_at=retained.published_at,
-                        fetched_at=retained.fetched_at,
-                    )
-                )
-            except KnowledgeError:
-                # Logged, not raised, and not reported to the model either.
-                # The read succeeded and is about to be shown; a failed corpus
-                # copy is worth less than the read, and a note about it in the
-                # tool result would spend the model's attention on something it
-                # did not ask for and cannot fix.
-                logger.warning(
-                    "could not keep %s for project %s", url, project_id, exc_info=True
-                )
-                # None on failure, so `fetch` cites nothing rather than an id
-                # the corpus does not hold. The alternative -- returning the id
-                # regardless -- would hand the model a citation that resolves to
-                # a document the store just refused, which is the dangling link
-                # this return value exists to prevent.
-                return None
-            return source_id
-
-        return keep
-
-    async def turn_tools(session: Session) -> tuple[BaseTool, ...]:
-        """Everything this turn adds on top of the registered set.
-
-        One source today, and still a seam rather than `granted_tools` passed
-        straight to the executor: `_compose`'s by-name shadowing is what
-        decides a collision between two per-turn providers, and the place that
-        rule is applied is the place a second provider gets added.
-        """
-        return await granted_tools(session)
-
-    async def turn_middleware(session: Session) -> tuple[AgentMiddleware, ...]:
-        """This turn's middleware.
-
-        `ComponentFeedback` is unconditional because a component can appear in
-        any markdown file the agent writes, and a session nobody is watching
-        closely is exactly where a malformed widget goes unnoticed.
-
-        Resolved per turn rather than once at build, because the executor
-        outlives any one turn's answer and a provider consulted once would
-        pin the first turn's middleware onto every turn after it.
-        """
-        # Reads off the aggregate the tool just wrote through, so an `edit_file`
-        # is validated against the document it produced rather than the
-        # replacement it was given.
-        return (
-            ComponentFeedback(
-                read=lambda path: session.state.files.get(path, {}).get("content")
-            ),
-            # Only when `search_attempts` is not `None` -- the same switch
-            # that decided whether `web_search` was registered at all.
-            # Installing this unconditionally would reset a counter that
-            # exists in every build, including ones with no search tool to
-            # bound, which is harmless today but asserts a dependency this
-            # build does not have.
-            *(
-                (SearchAttemptsMiddleware(search_attempts),)
-                if search_attempts is not None
-                else ()
-            ),
-            # Authoring only, and on the purpose rather than on anything about
-            # the turn -- `_subagents_for`'s reason exactly: a purpose is fixed
-            # when the session starts, where a course directory appears partway
-            # through phase 1 and would give phase 1 a different budget from
-            # phase 2. Built fresh here on every pass, which is what resets the
-            # count between phases; see `ResearchBudget` for why that is a
-            # property of the wiring rather than of the class.
-            *(
-                (ResearchBudget(rounds=authoring_rounds),)
-                if session.state.purpose is SessionPurpose.COURSE_AUTHORING
-                and authoring_rounds > 0
-                else ()
-            ),
-        )
-
-    # Shared by the turn executor, the ask executor, `document_extractor`,
-    # `editor` and `perceiver`: all of them read one project's corpus the same
-    # way, and separate lambdas would be separate places a future change to how
-    # a reader is built could drift. Defined here rather than beside its first
-    # user below because the executors above it need it too.
     corpus_readers = lambda target_project_id: ProjectCorpusReader(  # noqa: E731
         corpus, target_project_id, blob_store
     )
 
-    async def turn_subagents(session: Session) -> Sequence[dict]:
-        """This turn's roster -- see `_subagents_for` for the choice it makes.
-
-        A thin `async def` around a pure function, matching how `turn_tools`
-        above is wired: the seam is async because the other providers are, not
-        because anything here awaits.
-        """
-        return _subagents_for(session, subagents)
-
-    async def turn_model(session: Session) -> BaseChatModel | None:
-        """Which model answers this turn, resolved from its project.
-
-        `None` for a session attached to no project, and for a build whose
-        caller injected a model: the executor then uses the one it was
-        constructed with, which is the process answer and the fake a test
-        handed in. An injected model is a caller saying which model they want
-        used -- `_extraction_model` refuses to second-guess the same statement
-        for the same reason.
-
-        This is the seam that makes the settings page's `Models` group reach a
-        turn at all. `build_model()` above answers for the *process* and runs
-        once, so before this the agent's model, endpoint and key were fixed at
-        startup: a value saved against a project stored fine, resolved fine
-        through `/api/settings/resolved`, and was read by nothing -- which is
-        `application/effective.py`'s "the whole scoped store is decorative",
-        arrived at through the one path that had no bundle.
-
-        Per turn rather than per session, matching `turn_tools` and
-        `turn_middleware`: the executor outlives any one turn, and a provider
-        consulted once would pin the first turn's endpoint onto every turn
-        after it -- including the turn right after somebody fixed a bad URL.
-        Resolution is a dict lookup until a write bumps the revision, so the
-        cost of asking every time is an await and a comparison.
-        """
-        if model is not None:
-            return None
-        project_id = session.state.project_id
-        if project_id is None:
-            return None
-        return build_model(await effective_settings.research(project_id))
-
-    executor = DeepAgentTurnExecutor(
-        resolved_model,
+    executor = build_turn_executor(
+        resolved_model=resolved_model,
+        injected_model=model,
         subagents=subagents,
         tools=tools,
         policy=resolved_policy,
         approvals=approvals,
-        middleware_provider=turn_middleware,
-        tools_provider=turn_tools,
-        subagents_provider=turn_subagents,
-        model_provider=turn_model,
-        # The same registry `turn_tools` (via `granted_tools`) and `start_run`
-        # (below) consult -- see `resolved_grants`'s own note for why there
-        # is exactly one instance and what two would cost.
         grants=resolved_grants,
+        corpus=corpus,
+        blob_store=blob_store,
+        recall=recall,
+        pages=pages,
+        search_attempts=search_attempts,
+        authoring_rounds=authoring_rounds,
+        effective_settings=effective_settings,
+        get_attachment=lambda: attachment,
+        build_fetch=lambda **kw: build_fetch_tool(**kw),
     )
 
-    # The single owner of an open graph store per project: `open_graph` below
-    # borrows from it rather than building its own, which is what lets a read
-    # route see the same store extraction just wrote to instead of
-    # a second one rebuilt independently and stale from the moment it exists.
-    # One provider and one store for the process, not one per project.
-    # `OpenAIEmbeddings` holds a connection pool and the vectors are tenant-
-    # scoped inside the store, so a second set per project would buy isolation
-    # that redstring already provides and pay for it in sockets. Built eagerly
-    # rather than per `open_graph` so a misconfigured *name* -- the one failure
-    # that does not need the network to detect -- surfaces at startup; the
-    # endpoint itself is probed on first ingest, in the adapter.
-    #
-    # `None` everywhere when `AGENT_VECTOR_STORE=none`, which is the whole of
-    # switching the feature off: nothing is constructed and nothing is probed.
-    #
-    # The *store* is no longer built here, and that is not a tidy-up.
-    # `PgVectorStore.connect` is a coroutine which awaits `asyncpg.create_pool`
-    # -- unlike `Neo4jGraphStore.connect`, which is an ordinary method building
-    # a lazy driver -- and this function is synchronous, so building it here
-    # produced an un-awaited coroutine that was passed onwards as if it were a
-    # store. `ProjectGraphs` owns the open instead, because `open` is the first
-    # `await` on the path to the store being used; the config is still *read*
-    # here, so `AGENT_VECTOR_STORE=chroma` is still refused at startup rather
-    # than at the first project open.
-    vector_kind = config.vector_store()
-    embedding_dimension = config.embedding_dimension()
+    wired_graphs = build_project_graphs(
+        repository.store,
+    )
+    graphs = wired_graphs.graphs
+    embedding_provider = wired_graphs.embedding_provider
+    reembed_project = wired_graphs.reembed_project
 
-    async def open_vector_store():
-        return await build_vector_store(vector_kind, dimension=embedding_dimension)
-
-    # The provider stays eager: it needs no network to build, and a
-    # misconfigured model *name* is the one embedding failure that can be
-    # caught at startup. The endpoint itself is probed on first ingest, in the
-    # adapter.
-    embedding_provider = (
-        build_embedding_provider() if vector_kind != config.NO_VECTOR_STORE else None
+    open_graph = build_graph_opener(
+        graphs=graphs,
+        effective_settings=effective_settings,
+        model=model,
+        extraction_model=extraction_model,
+        repository=repository,
+        corpus=corpus,
+        topics=topics,
+        blob_store=blob_store,
+        recall=recall,
+        pages=pages,
+        extractions=extractions,
+        get_media_http_client=lambda: resolved_media_http_client,
+        get_editor=lambda: editor,
+        embedding_provider=embedding_provider,
+        build_fetch=lambda **kw: build_fetch_tool(**kw),
     )
 
-    graphs = ProjectGraphs(
-        build_store=lambda: build_graph_store(config.graph_store()),
-        rebuild=lambda store, target_project_id, **rebuild_kwargs: rebuild_graph(
-            store, feed=repository.store, project_id=target_project_id, **rebuild_kwargs
-        ),
-        open_vector_store=open_vector_store,
-        # Taken from the provider rather than from `config.embedding_model()`,
-        # so the name the fold filters on is the name the writer stamps on the
-        # event. Two reads of the same setting is how those come to disagree,
-        # and a fold filtering on a name nothing writes is a vector store that
-        # silently stays empty.
-        embedding_model=embedding_provider.model if embedding_provider is not None else None,
-        # In-memory unconditionally, even where the consolidation store is
-        # pgvector. Card embeddings are folded from `EntitiesEmbedded` at open
-        # exactly as chunks are folded from `DocumentChunked`, so the store is
-        # derived and losing it costs a replay rather than data -- which is the
-        # argument `build_chunk_store` already makes for the corpus. A second
-        # pgvector table would buy durability the log already provides and cost
-        # a schema, a DSN and a width to keep in step.
-        build_card_vectors=(
-            (lambda: build_card_vector_store(dimension=embedding_dimension))
-            if embedding_provider is not None
-            else None
-        ),
-        # Same `embedding_dimension` read above for the vector store, not a
-        # second `config.embedding_dimension()` call: a corpus and the vector
-        # store built from two separate reads could disagree if the env
-        # changed between them, and `build_chunk_store`'s docstring is
-        # explicit that a corpus built under one width can't accept vectors
-        # of another without a rebuild.
-        build_chunk_store=lambda: build_chunk_store(
-            config.chunk_store(), dimension=embedding_dimension
-        ),
-        # No config switch and no `kind`: the co-mention index is three fields
-        # per passage with no backend to choose, folded from the same
-        # `DocumentChunked` events the corpus is. Unconditional for the reason
-        # `build_card_vector_store` is in-memory unconditionally -- it is
-        # derived, so having it costs a fold and not a decision. Unlike the
-        # corpus it does **not** honour `AGENT_CHUNK_STORE=none`: that setting
-        # turns off holding passage *text*, which this does not hold.
-        build_co_mentions=CoMentionIndex,
-        # Cards are chunked with the same settings as the quotable corpus, and
-        # for a different reason than symmetry: a card is short, so the window
-        # almost never fires, and matching the corpus keeps one number to
-        # reason about instead of two that happen to agree.
-        index_cards=lambda *, graph, cards, tenant_id: index_cards(
-            graph=graph,
-            cards=cards,
-            tenant_id=tenant_id,
-            chunker=SlidingWindowChunker(default_chunk_size=1000, default_overlap=500),
-        ),
-    )
-
-    async def reembed_project(target_project_id: UUID) -> int:
-        """Re-embed every entity in one project, from the graph as it stands.
-
-        The repair route's engine. Assembles a card per canonical entity,
-        embeds them, appends one `EntitiesEmbedded` and folds it straight into
-        the project's card vector store -- so the effect is visible on the next
-        projection rather than only after the next restart.
-
-        Returns 0 rather than raising when embeddings are off, when the project
-        has no entities, or when the provider declines: the route reports the
-        number, and a build with `AGENT_VECTOR_STORE=none` should answer "0
-        embedded" rather than an error every caller has to special-case.
-
-        The event is appended *before* the store is written. Both orders leave
-        a window, and this is the one whose failure is recoverable: an append
-        that lands with no upsert is corrected by the next project open, while
-        an upsert that lands with no append is a store holding vectors the log
-        cannot reproduce -- which is the exact state this whole change exists
-        to end.
-        """
-        if embedding_provider is None:
-            return 0
-        store = await graphs.open(target_project_id)
-        card_vectors = graphs.card_vectors(target_project_id)
-        if card_vectors is None:
-            return 0
-        return await refresh_project_embeddings(
-            graph=store,
-            provider=embedding_provider,
-            event_store=repository.store,
-            vectors=card_vectors,
-            tenant_id=target_project_id,
-        )
-
-    async def open_graph(
-        target_project_id: UUID,
-    ) -> tuple[RedstringKnowledge, tuple[BaseTool, ...]]:
-        """Build one project's `RedstringKnowledge` over its shared graph store.
-
-        The store itself comes from `graphs`, which owns it for as long as
-        the project stays open -- not just for the duration of this
-        attachment. Raises before anything is returned if `graphs.open`
-        fails -- an unreachable Neo4j or a replay `KnowledgeError` -- which is
-        what lets `KnowledgeAttachment.attach` stay atomic: nothing here is
-        handed back for it to wire in until the store has actually opened.
-        Unlike the store this used to build for itself, a store that fails to
-        open here is *not* closed on the way out: `graphs` is what decided to
-        build it, and only `graphs` gets to decide it is done with it --
-        closing a cache's handle out from under it on a failure it did not
-        cause would leave the cache holding a closed store the next `open`
-        would hand straight back out.
-        """
-        store = await graphs.open(target_project_id)
-        # The one place a background run picks up its project's settings.
-        # `open_graph` is on the path of every ingest, every re-extraction and
-        # every catalog sweep, and it is already parametrised by the project
-        # id -- which is exactly why resolution keys on the id here rather
-        # than on a request that most of those callers never had.
-        #
-        # Resolved per open, not per process. That is what makes a setting
-        # saved through the API reach the *next* run: the bundle is cached on
-        # `(project, revision)` and the stores bump the revision on write, so
-        # this await is a dict lookup until somebody changes something and a
-        # fresh resolve immediately after they do.
-        settings = await effective_settings.extraction(target_project_id)
-        # A caller that injected a model has said which model they want used,
-        # and a fake has no endpoint to repoint -- see `_extraction_model`,
-        # which makes the same call for the same reason. Everything else gets
-        # a client built against this project's resolved model, endpoint and
-        # credential, which is the whole point of the branch.
-        project_extraction_model = (
-            extraction_model if model is not None else build_extraction_model(settings)
-        )
-        knowledge = RedstringKnowledge(
-            target_project_id,
-            store=store,
-            event_store=repository.store,
-            snapshot_store=repository.snapshot_store,
-            # The name redstring reports and prompts against, matched to the
-            # client beside it -- one field on `ExtractionSettings` rather than
-            # two reads, because two reads of one setting is how a label comes
-            # to name a model the run was not made on.
-            provider=LangChainLlmProvider(project_extraction_model, model=settings.model),
-            # `repository.publisher`, like every other repository built here,
-            # and it was the one that did not have it. The corpus read model
-            # follows the log through this bus, so without it a `remember`
-            # appended `CorpusDocumentStored` and woke nothing: the event was
-            # in the log, `topic_corpus_facts` had it (that repository
-            # publishes), and `corpus_documents` stayed empty for the life of
-            # the process -- which is "Documents" listing nothing while
-            # research is visibly fetching pages. Not caught by a signature:
-            # `event_publisher` is optional and defaults to None, so the wrong
-            # wiring is the quiet one. See
-            # `tests/integration/test_corpus_publishing.py`.
-            corpus=build_corpus_repository(
-                repository.store,
-                repository.publisher,
-                snapshot_store=repository.snapshot_store,
-            ),
-            # Same three arguments as the corpus, including the publisher, for
-            # the reason the comment above gives: `event_publisher` is optional
-            # and defaults to None, so the wrong wiring is the silent one.
-            judgements=build_judgements_repository(
-                repository.store,
-                repository.publisher,
-                snapshot_store=repository.snapshot_store,
-            ),
-            domain=settings.knowledge_domain,
-            embeddings=embedding_provider,
-            # `graphs.vectors()` rather than a captured store: `graphs.open`
-            # above has already opened it, so this is a cached attribute read,
-            # and routing both through the same owner is what keeps "the store
-            # whose schema was ensured" and "the store this adapter writes to"
-            # the same object.
-            vector_store=await graphs.vectors(),
-            # Per project, unlike the one above, and folded from the log at
-            # the `graphs.open` two lines up -- so this is the store that
-            # already holds every card embedding this project has recorded,
-            # not a fresh one this ingest would start filling from empty.
-            card_vector_store=graphs.card_vectors(target_project_id),
-            concurrency=settings.concurrency,
-            consolidation_batch=settings.consolidation_batch,
-            # One chunker per project adapter rather than one for the process.
-            # `SlidingWindowChunker` holds only its three numbers -- no buffer,
-            # no state carried between `chunk` calls -- so sharing one would
-            # save an object and buy nothing, while making the size look like
-            # a process-wide fact when it is a per-adapter argument.
-            #
-            # Overlap and the boundary flags are left at redstring's defaults:
-            # only the size is ours to choose, and passing the others would
-            # freeze values we have no reason to hold against upstream's.
-            # Wrapped so a chunk of table rows reaches the model with the
-            # header naming its columns; without it, every chunk after the
-            # first of a long table is rows whose cells mean nothing. This
-            # does not change the chunk size -- `MarkdownTableChunker` makes
-            # no boundary decisions, it only prepends a header the delegate's
-            # cut left behind -- but a header-carrying chunk does exceed
-            # `extraction_chunk_size` by the header's length. See that
-            # module's docstring for why that was preferred to shrinking the
-            # budget, and for the measurement.
-            chunker=MarkdownTableChunker(
-                SlidingWindowChunker(default_chunk_size=settings.chunk_size)
-            ),
-            # `graphs.chunks(...)`, not a second `build_chunk_store()` call:
-            # `graphs.open` above already built this project's chunk store and
-            # folded it in the same replay pass as the graph (see
-            # `ProjectGraphs.open`), and a second store built here would be
-            # empty. Indexing would write into it, replay would keep filling
-            # the *other* one, and every read downstream would silently see
-            # an empty corpus -- the exact failure this call is here to rule
-            # out rather than the one it happens to avoid. `None` when
-            # `AGENT_CHUNK_STORE=none`, matching `ProjectGraphs.chunks`'s own
-            # None-when-off return.
-            chunks=graphs.chunks(target_project_id),
-            # `graphs.cards(...)`, for `chunks`' reason: `graphs.open` above
-            # already built and filled this project's card store, and a second
-            # one built here would be empty -- every ingest would re-card into
-            # a store nothing reads while the store the reader holds stayed at
-            # whatever `open` left. `None` when cards are off.
-            cards=graphs.cards(target_project_id),
-            # Where this ingest's entity links land live. They reach the log
-            # either way -- `build_graph` records the chunking whenever it has
-            # an event store -- so this is about the *current* session seeing
-            # its own passages rather than about durability.
-            # `graphs.co_mentions(...)` for `chunks`' reason: `open` already
-            # folded this one, and a second built here would be written to by
-            # ingest while every reader held the other.
-            co_mentions=graphs.co_mentions(target_project_id),
-        )
-        # Both tool sets travel back through the one channel `KnowledgeAttachment`
-        # already has. A second callable for the corpus would need its own copy of
-        # the atomicity guarantee -- a failed attach leaves the executor's tools
-        # untouched -- and two half-attached states are exactly what that
-        # guarantee exists to rule out. The corpus reader needs nothing closed,
-        # so `close_graph` stays about the graph.
-        reader = ProjectCorpusReader(corpus, target_project_id, blob_store)
-        # The topic tools ride the same channel, for the reason the corpus
-        # tools do: `KnowledgeAttachment` already carries the atomicity
-        # guarantee that a failed attach leaves the executor's tools untouched,
-        # and a second callable would need its own copy of it.
-        topic_port = RepositoryTopics(
-            build_topic_repository(
-                repository.store,
-                repository.publisher,
-                snapshot_store=repository.snapshot_store,
-            ),
-            topics,
-            target_project_id,
-        )
-        # Shadows the base `fetch` for as long as this project is attached --
-        # see `_compose` in `knowledge_attachment.py`. It is the same tool
-        # with one more place to look: this project's own sources, which is
-        # the only lookup that can return something citable.
-        project_fetch = build_fetch_tool(recall=recall, corpus=reader, pages=pages)
-        # Unlike `project_fetch` above, `fetch_media` has no ungranted,
-        # project-less form to shadow: `fetch` can run and simply not save
-        # (`_keeper` below is the thing that decides that), but a
-        # `fetch_media` that cannot store what it downloads is the exact
-        # defect this tool was built to fix -- see `build_fetch_media_tool`'s
-        # own refusal. So it exists only from here, once a project is
-        # attached, rather than being registered unconditionally alongside
-        # the base `fetch` in `tools` above and reaching for a project it
-        # might not have.
-        #
-        # `editor` and `resolved_media_http_client` are both closed over from
-        # the outer `build_application` scope, defined further down in this
-        # function (`editor` beside `document_extractor`,
-        # `resolved_media_http_client` beside `media_accept_worker`) --
-        # ordinary in a nested `async def`, since Python resolves a closure's
-        # free variables at call time, and `open_graph` is never called until
-        # `build_application` has finished assembling both. Reusing the
-        # worker's own client rather than building a second one is what
-        # keeps "the connection pool a model's direct fetch uses" and "the
-        # one an accepted proposal's download uses" the same pool, not two
-        # that happen to agree on configuration today.
-        fetch_media = build_fetch_media_tool(
-            client=resolved_media_http_client,
-            editor=editor,
-            project_id=target_project_id,
-        )
-        return knowledge, (
-            project_fetch,
-            fetch_media,
-            # The reporter is per-project and so is this closure, which is why
-            # it is made here rather than passed in already bound. None when
-            # nothing is listening: a build with no web layer has nobody to
-            # tell, and `remember` is unchanged by its absence.
-            *build_knowledge_tools(
-                knowledge,
-                report=extractions.reporter(target_project_id)
-                if extractions is not None
-                else None,
-                pages=pages,
-            ),
-            *build_corpus_tools(reader),
-            *build_topic_tools(topic_port, target_project_id),
-        )
-
-    async def close_graph(knowledge: RedstringKnowledge) -> None:
-        """A no-op: detaching a project from one session no longer closes its store.
-
-        Before `graphs` existed, this was the only thing that closed a graph
-        store, so it closed the one `knowledge` held. Now the store outlives
-        any single attachment -- `graphs` is what opened it and `graphs` is
-        what gets to close it, on project delete or process shutdown. Closing
-        it here too would pull it out from under the cache: `graphs` would
-        still list the project as open, and the next `open` would hand back a
-        store that no longer accepts calls instead of rebuilding a working one.
-        """
-
-    attachment = KnowledgeAttachment(
+    attachment = build_knowledge_attachment(
         executor,
         tools,
         open_graph=open_graph,
-        close_graph=close_graph,
     )
 
     session_wiring = build_session_service(
