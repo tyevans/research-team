@@ -5,15 +5,16 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application import SummaryProjects, WorkerRoster
 from research_team.composition import build_application as _build_application
-from research_team.domain import (
-    StoreSourceDocument,
-    WriteFile,
-)
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.research.domain import StoreSourceDocument
+from research_team.session.application.workers import (
+    SummaryProjects,
+    WorkerRoster,
+)
+from research_team.session.domain import WriteFile
 
 
 async def _started(**kwargs):

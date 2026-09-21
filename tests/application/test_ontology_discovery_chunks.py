@@ -1,14 +1,14 @@
 """Chunking, multi-chunk span offset translation, and chunk merge tests."""
 
-from research_team.application.knowledge.ontology_discovery import (
+from research_team.knowledge.application.ontology_discovery import (
     DocumentChunk,
     OntologyDiscoveryService,
     merge_classes,
     verify_classes,
 )
-from research_team.application.research.corpus_read import StoredDocument
-from research_team.domain.knowledge.ontology import DiscoveredClass
-from research_team.domain.research.corpus import TextRecord
+from research_team.knowledge.domain.ontology import DiscoveredClass
+from research_team.research.application.corpus_read import StoredDocument
+from research_team.research.domain.corpus import TextRecord
 
 SONGS = (
     "There are six difficulties available in the game: EASY, NORMAL, HARD, "

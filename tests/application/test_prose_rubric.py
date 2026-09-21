@@ -15,8 +15,8 @@ rename or a truncated file would break.
 
 import pytest
 
-from research_team.application.curriculum import prose_rubric
-from research_team.application.curriculum.prose_rubric import (
+from research_team.curriculum.application import prose_rubric
+from research_team.curriculum.application.prose_rubric import (
     critic_reporting_contract,
     prose_rules,
 )

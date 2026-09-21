@@ -1,11 +1,11 @@
 """Tests for the resolved explorer component type."""
 
-from research_team.application.components import (
+from research_team.knowledge.application.timeline_read import MAX_TIMELINE_BANDS
+from research_team.platform.components import (
     REGISTRY,
     parse_document,
     project,
 )
-from research_team.application.knowledge.timeline_read import MAX_TIMELINE_BANDS
 
 EXPLORER = """\
 ```component:explorer

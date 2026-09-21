@@ -36,7 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from research_team.domain.research.urls import normalize_url
+from research_team.research.domain.urls import normalize_url
 
 CAPACITY = 128
 """How many responses are held. Entries are page bodies of up to `MAX_CHARS`,

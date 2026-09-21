@@ -17,17 +17,19 @@ from eventsource import CommandRejectedError
 from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from research_team.application import SessionService, TurnSupervisor
-from research_team.application.curriculum import CurriculumService
-from research_team.application.knowledge import KnowledgeError
-from research_team.application.tenancy.project_summaries import ProjectSummaries
-from research_team.domain import CreateProject, SessionPurpose
+from research_team.curriculum.application import CurriculumService
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (
     project_detail_view,
     project_view,
     reading_head,
 )
+from research_team.knowledge.application import KnowledgeError
+from research_team.session.application.session_service import SessionService
+from research_team.session.application.turn_supervisor import TurnSupervisor
+from research_team.session.domain import SessionPurpose
+from research_team.tenancy.application.project_summaries import ProjectSummaries
+from research_team.tenancy.domain import CreateProject
 
 logger = logging.getLogger(__name__)
 

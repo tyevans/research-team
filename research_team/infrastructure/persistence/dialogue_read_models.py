@@ -15,12 +15,12 @@ from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 from pydantic import Field, field_validator
 
-from research_team.domain.dialogue.ask import (
+from research_team.dialogue.domain.ask import (
     AskConversation,
     AskConversationStarted,
     AskTurnRecorded,
 )
-from research_team.domain.dialogue.socratic import (
+from research_team.dialogue.domain.socratic import (
     SocraticDialogue,
     SocraticDialogueConcluded,
     SocraticDialogueStarted,

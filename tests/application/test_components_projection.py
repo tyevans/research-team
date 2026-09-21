@@ -7,7 +7,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from research_team.application.components import (
+from research_team.platform.components import (
     parse_document,
     project,
 )

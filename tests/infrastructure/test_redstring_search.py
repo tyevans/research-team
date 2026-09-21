@@ -9,7 +9,7 @@ from redstring import (
     InMemoryVectorStore,
 )
 
-from research_team.application.knowledge import KnowledgeError, SearchMode, SourceRef
+from research_team.knowledge.application import KnowledgeError, SearchMode, SourceRef
 
 
 @pytest.mark.asyncio

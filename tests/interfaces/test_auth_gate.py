@@ -14,7 +14,6 @@ the "off" half. Only both together say what the flag means.
 import pytest
 from fastapi.testclient import TestClient
 
-from research_team.domain.settings import SettingError
 from research_team.infrastructure import config
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.auth import (
@@ -23,6 +22,7 @@ from research_team.interfaces.web.auth import (
     SessionSigner,
     SessionStore,
 )
+from research_team.settings.domain import SettingError
 
 SECRET = "gate-test-secret"
 

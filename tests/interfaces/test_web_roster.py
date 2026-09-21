@@ -7,12 +7,15 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application import SummaryProjects, WorkerRoster
-from research_team.application.knowledge import ExtractionNote
-from research_team.application.shared.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.interfaces.web import TurnActivity, create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.knowledge.application import ExtractionNote
+from research_team.platform.shared.ports import ActivityMessage
+from research_team.session.application.workers import (
+    SummaryProjects,
+    WorkerRoster,
+)
 from tests.interfaces.test_web_stream import StubRequest, _drain, _subscribed
 
 
@@ -143,8 +146,8 @@ async def test_activity_frames_ride_the_stream_without_an_id(repository, session
     `test_stream_reaches_a_real_browser_over_a_real_socket`), so going
     through the HTTP client here would just hang.
     """
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     activity = TurnActivity()
     feed = LiveFeed(repository, poll_interval=0.01)
@@ -222,8 +225,8 @@ async def test_extraction_frames_ride_the_stream_without_an_id(repository):
     Exercised against `_sse` directly for the reason the activity test is: the
     ASGI transport cannot stream a still-running response.
     """
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     activity = ExtractionActivity()
     feed = LiveFeed(repository, poll_interval=0.01)
@@ -252,9 +255,9 @@ async def test_seeding_frames_ride_the_stream_without_an_id(repository):
     over the log. But a subject-less "running" frame arriving live is what
     lets the panel show something before a browser reloads to find out.
     """
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
     from research_team.interfaces.web.seeding import SeedingActivity
+    from research_team.platform.shared.live_feed import LiveFeed
 
     seeding = SeedingActivity()
     feed = LiveFeed(repository, poll_interval=0.01)

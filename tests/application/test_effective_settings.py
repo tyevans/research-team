@@ -17,19 +17,19 @@ from uuid import UUID
 
 import pytest
 
-from research_team.application.settings import SettingsResolver
-from research_team.application.settings.effective import (
-    EffectiveSettings,
-    ExtractionSettings,
-    ResearchSettings,
-    SettingsRevision,
-)
-from research_team.domain.settings import ModelProfile, ModelRole, Scope, ScopeRef
 from research_team.infrastructure import config
 from research_team.infrastructure.settings.profiles import ModelProfileStore
 from research_team.infrastructure.settings.secrets import AesGcmSecretBox
 from research_team.infrastructure.settings.store import SettingsStore
 from research_team.interfaces.web.settings import SettingsDeps
+from research_team.settings.application import SettingsResolver
+from research_team.settings.application.effective import (
+    EffectiveSettings,
+    ExtractionSettings,
+    ResearchSettings,
+    SettingsRevision,
+)
+from research_team.settings.domain import ModelProfile, ModelRole, Scope, ScopeRef
 
 PROJECT_ID = UUID("0f4a1c6e-2b7d-4a51-9c33-5d8e17b04a92")
 OTHER_ID = UUID("8c21ba50-4f19-4d6c-b3a7-6e0d92f15c48")

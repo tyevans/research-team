@@ -130,14 +130,6 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from research_team.application.components import (
-    REGISTRY,
-    Block,
-    ComponentBlock,
-    Document,
-    MarkdownBlock,
-    parse_document,
-)
 from research_team.interfaces.web.course_html_figures import (
     MAX_FIGURE_BANDS as MAX_FIGURE_BANDS,
 )
@@ -371,6 +363,14 @@ from research_team.interfaces.web.course_html_widgets import (
 )
 from research_team.interfaces.web.course_html_widgets import (
     render_passages as render_passages,
+)
+from research_team.platform.components import (
+    REGISTRY,
+    Block,
+    ComponentBlock,
+    Document,
+    MarkdownBlock,
+    parse_document,
 )
 
 # --- what a course is, once it has been read ------------------------------

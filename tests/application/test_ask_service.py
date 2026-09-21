@@ -12,7 +12,7 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.dialogue.ask import (
+from research_team.dialogue.application.ask import (
     AskAnswer,
     AskConversationOpened,
     AskInFlight,
@@ -21,8 +21,8 @@ from research_team.application.dialogue.ask import (
     Citation,
     ConversationRegistry,
 )
-from research_team.application.shared.ports import ActivityDelta, ActivityReporter
-from research_team.domain.dialogue.ask import AskConversation
+from research_team.dialogue.domain.ask import AskConversation
+from research_team.platform.shared.ports import ActivityDelta, ActivityReporter
 
 
 class FakeExecutor:

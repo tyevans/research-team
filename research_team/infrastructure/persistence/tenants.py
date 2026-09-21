@@ -48,7 +48,11 @@ from eventsource.ports.readmodels import Query, ReadModelRepository
 from eventsource.ports.readmodels.query import Filter
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from research_team.domain.tenancy.tenant import (
+from research_team.infrastructure.persistence.read_models import (
+    LOCAL_RETRY_POLICY,
+    apply_schema,
+)
+from research_team.tenancy.domain.tenant import (
     LOCAL_SUBJECT,
     LOCAL_TENANT,
     TENANT_NAMESPACE,
@@ -64,10 +68,6 @@ from research_team.domain.tenancy.tenant import (
     TenantCreated,
     TenantKind,
     tenant_aggregate_id,
-)
-from research_team.infrastructure.persistence.read_models import (
-    LOCAL_RETRY_POLICY,
-    apply_schema,
 )
 
 

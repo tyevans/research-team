@@ -14,18 +14,18 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.knowledge import (
+from research_team.knowledge.application import (
     ExtractionNote,
     IngestReport,
     SourceRef,
 )
-from research_team.application.research.corpus_read import SourceListing, StoredDocument
-from research_team.application.research.document_extraction import (
+from research_team.research.application.corpus_read import SourceListing, StoredDocument
+from research_team.research.application.document_extraction import (
     DocumentExtractor,
     UnknownDocument,
 )
-from research_team.domain import TextRecord
-from research_team.domain.research.corpus import MediaRecord
+from research_team.research.domain import TextRecord
+from research_team.research.domain.corpus import MediaRecord
 
 
 class Corpus:

@@ -15,16 +15,16 @@ process the suite runs in.
 
 import pytest
 
-from research_team.application.settings import SettingsResolver
-from research_team.domain.settings import (
+from research_team.infrastructure.settings.secrets import PREFIX, AesGcmSecretBox
+from research_team.infrastructure.settings.store import SettingsStore
+from research_team.settings.application import SettingsResolver
+from research_team.settings.domain import (
     DEFAULT_LAYER,
     ENVIRONMENT_LAYER,
     Scope,
     ScopeRef,
     SettingError,
 )
-from research_team.infrastructure.settings.secrets import PREFIX, AesGcmSecretBox
-from research_team.infrastructure.settings.store import SettingsStore
 
 PROJECT = ScopeRef(scope=Scope.PROJECT, scope_id="project-1")
 USER = ScopeRef(scope=Scope.USER, scope_id="user-1")

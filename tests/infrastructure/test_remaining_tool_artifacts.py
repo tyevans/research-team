@@ -9,7 +9,7 @@ draws; it has no `entity_type` or `relationship_count` to be an `EntityRef`.
 
 import pytest
 
-from research_team.application.research.topics import TopicError
+from research_team.research.application.topics import TopicError
 
 
 async def invoke_for_artifact(tool, args: dict) -> tuple[str, dict]:

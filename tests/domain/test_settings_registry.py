@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from research_team.domain.settings import (
+from research_team.settings.domain import (
     BY_ENV,
     BY_KEY,
     CONNECTIONS,

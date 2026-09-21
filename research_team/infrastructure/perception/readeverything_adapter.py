@@ -47,12 +47,12 @@ from readeverything import (
     Transcriber as _Transcriber,
 )
 
-from research_team.application.research.perception import (
+from research_team.infrastructure import config
+from research_team.research.application.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,
 )
-from research_team.infrastructure import config
 
 FFMPEG_REVISION = "present"
 """The FFMPEG revision string in the declared `CapabilitySet`.

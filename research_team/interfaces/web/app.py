@@ -24,51 +24,19 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
 
-from research_team.application import (
-    AutonomyPolicy,
-    LiveFeed,
-    SessionService,
-    TurnSupervisor,
-    WorkerRoster,
-)
-from research_team.application.curriculum import CurriculumService
-from research_team.application.curriculum.area_projection import GraphTooLarge
-from research_team.application.curriculum.course_authoring import CourseAuthor
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application import CurriculumService
+from research_team.curriculum.application.area_projection import GraphTooLarge
+from research_team.curriculum.application.course_authoring import CourseAuthor
+from research_team.curriculum.application.course_catalog import (
     ArtGeneratorPort,
     BlurbTextPort,
     CatalogService,
     OutlineTextPort,
 )
-from research_team.application.curriculum.course_realization import CourseService
-from research_team.application.dialogue.ask import AskService
-from research_team.application.dialogue.socratic import SocraticDialogueService
-from research_team.application.knowledge.graph_read import GraphReadPort
-from research_team.application.knowledge.project_graphs import ProjectGraphs
-from research_team.application.knowledge.timeline_read import TimelineReadPort
-from research_team.application.research.corpus_editing import CorpusEditor
-from research_team.application.research.document_extraction import DocumentExtractor
-from research_team.application.research.media_acquisition import (
-    MAX_UPLOAD_BYTES as MAX_UPLOAD_BYTES,
-)
-from research_team.application.research.media_acquisition import MediaAcceptWorker
-from research_team.application.research.media_curation import (
-    MediaCurationTextPort,
-    MediaSearchPort,
-)
-from research_team.application.research.perception import (
-    MediaPerceiver,
-    PerceptionPort,
-)
-from research_team.application.research.topic_dispatch import (
-    TopicDispatcher,
-)
-from research_team.application.research.topic_seeding import TopicSeeder
-from research_team.application.shared.blobs import BlobStorePort
-from research_team.application.tenancy.project_summaries import ProjectSummaries
-from research_team.domain.curriculum.course import Course
-from research_team.domain.research.media_proposals import MediaProposals
-from research_team.domain.research.topic import Topic
+from research_team.curriculum.application.course_realization import CourseService
+from research_team.curriculum.domain.course import Course
+from research_team.dialogue.application.ask import AskService
+from research_team.dialogue.application.socratic import SocraticDialogueService
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
@@ -162,6 +130,36 @@ from research_team.interfaces.web.topics import (
 from research_team.interfaces.web.topics import (
     TopicReaders as TopicReaders,
 )
+from research_team.knowledge.application.graph_read import GraphReadPort
+from research_team.knowledge.application.project_graphs import ProjectGraphs
+from research_team.knowledge.application.timeline_read import TimelineReadPort
+from research_team.platform.shared.blobs import BlobStorePort
+from research_team.platform.shared.live_feed import LiveFeed
+from research_team.research.application.corpus_editing import CorpusEditor
+from research_team.research.application.document_extraction import DocumentExtractor
+from research_team.research.application.media_acquisition import (
+    MAX_UPLOAD_BYTES as MAX_UPLOAD_BYTES,
+)
+from research_team.research.application.media_acquisition import MediaAcceptWorker
+from research_team.research.application.media_curation import (
+    MediaCurationTextPort,
+    MediaSearchPort,
+)
+from research_team.research.application.perception import (
+    MediaPerceiver,
+    PerceptionPort,
+)
+from research_team.research.application.topic_dispatch import (
+    TopicDispatcher,
+)
+from research_team.research.application.topic_seeding import TopicSeeder
+from research_team.research.domain.media_proposals import MediaProposals
+from research_team.research.domain.topic import Topic
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.session_service import SessionService
+from research_team.session.application.turn_supervisor import TurnSupervisor
+from research_team.session.application.workers import WorkerRoster
+from research_team.tenancy.application.project_summaries import ProjectSummaries
 
 from .interactions import (
     InteractionDeps,

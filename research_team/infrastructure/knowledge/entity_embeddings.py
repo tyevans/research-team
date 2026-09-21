@@ -90,8 +90,8 @@ from redstring.aggregates.document import Document
 from redstring.events.streams import document_stream
 from redstring.ports.vector_store import VectorWriter
 
-from research_team.application.knowledge import KnowledgeError
 from research_team.infrastructure.knowledge.entity_cards import Card, assemble_cards
+from research_team.knowledge.application import KnowledgeError
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ distinction is pinned.
 
 import pytest
 
-from research_team.application.knowledge import SOURCE_ID_LIMIT, source_id_for_url
+from research_team.knowledge.application import SOURCE_ID_LIMIT, source_id_for_url
 
 ROMAN = "https://en.wikipedia.org/wiki/Roman_monarchy"
 

@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from research_team.domain.curriculum.catalog import ArtRef, CourseCandidate
+from research_team.curriculum.domain.catalog import ArtRef, CourseCandidate
 from research_team.infrastructure.persistence.read_models import ArtRow
 
 #: Picked, not measured. What would measure it: the rate at which a person

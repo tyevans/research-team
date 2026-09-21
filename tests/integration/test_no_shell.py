@@ -15,7 +15,7 @@ import os
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.domain import ToolResultRecorded
+from research_team.session.domain import ToolResultRecorded
 from tests.conftest import ToolAwareFakeChatModel, start_session
 
 ESCAPE_MARKER = "/tmp/research_team_escape_probe"

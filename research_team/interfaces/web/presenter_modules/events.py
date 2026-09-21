@@ -6,7 +6,7 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.domain import (
+from research_team.session.domain import (
     AutonomyChanged,
     ConversationCompacted,
     FileDeleted,

@@ -8,14 +8,14 @@ nothing, so that a runner reading the reply instead of the fold would fail.
 
 from uuid import uuid4
 
-from research_team.application.research.findings import Finding
-from research_team.application.research.research_round import (
+from research_team.research.application.findings import Finding
+from research_team.research.application.research_round import (
     ROUND_INSTRUCTIONS,
     TopicRoundRunner,
     round_prompt,
 )
-from research_team.application.research.topic_attention import TopicAttention
-from research_team.domain.research.topic import SubQuestion, TopicState
+from research_team.research.application.topic_attention import TopicAttention
+from research_team.research.domain.topic import SubQuestion, TopicState
 
 
 def attention(*findings):

@@ -13,9 +13,10 @@ from uuid import UUID
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.application import FeedEntry, TurnCancelled
-from research_team.application.shared.ports import ActivityDelta, ActivityMessage
-from research_team.domain import (
+from research_team.interfaces.web import TurnActivity
+from research_team.platform.shared.ports import ActivityDelta, ActivityMessage, FeedEntry
+from research_team.session.application.turn_supervisor import TurnCancelled
+from research_team.session.domain import (
     AssistantMessageAdded,
     FileWritten,
     Session,
@@ -24,7 +25,6 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
-from research_team.interfaces.web import TurnActivity
 from tests.application.test_turn_supervisor import CountingModel, once_inside_the_model
 from tests.conftest import start_session
 

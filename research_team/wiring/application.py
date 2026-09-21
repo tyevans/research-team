@@ -12,43 +12,13 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from langchain_core.tools import BaseTool
 
-from research_team.application import (
-    AutonomyPolicy,
-    LiveFeed,
-    ProjectGraphs,
-    ResearchSupervisor,
-    SessionService,
-    TurnSupervisor,
-    WorkerRoster,
-)
-from research_team.application.curriculum.course_authoring import CourseAuthor
-from research_team.application.curriculum.course_catalog import CatalogService
-from research_team.application.curriculum.course_realization import CourseService
-from research_team.application.dialogue.ask import AskService
-from research_team.application.dialogue.socratic import SocraticDialogueService
-from research_team.application.knowledge.entity_definitions import DefinitionService
-from research_team.application.knowledge.ontology_discovery import OntologyDiscoveryService
-from research_team.application.research.corpus_editing import CorpusEditor
-from research_team.application.research.document_extraction import DocumentExtractor
-from research_team.application.research.media_acquisition import (
-    MediaAcceptReconciler,
-    MediaAcceptWorker,
-)
-from research_team.application.research.media_curation import (
-    MediaCurationTextPort,
-    MediaSearchPort,
-)
-from research_team.application.research.perception import MediaPerceiver, PerceptionPort
-from research_team.application.research.topic_dispatch import TopicDispatcher
-from research_team.application.research.topic_read import TopicReadPort
-from research_team.application.research.topic_seeding import TopicSeeder
-from research_team.application.shared.blobs import BlobStorePort
-from research_team.application.tenancy.authorization import Authorizer
-from research_team.application.tenancy.grants import GrantRegistry
-from research_team.domain.curriculum.authoring_run import CourseAuthoringRun
-from research_team.domain.curriculum.course import Course
-from research_team.domain.research.media_proposals import MediaProposals
-from research_team.domain.research.topic import Topic
+from research_team.curriculum.application.course_authoring import CourseAuthor
+from research_team.curriculum.application.course_catalog import CatalogService
+from research_team.curriculum.application.course_realization import CourseService
+from research_team.curriculum.domain.authoring_run import CourseAuthoringRun
+from research_team.curriculum.domain.course import Course
+from research_team.dialogue.application.ask import AskService
+from research_team.dialogue.application.socratic import SocraticDialogueService
 from research_team.infrastructure import config
 from research_team.infrastructure.identity import EventStoreUserRecorder
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
@@ -81,6 +51,34 @@ from research_team.infrastructure.persistence.users import UserRunner
 from research_team.interfaces.web.art_sweep import ArtReroll, ArtSweep
 from research_team.interfaces.web.blurb_sweep import BlurbSweep
 from research_team.interfaces.web.settings import SettingsDeps
+from research_team.knowledge.application.entity_definitions import DefinitionService
+from research_team.knowledge.application.ontology_discovery import OntologyDiscoveryService
+from research_team.knowledge.application.project_graphs import ProjectGraphs
+from research_team.platform.shared.blobs import BlobStorePort
+from research_team.platform.shared.live_feed import LiveFeed
+from research_team.research.application.corpus_editing import CorpusEditor
+from research_team.research.application.document_extraction import DocumentExtractor
+from research_team.research.application.media_acquisition import (
+    MediaAcceptReconciler,
+    MediaAcceptWorker,
+)
+from research_team.research.application.media_curation import (
+    MediaCurationTextPort,
+    MediaSearchPort,
+)
+from research_team.research.application.perception import MediaPerceiver, PerceptionPort
+from research_team.research.application.research_supervisor import ResearchSupervisor
+from research_team.research.application.topic_dispatch import TopicDispatcher
+from research_team.research.application.topic_read import TopicReadPort
+from research_team.research.application.topic_seeding import TopicSeeder
+from research_team.research.domain.media_proposals import MediaProposals
+from research_team.research.domain.topic import Topic
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.session_service import SessionService
+from research_team.session.application.turn_supervisor import TurnSupervisor
+from research_team.session.application.workers import WorkerRoster
+from research_team.tenancy.application.authorization import Authorizer
+from research_team.tenancy.application.grants import GrantRegistry
 from research_team.wiring.lifecycle import _close_every_step
 from research_team.wiring.resources import (
     _LazyArtStore,

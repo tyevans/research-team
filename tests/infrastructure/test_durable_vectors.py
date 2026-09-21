@@ -40,11 +40,11 @@ import pytest
 from redstring import InMemoryGraphStore, InMemoryVectorStore
 from redstring.llm.adapters.fake_embedding import FakeEmbeddingProvider
 
-from research_team.application.knowledge import SourceRef
 from research_team.infrastructure.knowledge.entity_embeddings import (
     PROJECT_EMBEDDING_SOURCE,
 )
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
+from research_team.knowledge.application import SourceRef
 
 DIMENSION = 64
 TEXT = "Ada Lovelace worked with Charles Babbage on the Analytical Engine."

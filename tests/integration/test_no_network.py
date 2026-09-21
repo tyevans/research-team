@@ -14,9 +14,8 @@ suite would notice.
 
 from uuid import uuid4
 
-from research_team.application import SEARCH_TOOL
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.domain import Session
+from research_team.session.application.autonomy import FETCH_TOOL, SEARCH_TOOL
+from research_team.session.domain import Session
 
 
 def _tool_names(application) -> set[str]:

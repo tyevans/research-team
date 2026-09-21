@@ -39,15 +39,15 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from research_team.application.research.perception import (
-    LocatorSpan,
-    Perceived,
-    PerceptionCapabilities,
-)
 from research_team.composition import build_application
 from research_team.interfaces.web.app import create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
+from research_team.research.application.perception import (
+    LocatorSpan,
+    Perceived,
+    PerceptionCapabilities,
+)
 
 pytestmark = pytest.mark.asyncio
 

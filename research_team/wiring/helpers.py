@@ -4,12 +4,6 @@ from collections.abc import Sequence
 
 from langchain_core.language_models import BaseChatModel
 
-from research_team.application.shared.context import (
-    ContextStrategy,
-    ElideToolResults,
-    FullHistory,
-)
-from research_team.domain import Session, SessionPurpose
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import build_extraction_model
 from research_team.infrastructure.agent.authoring_subagents import AUTHORING_SUBAGENTS
@@ -17,6 +11,15 @@ from research_team.infrastructure.agent.compaction import SummarizingStrategy
 from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
+)
+from research_team.platform.shared.context import (
+    ContextStrategy,
+    ElideToolResults,
+    FullHistory,
+)
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
 )
 
 

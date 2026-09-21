@@ -24,8 +24,8 @@ import asyncio
 from typing import Any
 from uuid import UUID
 
-from research_team.application.knowledge import ExtractionNote, ExtractionReporter
-from research_team.application.session.workers import ExtractionSnapshot
+from research_team.knowledge.application import ExtractionNote, ExtractionReporter
+from research_team.session.application.workers import ExtractionSnapshot
 
 EXTRACTION = "Extraction"
 """The frame type on the live feed.

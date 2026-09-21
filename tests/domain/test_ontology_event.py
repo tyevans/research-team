@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from research_team.domain.knowledge.ontology import (
+from research_team.knowledge.domain.ontology import (
     DiscoveredClass,
     DiscoveredMember,
     EvidenceSpan,

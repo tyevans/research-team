@@ -34,7 +34,7 @@ from collections.abc import Awaitable, Callable
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
-from research_team.application.components import parse_document, validation_report
+from research_team.platform.components import parse_document, validation_report
 
 WRITE_TOOLS = frozenset({"write_file", "edit_file"})
 """The tools that leave a document behind. `delete` leaves nothing to check."""

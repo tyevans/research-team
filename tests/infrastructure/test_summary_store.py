@@ -13,17 +13,17 @@ import pytest
 from eventsource import ReadModel
 from eventsource.ports.readmodels import ReadModelSchemaMismatchError
 
-from research_team.domain import (
-    SendUserMessage,
-    SessionPurpose,
-    StartSession,
-)
 from research_team.infrastructure.persistence import SessionSummaryStore
 from research_team.infrastructure.persistence.read_models import (
     SocraticDialogueRow,
     SocraticTurnRow,
     apply_schema,
     model_schema,
+)
+from research_team.session.domain import (
+    SendUserMessage,
+    SessionPurpose,
+    StartSession,
 )
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 

@@ -10,20 +10,20 @@ from eventsource import DomainEvent, ExpectedVersion, StreamId
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.research.corpus_read import (
+from research_team.platform.shared.blobs import BlobStat
+from research_team.research.application.corpus_read import (
     MediaHandle,
     SourceListing,
     StoredDocument,
 )
-from research_team.application.research.perception import (
+from research_team.research.application.perception import (
     LocatorSpan,
     MediaPerceiver,
     Perceived,
     PerceptionCapabilities,
     derived_source_id,
 )
-from research_team.application.shared.blobs import BlobStat
-from research_team.domain.research.corpus import (
+from research_team.research.domain.corpus import (
     Corpus,
     CorpusDocumentDropped,
     CorpusDocumentStored,

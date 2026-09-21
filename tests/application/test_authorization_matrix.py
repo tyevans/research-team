@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.tenancy.authorization import (
+from research_team.tenancy.application.authorization import (
     PERMISSIONS,
     PROJECT_ROLE_ORDER,
     TENANT_ROLE_ORDER,
@@ -115,14 +115,14 @@ def test_the_project_matrix_is_exactly_this_table(role):
     Deriving the expectation from `PROJECT_ROLE_PERMISSIONS` would assert that a
     dict equals itself, and would go green on any widening of any role.
     """
-    from research_team.application.tenancy.authorization import PROJECT_ROLE_PERMISSIONS
+    from research_team.tenancy.application.authorization import PROJECT_ROLE_PERMISSIONS
 
     assert PROJECT_ROLE_PERMISSIONS[role] == PROJECT_MATRIX[role]
 
 
 @pytest.mark.parametrize("role", TENANT_ROLE_ORDER)
 def test_the_tenant_matrix_is_exactly_this_table(role):
-    from research_team.application.tenancy.authorization import TENANT_ROLE_PERMISSIONS
+    from research_team.tenancy.application.authorization import TENANT_ROLE_PERMISSIONS
 
     assert TENANT_ROLE_PERMISSIONS[role] == TENANT_MATRIX[role]
 

@@ -17,21 +17,20 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team import composition
-from research_team.application import (
+from research_team.infrastructure.agent.fetch import build_fetch_tool
+from research_team.infrastructure.agent.search import build_search_tool
+from research_team.interfaces.cli import TerminalApprovals, repl
+from research_team.platform.shared.ports import (
     ApprovalDecision,
     ApprovalRequest,
-    AutonomyPolicy,
 )
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.application.tenancy.grants import FetchGrant, GrantRegistry
-from research_team.domain import (
+from research_team.session.application.autonomy import FETCH_TOOL, AutonomyPolicy
+from research_team.session.domain import (
     AutonomyChanged,
     ToolCallDecided,
     ToolResultRecorded,
 )
-from research_team.infrastructure.agent.fetch import build_fetch_tool
-from research_team.infrastructure.agent.search import build_search_tool
-from research_team.interfaces.cli import TerminalApprovals, repl
+from research_team.tenancy.application.grants import FetchGrant, GrantRegistry
 from tests.conftest import ToolAwareFakeChatModel, start_session
 
 RESULT_TITLE = "Event Sourcing Explained"

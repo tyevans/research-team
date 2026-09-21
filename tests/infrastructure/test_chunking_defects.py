@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 from redstring import InMemoryChunkStore
 
-from research_team.application.knowledge import SourceRef
+from research_team.knowledge.application import SourceRef
 
 #: 2,700 characters: longer than the 1,000-character window the corpus is
 #: chunked with, which is the condition the defect below needs. A document at

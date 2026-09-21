@@ -17,8 +17,14 @@ from eventsource import (
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import ReadModelRepository
 
-from research_team.application.research.media_acquisition import AcceptedProposal
-from research_team.domain.research.media_proposals import (
+from research_team.infrastructure.persistence.store_base import (
+    LOCAL_RETRY_POLICY,
+    BaseProjectionRunner,
+    BaseReadModelStore,
+    open_readmodel_connection,
+)
+from research_team.research.application.media_acquisition import AcceptedProposal
+from research_team.research.domain.media_proposals import (
     MediaAssetIgnored,
     MediaAssetUnignored,
     MediaHostIgnored,
@@ -29,12 +35,6 @@ from research_team.domain.research.media_proposals import (
     MediaProposalRejected,
     MediaProposalStored,
     MediaProposed,
-)
-from research_team.infrastructure.persistence.store_base import (
-    LOCAL_RETRY_POLICY,
-    BaseProjectionRunner,
-    BaseReadModelStore,
-    open_readmodel_connection,
 )
 
 MEDIA_PROPOSAL_NAMESPACE = UUID("d4a1c6e2-8f3b-5a90-9e7c-1b4d3f6a8c2e")

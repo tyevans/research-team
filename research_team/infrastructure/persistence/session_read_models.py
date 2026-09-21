@@ -22,8 +22,15 @@ from eventsource.ports.readmodels import (
 )
 from pydantic import Field, field_validator
 
-from research_team.application import SessionSummary, SummaryHealth
-from research_team.domain import (
+from research_team.infrastructure.persistence.store_base import (
+    LOCAL_RETRY_POLICY,
+    BaseProjectionRunner,
+    BaseReadModelStore,
+    open_readmodel_connection,
+)
+from research_team.platform.shared.ports import SummaryHealth
+from research_team.session.application.summaries import SessionSummary
+from research_team.session.domain import (
     FileDeleted,
     FileEdited,
     FileWritten,
@@ -34,12 +41,6 @@ from research_team.domain import (
     TurnCompleted,
     TurnFailed,
     UserMessageSent,
-)
-from research_team.infrastructure.persistence.store_base import (
-    LOCAL_RETRY_POLICY,
-    BaseProjectionRunner,
-    BaseReadModelStore,
-    open_readmodel_connection,
 )
 
 __all__ = [

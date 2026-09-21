@@ -4,12 +4,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.session.workers import (
+from research_team.session.application.workers import (
     DispatchSnapshot,
     ExtractionSnapshot,
     WorkerRoster,
 )
-from research_team.domain.tenancy.project import ProjectState
+from research_team.tenancy.domain.project import ProjectState
 
 AT = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 
@@ -441,7 +441,7 @@ async def test_everywhere_counts_a_dispatch_as_something_running():
     worked, which is the one failure it exists to prevent. Fails if
     `everywhere` stops consulting the dispatch queue.
     """
-    from research_team.application.session.workers import DispatchSnapshot
+    from research_team.session.application.workers import DispatchSnapshot
 
     project_id, session = uuid4(), uuid4()
     projects = CountingProjects({project_id: state_with(project_id, [session])})

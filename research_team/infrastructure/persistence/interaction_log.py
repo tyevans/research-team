@@ -49,7 +49,7 @@ from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 from pydantic import Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from research_team.domain.dialogue.interaction import (
+from research_team.dialogue.domain.interaction import (
     ActionRetried,
     ActionUndone,
     ApprovalDecided,

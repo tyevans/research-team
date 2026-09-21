@@ -10,20 +10,20 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
 from research_team import composition
-from research_team.application import (
+from research_team.infrastructure.agent.search import build_search_tool
+from research_team.interfaces.web import WebApprovals, create_app
+from research_team.interfaces.web.app import _sse
+from research_team.platform.shared.ports import (
     ApprovalDecision,
     ApprovalRequest,
-    AutonomyPolicy,
-    TurnCancelled,
 )
-from research_team.domain import (
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.turn_supervisor import TurnCancelled
+from research_team.session.domain import (
     ToolCallDecided,
     ToolResultRecorded,
     TurnFailed,
 )
-from research_team.infrastructure.agent.search import build_search_tool
-from research_team.interfaces.web import WebApprovals, create_app
-from research_team.interfaces.web.app import _sse
 from tests.conftest import ToolAwareFakeChatModel, start_session
 
 RESULT_TITLE = "Event Sourcing Explained"

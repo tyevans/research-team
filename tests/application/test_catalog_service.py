@@ -3,12 +3,12 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from research_team.application.curriculum import Curriculum
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application import Curriculum
+from research_team.curriculum.application.course_catalog import (
     CachedBlurb,
     CatalogService,
 )
-from research_team.domain.curriculum.learning_area import (
+from research_team.curriculum.domain.learning_area import (
     AreaMember,
     AreaProjection,
     LearningArea,

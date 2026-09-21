@@ -17,7 +17,8 @@ from uuid import UUID, uuid4
 
 from langchain_core.tools import BaseTool, tool
 
-from research_team.application.research.topics import (
+from research_team.platform.shared.retry import with_retry
+from research_team.research.application.topics import (
     LINK_SOURCE_TOOL,
     LIST_TOPICS_TOOL,
     MAX_OPEN_TOPICS,
@@ -29,18 +30,17 @@ from research_team.application.research.topics import (
     TopicSummary,
     format_topics,
 )
-from research_team.application.session.tool_artifacts import (
-    Acknowledgement,
-    Inventory,
-    InventoryItem,
-)
-from research_team.application.shared.retry import with_retry
-from research_team.domain.research.topic import (
+from research_team.research.domain.topic import (
     LinkSource,
     OpenTopic,
     RecordFinding,
     RecordGap,
     Topic,
+)
+from research_team.session.application.tool_artifacts import (
+    Acknowledgement,
+    Inventory,
+    InventoryItem,
 )
 
 

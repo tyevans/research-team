@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.domain import ConversationCompacted
+from research_team.session.domain import ConversationCompacted
 from tests.conftest import ToolAwareFakeChatModel, start_session
 
 

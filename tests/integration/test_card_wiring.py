@@ -17,8 +17,8 @@ from uuid import uuid4
 import pytest
 from redstring import rank_chunks, tokenize
 
-from research_team.application.knowledge import SourceRef
 from research_team.composition import build_application
+from research_team.knowledge.application import SourceRef
 from tests.conftest import fake_provider
 
 

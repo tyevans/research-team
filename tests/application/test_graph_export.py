@@ -10,18 +10,18 @@ of it is opening it in a browser (see the task report).
 import json
 from xml.etree import ElementTree as ET
 
-from research_team.application.knowledge.graph_export import (
+from research_team.interfaces.web.graph_html import render_html
+from research_team.knowledge.application.graph_export import (
     build_export,
     to_graphml,
     to_json,
     to_payload,
 )
-from research_team.application.knowledge.graph_layout import _EXTENT, compute_layout
-from research_team.application.knowledge.graph_read import (
+from research_team.knowledge.application.graph_layout import _EXTENT, compute_layout
+from research_team.knowledge.application.graph_read import (
     GraphEntity,
     GraphRelationship,
 )
-from research_team.interfaces.web.graph_html import render_html
 
 
 def _entities(count: int) -> list[GraphEntity]:

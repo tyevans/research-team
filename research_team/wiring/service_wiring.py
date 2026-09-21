@@ -19,66 +19,21 @@ from eventsource.observability import Tracer
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from research_team.application import (
-    AutonomyPolicy,
-    DispatchesInFlight,
-    ExtractionChannel,
-    ProjectGraphs,
-    ResearchRunDriver,
-    ResearchSupervisor,
-    SessionService,
-    SummaryProjects,
-    TopicRoundRunner,
-    TurnActivityBuffer,
-    TurnSupervisor,
-    WorkerRoster,
-)
-from research_team.application.curriculum.course_authoring import CourseAuthor
-from research_team.application.dialogue.ask import (
+from research_team.curriculum.application.course_authoring import CourseAuthor
+from research_team.curriculum.domain.learner import LearnerProgress
+from research_team.dialogue.application.ask import (
     AskExecutor,
     AskService,
     ConversationRegistry,
 )
-from research_team.application.dialogue.socratic import (
+from research_team.dialogue.application.socratic import (
     DialogueReadModel,
     DialogueRegistry,
     SocraticDialogueService,
     SocraticExecutor,
 )
-from research_team.application.knowledge import ExtractionNote, KnowledgePort
-from research_team.application.knowledge.entity_definitions import DefinitionService
-from research_team.application.knowledge.knowledge_attachment import (
-    KnowledgeAttachment,
-)
-from research_team.application.knowledge.ontology_discovery import (
-    DISCOVERY_CHUNK_OVERLAP_CHARS,
-    MAX_DISCOVERY_CHUNK_CHARS,
-    OntologyDiscoveryService,
-)
-from research_team.application.research.corpus_editing import CorpusEditor
-from research_team.application.research.corpus_read import CorpusReadPort
-from research_team.application.research.document_extraction import DocumentExtractor
-from research_team.application.research.media_acquisition import (
-    MediaAcceptReconciler,
-    MediaAcceptWorker,
-)
-from research_team.application.research.perception import MediaPerceiver, PerceptionPort
-from research_team.application.research.topic_dispatch import TopicDispatcher
-from research_team.application.research.topic_read import TopicReadPort
-from research_team.application.research.topic_seeding import TopicSeeder
-from research_team.application.research.topics import TOPICS_PROMPT
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.application.shared.blobs import BlobStorePort
-from research_team.application.shared.context import ContextStrategy
-from research_team.application.shared.ports import TurnExecutor
-from research_team.application.tenancy.grants import GrantRegistry
-from research_team.domain.curriculum.learner import LearnerProgress
-from research_team.domain.dialogue.ask import AskConversation
-from research_team.domain.dialogue.socratic import SocraticDialogue
-from research_team.domain.research.corpus import Corpus
-from research_team.domain.research.media_proposals import MediaProposals
-from research_team.domain.research.run import Budget, ResearchRun
-from research_team.domain.research.topic import Topic
+from research_team.dialogue.domain.ask import AskConversation
+from research_team.dialogue.domain.socratic import SocraticDialogue
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
@@ -119,6 +74,49 @@ from research_team.infrastructure.persistence.read_models import (
     OntologyRunner,
 )
 from research_team.infrastructure.persistence.topic_reader import ProjectTopicReader
+from research_team.knowledge.application import ExtractionNote, KnowledgePort
+from research_team.knowledge.application.entity_definitions import DefinitionService
+from research_team.knowledge.application.knowledge_attachment import (
+    KnowledgeAttachment,
+)
+from research_team.knowledge.application.ontology_discovery import (
+    DISCOVERY_CHUNK_OVERLAP_CHARS,
+    MAX_DISCOVERY_CHUNK_CHARS,
+    OntologyDiscoveryService,
+)
+from research_team.knowledge.application.project_graphs import ProjectGraphs
+from research_team.platform.shared.blobs import BlobStorePort
+from research_team.platform.shared.context import ContextStrategy
+from research_team.platform.shared.ports import TurnActivityBuffer, TurnExecutor
+from research_team.research.application.corpus_editing import CorpusEditor
+from research_team.research.application.corpus_read import CorpusReadPort
+from research_team.research.application.document_extraction import DocumentExtractor
+from research_team.research.application.media_acquisition import (
+    MediaAcceptReconciler,
+    MediaAcceptWorker,
+)
+from research_team.research.application.perception import MediaPerceiver, PerceptionPort
+from research_team.research.application.research_round import TopicRoundRunner
+from research_team.research.application.research_run import ResearchRunDriver
+from research_team.research.application.research_supervisor import ResearchSupervisor
+from research_team.research.application.topic_dispatch import TopicDispatcher
+from research_team.research.application.topic_read import TopicReadPort
+from research_team.research.application.topic_seeding import TopicSeeder
+from research_team.research.application.topics import TOPICS_PROMPT
+from research_team.research.domain.corpus import Corpus
+from research_team.research.domain.media_proposals import MediaProposals
+from research_team.research.domain.run import Budget, ResearchRun
+from research_team.research.domain.topic import Topic
+from research_team.session.application.autonomy import FETCH_TOOL, AutonomyPolicy
+from research_team.session.application.session_service import SessionService
+from research_team.session.application.turn_supervisor import TurnSupervisor
+from research_team.session.application.workers import (
+    DispatchesInFlight,
+    ExtractionChannel,
+    SummaryProjects,
+    WorkerRoster,
+)
+from research_team.tenancy.application.grants import GrantRegistry
 
 __all__ = [
     "ContentPipeline",

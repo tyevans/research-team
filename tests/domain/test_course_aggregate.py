@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain.curriculum.course import (
+from research_team.curriculum.domain.course import (
     AbandonCourse,
     CourseAbandoned,
     CourseFit,
@@ -16,7 +16,7 @@ from research_team.domain.curriculum.course import (
     evolve,
     fit_of,
 )
-from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
+from research_team.curriculum.domain.learning_area import AreaMember, LearningArea
 
 
 def _area(slug: str, ids: list[str]) -> LearningArea:

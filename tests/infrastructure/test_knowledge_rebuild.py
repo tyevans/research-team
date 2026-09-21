@@ -14,9 +14,9 @@ from redstring import (
     tokenize,
 )
 
-from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge import rebuild
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
+from research_team.knowledge.application import KnowledgeError, SourceRef
 
 # `build_adapter` is a pytest fixture defined in test_redstring_adapter; importing
 # it into this module's namespace is how pytest shares fixtures across files.

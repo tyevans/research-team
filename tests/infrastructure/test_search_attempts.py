@@ -112,7 +112,7 @@ def test_the_bound_does_not_touch_the_autonomy_policy() -> None:
     recently `fetch_media`) gained a floor of its own -- a change this test
     has no opinion about and should not need editing for.
     """
-    from research_team.application.session.autonomy import SEARCH_TOOL, TOOL_FLOORS
+    from research_team.session.application.autonomy import SEARCH_TOOL, TOOL_FLOORS
 
     assert SEARCH_TOOL not in TOOL_FLOORS
 

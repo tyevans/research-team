@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
 from research_team.composition import build_application
-from research_team.domain.dialogue.socratic import (
+from research_team.dialogue.domain.socratic import (
     SocraticDialogue,
     SocraticDialogueConcluded,
     SocraticProgressObserved,
@@ -185,7 +185,7 @@ async def test_a_reply_to_a_concluded_dialogue_is_refused_before_the_model_is_ca
     That is the assertion doing work: it distinguishes "refused" from "answered
     a third time".
     """
-    from research_team.application.dialogue.socratic import UnknownDialogue
+    from research_team.dialogue.application.socratic import UnknownDialogue
 
     application = await _application(tmp_path, [FRAMING, CONCLUDING])
     try:

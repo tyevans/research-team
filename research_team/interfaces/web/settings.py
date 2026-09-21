@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from research_team.application.settings import (
+from research_team.settings.application import (
     ModelProfileService,
     ModelProfileStorePort,
     ProviderProbePort,
@@ -39,7 +39,7 @@ from research_team.application.settings import (
     SettingsStorePort,
     StoredProfile,
 )
-from research_team.domain.settings import (
+from research_team.settings.domain import (
     CONNECTIONS,
     PROVIDER_KEY_GROUP,
     RESOLUTION_ORDER,
@@ -53,7 +53,7 @@ from research_team.domain.settings import (
     SettingSpec,
     dynamic_specs,
 )
-from research_team.domain.settings.providers import (
+from research_team.settings.domain.providers import (
     PROVIDERS,
     Provider,
     UnknownProvider,

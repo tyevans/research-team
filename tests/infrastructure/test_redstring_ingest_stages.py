@@ -4,8 +4,8 @@ import pytest
 from eventsource import StreamId, collect
 from redstring import SlidingWindowChunker
 
-from research_team.application.knowledge import KnowledgeError, SourceRef
 from research_team.infrastructure.knowledge import redstring_adapter
+from research_team.knowledge.application import KnowledgeError, SourceRef
 
 
 def _corpus_events(store, project_id):

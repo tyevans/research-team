@@ -15,7 +15,7 @@ from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 from pydantic import Field, field_validator
 
-from research_team.domain.curriculum.authoring_run import (
+from research_team.curriculum.domain.authoring_run import (
     COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
     CourseAuthored,
     CourseAuthoringFailed,

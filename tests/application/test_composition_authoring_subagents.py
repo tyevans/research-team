@@ -31,11 +31,15 @@ from uuid import uuid4
 import pytest
 from deepagents import create_deep_agent
 
-from research_team.application.curriculum.authoring_dispatch import (
+from research_team.composition import _context_parts, _subagents_for
+from research_team.curriculum.application.authoring_dispatch import (
     AUTHORING_SUBAGENT_NAMES,
 )
-from research_team.composition import _context_parts, _subagents_for
-from research_team.domain import Session, SessionPurpose, StartSession
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
+    StartSession,
+)
 
 
 def _session(purpose: SessionPurpose) -> Session:

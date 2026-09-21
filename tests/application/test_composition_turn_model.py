@@ -22,9 +22,13 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain import Session, SessionPurpose, StartSession
-from research_team.domain.settings import Scope, ScopeRef
 from research_team.infrastructure import config
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
+    StartSession,
+)
+from research_team.settings.domain import Scope, ScopeRef
 
 
 def _session(project_id) -> Session:

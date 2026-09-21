@@ -14,9 +14,9 @@ from redstring import (
     TemporalExtent,
 )
 
-from research_team.application.knowledge.graph_read import MAX_GRAPH_NODES
 from research_team.composition import build_application as _build_application
 from research_team.interfaces.web import create_app
+from research_team.knowledge.application.graph_read import MAX_GRAPH_NODES
 
 
 async def _started(**kwargs):

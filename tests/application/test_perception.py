@@ -28,14 +28,16 @@ from eventsource import DomainEvent, ExpectedVersion, StreamId
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.knowledge import MAX_DOCUMENT_CHARS
-from research_team.application.research.corpus_read import (
+from research_team.knowledge.application import MAX_DOCUMENT_CHARS
+from research_team.platform.shared.blobs import BlobStat
+from research_team.platform.shared.locators import resolve
+from research_team.research.application.corpus_read import (
     MediaHandle,
     SourceListing,
     StoredDocument,
 )
-from research_team.application.research.document_extraction import UnknownDocument
-from research_team.application.research.perception import (
+from research_team.research.application.document_extraction import UnknownDocument
+from research_team.research.application.perception import (
     LocatorSpan,
     MediaBytesMissing,
     MediaPerceiver,
@@ -46,9 +48,7 @@ from research_team.application.research.perception import (
     PerceptionUnavailable,
     SourceDropped,
 )
-from research_team.application.shared.blobs import BlobStat
-from research_team.application.shared.locators import resolve
-from research_team.domain.research.corpus import (
+from research_team.research.domain.corpus import (
     Corpus,
     CorpusDocumentDropped,
     CorpusDocumentStored,

@@ -19,11 +19,12 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.domain import CreateProject, SessionPurpose
-from research_team.domain.research.run import Budget
-from research_team.domain.research.topic import OpenTopic, Topic
 from research_team.infrastructure.persistence import build_topic_repository
+from research_team.research.domain.run import Budget
+from research_team.research.domain.topic import OpenTopic, Topic
+from research_team.session.application.autonomy import FETCH_TOOL
+from research_team.session.domain import SessionPurpose
+from research_team.tenancy.domain import CreateProject
 from tests.conftest import ToolAwareFakeChatModel
 
 

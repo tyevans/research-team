@@ -9,18 +9,18 @@ import itertools
 
 import httpx
 
-from research_team.application.research.corpus_read import (
-    SourceListing,
-    StoredDocument,
-    TextSourceUri,
-)
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.domain import TextRecord
 from research_team.infrastructure.agent.fetch import (
     FETCH_CORPUS_PROMPT,
     build_fetch_tool,
 )
 from research_team.infrastructure.agent.recall import PageMemo, Recall
+from research_team.research.application.corpus_read import (
+    SourceListing,
+    StoredDocument,
+    TextSourceUri,
+)
+from research_team.research.domain import TextRecord
+from research_team.session.application.autonomy import FETCH_TOOL
 
 
 def _client(handler) -> httpx.AsyncClient:

@@ -9,13 +9,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from research_team.application.knowledge.graph_export import (
+from research_team.interfaces.web.graph_html import color_for_type
+from research_team.knowledge.application.graph_export import (
     ExportGraph,
     ExportNode,
     build_export,
 )
-from research_team.application.knowledge.timeline_read import TimelineBand
-from research_team.interfaces.web.graph_html import color_for_type
+from research_team.knowledge.application.timeline_read import TimelineBand
 
 #: How many nodes a lesson figure draws. A `graph` component is one entity's
 #: neighbourhood, not an explorer; a dense neighbourhood without a cap is an

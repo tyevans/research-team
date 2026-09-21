@@ -14,9 +14,9 @@ is `test_with_no_registry_behaviour_is_unchanged` below.
 
 from uuid import uuid4
 
-from research_team.application import AutonomyPolicy
-from research_team.application.tenancy.grants import FetchGrant, GrantRegistry
 from research_team.infrastructure.agent.approval import interrupt_config
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.tenancy.application.grants import FetchGrant, GrantRegistry
 
 
 class FakeRequest:

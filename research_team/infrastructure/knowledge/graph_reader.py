@@ -14,7 +14,11 @@ from eventsource.domain.tenant_context import tenant_scope
 from redstring import TemporalRelation, infer_relations
 from redstring.extraction.date_nodes import is_date_node
 
-from research_team.application.knowledge.graph_read import (
+from research_team.infrastructure.knowledge.temporal_rendering import (
+    entity_extent_label,
+    render_extent,
+)
+from research_team.knowledge.application.graph_read import (
     MAX_GRAPH_NODES,
     MAX_INFERRED_EDGES,
     MAX_NEIGHBORHOOD_DEPTH,
@@ -24,10 +28,6 @@ from research_team.application.knowledge.graph_read import (
     GraphEntity,
     GraphRelationship,
     Neighborhood,
-)
-from research_team.infrastructure.knowledge.temporal_rendering import (
-    entity_extent_label,
-    render_extent,
 )
 
 #: The only relations `infer_relations` produces that are worth a line on the

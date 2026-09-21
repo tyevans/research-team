@@ -12,8 +12,12 @@ from typing import Any
 from deepagents.backends.protocol import EditResult
 from deepagents.backends.state import StateBackend
 
-from research_team.domain import DeleteFile, EditFile, WriteFile
-from research_team.domain.session import Session
+from research_team.session.domain import (
+    DeleteFile,
+    EditFile,
+    Session,
+    WriteFile,
+)
 
 
 class EventSourcedBackend(StateBackend):

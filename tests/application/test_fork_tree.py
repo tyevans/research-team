@@ -3,8 +3,11 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from research_team.application import SessionSummary, build_fork_tree
-from research_team.domain import SessionPurpose
+from research_team.session.application.summaries import (
+    SessionSummary,
+    build_fork_tree,
+)
+from research_team.session.domain import SessionPurpose
 
 START = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
 

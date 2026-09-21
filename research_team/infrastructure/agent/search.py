@@ -17,15 +17,15 @@ from typing import Any, Literal
 import httpx
 from langchain_core.tools import BaseTool, tool
 
-from research_team.application import SEARCH_TOOL
-from research_team.application.research.media_curation import SearchResult
-from research_team.application.session.tool_artifacts import (
+from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
+from research_team.research.application.media_curation import SearchResult
+from research_team.session.application.autonomy import SEARCH_TOOL
+from research_team.session.application.tool_artifacts import (
     Acknowledgement,
     Hit,
     HitList,
     SourceHits,
 )
-from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
 
 TIMEOUT = httpx.Timeout(10.0)
 

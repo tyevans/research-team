@@ -26,7 +26,6 @@ from uuid import UUID
 
 import pytest
 
-from research_team.application.components import REGISTRY, parse_document
 from research_team.interfaces.web.course_html import (
     _RENDERERS,
     MAX_QUOTE_CHARS,
@@ -39,6 +38,7 @@ from research_team.interfaces.web.course_html import (
     resolution_key,
     title_of,
 )
+from research_team.platform.components import REGISTRY, parse_document
 
 PROJECT = UUID("11111111-2222-3333-4444-555555555555")
 

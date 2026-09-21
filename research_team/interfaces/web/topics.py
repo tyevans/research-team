@@ -15,30 +15,6 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from research_team.application.research.media_curation import (
-    CurationUnavailable,
-    MediaCurationService,
-    MediaCurationTextPort,
-    MediaSearchPort,
-)
-from research_team.application.research.topic_dispatch import (
-    DISPATCH_ACTIONS,
-    TopicDispatcher,
-    topic_directory,
-)
-from research_team.application.research.topic_read import TopicReadPort
-from research_team.application.research.topic_seeding import TopicSeeder
-from research_team.application.research.topics import MAX_OPEN_TOPICS
-from research_team.application.session.session_service import SessionService
-from research_team.application.session.workers import WorkerRoster
-from research_team.domain.research.media_proposals import MediaProposals
-from research_team.domain.research.topic import (
-    AddSubQuestion,
-    ResolveSubQuestion,
-    SetTopicStatus,
-    Topic,
-    TopicStatus,
-)
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.presenters import (
     dispatch_view,
@@ -49,6 +25,30 @@ from research_team.interfaces.web.presenters import (
     topic_view,
 )
 from research_team.interfaces.web.seeding import RunAlreadyActive, SeedingActivity
+from research_team.research.application.media_curation import (
+    CurationUnavailable,
+    MediaCurationService,
+    MediaCurationTextPort,
+    MediaSearchPort,
+)
+from research_team.research.application.topic_dispatch import (
+    DISPATCH_ACTIONS,
+    TopicDispatcher,
+    topic_directory,
+)
+from research_team.research.application.topic_read import TopicReadPort
+from research_team.research.application.topic_seeding import TopicSeeder
+from research_team.research.application.topics import MAX_OPEN_TOPICS
+from research_team.research.domain.media_proposals import MediaProposals
+from research_team.research.domain.topic import (
+    AddSubQuestion,
+    ResolveSubQuestion,
+    SetTopicStatus,
+    Topic,
+    TopicStatus,
+)
+from research_team.session.application.session_service import SessionService
+from research_team.session.application.workers import WorkerRoster
 
 TopicReaders = Callable[[UUID], TopicReadPort]
 """One project's `TopicReadPort`, built on demand.

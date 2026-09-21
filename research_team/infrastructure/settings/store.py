@@ -31,9 +31,9 @@ from eventsource import ReadModel
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 
-from research_team.application.settings.effective import SettingsRevision
-from research_team.domain.settings import Override, Scope, ScopeRef
 from research_team.infrastructure.persistence.read_models import apply_schema
+from research_team.settings.application.effective import SettingsRevision
+from research_team.settings.domain import Override, Scope, ScopeRef
 
 SETTINGS_NAMESPACE = UUID("2b6f9c14-7d3a-5e08-b192-4c7a0e5d38f6")
 

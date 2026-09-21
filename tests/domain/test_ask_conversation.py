@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError, DomainEvent
 
-from research_team.domain.dialogue.ask import (
+from research_team.dialogue.domain.ask import (
     AskConversationStarted,
     AskConversationState,
     AskTurnRecorded,

@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.curriculum.catalog import CourseCandidate
+from research_team.curriculum.domain.catalog import CourseCandidate
 from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.persistence.read_models import ArtStore, CandidateArtStore
 
@@ -18,7 +18,7 @@ class _FakeFallback:
 
     async def for_candidate(self, project_id, candidate):
         self.calls += 1
-        from research_team.domain.curriculum.catalog import ArtRef
+        from research_team.curriculum.domain.catalog import ArtRef
 
         return ArtRef(url="data:fallback", alt="fallback")
 

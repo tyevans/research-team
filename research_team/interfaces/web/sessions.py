@@ -18,16 +18,7 @@ from eventsource import CommandRejectedError, OptimisticLockError
 from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from research_team.application import (
-    ApprovalDecision,
-    AutonomyPolicy,
-    SessionService,
-    TurnAlreadyRunning,
-    TurnCancelled,
-    TurnSupervisor,
-)
-from research_team.application.components import View, parse_document, project
-from research_team.application.curriculum.grading import GradingError, grade
+from research_team.curriculum.application.grading import GradingError, grade
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import UnknownApproval, WebApprovals
 from research_team.interfaces.web.dialogues import Attempt
@@ -38,6 +29,15 @@ from research_team.interfaces.web.presenters import (
     item_view,
     progress_view,
     session_view,
+)
+from research_team.platform.components import View, parse_document, project
+from research_team.platform.shared.ports import ApprovalDecision
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.session_service import SessionService
+from research_team.session.application.turn_supervisor import (
+    TurnAlreadyRunning,
+    TurnCancelled,
+    TurnSupervisor,
 )
 
 logger = logging.getLogger(__name__)

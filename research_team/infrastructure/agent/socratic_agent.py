@@ -40,16 +40,13 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
-from research_team.application.components import component_reference
-from research_team.application.dialogue.socratic import (
+from research_team.dialogue.application.socratic import (
     DialogueMessage,
     SocraticFraming,
     SocraticObservation,
     SocraticPrompt,
 )
-from research_team.application.dialogue.socratic_components import SOCRATIC_COMPONENT_TYPES
-from research_team.application.research.corpus_read import REFERENCE_SYNTAX_PROMPT
-from research_team.application.shared.ports import ActivityReporter
+from research_team.dialogue.application.socratic_components import SOCRATIC_COMPONENT_TYPES
 from research_team.infrastructure.agent.ask_agent import (
     READ_ONLY_FILE_TOOLS,
     citations,
@@ -61,6 +58,9 @@ from research_team.infrastructure.agent.deep_agent import (
 )
 from research_team.infrastructure.agent.messages import last_text
 from research_team.infrastructure.agent.read_only_backend import ReadOnlyProjectBackend
+from research_team.platform.components import component_reference
+from research_team.platform.shared.ports import ActivityReporter
+from research_team.research.application.corpus_read import REFERENCE_SYNTAX_PROMPT
 
 SOCRATIC_TOOLS_PROMPT = (
     """You can read one research project's gathered material and change none of it.

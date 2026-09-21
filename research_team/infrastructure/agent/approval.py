@@ -11,9 +11,12 @@ from uuid import UUID
 
 from langchain.agents.middleware.human_in_the_loop import InterruptOnConfig
 
-from research_team.application import GATED_TOOLS, AutonomyPolicy
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.application.tenancy.grants import GrantRegistry
+from research_team.session.application.autonomy import (
+    FETCH_TOOL,
+    GATED_TOOLS,
+    AutonomyPolicy,
+)
+from research_team.tenancy.application.grants import GrantRegistry
 
 ALLOWED_DECISIONS = ["approve", "edit", "reject"]
 """No `respond`: answering on a tool's behalf invents a result, and this log is

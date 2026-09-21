@@ -11,13 +11,13 @@ rather than either producer.
 import json
 from uuid import uuid4
 
-from research_team.application.knowledge.entity_definitions import (
+from research_team.knowledge.application.entity_definitions import (
     Citation,
     ServedCitation,
     serve_citations,
 )
-from research_team.application.research.corpus_read import StoredDocument
-from research_team.domain.research.corpus import TextRecord
+from research_team.research.application.corpus_read import StoredDocument
+from research_team.research.domain.corpus import TextRecord
 
 
 def _map(*segments: tuple[int, int, dict[str, object]]) -> str:

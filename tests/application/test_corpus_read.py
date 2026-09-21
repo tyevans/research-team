@@ -13,16 +13,16 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.research.corpus_read import MediaHandle, SourceListing
-from research_team.domain.research.corpus import (
+from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
+from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
+from research_team.infrastructure.persistence.read_models import CorpusStore
+from research_team.research.application.corpus_read import MediaHandle, SourceListing
+from research_team.research.domain.corpus import (
     Corpus,
     StoreDerivedText,
     StoreSourceDocument,
     StoreSourceMedia,
 )
-from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
-from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
-from research_team.infrastructure.persistence.read_models import CorpusStore
 
 
 async def _bytes(payload: bytes):

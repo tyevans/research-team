@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain import (
+from research_team.session.domain import (
     SendUserMessage,
     Session,
     SessionPurpose,

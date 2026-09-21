@@ -6,13 +6,13 @@ from typing import Any
 
 from redstring import LlmProvider
 
-from research_team.application.knowledge import (
-    ExtractionNote,
-    ExtractionReporter,
-)
 from research_team.infrastructure.knowledge.temporal_expressions import (
     RAW_TEMPORAL_PROPERTY,
     normalize_for_parsing,
+)
+from research_team.knowledge.application import (
+    ExtractionNote,
+    ExtractionReporter,
 )
 
 logger = logging.getLogger(__name__)

@@ -8,13 +8,17 @@ import pytest
 from langchain_core.messages import AIMessage
 from pydantic import PrivateAttr
 
-from research_team.application import (
+from research_team.session.application.turn_supervisor import (
     RunningTurn,
     TurnAlreadyRunning,
     TurnCancelled,
     TurnSupervisor,
 )
-from research_team.domain import TurnCompleted, TurnFailed, UserMessageSent
+from research_team.session.domain import (
+    TurnCompleted,
+    TurnFailed,
+    UserMessageSent,
+)
 from tests.conftest import ToolAwareFakeChatModel, start_session
 
 

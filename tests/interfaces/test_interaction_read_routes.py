@@ -17,7 +17,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from research_team.composition import build_application
-from research_team.domain.dialogue.interaction import INTERACTION_EVENTS
+from research_team.dialogue.domain.interaction import INTERACTION_EVENTS
 from research_team.interfaces.web.app import create_app
 
 

@@ -7,13 +7,13 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.research.research_run import (
+from research_team.research.application.research_run import (
     ResearchRunDriver,
     RoundOutcome,
 )
-from research_team.application.research.topic_attention import Finding, TopicAttention
-from research_team.application.tenancy.grants import GrantRegistry
-from research_team.domain.research.run import ResearchRun
+from research_team.research.application.topic_attention import Finding, TopicAttention
+from research_team.research.domain.run import ResearchRun
+from research_team.tenancy.application.grants import GrantRegistry
 
 
 def attention(topic_id=None, triggers=("topic.never_investigated",), evidence=()):

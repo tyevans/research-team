@@ -15,9 +15,14 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.research.topic_attention import attention_for
-from research_team.domain.research.corpus import DropSourceDocument, StoreSourceDocument
-from research_team.domain.research.topic import (
+from research_team.infrastructure.persistence.event_store import (
+    build_corpus_repository,
+    build_topic_repository,
+)
+from research_team.infrastructure.persistence.topics import TopicRow, TopicRunner, TopicStore
+from research_team.research.application.topic_attention import attention_for
+from research_team.research.domain.corpus import DropSourceDocument, StoreSourceDocument
+from research_team.research.domain.topic import (
     AddSubQuestion,
     LinkSource,
     OpenTopic,
@@ -27,11 +32,6 @@ from research_team.domain.research.topic import (
     SetTopicStatus,
     Topic,
 )
-from research_team.infrastructure.persistence.event_store import (
-    build_corpus_repository,
-    build_topic_repository,
-)
-from research_team.infrastructure.persistence.topics import TopicRow, TopicRunner, TopicStore
 
 
 @pytest.fixture

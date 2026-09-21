@@ -14,23 +14,23 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool
 
-from research_team.application.components import component_reference
-from research_team.application.dialogue.ask import AskAnswer, AskMessage, Citation
-from research_team.application.dialogue.ask_components import ASK_COMPONENT_TYPES
-from research_team.application.knowledge import GRAPH_SEARCH_TOOL
-from research_team.application.research.corpus_read import (
-    LIST_SOURCES_TOOL,
-    READ_SOURCE_TOOL,
-    REFERENCE_SYNTAX_PROMPT,
-)
-from research_team.application.research.topics import LIST_TOPICS_TOOL
-from research_team.application.shared.ports import ActivityReporter
+from research_team.dialogue.application.ask import AskAnswer, AskMessage, Citation
+from research_team.dialogue.application.ask_components import ASK_COMPONENT_TYPES
 from research_team.infrastructure.agent.deep_agent import (
     to_activity_delta,
     to_activity_message,
 )
 from research_team.infrastructure.agent.messages import last_text
 from research_team.infrastructure.agent.read_only_backend import ReadOnlyProjectBackend
+from research_team.knowledge.application import GRAPH_SEARCH_TOOL
+from research_team.platform.components import component_reference
+from research_team.platform.shared.ports import ActivityReporter
+from research_team.research.application.corpus_read import (
+    LIST_SOURCES_TOOL,
+    READ_SOURCE_TOOL,
+    REFERENCE_SYNTAX_PROMPT,
+)
+from research_team.research.application.topics import LIST_TOPICS_TOOL
 
 READ_ONLY_TOOLS = frozenset(
     {

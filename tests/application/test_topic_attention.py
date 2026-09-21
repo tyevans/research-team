@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.research.topic_attention import (
+from research_team.research.application.topic_attention import (
     BY_NAME,
     REGISTRY,
     CorpusFacts,
@@ -27,7 +27,7 @@ from research_team.application.research.topic_attention import (
     Trigger,
     attention_for,
 )
-from research_team.domain.research.topic import (
+from research_team.research.domain.topic import (
     AcknowledgeTrigger,
     AddSubQuestion,
     LinkSource,
@@ -510,7 +510,7 @@ def test_an_unimplemented_trigger_blocks_rather_than_reading_as_nearly_clean():
 
 def test_findings_are_the_check_librarys_own_type():
     """One `Finding`, not two that agree until they quietly stop."""
-    from research_team.application.research.findings import Finding as CheckFinding
+    from research_team.research.application.findings import Finding as CheckFinding
 
     attention = attention_for(opened(), facts())
 

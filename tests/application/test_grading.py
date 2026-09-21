@@ -22,8 +22,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from research_team.application.components import parse_document
-from research_team.application.curriculum.grading import GradingError, grade
+from research_team.curriculum.application.grading import GradingError, grade
+from research_team.platform.components import parse_document
 
 MCQ = """\
 ```component:mcq

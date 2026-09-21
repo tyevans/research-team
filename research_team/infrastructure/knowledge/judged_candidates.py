@@ -25,7 +25,7 @@ from uuid import UUID
 
 from redstring import ScoredCandidate, SimilarityFeatures
 
-from research_team.domain.knowledge.judgements import EntityKey, JudgementsState
+from research_team.knowledge.domain.judgements import EntityKey, JudgementsState
 
 #: The score an injected candidate carries.
 #:

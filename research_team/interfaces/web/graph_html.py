@@ -32,7 +32,7 @@ file it was copied from.
 
 import json
 
-from research_team.application.knowledge.graph_export import ExportGraph, to_payload
+from research_team.knowledge.application.graph_export import ExportGraph, to_payload
 
 #: The console's `--k-*` kind tokens, copied. See this module's docstring for
 #: why a copy rather than a read of `tokens.css`.

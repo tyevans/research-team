@@ -20,8 +20,8 @@ import pytest
 from eventsource import collect
 from redstring import FakeLlmProvider, document_stream
 
-from research_team.application.knowledge import SourceRef
 from research_team.infrastructure.knowledge.redstring_adapter import RAW_TEMPORAL_PROPERTY
+from research_team.knowledge.application import SourceRef
 
 
 async def extracted_entities(store, project_id, source_id):

@@ -42,14 +42,18 @@ from eventsource.ports.readmodels.query import Filter
 from pydantic import Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from research_team.application.research.topic_attention import (
+from research_team.infrastructure.persistence.read_models import (
+    LOCAL_RETRY_POLICY,
+    apply_schema,
+)
+from research_team.research.application.topic_attention import (
     CorpusFacts,
     TopicAttention,
     attention_for,
     corpus_position,
 )
-from research_team.domain.research.corpus import CorpusDocumentDropped, CorpusDocumentStored
-from research_team.domain.research.topic import (
+from research_team.research.domain.corpus import CorpusDocumentDropped, CorpusDocumentStored
+from research_team.research.domain.topic import (
     Acknowledgement,
     Contest,
     SubQuestion,
@@ -67,10 +71,6 @@ from research_team.domain.research.topic import (
     TopicSubQuestionAdded,
     TopicSubQuestionResolved,
     TopicTriggerAcknowledged,
-)
-from research_team.infrastructure.persistence.read_models import (
-    LOCAL_RETRY_POLICY,
-    apply_schema,
 )
 
 TOPIC_NAMESPACE = UUID("2b7c1f4a-9d3e-5a71-8c62-4e0b9f1d7a35")

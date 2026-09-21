@@ -27,12 +27,12 @@ heuristic to explain.
 
 from redstring.extraction.chunkers import SlidingWindowChunker
 
-from research_team.application.knowledge.ontology_discovery import DocumentChunk
 from research_team.infrastructure.knowledge.markdown_table_chunker import (
     SYNTHETIC_PREFIX_CHARS,
     TABLE_HEADER,
     MarkdownTableChunker,
 )
+from research_team.knowledge.application.ontology_discovery import DocumentChunk
 
 __all__ = ["MarkdownAwareDocumentChunker"]
 

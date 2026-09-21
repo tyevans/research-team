@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from research_team.domain.dialogue.interaction import INTERACTION_EVENTS, InteractionEvent
+from research_team.dialogue.domain.interaction import INTERACTION_EVENTS, InteractionEvent
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder
 from research_team.infrastructure.persistence.interaction_log import (
     ENVELOPE_FIELDS,

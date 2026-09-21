@@ -9,18 +9,18 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from redstring import Entity, ExtractionMethod, Provenance
 
-from research_team.application.knowledge.entity_definitions import (
+from research_team.composition import build_application as _build_application
+from research_team.interfaces.web import create_app
+from research_team.knowledge.application.entity_definitions import (
     Definition,
     DefinitionService,
 )
-from research_team.application.knowledge.graph_read import (
+from research_team.knowledge.application.graph_read import (
     GraphEntity,
     GraphRelationship,
     Neighborhood,
 )
-from research_team.application.knowledge.usages import Usage
-from research_team.composition import build_application as _build_application
-from research_team.interfaces.web import create_app
+from research_team.knowledge.application.usages import Usage
 
 
 async def _started(**kwargs):

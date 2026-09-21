@@ -24,10 +24,6 @@ import trafilatura
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from trafilatura.metadata import extract_metadata
 
-from research_team.application.research.corpus_read import CorpusReadError, CorpusReadPort
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.application.session.tool_artifacts import Acknowledgement, Excerpt
-from research_team.application.tenancy.grants import FetchGrant
 from research_team.infrastructure.agent.corpus_tools import (
     bounded,
     excerpt_artifact,
@@ -40,6 +36,10 @@ from research_team.infrastructure.agent.recall import (
     normalize_url,
     url_key,
 )
+from research_team.research.application.corpus_read import CorpusReadError, CorpusReadPort
+from research_team.session.application.autonomy import FETCH_TOOL
+from research_team.session.application.tool_artifacts import Acknowledgement, Excerpt
+from research_team.tenancy.application.grants import FetchGrant
 
 TIMEOUT = httpx.Timeout(15.0)
 

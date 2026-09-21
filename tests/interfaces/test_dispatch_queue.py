@@ -16,8 +16,8 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.research.topic_dispatch import DispatchRun
 from research_team.interfaces.web.dispatch import DISPATCH, DispatchQueue
+from research_team.research.application.topic_dispatch import DispatchRun
 
 
 @pytest.fixture

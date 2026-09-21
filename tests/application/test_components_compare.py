@@ -1,6 +1,6 @@
 """Tests for the Compare resolved component type."""
 
-from research_team.application.components import (
+from research_team.platform.components import (
     parse_document,
     project,
 )

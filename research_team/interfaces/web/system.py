@@ -9,9 +9,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from research_team.application import SessionService, build_fork_tree
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.interfaces.web.presenters import tree_view
+from research_team.session.application.session_service import SessionService
+from research_team.session.application.summaries import build_fork_tree
 
 
 @dataclass(frozen=True)

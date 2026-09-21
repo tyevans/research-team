@@ -13,8 +13,8 @@ from collections.abc import Sequence
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
-from research_team.application.curriculum.course_catalog import DraftOutline
-from research_team.domain.curriculum.learning_area import AreaMember
+from research_team.curriculum.application.course_catalog import DraftOutline
+from research_team.curriculum.domain.learning_area import AreaMember
 from research_team.infrastructure.knowledge.anchors import anchor_lines
 
 #: The floor, below which this is not a different artifact from the blurb.

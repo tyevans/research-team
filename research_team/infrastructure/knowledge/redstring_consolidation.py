@@ -19,14 +19,14 @@ from redstring import (
 )
 from redstring.events.streams import document_stream
 
-from research_team.application.knowledge import KnowledgeError, MergeRecord
-from research_team.domain import EntityJudgements
 from research_team.infrastructure.config import DEFAULT_CONSOLIDATION_BATCH
 from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 from research_team.infrastructure.knowledge.redstring_providers import (
     _batches,
     _no_announcement,
 )
+from research_team.knowledge.application import KnowledgeError, MergeRecord
+from research_team.knowledge.domain import EntityJudgements
 
 logger = logging.getLogger(__name__)
 

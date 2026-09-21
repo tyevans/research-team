@@ -10,7 +10,7 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool, tool
 
-from research_team.application.dialogue.ask import AskMessage, Citation
+from research_team.dialogue.application.ask import AskMessage, Citation
 from research_team.infrastructure.agent.ask_agent import (
     CITED_BY_TOOL,
     READ_ONLY_TOOLS,
@@ -283,7 +283,7 @@ async def test_the_reference_syntax_reaches_the_model():
     than inert."""
     from langchain_core.messages import SystemMessage
 
-    from research_team.application.research.corpus_read import REFERENCE_SYNTAX_PROMPT
+    from research_team.research.application.corpus_read import REFERENCE_SYNTAX_PROMPT
 
     await _answer()
 
@@ -330,9 +330,9 @@ def test_the_hand_written_paragraph_names_exactly_the_resolved_types_on_offer():
     can replace reading it. What this refuses is a name that is missing or a
     name that should not be there.
     """
-    from research_team.application.components import REGISTRY
-    from research_team.application.dialogue.ask_components import ASK_COMPONENT_TYPES
+    from research_team.dialogue.application.ask_components import ASK_COMPONENT_TYPES
     from research_team.infrastructure.agent.ask_agent import ASK_COMPONENT_PROMPT
+    from research_team.platform.components import REGISTRY
 
     # Split at the first fenced example: everything before it is hand-written,
     # everything after is `component_reference` output. Naming a type only in

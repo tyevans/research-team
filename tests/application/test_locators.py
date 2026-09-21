@@ -8,7 +8,7 @@ stored field can carry a payload written by a build that is not this one.
 
 import json
 
-from research_team.application.shared.locators import resolve
+from research_team.platform.shared.locators import resolve
 
 
 def _map(*segments: tuple[int, int, dict[str, object]]) -> str:

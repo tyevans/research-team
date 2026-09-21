@@ -14,7 +14,7 @@ from eventsource import ExpectedVersion, InMemoryEventBus, StreamId
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.domain.dialogue.interaction import (
+from research_team.dialogue.domain.interaction import (
     BROWSER_SESSION_AGGREGATE_TYPE,
     INTERACTION_EVENTS,
     AskSubmitted,

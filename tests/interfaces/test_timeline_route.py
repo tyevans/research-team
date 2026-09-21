@@ -22,11 +22,14 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from redstring import DatePrecision, Entity, ExtractionMethod, Provenance, TemporalExtent
 
-from research_team.application import SummaryProjects, WorkerRoster
-from research_team.application.knowledge.timeline_read import MAX_TIMELINE_BANDS
 from research_team.composition import build_application
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.knowledge.application.timeline_read import MAX_TIMELINE_BANDS
+from research_team.session.application.workers import (
+    SummaryProjects,
+    WorkerRoster,
+)
 
 pytestmark = pytest.mark.asyncio
 

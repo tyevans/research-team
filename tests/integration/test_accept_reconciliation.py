@@ -36,18 +36,18 @@ import httpx
 import pytest
 
 from research_team import composition
-from research_team.application.research.perception import (
+from research_team.composition import build_application
+from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
+from research_team.research.application.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,
 )
-from research_team.composition import build_application
-from research_team.domain.research.media_proposals import (
+from research_team.research.domain.media_proposals import (
     AcceptMediaProposal,
     ProposeMedia,
     StoreMediaProposal,
 )
-from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 
 pytestmark = pytest.mark.asyncio
 

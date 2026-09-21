@@ -6,7 +6,7 @@ from uuid import UUID
 from eventsource import InMemoryEventBus
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.application.curriculum.course_realization import RealizedCourse
+from research_team.curriculum.application.course_realization import RealizedCourse
 from research_team.infrastructure.persistence.read_models import (
     AuthoringRunRunner,
     BaseProjectionRunner,

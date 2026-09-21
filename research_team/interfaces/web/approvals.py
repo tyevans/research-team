@@ -19,8 +19,12 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
-from research_team.application import ApprovalDecision, ApprovalRefused, ApprovalRequest
-from research_team.application.tenancy.grants import GrantRegistry
+from research_team.platform.shared.ports import (
+    ApprovalDecision,
+    ApprovalRefused,
+    ApprovalRequest,
+)
+from research_team.tenancy.application.grants import GrantRegistry
 
 REQUESTED = "ApprovalRequested"
 SETTLED = "ApprovalSettled"

@@ -23,12 +23,12 @@ import pytest
 from eventsource import StreamId
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.domain.tenancy.user import (
+from research_team.infrastructure.identity.oidc import Claims
+from research_team.tenancy.domain.user import (
     USER_AGGREGATE_TYPE,
     UserProfileChanged,
     stream_id_for,
 )
-from research_team.infrastructure.identity.oidc import Claims
 
 
 @pytest.fixture

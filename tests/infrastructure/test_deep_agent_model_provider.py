@@ -19,8 +19,12 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain import Session, SessionPurpose, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
+    StartSession,
+)
 
 STATIC = object()
 PER_TURN = object()

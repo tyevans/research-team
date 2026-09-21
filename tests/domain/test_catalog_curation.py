@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from research_team.domain.curriculum.curation import (
+from research_team.curriculum.domain.curation import (
     CATALOG_AGGREGATE_TYPE,
     CourseFeatured,
     CourseUnfeatured,

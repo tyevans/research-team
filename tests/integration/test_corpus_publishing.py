@@ -13,8 +13,8 @@ Both tests fail with the publisher argument removed again.
 
 from uuid import uuid4
 
-from research_team.domain.research.corpus import StoreSourceDocument
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
+from research_team.research.domain.corpus import StoreSourceDocument
 
 
 async def test_a_stored_document_appears_in_the_corpus_read_model(build_application):

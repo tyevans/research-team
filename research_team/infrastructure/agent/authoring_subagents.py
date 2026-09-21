@@ -42,10 +42,10 @@ plan is a control, not a proof -- the reason `prose-critic` and `unit-reviewer`
 exist is that it is expected to leak.
 """
 
-from research_team.application.curriculum.authoring_checkpoints import (
+from research_team.curriculum.application.authoring_checkpoints import (
     BUILDS_TOWARD_FIELD,
 )
-from research_team.application.curriculum.authoring_dispatch import (
+from research_team.curriculum.application.authoring_dispatch import (
     ANECDOTE_HUNTER_NAME,
     AUTHORING_DISPATCH_PROMPT,
     LESSON_DRAFTER_NAME,
@@ -54,8 +54,8 @@ from research_team.application.curriculum.authoring_dispatch import (
     UNIT_CRITIC_NAME,
     UNIT_REVIEWER_NAME,
 )
-from research_team.application.curriculum.course_authoring import COMPONENT_GUIDE
-from research_team.application.curriculum.prose_rubric import (
+from research_team.curriculum.application.course_authoring import COMPONENT_GUIDE
+from research_team.curriculum.application.prose_rubric import (
     critic_reporting_contract,
     prose_rules,
 )

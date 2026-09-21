@@ -10,12 +10,12 @@ from uuid import uuid4
 import pytest
 from redstring import InMemoryChunkStore, SlidingWindowChunker, rank_chunks, tokenize
 
-from research_team.application.knowledge import SourceRef
 from research_team.infrastructure.knowledge.entity_cards import (
     Neighbour,
     card_text,
     index_cards,
 )
+from research_team.knowledge.application import SourceRef
 from tests.conftest import fake_provider
 
 

@@ -19,19 +19,19 @@ the only place the three names appear together.
 
 from uuid import UUID
 
-from research_team.application.research.corpus_read import (
-    CorpusReadError,
-    MediaHandle,
-    SourceListing,
-    StoredDocument,
-    TextSourceUri,
-)
-from research_team.application.shared.blobs import BlobStorePort
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
     CorpusMediaRow,
     CorpusRunner,
     to_record,
+)
+from research_team.platform.shared.blobs import BlobStorePort
+from research_team.research.application.corpus_read import (
+    CorpusReadError,
+    MediaHandle,
+    SourceListing,
+    StoredDocument,
+    TextSourceUri,
 )
 
 

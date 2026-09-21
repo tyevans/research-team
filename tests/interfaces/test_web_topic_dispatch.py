@@ -9,12 +9,15 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
-from research_team.application import SummaryProjects, WorkerRoster
 from research_team.composition import build_application as _build_application
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.seeding import SeedingActivity
+from research_team.session.application.workers import (
+    SummaryProjects,
+    WorkerRoster,
+)
 
 
 async def _started(**kwargs):
@@ -557,9 +560,9 @@ async def test_dispatch_frames_ride_the_stream_without_an_id(repository):
     not resume from one. A `Dispatch` frame carrying an id would have
     `Last-Event-ID` asking the server to resume from a position the log does
     not have."""
-    from research_team.application import LiveFeed
-    from research_team.application.research.topic_dispatch import DispatchRun
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
+    from research_team.research.application.topic_dispatch import DispatchRun
 
     feed = LiveFeed(repository)
     queue = DispatchQueue()

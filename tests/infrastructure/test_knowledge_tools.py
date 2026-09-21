@@ -2,7 +2,9 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.knowledge import (
+from research_team.infrastructure.agent.knowledge_tools import build_knowledge_tools
+from research_team.infrastructure.agent.recall import PageMemo
+from research_team.knowledge.application import (
     IngestReport,
     KnowledgeError,
     Match,
@@ -11,8 +13,6 @@ from research_team.application.knowledge import (
     SearchOutcome,
     source_id_for_url,
 )
-from research_team.infrastructure.agent.knowledge_tools import build_knowledge_tools
-from research_team.infrastructure.agent.recall import PageMemo
 
 
 class StubKnowledge:
@@ -382,7 +382,7 @@ def test_remember_page_is_absent_without_a_page_memo():
 def test_remember_page_is_gated():
     """A commit is a commit however the bytes arrived. An ungated by-reference
     path would be a way around the gate on the by-value one."""
-    from research_team.application.session.autonomy import GATED_TOOLS, REMEMBER_PAGE_TOOL
+    from research_team.session.application.autonomy import GATED_TOOLS, REMEMBER_PAGE_TOOL
 
     assert REMEMBER_PAGE_TOOL in GATED_TOOLS
 

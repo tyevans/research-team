@@ -10,17 +10,17 @@ from langchain_core.messages import AIMessage
 from redstring import FakeLlmProvider
 
 from research_team import composition
-from research_team.application import SessionService
-from research_team.domain import (
-    CreateProject,
-    Session,
-    SessionPurpose,
-    StartSession,
-)
 from research_team.infrastructure.persistence import (
     EventStoreSessionRepository,
     build_aggregate_repository,
 )
+from research_team.session.application.session_service import SessionService
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
+    StartSession,
+)
+from research_team.tenancy.domain import CreateProject
 
 #: A canned extraction result: two people and the relationship between them.
 #: Shared by every test that needs `build_graph` to produce *something*

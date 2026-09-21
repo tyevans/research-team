@@ -7,7 +7,7 @@ long-lived server cannot accumulate conversations without limit.
 
 from uuid import uuid4
 
-from research_team.application.dialogue.ask import AskMessage, ConversationRegistry
+from research_team.dialogue.application.ask import AskMessage, ConversationRegistry
 
 
 def registry(clock, **kwargs) -> ConversationRegistry:

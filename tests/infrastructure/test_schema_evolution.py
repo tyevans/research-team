@@ -23,7 +23,13 @@ from eventsource import (
 )
 from pydantic import ValidationError
 
-from research_team.domain import (
+from research_team.infrastructure.persistence.event_store import (
+    build_research_run_repository,
+    build_topic_repository,
+)
+from research_team.research.domain.run import ResearchRunStarted
+from research_team.research.domain.topic import OpenTopic, TopicInvestigated
+from research_team.session.domain import (
     ConversationCompacted,
     SendUserMessage,
     Session,
@@ -32,12 +38,6 @@ from research_team.domain import (
     StartSession,
     ToolCallDecided,
     TurnFailed,
-)
-from research_team.domain.research.run import ResearchRunStarted
-from research_team.domain.research.topic import OpenTopic, TopicInvestigated
-from research_team.infrastructure.persistence.event_store import (
-    build_research_run_repository,
-    build_topic_repository,
 )
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 

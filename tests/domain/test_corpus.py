@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 from eventsource import CommandRejectedError, DomainEvent
 
-from research_team.domain.research.corpus import (
+from research_team.research.domain.corpus import (
     UNREADABLE_DEGRADATIONS,
     CorpusDerivedTextStored,
     CorpusDocumentDropped,
@@ -387,7 +387,7 @@ def test_the_new_event_and_command_are_exported_from_the_domain_package() -> Non
     Left unexported, Task 3 either adds them or imports from the submodule
     while importing its neighbours from the package.
     """
-    import research_team.domain as domain
+    import research_team.research.domain as domain
 
     assert domain.CorpusDerivedTextStored is CorpusDerivedTextStored
     assert domain.StoreDerivedText is StoreDerivedText

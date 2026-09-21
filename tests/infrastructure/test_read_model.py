@@ -11,8 +11,14 @@ from uuid import uuid4
 import pytest
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 
-from research_team.application import summarize_sessions
-from research_team.domain import (
+from research_team.infrastructure.persistence.read_models import (
+    LOCAL_RETRY_POLICY,
+    SessionSummaryProjection,
+    SessionSummaryRow,
+    to_summary,
+)
+from research_team.session.application.summaries import summarize_sessions
+from research_team.session.domain import (
     CompleteTurn,
     DeleteFile,
     EditFile,
@@ -23,12 +29,6 @@ from research_team.domain import (
     SessionPurpose,
     StartSession,
     WriteFile,
-)
-from research_team.infrastructure.persistence.read_models import (
-    LOCAL_RETRY_POLICY,
-    SessionSummaryProjection,
-    SessionSummaryRow,
-    to_summary,
 )
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 

@@ -29,10 +29,10 @@ from eventsource import ReadModel
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Filter, Query, ReadModelRepository
 
-from research_team.application.settings import RoleSelection, StoredProfile
-from research_team.application.settings.effective import SettingsRevision
-from research_team.domain.settings import ModelProfile, ModelRole, Scope, ScopeRef
 from research_team.infrastructure.persistence.read_models import apply_schema
+from research_team.settings.application import RoleSelection, StoredProfile
+from research_team.settings.application.effective import SettingsRevision
+from research_team.settings.domain import ModelProfile, ModelRole, Scope, ScopeRef
 
 PROFILE_NAMESPACE = UUID("7c4e2a90-1b6d-5f34-8a07-e35b91c6d248")
 

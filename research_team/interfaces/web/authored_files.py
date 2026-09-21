@@ -23,7 +23,7 @@ export routes and the read route share them without sharing `ExportDeps`.
 
 from typing import Any
 
-from research_team.application.curriculum.course_authoring import (
+from research_team.curriculum.application.course_authoring import (
     AREAS_DIR,
     PATHS_DIR,
 )

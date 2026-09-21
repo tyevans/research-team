@@ -11,7 +11,11 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.tenancy.tenant import (
+from research_team.infrastructure.persistence.tenants import (
+    TenantProjection,
+    TenantRunner,
+)
+from research_team.tenancy.domain.tenant import (
     TENANT_EVENTS,
     InvitationAccepted,
     InvitationCreated,
@@ -24,10 +28,6 @@ from research_team.domain.tenancy.tenant import (
     ProjectGrantRevoked,
     TenantCreated,
     tenant_aggregate_id,
-)
-from research_team.infrastructure.persistence.tenants import (
-    TenantProjection,
-    TenantRunner,
 )
 
 TENANT = "org-42"

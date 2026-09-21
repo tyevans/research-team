@@ -47,8 +47,7 @@ from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
-from research_team.application import RunAlreadyActive
-from research_team.domain.curriculum.authoring_run import (
+from research_team.curriculum.domain.authoring_run import (
     CourseAuthoringRun,
     RecordAuthoredCourse,
     RecordAuthoringFailure,
@@ -59,6 +58,7 @@ from research_team.infrastructure.persistence.read_models import (
     AuthoringRunRow,
     AuthoringRunRunner,
 )
+from research_team.research.application.research_supervisor import RunAlreadyActive
 
 AUTHORING = "Authoring"
 """The frame type on the live feed, PascalCase like `SEEDING` beside it.

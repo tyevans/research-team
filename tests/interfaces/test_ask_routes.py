@@ -18,22 +18,22 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 from fastapi.testclient import TestClient
 
-from research_team.application.dialogue.ask import (
+from research_team.dialogue.application.ask import (
     AskAnswer,
     AskInFlight,
     AskService,
     Citation,
     ConversationRegistry,
 )
-from research_team.application.shared.ports import (
+from research_team.dialogue.domain.ask import AskConversation
+from research_team.infrastructure.persistence.read_models import AskConversationStore
+from research_team.interfaces.web.app import create_app
+from research_team.interfaces.web.dialogues import AskRequest
+from research_team.platform.shared.ports import (
     ActivityDelta,
     ActivityMessage,
     ActivityRemark,
 )
-from research_team.domain.dialogue.ask import AskConversation
-from research_team.infrastructure.persistence.read_models import AskConversationStore
-from research_team.interfaces.web.app import create_app
-from research_team.interfaces.web.dialogues import AskRequest
 
 SOME_ANSWER = AskAnswer(text="an answer")
 """A module-level default because `ruff`'s B008 forbids the call in the

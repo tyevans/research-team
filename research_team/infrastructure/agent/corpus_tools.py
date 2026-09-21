@@ -22,7 +22,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
-from research_team.application.research.corpus_read import (
+from research_team.research.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     REFERENCE_SYNTAX_PROMPT,
@@ -32,8 +32,9 @@ from research_team.application.research.corpus_read import (
     SourceListing,
     StoredDocument,
 )
-from research_team.application.research.corpus_spans import Span, chunk, quote
-from research_team.application.session.tool_artifacts import (
+from research_team.research.application.corpus_spans import Span, chunk, quote
+from research_team.research.domain import TextRecord
+from research_team.session.application.tool_artifacts import (
     Acknowledgement,
     Excerpt,
     Hit,
@@ -42,7 +43,6 @@ from research_team.application.session.tool_artifacts import (
     InventoryItem,
     SourceHits,
 )
-from research_team.domain import TextRecord
 
 MAX_CHARS = 20_000
 """How much of a document reaches the model in one call.

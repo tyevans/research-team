@@ -6,11 +6,11 @@ No test here reaches the network, mirroring `tests/infrastructure/test_search.py
 import httpx
 import pytest
 
-from research_team.application.research.media_curation import SearchResult
 from research_team.infrastructure.agent.media_curation_adapter import (
     ChatModelCurationText,
     SearxngMediaSearch,
 )
+from research_team.research.application.media_curation import SearchResult
 
 PAYLOAD = {
     "results": [

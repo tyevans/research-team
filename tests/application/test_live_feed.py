@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from research_team.application import FeedEntry, LiveFeed
+from research_team.platform.shared.live_feed import LiveFeed
+from research_team.platform.shared.ports import FeedEntry
 
 
 class FakeFeed:

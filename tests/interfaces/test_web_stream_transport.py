@@ -7,12 +7,12 @@ from uuid import uuid4
 from httpx import AsyncClient
 
 from research_team.composition import build_application as _build_application
-from research_team.domain import (
+from research_team.interfaces.web import create_app
+from research_team.session.domain import (
     SendUserMessage,
     SessionPurpose,
     StartSession,
 )
-from research_team.interfaces.web import create_app
 from tests.conftest import start_session
 
 
@@ -102,9 +102,9 @@ async def _watch(feed, resume_from=None, wanted: int = 1):
 
 async def test_sse_emits_a_keepalive_while_the_log_is_idle(repository, monkeypatch):
     """A minute of model thinking must not look like a dead connection."""
-    from research_team.application import LiveFeed
     from research_team.interfaces.web import app as web_app
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     monkeypatch.setattr(web_app, "KEEPALIVE_SECONDS", 0.05)
     generator = _sse(StubRequest(), LiveFeed(repository, poll_interval=0.01))
@@ -115,9 +115,9 @@ async def test_sse_emits_a_keepalive_while_the_log_is_idle(repository, monkeypat
 
 
 async def test_sse_stops_when_the_client_goes_away(repository, monkeypatch):
-    from research_team.application import LiveFeed
     from research_team.interfaces.web import app as web_app
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     monkeypatch.setattr(web_app, "KEEPALIVE_SECONDS", 0.01)
     generator = _sse(StubRequest(disconnect_after=2), LiveFeed(repository, poll_interval=0.01))
@@ -189,7 +189,7 @@ async def test_stream_reaches_a_real_browser_over_a_real_socket(db_path, fake_mo
 
 async def test_each_frame_carries_the_cursor_that_follows_it(repository, session_id):
     """Without an id, a browser has nothing to reconnect with."""
-    from research_team.application import LiveFeed
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
@@ -220,7 +220,7 @@ async def test_reconnecting_with_a_cursor_delivers_what_was_missed(repository, s
     that started at the live end would never show it -- and the browser would
     have no way to know it had missed anything.
     """
-    from research_team.application import LiveFeed
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
@@ -256,7 +256,7 @@ async def test_reconnecting_with_a_cursor_delivers_what_was_missed(repository, s
 
 async def test_an_unplaceable_cursor_falls_back_to_the_live_end(repository, session_id):
     """A stale or foreign id must not replay the whole log at a browser."""
-    from research_team.application import LiveFeed
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
