@@ -97,6 +97,77 @@ class SqliteProjectSummaries:
             )
         return summaries
 
+    async def for_project(self, project_id: UUID) -> ProjectSummary | None:
+        """Summary for a single project, or None if the project has no rows."""
+        pid_str = str(project_id)
+        topic_count, topic_open = await self._single_stage(
+            TOPICS,
+            "COUNT(*), SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END)",
+            "project_id = ? AND deleted_at IS NULL",
+            pid_str,
+        )
+        source_count, extracted = await self._single_stage(
+            CORPUS,
+            "COUNT(*), SUM(CASE WHEN extracted_at IS NOT NULL THEN 1 ELSE 0 END)",
+            "project_id = ? AND deleted_at IS NULL AND dropped_reason IS NULL",
+            pid_str,
+        )
+        course_count, _ = await self._single_stage(
+            COURSES,
+            "COUNT(*), 0",
+            "project_id = ? AND deleted_at IS NULL AND abandoned = 0",
+            pid_str,
+        )
+        session_count, last_activity = await self._single_session_activity(pid_str)
+
+        has_any = (
+            topic_count > 0
+            or source_count > 0
+            or course_count > 0
+            or session_count > 0
+            or last_activity is not None
+        )
+        if not has_any:
+            return None
+
+        return ProjectSummary(
+            topics=topic_count,
+            topics_open=topic_open,
+            sources=source_count,
+            extracted=extracted,
+            courses=course_count,
+            sessions=session_count,
+            last_activity=last_activity,
+        )
+
+    async def _single_stage(
+        self, table: str, columns: str, where: str, pid: str
+    ) -> tuple[int, int]:
+        if not await self._present(table):
+            return (0, 0)
+        cursor = await self._connection.execute(
+            f"SELECT {columns} FROM {table} WHERE {where}", (pid,)
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return (0, 0)
+        return (int(row[0] or 0), int(row[1] or 0))
+
+    async def _single_session_activity(self, pid: str) -> tuple[int, str | None]:
+        if not await self._present(SESSIONS):
+            return (0, None)
+        cursor = await self._connection.execute(
+            f"SELECT COUNT(*), MAX(updated_at) FROM {SESSIONS} "
+            "WHERE project_id = ? AND deleted_at IS NULL",
+            (pid,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return (0, None)
+        return (int(row[0] or 0), row[1])
+
     async def _grouped(
         self, table: str, columns: str, where: str
     ) -> dict[UUID, tuple[int, int]]:

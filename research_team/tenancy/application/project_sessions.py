@@ -3,6 +3,7 @@
 Extracts joining, file inheritance, tip catch-up, and attachment.
 """
 
+import logging
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -25,21 +26,31 @@ from research_team.session.domain import (
 )
 from research_team.tenancy.domain import (
     AdvanceTip,
+    ArchiveProject,
     DeleteProject,
     JoinProject,
     Project,
     ProjectState,
+    RenameProject,
+    UnarchiveProject,
+    UpdateProjectMetadata,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ProjectSessions",
+    "archive_project_aggregate",
     "catch_up_project_tip",
     "delete_project_aggregate",
     "ensure_session_project_attached",
     "fork_session_files",
     "release_session_project",
+    "rename_project_aggregate",
     "resolve_project_files",
     "start_session_in_project",
+    "unarchive_project_aggregate",
+    "update_project_metadata_aggregate",
 ]
 
 
@@ -131,6 +142,57 @@ async def delete_project_aggregate(
     await projects.save(project)
     if graphs is not None:
         await graphs.close(project_id)
+
+
+async def archive_project_aggregate(
+    projects: AggregateRepository[Project],
+    project_id: UUID,
+    *,
+    attachment: KnowledgeAttachment | None = None,
+) -> None:
+    """Archive a project: mark read-only and detach knowledge graph if attached."""
+    project = await projects.load(project_id)
+    project.execute(ArchiveProject())
+    await projects.save(project)
+    if attachment is not None and attachment.attached_project_id == project_id:
+        await attachment.detach()
+
+
+async def unarchive_project_aggregate(
+    projects: AggregateRepository[Project],
+    project_id: UUID,
+) -> None:
+    """Restore an archived project to active standing."""
+    project = await projects.load(project_id)
+    project.execute(UnarchiveProject())
+    await projects.save(project)
+
+
+async def rename_project_aggregate(
+    projects: AggregateRepository[Project],
+    project_id: UUID,
+    name: str,
+) -> None:
+    """Rename an active project."""
+    project = await projects.load(project_id)
+    project.execute(RenameProject(name=name))
+    await projects.save(project)
+
+
+async def update_project_metadata_aggregate(
+    projects: AggregateRepository[Project],
+    project_id: UUID,
+    *,
+    description: str | None = None,
+    tags: tuple[str, ...] | list[str] | None = None,
+    metadata: dict[str, str] | None = None,
+) -> None:
+    """Update project metadata, tags, and description."""
+    project = await projects.load(project_id)
+    project.execute(
+        UpdateProjectMetadata(description=description, tags=tags, metadata=metadata)
+    )
+    await projects.save(project)
 
 
 async def catch_up_project_tip(project: Any, repository: SessionRepository) -> None:
@@ -330,6 +392,12 @@ async def release_session_project(
         return
     project = await projects.load(session.state.project_id)
     if project.state.active_session_id != session_id:
+        logger.warning(
+            "session %s with project %s attempted to release, but project is held by %s",
+            session_id,
+            session.state.project_id,
+            project.state.active_session_id,
+        )
         return
     project.execute(AdvanceTip(session_id=session_id, at_event=session.version))
     await projects.save(project)
@@ -339,6 +407,8 @@ async def ensure_session_project_attached(
     repository: SessionRepository,
     attachment: KnowledgeAttachment | None,
     session_id: UUID,
+    *,
+    projects: AggregateRepository[Project] | None = None,
 ) -> bool:
     """Make `session_id`'s own project the attached one. Returns whether it is.
 
@@ -362,6 +432,12 @@ async def ensure_session_project_attached(
     project_id = session.state.project_id
     if project_id is None:
         return False
+    if projects is not None:
+        project = await projects.load(project_id)
+        if project.state.status in ("deleted", "archived"):
+            if attachment.attached_project_id == project_id:
+                await attachment.detach()
+            return False
     if attachment.attached_project_id == project_id:
         return True
     await attachment.attach(project_id)
@@ -656,7 +732,38 @@ class ProjectSessions:
         a turn without knowledge tools is degraded but not broken.
         """
         return await ensure_session_project_attached(
-            self._repository, self._attachment, session_id
+            self._repository, self._attachment, session_id, projects=self._projects
+        )
+
+    async def archive_project(self, project_id: UUID) -> None:
+        """Archive a project: mark read-only and detach knowledge graph if attached."""
+        await archive_project_aggregate(
+            self._projects, project_id, attachment=self._attachment
+        )
+
+    async def unarchive_project(self, project_id: UUID) -> None:
+        """Restore an archived project to active standing."""
+        await unarchive_project_aggregate(self._projects, project_id)
+
+    async def rename_project(self, project_id: UUID, name: str) -> None:
+        """Rename an active project."""
+        await rename_project_aggregate(self._projects, project_id, name)
+
+    async def update_project_metadata(
+        self,
+        project_id: UUID,
+        *,
+        description: str | None = None,
+        tags: tuple[str, ...] | list[str] | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        """Update project metadata, tags, and description."""
+        await update_project_metadata_aggregate(
+            self._projects,
+            project_id,
+            description=description,
+            tags=tags,
+            metadata=metadata,
         )
 
     async def attach_project(self, project_id: UUID) -> None:

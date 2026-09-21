@@ -59,6 +59,38 @@ class ProjectDeleted(DomainEvent):
     aggregate_type: str = "Project"
 
 
+@register_event
+class ProjectArchived(DomainEvent):
+    """The project is archived: read-only, accepts no joins or tip advances."""
+
+    aggregate_type: str = "Project"
+
+
+@register_event
+class ProjectUnarchived(DomainEvent):
+    """The project is restored from archive to active standing."""
+
+    aggregate_type: str = "Project"
+
+
+@register_event
+class ProjectRenamed(DomainEvent):
+    """The project was given a new name."""
+
+    aggregate_type: str = "Project"
+    name: str
+
+
+@register_event
+class ProjectMetadataUpdated(DomainEvent):
+    """Project metadata (description, tags, arbitrary key-values) was updated."""
+
+    aggregate_type: str = "Project"
+    description: str
+    tags: tuple[str, ...] = Field(default_factory=tuple)
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class CreateProject:
     #: Which project to create. The one command whose target cannot be read
@@ -93,7 +125,38 @@ class DeleteProject:
     pass
 
 
-ProjectCommand = CreateProject | JoinProject | AdvanceTip | DeleteProject
+@dataclass(frozen=True)
+class ArchiveProject:
+    pass
+
+
+@dataclass(frozen=True)
+class UnarchiveProject:
+    pass
+
+
+@dataclass(frozen=True)
+class RenameProject:
+    name: str
+
+
+@dataclass(frozen=True)
+class UpdateProjectMetadata:
+    description: str | None = None
+    tags: tuple[str, ...] | list[str] | None = None
+    metadata: dict[str, str] | None = None
+
+
+ProjectCommand = (
+    CreateProject
+    | JoinProject
+    | AdvanceTip
+    | DeleteProject
+    | ArchiveProject
+    | UnarchiveProject
+    | RenameProject
+    | UpdateProjectMetadata
+)
 
 
 class ProjectState(BaseModel):
@@ -107,8 +170,11 @@ class ProjectState(BaseModel):
     id is not part of it.
     """
 
-    status: Literal["new", "created", "deleted"] = "new"
+    status: Literal["new", "created", "archived", "deleted"] = "new"
     name: str = ""
+    description: str = ""
+    tags: tuple[str, ...] = Field(default_factory=tuple)
+    metadata: dict[str, str] = Field(default_factory=dict)
     member_session_ids: list[UUID] = Field(default_factory=list)
     active_session_id: UUID | None = None
     """The session currently holding the project, if any."""
@@ -147,6 +213,66 @@ def decide(command: ProjectCommand, state: ProjectState) -> list[DomainEvent]:
             raise CommandRejectedError("project already deleted")
         case _, ProjectState(status="deleted"):
             raise CommandRejectedError("project has been deleted")
+
+        # Archiving and unarchiving
+        case ArchiveProject(), ProjectState(status="archived"):
+            raise CommandRejectedError("project already archived")
+        case ArchiveProject(), ProjectState(active_session_id=holder) if holder is not None:
+            raise CommandRejectedError(f"project is held by session {holder}")
+        case ArchiveProject(), _:
+            return [ProjectArchived(aggregate_id=project_id)]
+
+        case UnarchiveProject(), ProjectState(status="archived"):
+            return [ProjectUnarchived(aggregate_id=project_id)]
+        case UnarchiveProject(), _:
+            raise CommandRejectedError("project is not archived")
+
+        # Commands on archived projects that are rejected
+        case JoinProject(), ProjectState(status="archived"):
+            raise CommandRejectedError("project is archived")
+        case AdvanceTip(), ProjectState(status="archived"):
+            raise CommandRejectedError("project is archived")
+        case RenameProject(), ProjectState(status="archived"):
+            raise CommandRejectedError("project is archived")
+        case UpdateProjectMetadata(), ProjectState(status="archived"):
+            raise CommandRejectedError("project is archived")
+
+        # Renaming
+        case RenameProject(name=new_name), _:
+            cleaned = new_name.strip()
+            if not cleaned:
+                raise CommandRejectedError("project name cannot be empty")
+            if cleaned == state.name:
+                return []
+            return [ProjectRenamed(aggregate_id=project_id, name=cleaned)]
+
+        # Metadata and tagging
+        case UpdateProjectMetadata(description=desc, tags=tags, metadata=meta), _:
+            new_desc = state.description if desc is None else desc.strip()
+            if tags is None:
+                new_tags = state.tags
+            else:
+                seen: set[str] = set()
+                cleaned_tags: list[str] = []
+                for t in tags:
+                    cleaned_t = t.strip().lower()
+                    if cleaned_t and cleaned_t not in seen:
+                        seen.add(cleaned_t)
+                        cleaned_tags.append(cleaned_t)
+                new_tags = tuple(cleaned_tags)
+
+            if meta is None:
+                new_meta = state.metadata
+            else:
+                new_meta = {k.strip(): v.strip() for k, v in meta.items() if k.strip()}
+            return [
+                ProjectMetadataUpdated(
+                    aggregate_id=project_id,
+                    description=new_desc,
+                    tags=new_tags,
+                    metadata=new_meta,
+                )
+            ]
 
         # Held means a session is still driving it. Releasing first is the
         # caller's job, and it is a separate decision -- releasing advances
@@ -217,6 +343,20 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
                     "member_session_ids": [*state.member_session_ids, session_id],
                     "active_session_id": session_id,
                 }
+            )
+
+        case ProjectArchived():
+            return state.model_copy(update={"status": "archived"})
+
+        case ProjectUnarchived():
+            return state.model_copy(update={"status": "created"})
+
+        case ProjectRenamed(name=name):
+            return state.model_copy(update={"name": name})
+
+        case ProjectMetadataUpdated(description=description, tags=tags, metadata=metadata):
+            return state.model_copy(
+                update={"description": description, "tags": tags, "metadata": metadata}
             )
 
         case ProjectDeleted():

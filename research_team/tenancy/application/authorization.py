@@ -93,6 +93,8 @@ class Resource:
     tenant_id: str | None = None
     """The tenant that owns `object_id`. Equal to `object_id` for a tenant
     resource; `None` for the instance, which belongs to no tenant."""
+    status: str = "active"
+    """Lifecycle status for project resources ('active', 'archived', 'deleted')."""
 
     @classmethod
     def tenant(cls, organisation_id: str) -> "Resource":
@@ -105,14 +107,29 @@ class Resource:
         here even by accident, and the field it fills keeps the name the design
         chose.
         """
-        return cls(object_type="tenant", object_id=organisation_id, tenant_id=organisation_id)
+        return cls(
+            object_type="tenant",
+            object_id=organisation_id,
+            tenant_id=organisation_id,
+            status="active",
+        )
 
     @classmethod
-    def project(cls, project_id: UUID | str, organisation_id: str) -> "Resource":
+    def project(
+        cls,
+        project_id: UUID | str,
+        organisation_id: str,
+        status: str = "active",
+    ) -> "Resource":
         """`organisation_id` for `tenant`'s reason. Note that this is the one
         signature in the tree that takes both concepts at once, which is exactly
         why neither may be spelled ambiguously."""
-        return cls(object_type="project", object_id=str(project_id), tenant_id=organisation_id)
+        return cls(
+            object_type="project",
+            object_id=str(project_id),
+            tenant_id=organisation_id,
+            status=status,
+        )
 
     @classmethod
     def instance(cls) -> "Resource":
@@ -124,7 +141,7 @@ class Resource:
         everyone's -- calling that a tenant permission would be a lie the matrix
         told. See `RoleTableAuthorizer.admin_subjects`.
         """
-        return cls(object_type="instance", object_id="")
+        return cls(object_type="instance", object_id="", status="active")
 
 
 @runtime_checkable
@@ -296,6 +313,20 @@ def stronger_project_role(
     return max(ranked, key=PROJECT_ROLE_ORDER.index)
 
 
+def has_project_role(actual: str | ProjectRole | None, minimum: ProjectRole) -> bool:
+    """Whether `actual` meets or exceeds `minimum` on the project ladder."""
+    if actual not in PROJECT_ROLE_ORDER or minimum not in PROJECT_ROLE_ORDER:
+        return False
+    return PROJECT_ROLE_ORDER.index(actual) >= PROJECT_ROLE_ORDER.index(minimum)
+
+
+def has_tenant_role(actual: str | TenantRole | None, minimum: TenantRole) -> bool:
+    """Whether `actual` meets or exceeds `minimum` on the tenant ladder."""
+    if actual not in TENANT_ROLE_ORDER or minimum not in TENANT_ROLE_ORDER:
+        return False
+    return TENANT_ROLE_ORDER.index(actual) >= TENANT_ROLE_ORDER.index(minimum)
+
+
 class GrantReader(Protocol):
     """The two indexed reads the checker needs, and nothing else.
 
@@ -328,6 +359,18 @@ class Authorizer(Protocol):
         self, principal: Principal, permission: str, resource: Resource
     ) -> bool: ...
 
+    async def check_all(
+        self, principal: Principal, requests: list[tuple[str, Resource]]
+    ) -> list[bool]:
+        """Evaluate multiple authorization questions in order."""
+        ...
+
+    async def filter_resources(
+        self, principal: Principal, permission: str, resources: list[Resource]
+    ) -> list[Resource]:
+        """Filter a list of resources down to those the principal holds permission for."""
+        ...
+
 
 class PermissiveAuthorizer:
     """Yes, always. What `AGENT_AUTH=off` selects.
@@ -351,6 +394,16 @@ class PermissiveAuthorizer:
     async def check(self, principal: Principal, permission: str, resource: Resource) -> bool:
         return True
 
+    async def check_all(
+        self, principal: Principal, requests: list[tuple[str, Resource]]
+    ) -> list[bool]:
+        return [True] * len(requests)
+
+    async def filter_resources(
+        self, principal: Principal, permission: str, resources: list[Resource]
+    ) -> list[Resource]:
+        return list(resources)
+
 
 class DenyAllAuthorizer:
     """No, always. Not wired anywhere, and that is deliberate.
@@ -364,6 +417,16 @@ class DenyAllAuthorizer:
 
     async def check(self, principal: Principal, permission: str, resource: Resource) -> bool:
         return False
+
+    async def check_all(
+        self, principal: Principal, requests: list[tuple[str, Resource]]
+    ) -> list[bool]:
+        return [False] * len(requests)
+
+    async def filter_resources(
+        self, principal: Principal, permission: str, resources: list[Resource]
+    ) -> list[Resource]:
+        return []
 
 
 class RoleTableAuthorizer:
@@ -401,6 +464,16 @@ class RoleTableAuthorizer:
         """
         return self._admin_subjects
 
+    async def check_all(
+        self, principal: Principal, requests: list[tuple[str, Resource]]
+    ) -> list[bool]:
+        return [await self.check(principal, perm, res) for perm, res in requests]
+
+    async def filter_resources(
+        self, principal: Principal, permission: str, resources: list[Resource]
+    ) -> list[Resource]:
+        return [res for res in resources if await self.check(principal, permission, res)]
+
     async def check(self, principal: Principal, permission: str, resource: Resource) -> bool:
         subject = getattr(principal, "subject", "")
         if not subject:
@@ -435,6 +508,14 @@ class RoleTableAuthorizer:
             return permission in permissions_for_tenant_role(member_role)
 
         # A project.
+        if resource.status == "archived" and permission in (
+            "project.write",
+            "project.run",
+            "session.write",
+        ):
+            # Archived projects are read-only: writes and model runs are forbidden.
+            return False
+
         granted = _as_project_role(
             await self._grants.project_grant_role(resource.object_id, subject)
         )

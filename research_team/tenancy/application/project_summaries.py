@@ -104,3 +104,7 @@ class ProjectSummaries(Protocol):
     async def all(self) -> dict[UUID, ProjectSummary]:
         """Summaries for every project that has anything to summarise."""
         ...
+
+    async def for_project(self, project_id: UUID) -> ProjectSummary | None:
+        """Summary for one project, or None if the project has no rows in any table."""
+        ...

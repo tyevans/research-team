@@ -262,6 +262,10 @@ class _LazyProjectSummaries:
         reader = await self._opened()
         return await reader.all()
 
+    async def for_project(self, project_id: UUID) -> ProjectSummary | None:
+        reader = await self._opened()
+        return await reader.for_project(project_id)
+
     async def close(self) -> None:
         await self._resource.close()
 
