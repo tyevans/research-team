@@ -36,27 +36,16 @@ from research_team.application import (
     KnowledgeAttachment,
     LiveFeed,
     ProjectGraphs,
-    ResearchRunDriver,
-    ResearchSupervisor,
     SessionService,
-    SummaryProjects,
-    TopicRoundRunner,
     TurnActivityBuffer,
-    TurnSupervisor,
     WorkerRoster,
 )
 from research_team.application.ask import AskService, ConversationRegistry
-from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.course_authoring import CourseAuthor
 from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.entity_definitions import DefinitionService
 from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import KnowledgeError, SourceRef, source_id_for_url
-from research_team.application.media_acquisition import (
-    MediaAcceptReconciler,
-    MediaAcceptWorker,
-)
 from research_team.application.ontology_discovery import (
     DISCOVERY_CHUNK_OVERLAP_CHARS,
     MAX_DISCOVERY_CHUNK_CHARS,
@@ -64,13 +53,10 @@ from research_team.application.ontology_discovery import (
 )
 from research_team.application.perception import MediaPerceiver, PerceptionPort
 from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
-from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
-from research_team.application.topic_seeding import TopicSeeder
 from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain import Session, SessionPurpose
 from research_team.domain.media_proposals import MediaProposals
-from research_team.domain.research_run import Budget
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import (
     DeepAgentTurnExecutor,
@@ -175,9 +161,12 @@ from research_team.wiring import (
     build_corpus_editor,
     build_curation_tools,
     build_document_extractor,
+    build_media_acquisition,
     build_media_perceiver,
+    build_session_service,
     build_socratic_service,
     build_stores,
+    build_supervisor_roster,
     build_tools,
 )
 from research_team.wiring.application import Application
@@ -995,53 +984,20 @@ def _build_application(
         close_graph=close_graph,
     )
 
-    service = SessionService(
-        repository,
-        executor,
-        summaries,
-        repository.projects,
-        default_system_prompt=system_prompt + prompt_suffix,
+    session_wiring = build_session_service(
+        repository=repository,
+        executor=executor,
+        summaries=summaries,
+        system_prompt=system_prompt,
+        prompt_suffix=prompt_suffix,
         context=strategy,
-        # Resolved once and shared: whether this process exports traces is a
-        # deployment decision, and the composition root is where deployment
-        # decisions live. The projection gets the same instance, so a turn and
-        # the read-model work it causes are read off one trace rather than two.
         tracer=resolved_tracer,
-        # A session started in a project gets this appended to its prompt;
-        # one started plainly does not, so it never hears
-        # about tools it was not given.
-        # `TOPICS_PROMPT` belongs here for the same reason the other three do,
-        # and its absence was a plain oversight: `open_graph` attaches
-        # `build_topic_tools` alongside the knowledge and corpus tools, so a
-        # joined session has always *had* `open_topic` -- and was never told.
-        # The comment beside the build-time suffix above already names this
-        # exact failure ("no idea the tool exists") while claiming parity with
-        # this line, which is what made the gap invisible.
-        #
-        # Visible from the outside as an autonomous run that stops on its first
-        # round with `queue_empty` forever: the only thing that can put a topic
-        # on the queue is the agent calling `open_topic`, the driver never opens
-        # one itself, and nothing had told the agent the tool was there.
-        knowledge_prompt=(
-            KNOWLEDGE_PROMPT + CORPUS_PROMPT + FETCH_CORPUS_PROMPT + TOPICS_PROMPT
-        ),
-        # The service owns the attachment: `/project use` calls
-        # `service.attach_project` directly, so it lives where the REPL
-        # already reaches rather than behind a second accessor on `Application`.
         attachment=attachment,
-        # Learner progress rides the same log and the same snapshot table as
-        # everything else, keyed by the session it belongs to. Wired here
-        # rather than defaulted inside the service, because which store an
-        # aggregate lands in is exactly the decision this root exists to make.
-        progress=build_learner_progress_repository(
-            repository.store, repository.publisher, snapshot_store=repository.snapshot_store
-        ),
-        # So `delete_project` can evict the deleted project's cached store --
-        # the same `graphs` `open_graph` above borrows from, not a second
-        # instance that would cache independently of the one attachment uses.
         graphs=graphs,
+        activity=activity,
     )
-    turns = TurnSupervisor(service, activity=activity)
+    service = session_wiring.service
+    turns = session_wiring.turns
     # Built here because `open_graph` is a closure over this build's stores:
     # the ask agent takes the project tools that closure assembles and keeps
     # the readers, so it cannot be constructed anywhere a caller could reach.
@@ -1237,101 +1193,25 @@ def _build_application(
     course_repository = catalog_services.course_repository
     course_service = catalog_services.course_service
 
-    async def start_run(
-        run_id: UUID,
-        run_project_id: UUID,
-        session_id: UUID,
-        budget: Budget | None,
-        fetch_hosts: list[str],
-        fetch_budget: int,
-        cancelled,
-    ):
-        """One autonomous run: a driver, bound to one session's turns.
-
-        Built per run rather than once, because `run_round` closes over the
-        session the rounds are turns on. The driver itself holds no state, so
-        there is nothing to share by keeping one around.
-
-        Rounds go through `turns` rather than straight to the service, which
-        is what makes "one turn at a time per session" cover an autonomous run
-        as well as a person typing: a `/turns` POST arriving mid-run is refused
-        with the 409 it would get from any other second turn, rather than
-        interleaving with a round.
-
-        `read_only` is read from the policy rather than asserted. The default
-        is a read-only run because `fetch` floors at `ask` and an unattended
-        approval deadlocks -- but someone who has set `fetch` to `auto` has a
-        run that can leave the process, and recording `read_only=True` over
-        that would put a false claim in the audit trail of the one kind of run
-        that most needs a true one. The policy is read here and never written,
-        which is what keeps `TOOL_FLOORS` a floor rather than a suggestion.
-
-        `fetch_hosts`/`fetch_budget` travel from the HTTP request all the way
-        here (`app.py`'s `NewRun` -> `ResearchSupervisor.start` -> this
-        `StartRun` callable) and go straight to the driver, which is the one
-        thing that turns them into a `FetchGrant` and registers it --
-        `resolved_grants` is threaded to the driver below for exactly that.
-        """
-        return await ResearchRunDriver(
-            runs,
-            topic_repository,
-            topics.queue,
-            run_round=TopicRoundRunner(
-                topic_repository,
-                lambda prompt: turns.run(session_id, prompt),
-            ),
-            # The queue is a projection, so the look a round just recorded is
-            # not in the table the next round reads until it catches up.
-            # Without this the run is handed back the topic it has just
-            # finished, which looks exactly like a loop that cannot learn.
-            settle=topics.caught_up,
-            # The same registry `turn_tools` and the gate consult -- see
-            # `resolved_grants`'s own note.
-            grants=resolved_grants,
-        ).run(
-            run_project_id,
-            session_id,
-            budget=budget,
-            fetch_hosts=fetch_hosts,
-            fetch_budget=fetch_budget,
-            run_id=run_id,
-            cancelled=cancelled,
-            autonomy_snapshot=resolved_policy.levels(),
-            read_only=resolved_policy.level_for(FETCH_TOOL) != "auto",
-        )
-
-    research_supervisor = ResearchSupervisor(start_run, runs)
-    # Built over the same `service` and `turns` a person's own turns run
-    # through -- a seeding turn is a turn like any other, and `TopicSeeder`
-    # joins and releases the project the same way `start_research_run` does.
-    topic_seeder = TopicSeeder(service, turns)
-    # Same `service` and `turns` a third time. An authoring run is four turns
-    # rather than one, but they are ordinary turns against a joined project --
-    # which is the point: a lesson can quote the corpus because the agent
-    # writing it has the same tools every other turn has.
-    course_author = CourseAuthor(service, turns)
-    # Same `service` and `turns` again: a dispatch turn is a turn like any
-    # other. `topic_reader` is the same factory the read routes close over, so
-    # the number in `/topics/<nn>-<slug>/` and the order the topic list renders
-    # in cannot come from two different reads.
-    dispatcher = TopicDispatcher(service, turns, topic_reader)
-    # The same object the tools report through, not a second one: the roster's
-    # "an extraction is running" and the pane's frames are two reads of one
-    # buffer, and two instances would let them disagree.
-    worker_roster = WorkerRoster(
-        service,
+    supervisors = build_supervisor_roster(
+        service=service,
         turns=turns,
-        runs=research_supervisor,
+        runs=runs,
+        topics=topics,
+        topic_repository=topic_repository,
+        topic_reader=topic_reader,
+        policy=resolved_policy,
+        grants=resolved_grants,
+        summaries=summaries,
         extractions=extractions,
-        # Passed in rather than built here for `extractions`' reason: the
-        # queue the routes enqueue into and the one the roster reads must be
-        # the same object, and only the process that owns both can say so.
         dispatches=dispatches,
-        # The projection, not the service: `everywhere` needs session -> project
-        # for the turns it finds, and asking the service would fold a session
-        # per running turn to learn something a read-model column already says.
-        summaries=SummaryProjects(summaries),
+        worker_roster_cls=WorkerRoster,
     )
+    research_supervisor = supervisors.research
+    topic_seeder = supervisors.topic_seeder
+    course_author = supervisors.course_author
+    dispatcher = supervisors.dispatcher
+    worker_roster = supervisors.workers
 
     # Built last, deliberately: this used to be built ~250 lines earlier,
     # immediately after `media_perceiver`, where nothing built from
@@ -1365,27 +1245,16 @@ def _build_application(
     # not just on an actually-broken one. 30s matches `fetch_media.TIMEOUT`
     # so the two paths that share `download_media` also share the ceiling
     # they run it under.
-    resolved_media_http_client = (
-        media_http_client
-        if media_http_client is not None
-        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    )
-    media_accept_worker = MediaAcceptWorker(
-        reads=media_proposals,
-        proposals=media_proposal_repository,
+    media_acquisition = build_media_acquisition(
+        media_proposals=media_proposals,
+        media_proposal_repository=media_proposal_repository,
         editor=editor,
-        perceiver=media_perceiver,
-        client=resolved_media_http_client,
+        media_perceiver=media_perceiver,
+        media_http_client=media_http_client,
     )
-    # Built here rather than at the projections above, because it needs the
-    # worker, which needs everything the comment above `media_accept_worker`
-    # explains. `reads` is `media_proposals` again -- the same runner the
-    # worker resolves one proposal through, now also asked for the whole
-    # accepted set.
-    media_accept_reconciler = MediaAcceptReconciler(
-        reads=media_proposals,
-        worker=media_accept_worker,
-    )
+    resolved_media_http_client = media_acquisition.client
+    media_accept_worker = media_acquisition.worker
+    media_accept_reconciler = media_acquisition.reconciler
 
     return Application(
         service=service,
