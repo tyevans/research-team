@@ -64,6 +64,7 @@ from research_team.research.domain.topic import (
     TopicGapRecorded,
     TopicInvestigated,
     TopicOpened,
+    TopicQuestionRestated,
     TopicSourceLinked,
     TopicSourceUnlinked,
     TopicState,
@@ -244,6 +245,12 @@ class TopicProjection(DeclarativeProjection):
                 status="open",
             )
         )
+
+    @handles(TopicQuestionRestated)
+    async def _on_question_restated(self, event: TopicQuestionRestated) -> None:
+        row = await self._require(event.aggregate_id)
+        row.question = event.question
+        await self._rows.save(row)
 
     @handles(TopicSubQuestionAdded)
     async def _on_sub_added(self, event: TopicSubQuestionAdded) -> None:

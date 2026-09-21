@@ -513,3 +513,47 @@ async def test_the_202s_run_id_is_the_id_the_finished_run_reports(seeding_client
     caught_up = await http.get(f"/api/projects/{project_id}/topics/seed")
 
     assert caught_up.json()["last"]["run_id"] == started.json()["run_id"]
+
+
+async def test_a_human_can_restate_a_topic_question(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+    new_question = (
+        "What are the typical physical traits of a Nova Scotia Duck Tolling Retriever?"
+    )
+
+    response = await client.patch(
+        f"/api/projects/{project_id}/topics/{topic_id}/question",
+        json={
+            "question": new_question,
+            "rationale": "Clarify subject per B39",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["question"] == new_question
+
+    # Verify GET reflects the restated question
+    fetched = await client.get(f"/api/projects/{project_id}/topics/{topic_id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["question"] == new_question
+
+
+async def test_restating_a_topic_question_refuses_blank(app_and_client):
+    application, client = app_and_client
+    project_id, topic_id = await _project_with_topics(application, client)
+
+    response = await client.patch(
+        f"/api/projects/{project_id}/topics/{topic_id}/question",
+        json={"question": "   "},
+    )
+    assert response.status_code == 422
+
+
+async def test_restating_an_unknown_topic_yields_404(client):
+    project_id = (await client.post("/api/projects", json={"name": "atlas"})).json()["id"]
+    response = await client.patch(
+        f"/api/projects/{project_id}/topics/{uuid4()}/question",
+        json={"question": "Does it exist?"},
+    )
+    assert response.status_code == 404

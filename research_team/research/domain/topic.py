@@ -83,6 +83,20 @@ class TopicOpened(DomainEvent):
 
 
 @register_event
+class TopicQuestionRestated(DomainEvent):
+    """The question being tracked was rephrased or clarified.
+
+    Records what changed, the previous question, and why. Deciding what
+    a question was really asking is a human action (B39).
+    """
+
+    aggregate_type: str = "Topic"
+    question: str
+    previous_question: str
+    rationale: str = ""
+
+
+@register_event
 class TopicSubQuestionAdded(DomainEvent):
     aggregate_type: str = "Topic"
     key: str
@@ -265,6 +279,12 @@ class OpenTopic:
 
 
 @dataclass(frozen=True)
+class RestateTopicQuestion:
+    question: str
+    rationale: str = ""
+
+
+@dataclass(frozen=True)
 class AddSubQuestion:
     key: str
     question: str
@@ -344,6 +364,7 @@ class AcknowledgeTrigger:
 
 TopicCommand = (
     OpenTopic
+    | RestateTopicQuestion
     | AddSubQuestion
     | ResolveSubQuestion
     | LinkSource
@@ -402,6 +423,7 @@ class TopicState(BaseModel):
     """
 
     question: str = ""
+    previous_questions: list[str] = Field(default_factory=list)
     scope: str = ""
     rationale: str = ""
     sub_questions: dict[str, SubQuestion] = Field(default_factory=dict)
@@ -484,6 +506,21 @@ def decide(command: TopicCommand, state: TopicState) -> list[DomainEvent]:
 
         case _, TopicState(status="new"):
             raise CommandRejectedError("topic not opened")
+
+        case RestateTopicQuestion(question=question, rationale=rationale), _:
+            cleaned = question.strip()
+            if not cleaned:
+                raise CommandRejectedError("a topic question cannot be blank")
+            if cleaned == state.question:
+                return []
+            return [
+                TopicQuestionRestated(
+                    aggregate_id=topic_id,
+                    question=cleaned,
+                    previous_question=state.question,
+                    rationale=rationale.strip(),
+                )
+            ]
 
         case AddSubQuestion(key=key, question=question), _:
             if key in state.sub_questions:
@@ -653,6 +690,14 @@ def evolve(state: TopicState, event: DomainEvent) -> TopicState:
                 question=question,
                 rationale=rationale,
                 scope=scope,
+            )
+
+        case TopicQuestionRestated(question=question, previous_question=prev):
+            return state.model_copy(
+                update={
+                    "question": question,
+                    "previous_questions": [*state.previous_questions, prev],
+                }
             )
 
         case TopicSubQuestionAdded(key=key, question=question):
