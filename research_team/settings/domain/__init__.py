@@ -20,6 +20,7 @@ from research_team.settings.domain.provider_specs import (
 from research_team.settings.domain.providers import (
     BY_ID,
     PROVIDERS,
+    ROLE_CAPABILITIES,
     Auth,
     Capability,
     Credential,
@@ -28,6 +29,7 @@ from research_team.settings.domain.providers import (
     Provider,
     UnknownProvider,
     provider_for,
+    provider_supports_role,
 )
 from research_team.settings.domain.registry import (
     _DEPLOYMENT,
@@ -66,6 +68,7 @@ __all__ = [
     "PROVIDER_KEY_GROUP",
     "PROVIDER_KEY_PREFIX",
     "RESOLUTION_ORDER",
+    "ROLE_CAPABILITIES",
     "ROLE_MODEL_KEYS",
     "SETTINGS",
     "TRUE_WORDS",
@@ -94,6 +97,7 @@ __all__ = [
     "mask",
     "provider_for",
     "provider_key",
+    "provider_supports_role",
     "resolve_spec",
     "spec_for",
 ]

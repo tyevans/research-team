@@ -35,6 +35,7 @@ from research_team.settings.domain import (
     DEFAULT_LAYER,
     ENVIRONMENT_LAYER,
     RESOLUTION_ORDER,
+    ROLE_CAPABILITIES,
     ROLE_MODEL_KEYS,
     MaskedSecret,
     ModelProfile,
@@ -45,9 +46,11 @@ from research_team.settings.domain import (
     SettingError,
     SettingSpec,
     mask,
+    provider_supports_role,
     resolve_spec,
 )
 from research_team.settings.domain.providers import (
+    BY_ID,
     ProbeResult,
     Provider,
     UnknownProvider,
@@ -336,6 +339,16 @@ class SettingsResolver:
             raise SettingError("no settings store is wired")
         return await self._store.clear(ref, spec.key)
 
+    async def diagnose(
+        self,
+        chain: Iterable[ScopeRef],
+        profiles: "ModelProfileService | None" = None,
+    ):
+        """Run diagnostics across this scope chain for secrets, profiles, and settings."""
+        from research_team.settings.application.diagnostics import run_diagnostics
+
+        return await run_diagnostics(self, profiles, chain)
+
 
 @dataclass(frozen=True)
 class StoredProfile:
@@ -408,6 +421,9 @@ class ResolvedRole:
     send the role to the default model and look like it worked.
     """
 
+    incompatible: str | None = None
+    """Explanation if the profile's provider lacks the capability required for the role."""
+
 
 def _ordered(chain: Iterable[ScopeRef]) -> list[ScopeRef]:
     """The chain in resolution order, dropping scopes not named.
@@ -470,14 +486,11 @@ class ModelProfileService:
         """
         if self._store is None:
             raise SettingError("no model profile store is wired")
-        if not profile.name.strip():
-            raise SettingError("a profile needs a name")
+        profile.validate()
         try:
             provider_for(profile.provider_id)
         except UnknownProvider as error:
             raise SettingError(str(error)) from error
-        if not profile.model.strip():
-            raise SettingError("a profile needs a model")
         if profile.credential_key is not None:
             spec = resolve_spec(profile.credential_key)
             if not spec.secret:
@@ -496,7 +509,13 @@ class ModelProfileService:
             raise SettingError("no model profile store is wired")
         return await self._store.delete_profile(ref, name)
 
-    async def select(self, ref: ScopeRef, role: ModelRole, profile_name: str) -> None:
+    async def select(
+        self,
+        ref: ScopeRef,
+        role: ModelRole,
+        profile_name: str,
+        chain: Iterable[ScopeRef] | None = None,
+    ) -> None:
         """Point a role at a profile.
 
         The profile need not exist yet, deliberately: a selection is resolved
@@ -508,6 +527,21 @@ class ModelProfileService:
             raise SettingError("no model profile store is wired")
         if not profile_name.strip():
             raise SettingError("a role selection needs a profile name")
+
+        # If the profile exists in the scope chain (or at ref), validate capability
+        scopes_to_check = list(chain) if chain is not None else [ref]
+        stored_profiles = await self._store.profiles(scopes_to_check)
+        matching = next((p for p in stored_profiles if p.profile.name == profile_name), None)
+        if matching is not None:
+            provider = BY_ID.get(matching.profile.provider_id)
+            if provider is not None and not provider_supports_role(provider, role):
+                req = ROLE_CAPABILITIES.get(role)
+                req_str = f" (requires {req.value} capability)" if req else ""
+                raise SettingError(
+                    f"provider {provider.display_name!r} does not support "
+                    f"{role.value} role{req_str}"
+                )
+
         await self._store.select(ref, role, profile_name)
 
     async def clear(self, ref: ScopeRef, role: ModelRole) -> bool:
@@ -543,6 +577,15 @@ class ModelProfileService:
             selection = chosen.get(role)
             stored = visible.get(selection.profile_name) if selection else None
             if selection is not None and stored is not None:
+                provider = BY_ID.get(stored.profile.provider_id)
+                incompatible: str | None = None
+                if provider is not None and not provider_supports_role(provider, role):
+                    req = ROLE_CAPABILITIES.get(role)
+                    req_str = f"requires {req.value}" if req else "unsupported"
+                    incompatible = (
+                        f"provider {provider.display_name!r} does not support "
+                        f"{role.value} ({req_str})"
+                    )
                 answers.append(
                     ResolvedRole(
                         role=role,
@@ -551,6 +594,7 @@ class ModelProfileService:
                         profile=stored.profile,
                         scope_id=selection.scope_id,
                         setting_key=key,
+                        incompatible=incompatible,
                     )
                 )
                 continue

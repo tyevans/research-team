@@ -1,10 +1,19 @@
 """Settings application package."""
 
+from research_team.settings.application.diagnostics import (
+    DiagnosticIssue,
+    DiagnosticSeverity,
+    SettingsDiagnostics,
+    run_diagnostics,
+)
 from research_team.settings.application.effective import (
+    CurationSettings,
     EffectiveSettings,
+    EmbeddingSettings,
     ExtractionSettings,
     ResearchSettings,
     SettingsRevision,
+    VisionSettings,
 )
 from research_team.settings.application.settings import (
     ModelProfileService,
@@ -20,7 +29,11 @@ from research_team.settings.application.settings import (
 )
 
 __all__ = [
+    "CurationSettings",
+    "DiagnosticIssue",
+    "DiagnosticSeverity",
     "EffectiveSettings",
+    "EmbeddingSettings",
     "ExtractionSettings",
     "ModelProfileService",
     "ModelProfileStorePort",
@@ -30,8 +43,11 @@ __all__ = [
     "ResolvedRole",
     "RoleSelection",
     "SecretBoxPort",
+    "SettingsDiagnostics",
     "SettingsResolver",
     "SettingsRevision",
     "SettingsStorePort",
     "StoredProfile",
+    "VisionSettings",
+    "run_diagnostics",
 ]
