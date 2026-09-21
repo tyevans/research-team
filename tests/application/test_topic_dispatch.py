@@ -86,6 +86,20 @@ def _writes(path: str, text: str, call_id: str = "w1") -> AIMessage:
     )
 
 
+def _restates_topic(topic_id: str, question: str, rationale: str = "clearer") -> AIMessage:
+    return AIMessage(
+        content="",
+        id=f"restate-{question}",
+        tool_calls=[
+            {
+                "name": "restate_question",
+                "args": {"topic_id": topic_id, "question": question, "rationale": rationale},
+                "id": f"restate-{question}",
+            }
+        ],
+    )
+
+
 async def _seed_topic(service, dispatcher, fake_model, project_id, question: str):
     """Open one topic through a real turn, so it exists in the read model."""
     from research_team.research.application.topic_seeding import TopicSeeder
@@ -419,6 +433,27 @@ async def test_a_refine_dispatch_writes_beside_the_understanding_it_judges(
     assert run.path == path == "/topics/00-how-does-spacing-work/refinement.md"
     assert path in files
     assert understanding.rsplit("/", 1)[0] == path.rsplit("/", 1)[0]
+
+
+async def test_a_refine_dispatch_that_restates_question_reports_new_question(
+    dispatcher, service, fake_model, project_id, topic_reader
+):
+    await _seed_topic(service, dispatcher, fake_model, project_id, "How does spacing work?")
+    [view] = await topic_reader.list_topics()
+    topic_id = view.summary.topic_id
+
+    fake_model.responses = [
+        _restates_topic(
+            str(topic_id),
+            "How do spacing intervals affect long-term retention?",
+            rationale="narrow and specify retention interval",
+        ),
+        AIMessage(content="refined question", id="a9"),
+    ]
+    run = await dispatcher.dispatch(project_id, topic_id, "refine")
+
+    assert run.question == "How do spacing intervals affect long-term retention?"
+    assert run.initial_question == "How does spacing work?"
 
 
 def test_the_two_spellings_of_the_action_vocabulary_agree():
