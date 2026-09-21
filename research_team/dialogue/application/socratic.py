@@ -40,12 +40,11 @@ from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
-from research_team.curriculum.domain.learner import (
-    LearnerProgress,
+from research_team.curriculum.application.learner_progress import (
+    LearnerProgressService,
     LearnerProgressState,
-    RecordAttempt,
 )
-from research_team.curriculum.domain.learner import initial_state as learner_initial_state
+from research_team.curriculum.domain import LearnerProgress
 from research_team.dialogue.domain.socratic import (
     Citation,
     ConcludeSocraticDialogue,
@@ -316,7 +315,7 @@ class SocraticDialogueService:
         now: Callable[[], float],
         transcripts: AggregateRepository[SocraticDialogue],
         clock: Callable[[], datetime],
-        progress: AggregateRepository[LearnerProgress] | None = None,
+        progress: AggregateRepository[LearnerProgress] | LearnerProgressService | None = None,
     ) -> None:
         self._executor = executor
         self._dialogues = dialogues
@@ -331,12 +330,16 @@ class SocraticDialogueService:
         self._clock = clock
         # Optional, unlike `read_model`: a build without it grades and does not
         # remember, which is a degradation a reader can live with, where a build
-        # without a read model resumes wrongly and cannot. Checked with
-        # `is not None` at every use -- an `or` here is the shape that has
-        # already cost this feature two debugging sessions, and see
-        # `DialogueRegistry.__bool__` for the one that shipped.
-        self._progress = progress
+        # without a read model resumes wrongly and cannot.
+        if isinstance(progress, LearnerProgressService):
+            self._learner_progress = progress
+        else:
+            self._learner_progress = LearnerProgressService(progress)
         self._running: set[UUID] = set()
+
+    @property
+    def _progress(self) -> AggregateRepository[LearnerProgress] | None:
+        return self._learner_progress.repository
 
     async def begin(self, *, project_id: UUID, topic: str) -> UUID:
         """Frame a dialogue and start its stream.
@@ -502,10 +505,7 @@ class SocraticDialogueService:
         still records nothing, and generalising this is a separate decision with
         a separate argument.
         """
-        if self._progress is None:
-            return learner_initial_state()
-        aggregate = await self._progress.load_or_create(dialogue_id)
-        return aggregate.state
+        return await self._learner_progress.get_progress(dialogue_id)
 
     async def record_attempt(
         self,
@@ -581,23 +581,16 @@ class SocraticDialogueService:
         aggregate.execute(observed)
         await self._transcripts.save(aggregate)
 
-        if self._progress is None:
-            return learner_initial_state()
-        progress = await self._progress.load_or_create(dialogue_id)
-        progress.execute(
-            RecordAttempt(
-                progress_id=dialogue_id,
-                path=f"turn/{position}",
-                component_id=component_id,
-                component_type=component_type,
-                digest=digest,
-                response=response,
-                correct=correct,
-                score=score,
-            )
+        return await self._learner_progress.record_attempt(
+            dialogue_id,
+            path=f"turn/{position}",
+            component_id=component_id,
+            component_type=component_type,
+            digest=digest,
+            response=response,
+            correct=correct,
+            score=score,
         )
-        await self._progress.save(progress)
-        return progress.state
 
     async def end(self, *, project_id: UUID, dialogue_id: UUID) -> None:
         """Stop a dialogue because the reader said so.

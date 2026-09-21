@@ -29,7 +29,7 @@ from research_team.dialogue.application.component_projections import (
     parse_and_project,
     validate_components_in_doc,
 )
-from research_team.platform.components import View
+from research_team.platform.components.components import View
 
 ASK_COMPONENT_TYPES: tuple[str, ...] = (
     "mcq",

@@ -11,8 +11,11 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from research_team.knowledge.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
-from research_team.knowledge.application.timeline_read import MAX_TIMELINE_BANDS
+# Constants aligned with graph_read.MAX_NEIGHBORHOOD_DEPTH and
+# timeline_read.MAX_TIMELINE_BANDS.
+# Defined here so platform components do not form a circular import dependency on knowledge BC.
+MAX_NEIGHBORHOOD_DEPTH = 2
+MAX_TIMELINE_BANDS = 1_000
 
 if TYPE_CHECKING:
     from research_team.platform.components.components import ComponentType, Note

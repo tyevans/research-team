@@ -19,7 +19,7 @@ from research_team.session.domain import Session
 
 
 def _tool_names(application) -> set[str]:
-    return {tool.name for tool in application.service._executor._tools}
+    return {tool.name for tool in application.turns_tools()}
 
 
 async def _middleware_names(application) -> set[str]:

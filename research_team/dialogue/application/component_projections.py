@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from research_team.platform.components import View, parse_document, project
+from research_team.platform.components.components import View, parse_document, project
 
 
 def parse_and_project(text: str, view: View = "learner") -> dict[str, Any]:

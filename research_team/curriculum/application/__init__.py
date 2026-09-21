@@ -53,6 +53,10 @@ from research_team.curriculum.application.grading import (
     grade,
     normalize_answer,
 )
+from research_team.curriculum.application.learner_progress import (
+    LearnerProgressPort,
+    LearnerProgressService,
+)
 from research_team.curriculum.application.learning_paths import (
     full_path,
     path_to,
@@ -81,6 +85,8 @@ __all__ = [
     "DraftOutline",
     "GradingError",
     "GraphTooLarge",
+    "LearnerProgressPort",
+    "LearnerProgressService",
     "OutlineCachePort",
     "OutlineTextPort",
     "RealizedCourse",
