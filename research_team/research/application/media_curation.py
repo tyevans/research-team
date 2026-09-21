@@ -33,7 +33,6 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
-from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
@@ -44,7 +43,7 @@ from research_team.research.domain.media_proposals import (
     MediaProposals,
     ProposeMedia,
 )
-from research_team.research.domain.urls import normalize_url
+from research_team.research.domain.urls import extract_hostname, normalize_url
 
 logger = logging.getLogger(__name__)
 
@@ -545,13 +544,11 @@ def _judge_prompt(need: MediaNeed, results: list[SearchResult]) -> str:
 
 
 def _host_of(url: str) -> str:
-    """The same comparison key `domain/media_proposals.py`'s `_host_of` uses
-    for `ignored_hosts` -- duplicated rather than imported because that
-    function is private to the aggregate module, and this filter must agree
-    with `decide`'s own key derivation or an asset filtered here could still
-    be proposed there, or vice versa.
+    """The comparison key for `ignored_hosts`, matching `domain/media_proposals.py`.
+
+    Delegates to `extract_hostname` so invalid or malformed URLs are safely handled.
     """
-    return (urlsplit(url).hostname or "").lower()
+    return extract_hostname(url)
 
 
 class CurationUnavailable(Exception):

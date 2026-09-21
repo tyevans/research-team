@@ -26,7 +26,7 @@ pins the behaviour so a later "helpful" guard against re-proposing a rejected
 asset cannot creep back in.
 
 Ignore keys are `normalize_url(asset_url)` for assets and lowercased
-`urlsplit(url).hostname` for hosts -- no new normalization, and specifically
+`extract_hostname(url)` for hosts -- no new normalization, and specifically
 no suffix matching: `example.com` does not cover `cdn.example.com`, for the
 reason `FetchGrant` gives for the same decision
 (`research_team/application/grants.py`) -- getting suffix matching right needs
@@ -35,13 +35,12 @@ hosts can name two hosts.
 """
 
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from eventsource import CommandRejectedError, DeciderAggregate, DomainEvent, register_event
 from pydantic import BaseModel, Field
 
-from research_team.research.domain.urls import normalize_url
+from research_team.research.domain.urls import extract_hostname, normalize_url
 
 
 @register_event
@@ -279,11 +278,12 @@ def initial_state() -> MediaProposalState:
 def _host_of(url: str) -> str:
     """The comparison key for `ignored_hosts`: lowercased, nothing else.
 
-    No suffix matching -- see this module's docstring. `urlsplit` never
-    raises on text a model wrote (unlike `.port`, `.hostname` does not parse
-    a number), so this is total without `normalize_url`'s try/except.
+    No suffix matching -- see this module's docstring. Delegated to
+    `extract_hostname` because `urlsplit` raises `ValueError` on malformed
+    bracketed IPv6 URLs (like `https://[::1/x`), so totality requires guarding
+    against that failure mode rather than assuming hostname parsing never raises.
     """
-    return (urlsplit(url).hostname or "").lower()
+    return extract_hostname(url)
 
 
 def decide(command: MediaProposalsCommand, state: MediaProposalState) -> list[DomainEvent]:

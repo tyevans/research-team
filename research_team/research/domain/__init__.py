@@ -53,7 +53,7 @@ from research_team.research.domain.topic import (
     TopicSubQuestionAdded,
     TopicSubQuestionResolved,
 )
-from research_team.research.domain.urls import normalize_url
+from research_team.research.domain.urls import extract_hostname, normalize_url
 
 __all__ = [
     "UNREADABLE_DEGRADATIONS",
@@ -101,5 +101,6 @@ __all__ = [
     "TopicState",
     "TopicSubQuestionAdded",
     "TopicSubQuestionResolved",
+    "extract_hostname",
     "normalize_url",
 ]
