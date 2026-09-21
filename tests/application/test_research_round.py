@@ -15,7 +15,7 @@ from research_team.research.application.research_round import (
     round_prompt,
 )
 from research_team.research.application.topic_attention import TopicAttention
-from research_team.research.domain.topic import SubQuestion, TopicState
+from research_team.research.domain.topic import Contest, SubQuestion, TopicState
 
 
 def attention(*findings):
@@ -116,6 +116,30 @@ async def test_resolving_a_sub_question_is_not_opening_one():
     outcome = await runner(uuid4(), attention(finding()))
 
     assert outcome.sub_questions_opened == 0
+    assert outcome.sub_questions_resolved == 1
+    assert not outcome.produced_nothing
+
+
+async def test_recording_a_gap_counts_as_work_done():
+    before = state(gaps=0)
+    after = state(gaps=2)
+    runner = TopicRoundRunner(ScriptedTopics(before, after), _reply(""))
+
+    outcome = await runner(uuid4(), attention(finding()))
+
+    assert outcome.gaps == 2
+    assert not outcome.produced_nothing
+
+
+async def test_resolving_a_contest_counts_as_work_done():
+    unresolved = state(contests={"c1": Contest(nature="conflict")})
+    resolved = state(contests={"c1": Contest(nature="conflict", resolution="settled")})
+    runner = TopicRoundRunner(ScriptedTopics(unresolved, resolved), _reply(""))
+
+    outcome = await runner(uuid4(), attention(finding()))
+
+    assert outcome.contests_resolved == 1
+    assert not outcome.produced_nothing
 
 
 async def test_the_turn_is_given_the_round_prompt():

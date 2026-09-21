@@ -324,9 +324,9 @@ def test_thrash_still_fires_with_its_old_message_when_no_gaps_are_recorded():
         f for f in attention_for(state, facts()).findings if f.check == "topic.rework_thrash"
     ]
     assert finding.message == "2 look(s) with nothing recorded since the last one"
-    assert (
-        finding.suggested_edit
-        == "Change what you are asking; re-reading the same material is not working."
+    assert finding.suggested_edit == (
+        "Restate the topic question or change what you are asking; "
+        "re-reading the same material is not working."
     )
 
 
