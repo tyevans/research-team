@@ -356,7 +356,13 @@ def build_fetch_tool(
         and not a plain keyword argument with a default.
         """
         try:
-            scheme = urlsplit(url).scheme.lower()
+            try:
+                scheme = urlsplit(url).scheme.lower()
+            except ValueError:
+                # Malformed URLs (e.g. invalid IPv6) raise ValueError from
+                # urlsplit. A gate approval can let one reach the tool; refusing
+                # it safely keeps the turn intact rather than crashing (B42).
+                scheme = ""
             if scheme not in ("http", "https"):
                 # Refused before the transport rather than left to httpx. A
                 # scheme it does not support today it might support tomorrow,

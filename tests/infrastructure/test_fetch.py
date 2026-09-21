@@ -262,6 +262,22 @@ async def test_a_non_web_scheme_is_refused_without_a_request(url: str):
     assert seen == []
 
 
+async def test_a_malformed_url_approved_by_a_human_is_refused_safely():
+    """B42: urlsplit raises ValueError on malformed URLs like invalid IPv6 brackets.
+    The tool must return a refusal prose rather than crashing the turn.
+    """
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, html=ARTICLE)
+
+    fetch = build_fetch_tool(client=_client(handler))
+    text = await _invoke(fetch, {"url": "https://[::1/x"})
+    assert "Only http and https URLs can be fetched" in text
+    assert seen == []
+
+
 async def test_the_response_body_is_capped_before_extraction():
     """A hostile or merely enormous page should not be parsed in full just to
     throw most of it away -- `lxml` on a 500MB body is a way to lose the turn.
