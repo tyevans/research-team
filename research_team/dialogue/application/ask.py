@@ -32,6 +32,7 @@ from research_team.dialogue.domain.ask import (
     StartAskConversation,
 )
 from research_team.platform.shared.ports import ActivityNote, ActivityReporter
+from research_team.platform.shared.registry_cache import ExpiringLruCache
 
 Role = Literal["user", "assistant"]
 
@@ -137,10 +138,17 @@ class ConversationRegistry:
         self._now = now
         self._limit = limit
         self._idle_seconds = idle_seconds
-        self._held: OrderedDict[str, Conversation] = OrderedDict()
+        self._cache: ExpiringLruCache[str, Conversation] = ExpiringLruCache(
+            now=now,
+            limit=limit,
+            idle_seconds=idle_seconds,
+            get_used_at=lambda c: c.used_at,
+            get_project_id=lambda c: c.project_id,
+        )
+        self._held: OrderedDict[str, Conversation] = self._cache._held
 
     def __len__(self) -> int:
-        return len(self._held)
+        return len(self._cache)
 
     def __bool__(self) -> bool:
         """Always true. A registry exists or it does not; it is never absent
@@ -149,44 +157,20 @@ class ConversationRegistry:
         return True
 
     def __contains__(self, chat_id: str) -> bool:
-        return chat_id in self._held
+        return chat_id in self._cache
 
     def contains(self, chat_id: str, project_id: UUID | None = None) -> bool:
         """Check whether a chat is currently active in memory and unexpired."""
-        held = self._held.get(chat_id)
-        if held is None:
-            return False
-        if project_id is not None and held.project_id != project_id:
-            return False
-        return (self._now() - held.used_at) <= self._idle_seconds
+        return self._cache.contains(chat_id, project_id)
 
     def get(self, chat_id: str, project_id: UUID) -> Conversation:
         now = self._now()
-        held = self._held.get(chat_id)
+        held = self._cache.get(chat_id, project_id, now=now)
         # A chat id arrives from the browser, so the project it was opened
         # under is checked rather than trusted; a mismatch is treated as
         # absence, which is also what a guessed id deserves.
-        #
-        # **This check now decides which stream a turn is appended to, not
-        # just which cache entry is returned.** `RecordAskTurn` carries no
-        # `project_id`, so `AskConversation.decide` has nothing to compare and
-        # cannot refuse a turn recorded onto another project's conversation --
-        # there is no second line of defence behind this one. Absence is kept
-        # as the answer rather than a refusal because it is what happens today
-        # and the caller has an obvious next move: the mismatched chat starts
-        # a fresh conversation on a fresh stream, and the other project's
-        # stream is untouched.
-        # `test_a_chat_id_reused_under_another_project_starts_its_own_stream`
-        # fails if this clause goes -- checked by deleting it, and B's
-        # question landed on A's stream.
-        if (
-            held is None
-            or held.project_id != project_id
-            or now - held.used_at > self._idle_seconds
-        ):
-            self._held.pop(chat_id, None)
+        if held is None:
             return Conversation(chat_id=chat_id, project_id=project_id, used_at=now)
-        self._held.move_to_end(chat_id)
         return held
 
     def get_by_conversation_id(
@@ -196,47 +180,30 @@ class ConversationRegistry:
         now = self._now()
         for chat_id, conv in list(self._held.items()):
             if conv.conversation_id == conversation_id:
-                if conv.project_id != project_id or now - conv.used_at > self._idle_seconds:
-                    self._held.pop(chat_id, None)
+                if conv.project_id != project_id or (now - conv.used_at) > self._idle_seconds:
+                    self._cache.drop(chat_id)
                     return None
-                self._held.move_to_end(chat_id)
+                self._cache.get(chat_id, project_id)
                 return conv
         return None
 
     def put(self, conversation: Conversation) -> None:
-        self._held[conversation.chat_id] = conversation
-        self._held.move_to_end(conversation.chat_id)
-        while len(self._held) > self._limit:
-            self._held.popitem(last=False)
+        self._cache.put(conversation.chat_id, conversation)
 
     def drop(self, chat_id: str) -> None:
-        self._held.pop(chat_id, None)
+        self._cache.drop(chat_id)
 
     def clear(self) -> None:
         """Evict all cached conversations."""
-        self._held.clear()
+        self._cache.clear()
 
     def evict_idle(self, now: float | None = None) -> int:
         """Explicitly prune all conversations that exceeded idle_seconds."""
-        current_time = self._now() if now is None else now
-        expired = [
-            c_id
-            for c_id, c in self._held.items()
-            if current_time - c.used_at > self._idle_seconds
-        ]
-        for c_id in expired:
-            self._held.pop(c_id, None)
-        return len(expired)
+        return self._cache.evict_idle(now)
 
     def active_chat_ids(self, project_id: UUID | None = None) -> list[str]:
         """List active, non-expired chat IDs currently held in cache."""
-        now = self._now()
-        return [
-            c_id
-            for c_id, c in self._held.items()
-            if (project_id is None or c.project_id == project_id)
-            and (now - c.used_at <= self._idle_seconds)
-        ]
+        return self._cache.active_keys(project_id)
 
 
 class AskInFlight(RuntimeError):
