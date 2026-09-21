@@ -227,6 +227,10 @@ class SocraticDialogueState(BaseModel):
     status: Literal["new", "started", "concluded"] = "new"
     turns: int = 0
     observations: list[str] = Field(default_factory=list)
+    opening_prompt: str = ""
+    pending_prompt: str = ""
+    conclusion_reason: ConclusionReason | None = None
+    turn_history: list[tuple[str, str]] = Field(default_factory=list)
 
     @property
     def is_started(self) -> bool:
@@ -315,7 +319,11 @@ def evolve(state: SocraticDialogueState, event: DomainEvent) -> SocraticDialogue
     """What each fact does to the state. Total, like every other fold here."""
     match event:
         case SocraticDialogueStarted(
-            project_id=project_id, topic=topic, goal=goal, stopping_condition=condition
+            project_id=project_id,
+            topic=topic,
+            goal=goal,
+            stopping_condition=condition,
+            opening_prompt=opening_prompt,
         ):
             return SocraticDialogueState(
                 dialogue_id=event.aggregate_id,
@@ -323,22 +331,33 @@ def evolve(state: SocraticDialogueState, event: DomainEvent) -> SocraticDialogue
                 topic=topic,
                 goal=goal,
                 stopping_condition=condition,
+                opening_prompt=opening_prompt,
+                pending_prompt=opening_prompt,
                 status="started",
             )
 
-        # A counter, not the text. Which question is outstanding is a *read*
-        # concern -- the last turn's `prompt`, or `opening_prompt` -- and no
-        # decision in this module needs it, so the aggregate does not carry it.
-        case SocraticTurnRecorded():
-            return state.model_copy(update={"turns": state.turns + 1})
+        case SocraticTurnRecorded(reply=reply, prompt=prompt):
+            return state.model_copy(
+                update={
+                    "turns": state.turns + 1,
+                    "pending_prompt": prompt,
+                    "turn_history": [*state.turn_history, (reply, prompt)],
+                }
+            )
 
         case SocraticProgressObserved(observation=observation):
             return state.model_copy(
                 update={"observations": [*state.observations, observation]}
             )
 
-        case SocraticDialogueConcluded():
-            return state.model_copy(update={"status": "concluded"})
+        case SocraticDialogueConcluded(reason=reason):
+            return state.model_copy(
+                update={
+                    "status": "concluded",
+                    "conclusion_reason": reason,
+                    "pending_prompt": "",
+                }
+            )
 
     return state
 

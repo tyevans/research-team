@@ -115,3 +115,51 @@ def test_seq_is_required():
 
     with pytest.raises(ValueError):
         ViewEntered(**envelope, params={})
+
+
+def test_summarize_interactions_computes_views_dwells_and_friction():
+    from research_team.dialogue.domain.interaction import (
+        ActionUndone,
+        AskSubmitted,
+        SearchPerformed,
+        ViewEntered,
+        ViewExited,
+        filter_by_project,
+        filter_by_view,
+        find_friction_signals,
+        summarize_interactions,
+    )
+
+    env = {k: v for k, v in _envelope().items() if k not in ("seq", "view")}
+    proj = uuid4()
+    events = [
+        ViewEntered(**env, seq=1, view="ask", project_id=proj),
+        AskSubmitted(**env, seq=2, view="ask", project_id=proj, query_text="hello"),
+        ViewExited(**env, seq=3, view="ask", project_id=proj, dwell_ms=5000),
+        ViewEntered(**env, seq=4, view="search", project_id=proj),
+        SearchPerformed(
+            **env, seq=5, view="search", project_id=proj, query_text="topic", result_count=2
+        ),
+        ActionUndone(**env, seq=6, view="search", project_id=proj, action_kind="filter"),
+        ViewExited(**env, seq=7, view="search", project_id=proj, dwell_ms=10000),
+    ]
+
+    summary = summarize_interactions(events)
+
+    assert summary.total_events == 7
+    assert summary.views == ("ask", "search")
+    assert summary.dwell_by_view == {"ask": 5000, "search": 10000}
+    assert summary.ask_count == 1
+    assert summary.search_count == 1
+    assert summary.has_friction is True
+    assert summary.friction_count == 1
+
+    friction = find_friction_signals(events)
+    assert len(friction) == 1
+    assert isinstance(friction[0], ActionUndone)
+
+    ask_events = filter_by_view(events, "ask")
+    assert len(ask_events) == 3
+
+    proj_events = filter_by_project(events, proj)
+    assert len(proj_events) == 7

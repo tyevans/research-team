@@ -257,3 +257,40 @@ def test_starting_a_concluded_dialogue_says_so_rather_than_saying_already_starte
             ),
             concluded,
         )
+
+
+def test_state_tracks_opening_prompt_pending_prompt_and_turn_history():
+    state = _with(
+        STARTED,
+        SocraticTurnRecorded(
+            aggregate_id=DIALOGUE_ID,
+            reply="Arianism was rejected.",
+            prompt="And who championed that?",
+            citations=[],
+        ),
+        SocraticTurnRecorded(
+            aggregate_id=DIALOGUE_ID,
+            reply="Athanasius.",
+            prompt="What role did the bishops play?",
+            citations=[],
+        ),
+    )
+
+    assert state.opening_prompt == "What do you already believe about it?"
+    assert state.pending_prompt == "What role did the bishops play?"
+    assert state.turns == 2
+    assert state.turn_history == [
+        ("Arianism was rejected.", "And who championed that?"),
+        ("Athanasius.", "What role did the bishops play?"),
+    ]
+
+
+def test_concluding_records_reason_and_clears_pending_prompt():
+    state = _with(
+        STARTED,
+        SocraticDialogueConcluded(aggregate_id=DIALOGUE_ID, reason="met"),
+    )
+
+    assert state.is_concluded
+    assert state.conclusion_reason == "met"
+    assert state.pending_prompt == ""

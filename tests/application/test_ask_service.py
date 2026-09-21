@@ -6,6 +6,7 @@ leaves no half-conversation behind.
 
 import asyncio
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -21,7 +22,7 @@ from research_team.dialogue.application.ask import (
     Citation,
     ConversationRegistry,
 )
-from research_team.dialogue.domain.ask import AskConversation
+from research_team.dialogue.domain.ask import AskConversation, StartAskConversation
 from research_team.platform.shared.ports import ActivityDelta, ActivityReporter
 
 
@@ -342,3 +343,104 @@ async def test_forgetting_a_chat_clears_its_history():
 
     history, _ = executor.calls[1]
     assert history == ()
+
+
+async def test_an_empty_question_is_rejected():
+    ask = service(FakeExecutor())
+    project = uuid4()
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        await drain(ask.ask(project_id=project, chat_id="c", question=""))
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        await drain(ask.ask(project_id=project, chat_id="c", question="   \n\t"))
+
+
+async def test_is_running_and_running_chats():
+    executor = FakeExecutor()
+    executor.release.clear()
+    ask = service(executor)
+    project = uuid4()
+
+    assert ask.is_running("c") is False
+    assert ask.running_chats == frozenset()
+
+    task = asyncio.create_task(
+        drain(ask.ask(project_id=project, chat_id="c", question="wait"))
+    )
+    await executor.started.wait()
+
+    assert ask.is_running("c") is True
+    assert ask.running_chats == frozenset({"c"})
+
+    executor.release.set()
+    await task
+
+    assert ask.is_running("c") is False
+    assert ask.running_chats == frozenset()
+
+
+async def test_resuming_an_ask_conversation_from_read_model():
+    from types import SimpleNamespace
+
+    conv_id = uuid4()
+    project = uuid4()
+
+    class StubAskReadModel:
+        def __init__(self):
+            self.row = SimpleNamespace(id=conv_id, project_id=project, turn_count=1)
+            self.turns = [
+                SimpleNamespace(
+                    question="previous q",
+                    answer="previous a",
+                    citations=[],
+                    position=0,
+                )
+            ]
+
+        async def get(self, cid):
+            return self.row if cid == conv_id else None
+
+        async def turns_for(self, cid):
+            return self.turns if cid == conv_id else []
+
+    read_model = StubAskReadModel()
+    executor = FakeExecutor()
+    transcripts = AggregateRepository(InMemoryTestHarness().event_store, AskConversation)
+    agg = transcripts.create_new(conv_id)
+    agg.execute(
+        StartAskConversation(
+            conversation_id=conv_id,
+            project_id=project,
+            opened_at=datetime.now(UTC),
+        )
+    )
+    await transcripts.save(agg)
+
+    ask = AskService(
+        executor=executor,
+        conversations=ConversationRegistry(now=lambda: 0.0),
+        now=lambda: 0.0,
+        transcripts=transcripts,
+        read_model=read_model,
+    )
+
+    # Ask passing the conversation_id
+    notes = await drain(
+        ask.ask(
+            project_id=project,
+            chat_id="chat-restored",
+            question="follow up",
+            conversation_id=conv_id,
+        )
+    )
+
+    assert isinstance(notes[0], AskConversationOpened)
+    assert notes[0].conversation_id == conv_id
+    # Check that executor received history from read model!
+    history, question = executor.calls[0]
+    assert question == "follow up"
+    assert history == (
+        AskMessage(role="user", text="previous q"),
+        AskMessage(role="assistant", text="previous a"),
+    )

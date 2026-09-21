@@ -141,3 +141,47 @@ def test_the_socratic_prompt_inherits_nothing_from_the_ask_s_component_reference
             f"{unwanted} reached the socratic prompt, which means it was built by "
             f"appending to ASK_PROMPT rather than composed from pieces"
         )
+
+
+def test_socratic_component_utilities():
+    from research_team.dialogue.application.socratic_components import (
+        extract_component_ids,
+        extract_component_types,
+        extract_components,
+        extract_prose,
+        has_components,
+        has_gradeable_components,
+        validate_components,
+    )
+
+    text = (
+        "Consider this question carefully:\n\n"
+        "```component:cloze\n"
+        "id: c_test\n"
+        "prompt: Fill in the blank\n"
+        "text: The council took place in {{Nicaea}}.\n"
+        "```\n\n"
+        "What does that tell us?"
+    )
+
+    assert has_components(text) is True
+    assert has_gradeable_components(text) is True
+    assert extract_component_ids(text) == ["c_test"]
+    assert extract_component_types(text) == ["cloze"]
+
+    components = extract_components(text)
+    assert len(components) == 1
+    assert components[0]["type"] == "cloze"
+
+    prose = extract_prose(text)
+    assert "Consider this question carefully:" in prose
+    assert "What does that tell us?" in prose
+    assert "component:cloze" not in prose
+
+    assert validate_components(text) == []
+
+    # Disallowed component in Socratic context (e.g. flashcards)
+    bad_text = "```component:flashcards\nid: f1\n```"
+    bad_errors = validate_components(bad_text)
+    assert len(bad_errors) > 0
+    assert "flashcards" in bad_errors[0]

@@ -101,3 +101,69 @@ def test_dropping_a_conversation_forgets_it():
     conversations.drop("chat-1")
 
     assert conversations.get("chat-1", project).messages == ()
+
+
+def test_conversation_registry_is_truthy_even_when_empty():
+    conversations = registry(lambda: 0.0)
+    assert len(conversations) == 0
+    assert bool(conversations) is True
+
+
+def test_conversation_registry_contains_and_in():
+    project = uuid4()
+    conversations = registry(lambda: 0.0)
+    conv = conversations.get("chat-1", project)
+    conversations.put(conv)
+
+    assert "chat-1" in conversations
+    assert "chat-2" not in conversations
+    assert conversations.contains("chat-1", project) is True
+    assert conversations.contains("chat-1", uuid4()) is False
+
+
+def test_conversation_registry_clear():
+    project = uuid4()
+    conversations = registry(lambda: 0.0)
+    conversations.put(conversations.get("chat-1", project))
+    conversations.put(conversations.get("chat-2", project))
+
+    assert len(conversations) == 2
+    conversations.clear()
+    assert len(conversations) == 0
+
+
+def test_conversation_registry_evict_idle_and_active_chat_ids():
+    project = uuid4()
+    current_time = [100.0]
+    conversations = registry(lambda: current_time[0], idle_seconds=50.0)
+
+    c1 = conversations.get("chat-1", project)
+    conversations.put(c1)
+    current_time[0] = 120.0
+    c2 = conversations.get("chat-2", project)
+    conversations.put(c2)
+
+    current_time[0] = 160.0
+    # c1 is idle (>50s), c2 is active (40s)
+    assert conversations.active_chat_ids(project) == ["chat-2"]
+
+    evicted = conversations.evict_idle()
+    assert evicted == 1
+    assert "chat-1" not in conversations
+    assert "chat-2" in conversations
+
+
+def test_conversation_registry_get_by_conversation_id():
+    project = uuid4()
+    conversations = registry(lambda: 0.0)
+    c1 = conversations.get("chat-1", project)
+    conversations.put(c1)
+
+    found = conversations.get_by_conversation_id(c1.conversation_id, project)
+    assert found is not None
+    assert found.chat_id == "chat-1"
+
+    # Mismatched project returns None
+    assert conversations.get_by_conversation_id(c1.conversation_id, uuid4()) is None
+    # Unknown id returns None
+    assert conversations.get_by_conversation_id(uuid4(), project) is None
