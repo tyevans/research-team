@@ -106,3 +106,52 @@ def test_the_prompt_an_ask_agent_receives_carries_every_offered_type():
     for name in ASK_COMPONENT_TYPES:
         assert f"component:{name}" in ASK_PROMPT, f"{name} never reaches the model"
     assert "component:checklist" not in ASK_PROMPT
+
+
+def test_ask_component_utilities():
+    from research_team.dialogue.application.ask_components import (
+        extract_component_ids,
+        extract_component_types,
+        extract_components,
+        extract_prose,
+        has_components,
+        has_gradeable_components,
+        validate_components,
+    )
+
+    text = (
+        "Here is some introduction text.\n\n"
+        "```component:mcq\n"
+        "id: q_test\n"
+        "prompt: Select one\n"
+        "options:\n"
+        '  - text: "A"\n'
+        "    correct: true\n"
+        '  - text: "B"\n'
+        "    correct: false\n"
+        "```\n\n"
+        "And some concluding prose."
+    )
+
+    assert has_components(text) is True
+    assert has_gradeable_components(text) is True
+    assert extract_component_ids(text) == ["q_test"]
+    assert extract_component_types(text) == ["mcq"]
+
+    components = extract_components(text)
+    assert len(components) == 1
+    assert components[0]["type"] == "mcq"
+
+    prose = extract_prose(text)
+    assert "Here is some introduction text." in prose
+    assert "And some concluding prose." in prose
+    assert "component:mcq" not in prose
+
+    errors = validate_components(text)
+    assert errors == []
+
+    # Invalid component type
+    bad_text = "```component:checklist\nid: c1\n```"
+    bad_errors = validate_components(bad_text)
+    assert len(bad_errors) > 0
+    assert "checklist" in bad_errors[0]

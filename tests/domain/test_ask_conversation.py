@@ -127,3 +127,31 @@ def test_starting_a_conversation_that_already_started_is_refused():
             ),
             state,
         )
+
+
+def test_recording_turns_tracks_last_turn_and_history():
+    state = _with(
+        AskConversationStarted(
+            aggregate_id=CONVERSATION_ID, project_id=PROJECT_ID, opened_at=OPENED_AT
+        ),
+        AskTurnRecorded(
+            aggregate_id=CONVERSATION_ID,
+            question="What is this?",
+            answer="This is a test.",
+            citations=[],
+        ),
+        AskTurnRecorded(
+            aggregate_id=CONVERSATION_ID,
+            question="And then?",
+            answer="Then it passed.",
+            citations=[("source", "s1")],
+        ),
+    )
+
+    assert state.turns == 2
+    assert state.last_question == "And then?"
+    assert state.last_answer == "Then it passed."
+    assert state.history == [
+        ("What is this?", "This is a test."),
+        ("And then?", "Then it passed."),
+    ]

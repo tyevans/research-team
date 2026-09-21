@@ -28,6 +28,8 @@ publishing is this feature's own job; see that module's docstring for what
 forgetting it looks like.
 """
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -374,3 +376,84 @@ what was searched.
 Machine-readable rather than prose so a test can pin it. Widening it is a
 deliberate change with a reason attached, not a judgement call at a call site.
 """
+
+
+@dataclass(frozen=True)
+class InteractionSummary:
+    """Derivable summary of interaction events for a browser session."""
+
+    session_id: UUID | None
+    install_id: UUID | None
+    total_events: int
+    views: tuple[str, ...]
+    dwell_by_view: dict[str, int]
+    friction_count: int
+    search_count: int
+    ask_count: int
+    has_friction: bool
+    events: tuple[InteractionEvent, ...]
+
+
+def filter_by_view(events: Sequence[InteractionEvent], view: str) -> list[InteractionEvent]:
+    """Filter interaction events to those occurring on a specific view."""
+    return [e for e in events if e.view == view]
+
+
+def filter_by_project(
+    events: Sequence[InteractionEvent], project_id: UUID
+) -> list[InteractionEvent]:
+    """Filter interaction events scoped to a specific project."""
+    return [e for e in events if e.project_id == project_id]
+
+
+def find_friction_signals(
+    events: Sequence[InteractionEvent],
+) -> list[InteractionEvent]:
+    """Extract events indicating friction (undone actions, retries, errors, empty results)."""
+    friction_types = (
+        ActionUndone,
+        ActionRetried,
+        RenderErrorRaised,
+        EmptyResultEncountered,
+    )
+    return [e for e in events if isinstance(e, friction_types)]
+
+
+def summarize_interactions(
+    events: Sequence[InteractionEvent],
+) -> InteractionSummary:
+    """Summarize an interaction session's events into navigation, dwell times, and friction."""
+    sorted_events = sorted(events, key=lambda e: e.seq)
+    views: list[str] = []
+    seen_views: set[str] = set()
+    dwell_by_view: dict[str, int] = {}
+    searches = 0
+    asks = 0
+
+    for e in sorted_events:
+        if e.view not in seen_views:
+            seen_views.add(e.view)
+            views.append(e.view)
+        if isinstance(e, ViewExited):
+            dwell_by_view[e.view] = dwell_by_view.get(e.view, 0) + e.dwell_ms
+        elif isinstance(e, SearchPerformed):
+            searches += 1
+        elif isinstance(e, AskSubmitted):
+            asks += 1
+
+    friction_events = find_friction_signals(sorted_events)
+    session_id = sorted_events[0].aggregate_id if sorted_events else None
+    install_id = sorted_events[0].install_id if sorted_events else None
+
+    return InteractionSummary(
+        session_id=session_id,
+        install_id=install_id,
+        total_events=len(sorted_events),
+        views=tuple(views),
+        dwell_by_view=dwell_by_view,
+        friction_count=len(friction_events),
+        search_count=searches,
+        ask_count=asks,
+        has_friction=len(friction_events) > 0,
+        events=tuple(sorted_events),
+    )

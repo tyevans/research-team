@@ -21,7 +21,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
@@ -142,6 +142,24 @@ class ConversationRegistry:
     def __len__(self) -> int:
         return len(self._held)
 
+    def __bool__(self) -> bool:
+        """Always true. A registry exists or it does not; it is never absent
+        for being empty.
+        """
+        return True
+
+    def __contains__(self, chat_id: str) -> bool:
+        return chat_id in self._held
+
+    def contains(self, chat_id: str, project_id: UUID | None = None) -> bool:
+        """Check whether a chat is currently active in memory and unexpired."""
+        held = self._held.get(chat_id)
+        if held is None:
+            return False
+        if project_id is not None and held.project_id != project_id:
+            return False
+        return (self._now() - held.used_at) <= self._idle_seconds
+
     def get(self, chat_id: str, project_id: UUID) -> Conversation:
         now = self._now()
         held = self._held.get(chat_id)
@@ -171,6 +189,20 @@ class ConversationRegistry:
         self._held.move_to_end(chat_id)
         return held
 
+    def get_by_conversation_id(
+        self, conversation_id: UUID, project_id: UUID
+    ) -> Conversation | None:
+        """Find a cached conversation by its server-minted conversation_id."""
+        now = self._now()
+        for chat_id, conv in list(self._held.items()):
+            if conv.conversation_id == conversation_id:
+                if conv.project_id != project_id or now - conv.used_at > self._idle_seconds:
+                    self._held.pop(chat_id, None)
+                    return None
+                self._held.move_to_end(chat_id)
+                return conv
+        return None
+
     def put(self, conversation: Conversation) -> None:
         self._held[conversation.chat_id] = conversation
         self._held.move_to_end(conversation.chat_id)
@@ -179,6 +211,32 @@ class ConversationRegistry:
 
     def drop(self, chat_id: str) -> None:
         self._held.pop(chat_id, None)
+
+    def clear(self) -> None:
+        """Evict all cached conversations."""
+        self._held.clear()
+
+    def evict_idle(self, now: float | None = None) -> int:
+        """Explicitly prune all conversations that exceeded idle_seconds."""
+        current_time = self._now() if now is None else now
+        expired = [
+            c_id
+            for c_id, c in self._held.items()
+            if current_time - c.used_at > self._idle_seconds
+        ]
+        for c_id in expired:
+            self._held.pop(c_id, None)
+        return len(expired)
+
+    def active_chat_ids(self, project_id: UUID | None = None) -> list[str]:
+        """List active, non-expired chat IDs currently held in cache."""
+        now = self._now()
+        return [
+            c_id
+            for c_id, c in self._held.items()
+            if (project_id is None or c.project_id == project_id)
+            and (now - c.used_at <= self._idle_seconds)
+        ]
 
 
 class AskInFlight(RuntimeError):
@@ -213,6 +271,17 @@ class AskExecutor(Protocol):
     ) -> AskAnswer: ...
 
 
+class AskReadModel(Protocol):
+    """Where an evicted or existing ask conversation can be read back from.
+
+    Typed over `Any` structurally, following `DialogueReadModel`.
+    """
+
+    async def get(self, conversation_id: UUID) -> Any | None: ...
+
+    async def turns_for(self, conversation_id: UUID) -> list[Any]: ...
+
+
 AskNote = AskConversationOpened | ActivityNote | AskAnswer
 """What `AskService.ask` yields: the conversation id first, then activity as
 it happens, then one answer last."""
@@ -226,6 +295,7 @@ class AskService:
         conversations: ConversationRegistry,
         now: Callable[[], float],
         transcripts: AggregateRepository[AskConversation],
+        read_model: AskReadModel | None = None,
     ) -> None:
         self._executor = executor
         self._conversations = conversations
@@ -236,19 +306,80 @@ class AskService:
         # connected to nothing. A missing repository is a TypeError at
         # composition, which is the earliest anyone can be told.
         self._transcripts = transcripts
+        self._read_model = read_model
         self._running: set[str] = set()
 
     def forget(self, chat_id: str) -> None:
         self._conversations.drop(chat_id)
 
+    def is_running(self, chat_id: str) -> bool:
+        """Whether a given chat_id currently has a question running."""
+        return chat_id in self._running
+
+    @property
+    def running_chats(self) -> frozenset[str]:
+        """All chat_ids currently running a question."""
+        return frozenset(self._running)
+
+    async def resume(
+        self,
+        *,
+        project_id: UUID,
+        conversation_id: UUID,
+        chat_id: str | None = None,
+    ) -> Conversation:
+        """Resume an existing conversation from cache or read model."""
+        target_chat_id = chat_id or str(conversation_id)
+        cached = self._conversations.get_by_conversation_id(conversation_id, project_id)
+        if cached is not None:
+            return cached
+        if self._read_model is None:
+            raise LookupError(
+                f"cannot resume ask conversation {conversation_id}: no read model configured"
+            )
+        row = await self._read_model.get(conversation_id)
+        if row is None or row.project_id != project_id:
+            raise LookupError(f"no conversation {conversation_id} in project {project_id}")
+        turns = await self._read_model.turns_for(conversation_id)
+        messages: list[AskMessage] = []
+        for turn in turns:
+            messages.append(AskMessage(role="user", text=turn.question))
+            messages.append(AskMessage(role="assistant", text=turn.answer))
+        conversation = Conversation(
+            chat_id=target_chat_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            messages=tuple(messages),
+            used_at=self._now(),
+        )
+        self._conversations.put(conversation)
+        return conversation
+
     async def ask(
-        self, *, project_id: UUID, chat_id: str, question: str
+        self,
+        *,
+        project_id: UUID,
+        chat_id: str,
+        question: str,
+        conversation_id: UUID | None = None,
     ) -> AsyncIterator[AskNote]:
+        if not question or not question.strip():
+            raise ValueError("question must not be empty")
         if chat_id in self._running:
             raise AskInFlight(f"chat {chat_id} already has a question running")
         self._running.add(chat_id)
         try:
-            conversation = self._conversations.get(chat_id, project_id)
+            if conversation_id is not None:
+                try:
+                    conversation = await self.resume(
+                        project_id=project_id,
+                        conversation_id=conversation_id,
+                        chat_id=chat_id,
+                    )
+                except LookupError:
+                    conversation = self._conversations.get(chat_id, project_id)
+            else:
+                conversation = self._conversations.get(chat_id, project_id)
             # Announced before anything else happens, including before the
             # executor is started -- see `AskConversationOpened`. A reader who
             # walks away during the answer has still been told where to find

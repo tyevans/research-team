@@ -449,3 +449,86 @@ def test_an_idle_dialogue_is_evicted_and_a_busy_one_is_not():
     assert registry.get(dialogue_id, PROJECT_ID) is not None
     clock["t"] = 11.0
     assert registry.get(dialogue_id, PROJECT_ID) is None
+
+
+def test_dialogue_registry_clear_evict_idle_and_active_ids():
+    current_time = [100.0]
+    reg = DialogueRegistry(now=lambda: current_time[0], idle_seconds=50.0)
+    d1 = uuid4()
+    d2 = uuid4()
+
+    reg.put(
+        LiveDialogue(
+            dialogue_id=d1,
+            project_id=PROJECT_ID,
+            topic="t1",
+            goal="g",
+            stopping_condition="s",
+            used_at=100.0,
+        )
+    )
+    current_time[0] = 120.0
+    reg.put(
+        LiveDialogue(
+            dialogue_id=d2,
+            project_id=PROJECT_ID,
+            topic="t2",
+            goal="g",
+            stopping_condition="s",
+            used_at=120.0,
+        )
+    )
+
+    assert d1 in reg
+    assert d2 in reg
+    assert reg.contains(d1, PROJECT_ID) is True
+    assert reg.contains(d1, uuid4()) is False
+
+    current_time[0] = 160.0
+    # d1 is idle (60s elapsed > 50s), d2 is active (40s elapsed <= 50s)
+    assert reg.active_ids(PROJECT_ID) == [d2]
+
+    evicted = reg.evict_idle()
+    assert evicted == 1
+    assert d1 not in reg
+    assert d2 in reg
+
+    reg.clear()
+    assert len(reg) == 0
+
+
+async def test_socratic_service_is_running_and_topic_preserved(transcripts):
+    import asyncio
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class PausedExecutor(StubExecutor):
+        async def respond(self, **kwargs):
+            started.set()
+            await release.wait()
+            return SocraticPrompt(prompt="done")
+
+    service = build(PausedExecutor(), transcripts)
+    dialogue_id = await service.begin(project_id=PROJECT_ID, topic="the Nicene Council")
+
+    assert service.is_running(dialogue_id) is False
+    assert service.running_dialogues == frozenset()
+
+    task = asyncio.create_task(
+        drain(service.respond(project_id=PROJECT_ID, dialogue_id=dialogue_id, reply="start"))
+    )
+    await started.wait()
+
+    assert service.is_running(dialogue_id) is True
+    assert service.running_dialogues == frozenset({dialogue_id})
+
+    release.set()
+    notes = await task
+
+    assert service.is_running(dialogue_id) is False
+    assert service.running_dialogues == frozenset()
+
+    # Verify topic is preserved in SocraticDialogueOpened!
+    assert isinstance(notes[0], SocraticDialogueOpened)
+    assert notes[0].topic == "the Nicene Council"

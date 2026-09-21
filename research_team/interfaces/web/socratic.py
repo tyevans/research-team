@@ -146,6 +146,7 @@ def _socratic_frame(note: object) -> str | None:
         body: dict[str, Any] = {
             "type": "dialogue",
             "dialogue_id": str(note.dialogue_id),
+            "topic": note.topic,
             "goal": note.goal,
             "stopping_condition": note.stopping_condition,
             # The question being answered, not the one about to be asked.

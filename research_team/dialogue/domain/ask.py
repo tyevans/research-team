@@ -104,6 +104,9 @@ class AskConversationState(BaseModel):
     project_id: UUID | None = None
     status: Literal["new", "started"] = "new"
     turns: int = 0
+    last_question: str = ""
+    last_answer: str = ""
+    history: list[tuple[str, str]] = Field(default_factory=list)
 
     @property
     def is_started(self) -> bool:
@@ -160,8 +163,15 @@ def evolve(state: AskConversationState, event: DomainEvent) -> AskConversationSt
                 status="started",
             )
 
-        case AskTurnRecorded():
-            return state.model_copy(update={"turns": state.turns + 1})
+        case AskTurnRecorded(question=question, answer=answer):
+            return state.model_copy(
+                update={
+                    "turns": state.turns + 1,
+                    "last_question": question,
+                    "last_answer": answer,
+                    "history": [*state.history, (question, answer)],
+                }
+            )
 
     return state
 

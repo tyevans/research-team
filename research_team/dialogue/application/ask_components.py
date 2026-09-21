@@ -80,3 +80,55 @@ def answer_document(text: str, view: View = "learner") -> dict[str, Any]:
     filename that would look like something a reader could open.
     """
     return project(parse_document(text, path=""), view=view)
+
+
+def extract_components(text: str, view: View = "learner") -> list[dict[str, Any]]:
+    """Extract all parsed and projected component blocks from an answer."""
+    doc = answer_document(text, view=view)
+    return [b for b in doc["blocks"] if b.get("kind") == "component"]
+
+
+def extract_prose(text: str) -> str:
+    """Extract markdown text without component blocks."""
+    doc = answer_document(text)
+    paragraphs = [
+        b["text"] for b in doc["blocks"] if b.get("kind") == "markdown" and b.get("text")
+    ]
+    return "\n\n".join(paragraphs)
+
+
+def has_components(text: str) -> bool:
+    """Check if the answer text contains any components."""
+    doc = answer_document(text)
+    return any(b.get("kind") == "component" for b in doc["blocks"])
+
+
+def has_gradeable_components(text: str) -> bool:
+    """Check if the answer text contains any gradeable components."""
+    components = extract_components(text)
+    return any(c.get("gradeable", False) for c in components)
+
+
+def extract_component_ids(text: str) -> list[str]:
+    """Return all component IDs present in the answer."""
+    return [c["id"] for c in extract_components(text) if "id" in c]
+
+
+def extract_component_types(text: str) -> list[str]:
+    """Return all component types present in the answer."""
+    return [c["type"] for c in extract_components(text) if "type" in c]
+
+
+def validate_components(
+    text: str, allowed_types: tuple[str, ...] = ASK_COMPONENT_TYPES
+) -> list[str]:
+    """Return a list of errors if any component has errors or is not an allowed type."""
+    errors: list[str] = []
+    components = extract_components(text)
+    for c in components:
+        comp_type = c.get("type", "")
+        if comp_type not in allowed_types:
+            errors.append(f"component type '{comp_type}' is not allowed")
+        for err in c.get("errors", []):
+            errors.append(f"component {c.get('id', '')}: {err.get('message', 'error')}")
+    return errors

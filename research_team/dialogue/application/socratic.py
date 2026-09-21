@@ -120,6 +120,7 @@ class SocraticDialogueOpened:
     fresh dialogue, the outstanding one on a resumed dialogue. Named for what
     it is rather than `opening_prompt`, because after an eviction it is not the
     opening question and a page that labelled it so would be lying."""
+    topic: str = ""
 
 
 SocraticNote = SocraticDialogueOpened | ActivityNote | SocraticPrompt
@@ -177,6 +178,7 @@ class LiveDialogue:
     the assistant -- the opening question is `messages[0]`. The outstanding
     question is simply `messages[-1]`, so nothing here caches it."""
     used_at: float = 0.0
+    topic: str = ""
 
     def appended(self, *messages: DialogueMessage, at: float) -> "LiveDialogue":
         return replace(self, messages=(*self.messages, *messages), used_at=at)
@@ -227,6 +229,18 @@ class DialogueRegistry:
         """
         return True
 
+    def __contains__(self, dialogue_id: UUID) -> bool:
+        return dialogue_id in self._held
+
+    def contains(self, dialogue_id: UUID, project_id: UUID | None = None) -> bool:
+        """Check whether a dialogue is currently active in memory and unexpired."""
+        held = self._held.get(dialogue_id)
+        if held is None:
+            return False
+        if project_id is not None and held.project_id != project_id:
+            return False
+        return (self._now() - held.used_at) <= self._idle_seconds
+
     def get(self, dialogue_id: UUID, project_id: UUID) -> LiveDialogue | None:
         now = self._now()
         held = self._held.get(dialogue_id)
@@ -255,6 +269,32 @@ class DialogueRegistry:
 
     def drop(self, dialogue_id: UUID) -> None:
         self._held.pop(dialogue_id, None)
+
+    def clear(self) -> None:
+        """Evict all cached dialogues."""
+        self._held.clear()
+
+    def evict_idle(self, now: float | None = None) -> int:
+        """Explicitly prune all dialogues that exceeded idle_seconds."""
+        current_time = self._now() if now is None else now
+        expired = [
+            d_id
+            for d_id, d in self._held.items()
+            if current_time - d.used_at > self._idle_seconds
+        ]
+        for d_id in expired:
+            self._held.pop(d_id, None)
+        return len(expired)
+
+    def active_ids(self, project_id: UUID | None = None) -> list[UUID]:
+        """List active, non-expired dialogue IDs currently held in cache."""
+        now = self._now()
+        return [
+            d_id
+            for d_id, d in self._held.items()
+            if (project_id is None or d.project_id == project_id)
+            and (now - d.used_at <= self._idle_seconds)
+        ]
 
 
 class SocraticExecutor(Protocol):
@@ -369,6 +409,7 @@ class SocraticDialogueService:
             LiveDialogue(
                 dialogue_id=dialogue_id,
                 project_id=project_id,
+                topic=topic,
                 goal=framing.goal,
                 stopping_condition=framing.stopping_condition,
                 # Guarded exactly as `_resume` guards it, and the two must
@@ -402,6 +443,15 @@ class SocraticDialogueService:
         """
         self._dialogues.drop(dialogue_id)
 
+    def is_running(self, dialogue_id: UUID) -> bool:
+        """Whether a given dialogue_id currently has a reply running."""
+        return dialogue_id in self._running
+
+    @property
+    def running_dialogues(self) -> frozenset[UUID]:
+        """All dialogue_ids currently running a reply."""
+        return frozenset(self._running)
+
     async def respond(
         self, *, project_id: UUID, dialogue_id: UUID, reply: str
     ) -> AsyncIterator[SocraticNote]:
@@ -415,6 +465,7 @@ class SocraticDialogueService:
             # this dialogue is aimed at and which question is outstanding.
             yield SocraticDialogueOpened(
                 dialogue_id=dialogue.dialogue_id,
+                topic=dialogue.topic,
                 goal=dialogue.goal,
                 stopping_condition=dialogue.stopping_condition,
                 pending_prompt=dialogue.messages[-1].text if dialogue.messages else "",
@@ -681,6 +732,7 @@ class SocraticDialogueService:
         return LiveDialogue(
             dialogue_id=dialogue_id,
             project_id=project_id,
+            topic=getattr(row, "topic", ""),
             goal=row.goal,
             stopping_condition=row.stopping_condition,
             messages=tuple(messages),
