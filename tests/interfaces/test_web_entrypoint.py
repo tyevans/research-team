@@ -172,3 +172,26 @@ def test_the_guarded_parameters_are_still_optional_on_the_factory(parameter):
     passing silently, so the assumption is stated where it can fail.
     """
     assert inspect.signature(create_app).parameters[parameter].default is None
+
+
+def test_web_entrypoint_is_importable():
+    """`web.py` is the production process entrypoint; it must be importable without error."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("web", ENTRYPOINT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert hasattr(module, "main") and callable(module.main)
+
+
+def test_cli_entrypoint_is_importable():
+    """`main.py` is the CLI process entrypoint; it must be importable without error."""
+    import importlib.util
+
+    cli_entrypoint = ENTRYPOINT.parent / "main.py"
+    spec = importlib.util.spec_from_file_location("cli_main", cli_entrypoint)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert hasattr(module, "main") and callable(module.main)
