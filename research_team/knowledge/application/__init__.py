@@ -1,5 +1,42 @@
-"""Knowledge application package."""
+"""Knowledge application package: graph access, layout, export, attachments, and discovery."""
 
+from research_team.knowledge.application.entity_definitions import (
+    Definition,
+    DefinitionCachePort,
+    DefinitionService,
+    DefinitionTextPort,
+    ServedCitation,
+)
+from research_team.knowledge.application.graph_export import (
+    ExportGraph,
+    ExportNode,
+    build_export,
+    to_csv_edges,
+    to_csv_nodes,
+    to_cytoscape,
+    to_cytoscape_json,
+    to_dot,
+    to_graphml,
+    to_json,
+    to_payload,
+)
+from research_team.knowledge.application.graph_layout import (
+    Layout,
+    circular_layout,
+    compute_layout,
+    fruchterman_reingold_layout,
+    grid_layout,
+    hierarchical_layout,
+    radial_layout,
+)
+from research_team.knowledge.application.graph_read import (
+    EntityPage,
+    Graph,
+    GraphEntity,
+    GraphReadPort,
+    GraphRelationship,
+    Neighborhood,
+)
 from research_team.knowledge.application.knowledge import (
     GRAPH_DESCRIBE_TOOL,
     GRAPH_SEARCH_TOOL,
@@ -21,6 +58,32 @@ from research_team.knowledge.application.knowledge import (
     SourceRef,
     source_id_for_url,
 )
+from research_team.knowledge.application.knowledge_attachment import (
+    KnowledgeAttachment,
+    TurnExecutorTools,
+)
+from research_team.knowledge.application.name_shape import (
+    clause_shaped,
+    signals,
+)
+from research_team.knowledge.application.ontology_discovery import (
+    DiscoveryProgress,
+    DiscoveryReport,
+    OntologyDiscoveryService,
+    OntologyRecordPort,
+    OntologyTextPort,
+)
+from research_team.knowledge.application.project_graphs import ProjectGraphs
+from research_team.knowledge.application.timeline_read import (
+    Timeline,
+    TimelineBand,
+    TimelineInterval,
+    TimelineReadPort,
+)
+from research_team.knowledge.application.usages import (
+    Usage,
+    UsageReadPort,
+)
 
 __all__ = [
     "GRAPH_DESCRIBE_TOOL",
@@ -30,16 +93,61 @@ __all__ = [
     "REMEMBER_TOOL",
     "SOURCE_ID_LIMIT",
     "UNMERGE_TOOL",
+    "Definition",
+    "DefinitionCachePort",
+    "DefinitionService",
+    "DefinitionTextPort",
+    "DiscoveryProgress",
+    "DiscoveryReport",
+    "EntityPage",
+    "ExportGraph",
+    "ExportNode",
     "ExtractionNote",
     "ExtractionReporter",
     "ExtractionStage",
+    "Graph",
+    "GraphEntity",
+    "GraphReadPort",
+    "GraphRelationship",
     "IngestReport",
+    "KnowledgeAttachment",
     "KnowledgeError",
     "KnowledgePort",
+    "Layout",
     "Match",
     "MergeRecord",
+    "Neighborhood",
+    "OntologyDiscoveryService",
+    "OntologyRecordPort",
+    "OntologyTextPort",
+    "ProjectGraphs",
     "SearchMode",
     "SearchOutcome",
+    "ServedCitation",
     "SourceRef",
+    "Timeline",
+    "TimelineBand",
+    "TimelineInterval",
+    "TimelineReadPort",
+    "TurnExecutorTools",
+    "Usage",
+    "UsageReadPort",
+    "build_export",
+    "circular_layout",
+    "clause_shaped",
+    "compute_layout",
+    "fruchterman_reingold_layout",
+    "grid_layout",
+    "hierarchical_layout",
+    "radial_layout",
+    "signals",
     "source_id_for_url",
+    "to_csv_edges",
+    "to_csv_nodes",
+    "to_cytoscape",
+    "to_cytoscape_json",
+    "to_dot",
+    "to_graphml",
+    "to_json",
+    "to_payload",
 ]

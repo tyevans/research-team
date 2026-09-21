@@ -245,3 +245,18 @@ SESSION_EVENTS: tuple[type[DomainEvent], ...] = (
     ToolCallDecided,
     AutonomyChanged,
 )
+
+FILE_EVENT_TYPES: tuple[type[DomainEvent], ...] = (FileWritten, FileEdited, FileDeleted)
+"""Events that modify the virtual filesystem on a session stream."""
+
+INHERITED_EVENT_FIELDS: frozenset[str] = frozenset(
+    {
+        "event_id",
+        "event_type",
+        "occurred_at",
+        "aggregate_id",
+        "aggregate_type",
+        "aggregate_version",
+    }
+)
+"""Common envelope metadata fields excluded when cloning or replaying historical events."""

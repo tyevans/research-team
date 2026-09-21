@@ -84,7 +84,7 @@ from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
-from research_team.knowledge.application import (
+from research_team.knowledge.application.knowledge import (
     MAX_DOCUMENT_CHARS,
     KnowledgeError,
     SourceRef,

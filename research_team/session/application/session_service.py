@@ -55,6 +55,12 @@ from research_team.session.application.turn_runner import (
     _INHERITED_EVENT_FIELDS as _INHERITED_EVENT_FIELDS,
 )
 from research_team.session.application.turn_runner import (
+    FILE_EVENT_TYPES as FILE_EVENT_TYPES,
+)
+from research_team.session.application.turn_runner import (
+    INHERITED_EVENT_FIELDS as INHERITED_EVENT_FIELDS,
+)
+from research_team.session.application.turn_runner import (
     TurnOutcome as TurnOutcome,
 )
 from research_team.session.application.turn_runner import (
@@ -100,7 +106,7 @@ from research_team.tenancy.application.project_sessions import (
     resolve_project_files as resolve_project_files,
 )
 from research_team.tenancy.application.project_sessions import (
-    start_session_in_project as start_session_in_project,
+    start_session_in_project as _tenancy_start_session_in_project,
 )
 from research_team.tenancy.domain import (
     Project,
@@ -108,6 +114,31 @@ from research_team.tenancy.domain import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def start_session_in_project(
+    projects: AggregateRepository[Project],
+    repository: SessionRepository,
+    project_id: UUID,
+    purpose: SessionPurpose,
+    *,
+    default_system_prompt: str = "",
+    knowledge_prompt: str = "",
+    model_name: str = "",
+    session_id: UUID | None = None,
+) -> UUID:
+    """Start a session in a project, generating a session ID if not provided."""
+    return await _tenancy_start_session_in_project(
+        projects,
+        repository,
+        project_id,
+        purpose,
+        default_system_prompt=default_system_prompt,
+        knowledge_prompt=knowledge_prompt,
+        model_name=model_name,
+        session_id=session_id if session_id is not None else uuid4(),
+    )
+
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a coding agent working in an in-memory filesystem. "
@@ -536,7 +567,13 @@ class SessionService:
     # session that names a project without the project having agreed to it, so
     # no `JoinProject`, no holder, no inherited filesystem. Callers that
     # wanted "a session, quickly" want `start_in_project` and a project.
-    async def start_in_project(self, project_id: UUID, purpose: SessionPurpose) -> UUID:
+    async def start_in_project(
+        self,
+        project_id: UUID,
+        purpose: SessionPurpose,
+        *,
+        session_id: UUID | None = None,
+    ) -> UUID:
         """Begin a session that shares the project's filesystem.
 
         `purpose` is required and undefaulted so that every caller states what
@@ -567,7 +604,11 @@ class SessionService:
         copied from. See `_catch_up_tip` for what is being caught up and why
         there is anything to catch.
         """
-        return await self._project_sessions.start_in_project(project_id, purpose)
+        return await self._project_sessions.start_in_project(
+            project_id,
+            purpose,
+            session_id=session_id if session_id is not None else uuid4(),
+        )
 
     async def _catch_up_tip(self, project: Any) -> None:
         """Move the tip to the end of the stream it already names.
@@ -1010,7 +1051,7 @@ class SessionService:
         new_id = uuid4()
         forked = self._repository.create(new_id)
         for event in events[:at]:
-            payload = event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
+            payload = event.model_dump(exclude=set(INHERITED_EVENT_FIELDS))
             if isinstance(event, SessionStarted) and purpose is not None:
                 payload["purpose"] = purpose
             forked.create_event(type(event), **payload)

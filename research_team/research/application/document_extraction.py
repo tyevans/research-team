@@ -23,7 +23,7 @@ the precedent -- a read path that needs the same closure, constructed inside
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
-from research_team.knowledge.application import (
+from research_team.knowledge.application.knowledge import (
     ExtractionReporter,
     IngestReport,
     KnowledgePort,

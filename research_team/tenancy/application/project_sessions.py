@@ -14,12 +14,9 @@ from research_team.knowledge.application.knowledge_attachment import (
 )
 from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.platform.shared.ports import SessionRepository, TurnExecutor
-from research_team.session.application.turn_runner import (
-    _FILE_EVENT_TYPES,
-    _INHERITED_EVENT_FIELDS,
-    project_context,
-)
 from research_team.session.domain import (
+    FILE_EVENT_TYPES,
+    INHERITED_EVENT_FIELDS,
     RecordForkSource,
     SessionPurpose,
     StartSession,
@@ -45,6 +42,7 @@ __all__ = [
     "delete_project_aggregate",
     "ensure_session_project_attached",
     "fork_session_files",
+    "project_context",
     "release_session_project",
     "rename_project_aggregate",
     "resolve_project_files",
@@ -52,6 +50,40 @@ __all__ = [
     "unarchive_project_aggregate",
     "update_project_metadata_aggregate",
 ]
+
+
+def project_context(name: str) -> str:
+    """What project this session is in, for a session that is in one.
+
+    Every other project-scoped clause in this build describes a *tool* -- the
+    graph, the corpus, the topic queue -- and none of them said what the
+    project is about. An agent joined to a project could not name it, which is
+    the second half of why a topic question like "typical physical traits"
+    goes unnoticed: even an agent that wanted to disambiguate had nothing to
+    disambiguate against.
+
+    Built per session rather than folded into the static `knowledge_prompt`,
+    because the name is per project and that string is one constant shared by
+    every project in the process. It lands in `SessionStarted.system_prompt`
+    like the rest of the prompt, so a session resumed after a project is
+    renamed still runs under the name it started with -- deliberate: replaying
+    a session under a prompt it never saw is the failure that field exists to
+    prevent, and a stale project name is a much smaller cost than that.
+
+    Empty string for a project created without one. `ProjectState.name`
+    defaults to `""` and nothing forbids it, and "This project is called ``."
+    is worse than silence -- it reads as a bug in the prompt builder rather
+    than as a project nobody named.
+    """
+    if not name.strip():
+        return ""
+    return (
+        f"\n\nThis session is working in a project called {name!r}. That is the "
+        "subject everything here is about. It is context for you, not a "
+        "substitute for saying so: anything you write down -- a topic "
+        "question, a finding, a file -- is read later by someone who does not "
+        "have it."
+    )
 
 
 async def resolve_project_files(
@@ -273,9 +305,9 @@ async def fork_session_files(
         )
     )
     for event in events[:at_event]:
-        if isinstance(event, _FILE_EVENT_TYPES):
+        if isinstance(event, FILE_EVENT_TYPES):
             session.create_event(
-                type(event), **event.model_dump(exclude=set(_INHERITED_EVENT_FIELDS))
+                type(event), **event.model_dump(exclude=set(INHERITED_EVENT_FIELDS))
             )
     session.execute(RecordForkSource(source_session_id=source_session_id, at_event=at_event))
     await repository.save(session)
@@ -290,6 +322,7 @@ async def start_session_in_project(
     default_system_prompt: str = "",
     knowledge_prompt: str = "",
     model_name: str = "",
+    session_id: UUID | None = None,
 ) -> UUID:
     """Begin a session that shares the project's filesystem.
 
@@ -323,10 +356,9 @@ async def start_session_in_project(
     """
     project = await projects.load(project_id)
     await catch_up_project_tip(project, repository)
-    import research_team.session.application.session_service as _session_service
 
-    uuid_func = getattr(_session_service, "uuid4", uuid4)
-    session_id = uuid_func()
+    if session_id is None:
+        session_id = uuid4()
     project.execute(JoinProject(session_id=session_id))
 
     state = project.state
@@ -570,7 +602,13 @@ class ProjectSessions:
         """
         await delete_project_aggregate(self._projects, project_id, graphs=self._graphs)
 
-    async def start_in_project(self, project_id: UUID, purpose: SessionPurpose) -> UUID:
+    async def start_in_project(
+        self,
+        project_id: UUID,
+        purpose: SessionPurpose,
+        *,
+        session_id: UUID | None = None,
+    ) -> UUID:
         """Begin a session that shares the project's filesystem.
 
         `purpose` is required and undefaulted so that every caller states what
@@ -609,6 +647,7 @@ class ProjectSessions:
             default_system_prompt=self._default_system_prompt,
             knowledge_prompt=self._knowledge_prompt,
             model_name=self._model_name,
+            session_id=session_id,
         )
 
     async def catch_up_tip(self, project: Any) -> None:

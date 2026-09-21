@@ -243,3 +243,75 @@ def test_the_removed_workflows_package_does_not_come_back_as_a_directory() -> No
         "never cleaned; the package was deleted with B147 and an empty "
         "directory still imports as a namespace package"
     )
+
+
+BOUNDED_CONTEXTS = (
+    "curriculum",
+    "dialogue",
+    "knowledge",
+    "research",
+    "session",
+    "settings",
+    "tenancy",
+)
+
+
+def _bc_of_module(module: Path) -> str | None:
+    parts = module.relative_to(PACKAGE).parts
+    if parts and parts[0] in BOUNDED_CONTEXTS:
+        return parts[0]
+    return None
+
+
+DOMAIN_MODULES = [m for m in _modules("domain") if _bc_of_module(m) is not None]
+
+
+@pytest.mark.parametrize(
+    "module",
+    DOMAIN_MODULES,
+    ids=[str(m.relative_to(PACKAGE)) for m in DOMAIN_MODULES],
+)
+def test_domain_layers_are_isolated_from_other_bounded_contexts(module: Path) -> None:
+    """DDD domain purity: a bounded context's domain never imports another bounded context."""
+    bc = _bc_of_module(module)
+    assert bc is not None
+    other_bcs = set(BOUNDED_CONTEXTS) - {bc}
+    for imported in _imported_paths(module):
+        if imported.startswith("research_team."):
+            parts = imported.split(".")
+            if len(parts) >= 2 and parts[1] in other_bcs:
+                pytest.fail(
+                    f"{module.relative_to(PACKAGE)} imports from other bounded context "
+                    f"'{parts[1]}': {imported}. Domain layers must be strictly isolated."
+                )
+
+
+ALL_BC_MODULES = [
+    (layer, module) for layer, module in ALL_MODULES if _bc_of_module(module) is not None
+]
+
+
+@pytest.mark.parametrize(
+    ("layer", "module"),
+    ALL_BC_MODULES,
+    ids=[f"{layer}/{module.relative_to(PACKAGE)}" for layer, module in ALL_BC_MODULES],
+)
+def test_bounded_contexts_do_not_import_other_bounded_context_outer_layers(
+    layer: str, module: Path
+) -> None:
+    """A bounded context may not depend on another's infrastructure or interfaces."""
+    bc = _bc_of_module(module)
+    assert bc is not None
+    other_bcs = set(BOUNDED_CONTEXTS) - {bc}
+    for imported in _imported_paths(module):
+        if imported.startswith("research_team."):
+            parts = imported.split(".")
+            if len(parts) >= 3 and parts[1] in other_bcs:
+                target_layer = parts[2]
+                if target_layer in ("infrastructure", "interfaces"):
+                    pytest.fail(
+                        f"{module.relative_to(PACKAGE)} reaches into "
+                        f"'{parts[1]}.{target_layer}': {imported}. "
+                        "Cross-context interactions must go through "
+                        "application or domain contracts."
+                    )
