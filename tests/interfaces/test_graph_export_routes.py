@@ -232,3 +232,42 @@ async def test_scope_area_without_an_area_is_refused(app_and_client):
 
     assert response.status_code == 422
     assert "area" in response.json()["detail"]
+
+
+async def test_export_graph_dot_and_cytoscape(app_and_client):
+    client = app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(app_and_client.application, project_id)
+
+    # DOT
+    dot_resp = await client.get(f"/api/projects/{project_id}/export/graph?format=dot")
+    assert dot_resp.status_code == 200
+    assert ".dot" in dot_resp.headers["content-disposition"]
+    assert 'digraph "project"' in dot_resp.text
+
+    # Cytoscape
+    cyto_resp = await client.get(f"/api/projects/{project_id}/export/graph?format=cytoscape")
+    assert cyto_resp.status_code == 200
+    assert ".cytoscape.json" in cyto_resp.headers["content-disposition"]
+    cyto_data = cyto_resp.json()
+    assert len(cyto_data["elements"]["nodes"]) == 8
+
+
+async def test_export_graph_csv_and_filters(app_and_client):
+    client = app_and_client.client
+    project_id = await _new_project(client)
+    await _seed_two_clusters(app_and_client.application, project_id)
+
+    # CSV Nodes
+    nodes_resp = await client.get(f"/api/projects/{project_id}/export/graph?format=csv_nodes")
+    assert nodes_resp.status_code == 200
+    assert ".nodes.csv" in nodes_resp.headers["content-disposition"]
+    assert "id,name,entity_type,inferred,temporal,x,y" in nodes_resp.text
+
+    # CSV Edges with search filter
+    edges_resp = await client.get(
+        f"/api/projects/{project_id}/export/graph?format=csv_edges&search=Alpha&layout=circular"
+    )
+    assert edges_resp.status_code == 200
+    assert ".edges.csv" in edges_resp.headers["content-disposition"]
+    assert "source,target,relationship_type,inferred,derivation" in edges_resp.text

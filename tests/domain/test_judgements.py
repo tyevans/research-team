@@ -431,3 +431,59 @@ def test_distinctness_still_does_not_travel_between_two_distinct_pairs():
     )
 
     assert not state.are_held_distinct(JFK, IRAN)
+
+
+def test_judgements_state_inspection_queries():
+    same_event = EntitiesHeldSame(aggregate_id=PROJECT, keys=[JFK, JOHN], reason="presidents")
+    distinct_event = EntitiesHeldDistinct(
+        aggregate_id=PROJECT, left=IRAN, right=IRAQ, reason="countries"
+    )
+    state = _fold(same_event, distinct_event)
+
+    assert state.all_groups() == [frozenset({JFK, JOHN})]
+    assert state.all_distinct_pairs() == [(IRAN, IRAQ)]
+    assert len(state.live_judgements()) == 2
+    assert len(state.withdrawn_judgements()) == 0
+    assert state.is_judged(JFK)
+    assert state.is_judged(IRAN)
+    assert not state.is_judged(KENNEDY)
+
+    j_for_jfk = state.judgements_for(JFK)
+    assert len(j_for_jfk) == 1
+    assert j_for_jfk[0][0] == same_event.event_id
+
+    # Withdraw same_event and verify inspection methods
+    state_withdrawn = evolve(
+        state,
+        JudgementWithdrawn(
+            aggregate_id=PROJECT, judgement_id=same_event.event_id, reason="withdrawn"
+        ),
+    )
+    assert state_withdrawn.all_groups() == []
+    assert len(state_withdrawn.live_judgements()) == 1
+    assert len(state_withdrawn.withdrawn_judgements()) == 1
+    assert not state_withdrawn.is_judged(JFK)
+
+
+def test_redundant_hold_same_is_refused():
+    state = _fold(EntitiesHeldSame(aggregate_id=PROJECT, keys=[JFK, JOHN], reason="r"))
+    with pytest.raises(CommandRejectedError, match="already held same"):
+        decide(HoldSame(judgements_id=PROJECT, keys=[JFK, JOHN], reason="redundant"), state)
+
+
+def test_redundant_hold_distinct_is_refused():
+    state = _fold(
+        EntitiesHeldDistinct(aggregate_id=PROJECT, left=IRAN, right=IRAQ, reason="r")
+    )
+    with pytest.raises(CommandRejectedError, match="already held distinct"):
+        decide(
+            HoldDistinct(judgements_id=PROJECT, left=IRAN, right=IRAQ, reason="redundant"),
+            state,
+        )
+
+
+def test_hold_same_deduplicates_keys_preserving_order():
+    state = initial_state()
+    events = decide(HoldSame(judgements_id=PROJECT, keys=[JFK, JOHN, JFK], reason="r"), state)
+    assert len(events) == 1
+    assert events[0].keys == [JFK, JOHN]

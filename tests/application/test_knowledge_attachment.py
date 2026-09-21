@@ -229,3 +229,60 @@ async def test_a_tool_without_a_name_is_kept_rather_than_dropped():
     await attachment.attach(uuid4())
 
     assert anonymous in executor.tools
+
+
+@pytest.mark.asyncio
+async def test_attachment_properties_and_session_context(repository):
+    attachment, _executor, closed = _build(repository)
+    project_id = uuid4()
+
+    assert not attachment.is_attached
+    assert attachment.attached_tools == ()
+
+    async with attachment.session(project_id) as att:
+        assert att.is_attached
+        assert att.attached_project_id == project_id
+        assert {t.name for t in att.attached_tools} == KNOWLEDGE_TOOL_NAMES
+
+    assert not attachment.is_attached
+    assert attachment.attached_tools == ()
+    assert len(closed) == 1
+
+
+@pytest.mark.asyncio
+async def test_attachment_refresh_and_lifecycle_callbacks(repository):
+    attached_events = []
+    detached_events = []
+
+    async def on_attached(pid):
+        attached_events.append(pid)
+
+    async def on_detached():
+        detached_events.append(True)
+
+    async def open_graph(project_id):
+        return "graph", (_FakeTool("tool_a"),)
+
+    async def close_graph(knowledge):
+        pass
+
+    executor = _FakeExecutor(BASE_TOOLS)
+    attachment = KnowledgeAttachment(
+        executor,
+        BASE_TOOLS,
+        open_graph=open_graph,
+        close_graph=close_graph,
+        on_attached=on_attached,
+        on_detached=on_detached,
+    )
+    pid = uuid4()
+    await attachment.attach(pid)
+    assert attached_events == [pid]
+    assert attachment.is_attached
+
+    await attachment.refresh()
+    assert len(attached_events) == 2
+
+    await attachment.detach()
+    assert detached_events == [True]
+    assert not attachment.is_attached

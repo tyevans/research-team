@@ -521,3 +521,45 @@ async def test_a_project_without_a_card_indexer_still_opens():
 
     assert graphs.chunks(project_id) is not None
     assert graphs.cards(project_id) is None
+
+
+async def test_project_graphs_lifecycle_queries_and_reload():
+    graphs = _graphs()
+    p1, p2 = uuid4(), uuid4()
+
+    assert not graphs.is_open(p1)
+    assert graphs.opened_projects() == set()
+    assert graphs.project_status(p1) == {
+        "open": False,
+        "has_chunks": False,
+        "has_co_mentions": False,
+        "has_card_vectors": False,
+        "has_cards": False,
+    }
+
+    first_store = await graphs.open(p1)
+    assert graphs.is_open(p1)
+    assert not graphs.is_open(p2)
+    assert graphs.opened_projects() == {p1}
+    assert graphs.project_status(p1)["open"] is True
+
+    reloaded_store = await graphs.reload(p1)
+    assert reloaded_store is not first_store
+    assert first_store.closed is True
+    assert graphs.is_open(p1)
+
+
+async def test_open_cleans_up_on_rebuild_error():
+    class FailingRebuild:
+        async def __call__(self, store, project_id, **kwargs):
+            raise RuntimeError("rebuild failure")
+
+    class TrackedStore(_FakeStore):
+        pass
+
+    graphs = ProjectGraphs(build_store=TrackedStore, rebuild=FailingRebuild())
+    pid = uuid4()
+    with pytest.raises(RuntimeError, match="rebuild failure"):
+        await graphs.open(pid)
+
+    assert not graphs.is_open(pid)

@@ -6,6 +6,7 @@ Houses read-side state and projections for entity definitions and discovered ont
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid5
 
@@ -31,6 +32,7 @@ from research_team.knowledge.domain.ontology import (
     DiscoveredClass,
     OntologyDiscovered,
 )
+from research_team.research.domain.corpus import CorpusDocumentDropped
 
 DEFINITION_NAMESPACE = UUID("8a2c1e6d-4b9f-5a71-9e3c-2d6f8b1a0c45")
 """Distinct from `CORPUS_NAMESPACE` so a definition and a document that
@@ -196,12 +198,78 @@ class EntityDefinitionStore(BaseReadModelStore):
         )
         await self._connection.commit()
 
+    async def mark_stale_many(self, project_id: UUID, entity_ids: Sequence[UUID]) -> int:
+        """Flag multiple cached definitions as stale in one atomic operation."""
+        if not entity_ids:
+            return 0
+        row_ids = [str(EntityDefinitionRow.row_id(project_id, eid)) for eid in entity_ids]
+        placeholders = ",".join("?" for _ in row_ids)
+        cursor = await self._connection.execute(
+            f"UPDATE {EntityDefinitionRow.table_name()} "  # nosec B608
+            "SET stale = 1, updated_at = ?, version = version + 1 "
+            f"WHERE id IN ({placeholders}) AND project_id = ? "
+            "AND stale = 0 AND deleted_at IS NULL",
+            (
+                datetime.now(UTC).isoformat(),
+                *row_ids,
+                str(project_id),
+            ),
+        )
+        await self._connection.commit()
+        return cursor.rowcount
+
     async def delete(self, project_id: UUID, entity_id: UUID) -> None:
         """Discard a cached definition outright -- for an entity that no
         longer exists, where marking it stale would leave a permanent orphan
         nothing will ever regenerate. A missing row is a no-op for the same
         reason `mark_stale`'s is."""
         await self._rows.delete(EntityDefinitionRow.row_id(project_id, entity_id))
+
+    async def delete_many(self, project_id: UUID, entity_ids: Sequence[UUID]) -> int:
+        """Discard multiple cached definitions in one atomic operation."""
+        if not entity_ids:
+            return 0
+        row_ids = [str(EntityDefinitionRow.row_id(project_id, eid)) for eid in entity_ids]
+        placeholders = ",".join("?" for _ in row_ids)
+        cursor = await self._connection.execute(
+            f"DELETE FROM {EntityDefinitionRow.table_name()} "  # nosec B608
+            f"WHERE id IN ({placeholders}) AND project_id = ?",
+            (
+                *row_ids,
+                str(project_id),
+            ),
+        )
+        await self._connection.commit()
+        return cursor.rowcount
+
+    async def mark_stale_for_source(self, project_id: UUID, source_id: str) -> int:
+        """Flag any cached definition that cites `source_id` as stale."""
+        cursor = await self._connection.execute(
+            f"UPDATE {EntityDefinitionRow.table_name()} "  # nosec B608
+            "SET stale = 1, updated_at = ?, version = version + 1 "
+            "WHERE project_id = ? AND citations LIKE ? AND stale = 0 AND deleted_at IS NULL",
+            (
+                datetime.now(UTC).isoformat(),
+                str(project_id),
+                f'%"{source_id}"%',
+            ),
+        )
+        await self._connection.commit()
+        return cursor.rowcount
+
+    async def mark_all_stale(self, project_id: UUID) -> int:
+        """Flag all cached definitions for a project as stale."""
+        cursor = await self._connection.execute(
+            f"UPDATE {EntityDefinitionRow.table_name()} "  # nosec B608
+            "SET stale = 1, updated_at = ?, version = version + 1 "
+            "WHERE project_id = ? AND stale = 0 AND deleted_at IS NULL",
+            (
+                datetime.now(UTC).isoformat(),
+                str(project_id),
+            ),
+        )
+        await self._connection.commit()
+        return cursor.rowcount
 
 
 class EntityDefinitionProjection(DeclarativeProjection):
@@ -256,14 +324,9 @@ class EntityDefinitionProjection(DeclarativeProjection):
         a new mention or a corrected name would -- so this one subscription
         is the entire "more properties were added" case; there is no second
         event to also watch for that.
-
-        Keys on `event.tenant_id`, matching `CorpusProjection._on_extracted`:
-        this subscribes to the whole store rather than one category, so
-        redstring's own event arrives here without new wiring, and
-        `tenant_id` is the project.
         """
-        for entity in event.entities:
-            await self._definitions.mark_stale(event.tenant_id, entity.id)
+        entity_ids = [entity.id for entity in event.entities]
+        await self._definitions.mark_stale_many(event.tenant_id, entity_ids)
 
     @handles(EntitiesMerged)
     async def _on_merged(self, event: EntitiesMerged) -> None:
@@ -280,8 +343,13 @@ class EntityDefinitionProjection(DeclarativeProjection):
         could later explain.
         """
         await self._definitions.mark_stale(event.tenant_id, event.canonical_entity_id)
-        for merged_id in event.merged_entity_ids:
-            await self._definitions.delete(event.tenant_id, merged_id)
+        if event.merged_entity_ids:
+            await self._definitions.delete_many(event.tenant_id, event.merged_entity_ids)
+
+    @handles(CorpusDocumentDropped)
+    async def _on_source_dropped(self, event: CorpusDocumentDropped) -> None:
+        """Stale any cached definitions that cited this dropped document."""
+        await self._definitions.mark_stale_for_source(event.aggregate_id, str(event.source_id))
 
 
 class EntityDefinitionRunner(BaseProjectionRunner[EntityDefinitionStore]):
@@ -350,6 +418,24 @@ class EntityDefinitionRunner(BaseProjectionRunner[EntityDefinitionStore]):
         reads.
         """
         await self._started().put(row)
+
+    async def mark_stale(self, project_id: UUID, entity_id: UUID) -> None:
+        await self._started().mark_stale(project_id, entity_id)
+
+    async def delete(self, project_id: UUID, entity_id: UUID) -> None:
+        await self._started().delete(project_id, entity_id)
+
+    async def mark_stale_many(self, project_id: UUID, entity_ids: Sequence[UUID]) -> int:
+        return await self._started().mark_stale_many(project_id, entity_ids)
+
+    async def delete_many(self, project_id: UUID, entity_ids: Sequence[UUID]) -> int:
+        return await self._started().delete_many(project_id, entity_ids)
+
+    async def mark_stale_for_source(self, project_id: UUID, source_id: str) -> int:
+        return await self._started().mark_stale_for_source(project_id, source_id)
+
+    async def mark_all_stale(self, project_id: UUID) -> int:
+        return await self._started().mark_all_stale(project_id)
 
 
 class OntologyClassRow(ReadModel):

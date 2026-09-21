@@ -99,3 +99,12 @@ class ProjectDefinitionCache:
                 stale=definition.stale,
             )
         )
+
+    async def mark_stale(self, entity_id: UUID) -> None:
+        await self._runner.mark_stale(self._project_id, entity_id)
+
+    async def delete(self, entity_id: UUID) -> None:
+        await self._runner.delete(self._project_id, entity_id)
+
+    async def mark_stale_for_source(self, source_id: str) -> int:
+        return await self._runner.mark_stale_for_source(self._project_id, source_id)

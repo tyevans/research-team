@@ -11,7 +11,8 @@ graph is delegated to callables the composition root supplies, the same way
 what lets this live in `application/` without naming an adapter.
 """
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -73,24 +74,45 @@ class KnowledgeAttachment:
         *,
         open_graph: OpenGraph,
         close_graph: CloseGraph,
+        on_attached: Callable[[UUID], Awaitable[None]] | None = None,
+        on_detached: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._executor = executor
         self._base_tools = tuple(base_tools)
         self._open_graph = open_graph
         self._close_graph = close_graph
+        self._on_attached = on_attached
+        self._on_detached = on_detached
         self.current: Any | None = None
         """The attached graph, or None with no project attached."""
 
         self.attached_project_id: UUID | None = None
-        """Which project `current` belongs to, or None with nothing attached.
+        """Which project `current` belongs to, or None with nothing attached."""
+        self._attached_tools: tuple[Any, ...] = ()
 
-        Tracked because "a graph is attached" and "*this session's* graph is
-        attached" are different questions, and only the second is useful to a
-        front end serving several sessions from one process. Without it, such
-        a caller can only re-attach unconditionally (reopening a graph it
-        already has) or not at all (running a turn against whichever project
-        was attached last).
-        """
+    @property
+    def is_attached(self) -> bool:
+        """Whether a project's knowledge graph is currently attached."""
+        return self.current is not None
+
+    @property
+    def attached_tools(self) -> tuple[Any, ...]:
+        """The tools contributed by the knowledge attachment."""
+        return self._attached_tools
+
+    @asynccontextmanager
+    async def session(self, project_id: UUID) -> AsyncIterator["KnowledgeAttachment"]:
+        """Scoped attachment context manager that guarantees clean detachment."""
+        await self.attach(project_id)
+        try:
+            yield self
+        finally:
+            await self.detach()
+
+    async def refresh(self) -> None:
+        """Re-attach the current project if one is currently attached."""
+        if self.attached_project_id is not None:
+            await self.attach(self.attached_project_id)
 
     async def attach(self, project_id: UUID) -> None:
         """Open `project_id`'s graph and swap its tools into the executor.
@@ -105,12 +127,11 @@ class KnowledgeAttachment:
         self._executor.set_tools(_compose(self._base_tools, tools))
         self.current = knowledge
         self.attached_project_id = project_id
+        self._attached_tools = tuple(tools)
         if previous is not None:
-            # Attaching over an existing attachment (rare -- one project per
-            # session in practice) closes what it replaces rather than
-            # leaking it. Only reached once the new graph has already opened
-            # successfully, so a failed re-attach leaves the original intact.
             await self._close_graph(previous)
+        if self._on_attached is not None:
+            await self._on_attached(project_id)
 
     async def detach(self) -> None:
         """Close whatever is attached and restore the base tools exactly.
@@ -124,3 +145,6 @@ class KnowledgeAttachment:
         self._executor.set_tools(self._base_tools)
         self.current = None
         self.attached_project_id = None
+        self._attached_tools = ()
+        if self._on_detached is not None:
+            await self._on_detached()

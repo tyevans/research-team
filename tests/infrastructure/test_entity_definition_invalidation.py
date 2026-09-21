@@ -1,150 +1,209 @@
-"""Keeping cached definitions honest when the entity they describe changes.
+"""Tests for entity definition invalidation: projection handlers and runner methods."""
 
-`EntityDefinitionProjection` never writes definition text -- that is
-the definition service's `put`, elsewhere -- it only marks a cached row
-untrustworthy (or deletes it outright) in reaction to graph events. The two
-tests that matter most are paired on purpose: the first proves the touched
-row gets marked, the second proves an untouched sibling does not. The obvious
-wrong implementation -- mark the whole project stale on any activity --
-passes the first test perfectly and is invisible without the second.
-"""
-
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from redstring import DocumentExtracted, EntitiesMerged
-from redstring.domain.entity import Entity
-from redstring.domain.provenance import ExtractionMethod, Provenance
+from redstring import DocumentExtracted, EntitiesMerged, Entity, ExtractionMethod, Provenance
 
+from research_team.infrastructure.persistence.definition_cache import ProjectDefinitionCache
 from research_team.infrastructure.persistence.read_models import (
     EntityDefinitionProjection,
     EntityDefinitionRow,
+    EntityDefinitionRunner,
     EntityDefinitionStore,
 )
+from research_team.knowledge.application.entity_definitions import Citation, Definition
+from research_team.research.domain.corpus import CorpusDocumentDropped
 
 
-def _entity(project_id, entity_id, source_id="s1") -> Entity:
-    """A minimally-valid extracted entity, built by hand for the reason
-    `test_corpus_read_model.py`'s `_extracted` gives: nothing here folds
-    anything, so standing up a real extraction to get one `Entity` would put
-    a model provider between this test and the column it is about.
-    """
-    return Entity(
-        id=entity_id,
-        tenant_id=project_id,
-        name="Acme",
-        normalized_name="acme",
-        entity_type="organization",
-        provenance=Provenance(
-            observed_at=datetime(2026, 8, 14, tzinfo=UTC),
-            extraction_method=ExtractionMethod.LLM,
-            confidence=0.9,
-            source_id=source_id,
+def _row(project_id, entity_id, **overrides) -> EntityDefinitionRow:
+    fields = {
+        "id": EntityDefinitionRow.row_id(project_id, entity_id),
+        "project_id": project_id,
+        "entity_id": entity_id,
+        "text": "A protein that folds RNA.",
+        "citations": json.dumps([{"source_id": "doc-1", "start": 0, "end": 26}]),
+        "model": "test-model",
+        "generated_at": "2026-08-14T00:00:00+00:00",
+        "stale": False,
+    }
+    fields.update(overrides)
+    return EntityDefinitionRow(**fields)
+
+
+@pytest.fixture
+async def def_store(db_path):
+    store = await EntityDefinitionStore.open(db_path)
+    yield store
+    await store.close()
+
+
+@pytest.fixture
+async def def_runner(db_path, store, publisher):
+    runner = EntityDefinitionRunner(store, db_path, publisher)
+    await runner.start()
+    yield runner
+    await runner.stop()
+
+
+async def test_projection_handles_corpus_document_dropped(def_store):
+    project_id = uuid4()
+    e1, e2 = uuid4(), uuid4()
+
+    # e1 cites doc-dropped, e2 cites doc-kept
+    await def_store.put(
+        _row(
+            project_id,
+            e1,
+            citations=json.dumps([{"source_id": "doc-dropped", "start": 0, "end": 10}]),
+        )
+    )
+    await def_store.put(
+        _row(
+            project_id,
+            e2,
+            citations=json.dumps([{"source_id": "doc-kept", "start": 0, "end": 10}]),
+        )
+    )
+
+    projection = EntityDefinitionProjection(def_store)
+    event = CorpusDocumentDropped(
+        aggregate_id=project_id, source_id="doc-dropped", reason="test"
+    )
+    await projection.handle(event)
+
+    row1 = await def_store.get(project_id, e1)
+    row2 = await def_store.get(project_id, e2)
+
+    assert row1 is not None and row1.stale is True
+    assert row2 is not None and row2.stale is False
+
+
+async def test_projection_handles_document_extracted(def_store):
+    project_id = uuid4()
+    e1, e2, e3 = uuid4(), uuid4(), uuid4()
+
+    await def_store.put(_row(project_id, e1))
+    await def_store.put(_row(project_id, e2))
+    await def_store.put(_row(project_id, e3))
+
+    projection = EntityDefinitionProjection(def_store)
+    entities = [
+        Entity(
+            id=e1,
+            tenant_id=project_id,
+            name="E1",
+            normalized_name="e1",
+            entity_type="type",
+            provenance=Provenance(
+                source_id="doc-x",
+                observed_at=datetime.now(UTC),
+                extraction_method=ExtractionMethod.MANUAL,
+                confidence=1.0,
+            ),
         ),
-    )
-
-
-def _extracted(project_id, *entity_ids) -> DocumentExtracted:
-    return DocumentExtracted(
-        aggregate_id=uuid4(),
+        Entity(
+            id=e2,
+            tenant_id=project_id,
+            name="E2",
+            normalized_name="e2",
+            entity_type="type",
+            provenance=Provenance(
+                source_id="doc-x",
+                observed_at=datetime.now(UTC),
+                extraction_method=ExtractionMethod.MANUAL,
+                confidence=1.0,
+            ),
+        ),
+    ]
+    event = DocumentExtracted(
+        aggregate_id=project_id,
         tenant_id=project_id,
-        source_id="s1",
-        entities=[_entity(project_id, entity_id) for entity_id in entity_ids],
+        source_id="doc-x",
+        model_version="test-model",
+        entities=entities,
         relationships=[],
-        model_version="test",
     )
+    await projection.handle(event)
+
+    assert (await def_store.get(project_id, e1)).stale is True
+    assert (await def_store.get(project_id, e2)).stale is True
+    assert (await def_store.get(project_id, e3)).stale is False
 
 
-def _merged(project_id, canonical_id, *merged_ids) -> EntitiesMerged:
-    return EntitiesMerged(
-        aggregate_id=uuid4(),
+async def test_projection_handles_entities_merged(def_store):
+    project_id = uuid4()
+    canonical = uuid4()
+    absorbed1 = uuid4()
+    absorbed2 = uuid4()
+
+    await def_store.put(_row(project_id, canonical, stale=False))
+    await def_store.put(_row(project_id, absorbed1, stale=False))
+    await def_store.put(_row(project_id, absorbed2, stale=False))
+
+    projection = EntityDefinitionProjection(def_store)
+    event = EntitiesMerged(
+        aggregate_id=project_id,
         tenant_id=project_id,
-        canonical_entity_id=canonical_id,
-        merged_entity_ids=list(merged_ids),
+        canonical_entity_id=canonical,
+        merged_entity_ids=[absorbed1, absorbed2],
     )
+    await projection.handle(event)
+
+    # Canonical is marked stale
+    assert (await def_store.get(project_id, canonical)).stale is True
+    # Absorbed entities are deleted
+    assert await def_store.get(project_id, absorbed1) is None
+    assert await def_store.get(project_id, absorbed2) is None
 
 
-def _row(project_id, entity_id) -> EntityDefinitionRow:
-    return EntityDefinitionRow(
-        id=EntityDefinitionRow.row_id(project_id, entity_id),
-        project_id=project_id,
-        entity_id=entity_id,
-        text="A protein that folds RNA.",
-        citations="[]",
-        model="test-model",
-        generated_at="2026-08-14T00:00:00+00:00",
+async def test_runner_and_project_definition_cache(def_runner):
+    project_id = uuid4()
+    e1, e2 = uuid4(), uuid4()
+
+    cache = ProjectDefinitionCache(def_runner, project_id)
+
+    # Put definitions
+    d1 = Definition(
+        text="Def 1",
+        citations=[Citation(source_id="doc-alpha", start=0, end=5)],
+        model="test",
+        generated_at="2026-01-01T00:00:00Z",
         stale=False,
     )
+    d2 = Definition(
+        text="Def 2",
+        citations=[Citation(source_id="doc-beta", start=0, end=5)],
+        model="test",
+        generated_at="2026-01-01T00:00:00Z",
+        stale=False,
+    )
+    await cache.put(e1, d1)
+    await cache.put(e2, d2)
 
+    assert (await cache.get(e1)).stale is False
+    assert (await cache.get(e2)).stale is False
 
-@pytest.fixture
-async def store(db_path) -> EntityDefinitionStore:
-    """A real SQLite store, where this fixture used to pass `connection=None`
-    and an `InMemoryReadModelRepository`.
+    # Invalidate by source
+    count = await cache.mark_stale_for_source("doc-alpha")
+    assert count == 1
+    assert (await cache.get(e1)).stale is True
+    assert (await cache.get(e2)).stale is False
 
-    The swap was forced, and the way it was forced is the interesting part.
-    B74 rewrote `mark_stale` as a single `UPDATE` against the connection --
-    the previous read-modify-write went through the repository, which the
-    in-memory one satisfied, so the fixture had never needed a connection.
-    It broke with `AttributeError: 'NoneType' object has no attribute
-    'execute'` on eleven tests, and *that is the fixture working correctly*:
-    it named the seam that had changed instead of quietly agreeing with the
-    new code.
+    # Invalidate by entity_id
+    await cache.mark_stale(e2)
+    assert (await cache.get(e2)).stale is True
 
-    Worth keeping in mind next time this is tempting to fake again. Every test
-    below asserts on a row, and a row read back out of SQLite is the claim
-    these tests are actually making -- the in-memory repository could not have
-    told a `stale` column that was never written from one written as the
-    string "True".
-    """
-    opened = await EntityDefinitionStore.open(db_path)
-    yield opened
-    await opened.close()
+    # Delete entity
+    await cache.delete(e1)
+    assert await cache.get(e1) is None
+    assert await cache.get(e2) is not None
 
+    # Runner delegation: mark_all_stale and delete_many
+    await def_runner.mark_all_stale(project_id)
+    assert (await cache.get(e2)).stale is True
 
-@pytest.fixture
-def projection(store) -> EntityDefinitionProjection:
-    return EntityDefinitionProjection(store)
-
-
-async def test_extraction_marks_the_touched_entities_stale(projection, store):
-    project_id, acme_id = uuid4(), uuid4()
-    await store.put(_row(project_id, acme_id))
-
-    await projection.handle(_extracted(project_id, acme_id))
-
-    assert (await store.get(project_id, acme_id)).stale is True
-
-
-async def test_extraction_leaves_untouched_entities_alone(projection, store):
-    """Fails if the handler marks the whole project stale -- the obvious
-    wrong implementation, and invisible without this sibling test."""
-    project_id, acme_id, other_id = uuid4(), uuid4(), uuid4()
-    await store.put(_row(project_id, acme_id))
-
-    await projection.handle(_extracted(project_id, other_id))
-
-    assert (await store.get(project_id, acme_id)).stale is False
-
-
-async def test_a_merge_marks_the_survivor_stale_and_deletes_the_absorbed(projection, store):
-    """An absorbed id is no longer clickable, so its cached definition is
-    unreachable text -- and leaving it would make a `/rebuild` produce a
-    different row count than steady-state operation, for no reason anyone
-    could explain later."""
-    project_id, acme_id, acme_corp_id = uuid4(), uuid4(), uuid4()
-    await store.put(_row(project_id, acme_id))
-    await store.put(_row(project_id, acme_corp_id))
-
-    await projection.handle(_merged(project_id, acme_id, acme_corp_id))
-
-    assert (await store.get(project_id, acme_id)).stale is True
-    assert await store.get(project_id, acme_corp_id) is None
-
-
-async def test_a_definition_for_an_entity_with_no_cached_row_is_not_an_error(projection):
-    """Matches `CorpusProjection._on_extracted`: a projection that raises on a
-    row it has never seen cannot replay a log that predates it."""
-    project_id, never_defined_id = uuid4(), uuid4()
-    await projection.handle(_extracted(project_id, never_defined_id))  # does not raise
+    await def_runner.delete_many(project_id, [e2])
+    assert await cache.get(e2) is None

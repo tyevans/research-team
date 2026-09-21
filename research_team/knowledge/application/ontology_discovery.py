@@ -48,8 +48,9 @@ conclusions about whether to trust the pass.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from research_team.knowledge.domain.ontology import (
     DiscoveredClass,
@@ -58,6 +59,45 @@ from research_team.knowledge.domain.ontology import (
     RejectedMember,
 )
 from research_team.research.application.corpus_read import CorpusReadPort
+
+DiscoveryStage = Literal[
+    "reading",
+    "chunking",
+    "generating",
+    "verifying",
+    "complete",
+    "failed",
+]
+
+
+@dataclass(frozen=True)
+class DiscoveryProgress:
+    """Where ontology discovery has reached."""
+
+    source_id: str
+    stage: DiscoveryStage
+    chunk_index: int | None = None
+    total_chunks: int | None = None
+    classes_found_so_far: int = 0
+    detail: str = ""
+
+
+DiscoveryReporter = Callable[[DiscoveryProgress], None]
+
+
+@dataclass(frozen=True)
+class DiscoveryReport:
+    """Detailed summary of an ontology discovery pass over one document."""
+
+    source_id: str
+    class_count: int
+    classes: tuple[DiscoveredClass, ...]
+    chunks_total: int
+    chunks_processed: int
+    chunks_unreadable: int
+    total_rejected_members: int
+    strict: bool
+
 
 #: How much *document text* goes into one model call. Not a document ceiling
 #: -- that is `MAX_DISCOVERY_CHARS` below, and the two being one constant is
@@ -702,14 +742,17 @@ def _members(
         name = item.get("name")
         if not isinstance(name, str) or not name.strip():
             continue
-        if name not in search_text:
+        cleaned_name = name.strip()
+        if cleaned_name not in search_text and name not in search_text:
             rejected.append(
-                RejectedMember(name=name, reason="not found in the document, verbatim")
+                RejectedMember(name=cleaned_name, reason="not found in the document, verbatim")
             )
             continue
         ordinal = item.get("ordinal")
         members.append(
-            DiscoveredMember(name=name, ordinal=ordinal if isinstance(ordinal, int) else None)
+            DiscoveredMember(
+                name=cleaned_name, ordinal=ordinal if isinstance(ordinal, int) else None
+            )
         )
     return members, rejected
 
@@ -765,98 +808,130 @@ class OntologyDiscoveryService:
         self._recorder = recorder
         self._chunker = chunker
 
-    async def discover(self, source_id: str, *, strict: bool = True) -> int | None:
+    async def discover(
+        self,
+        source_id: str,
+        *,
+        strict: bool = True,
+        on_progress: DiscoveryReporter | None = None,
+    ) -> int | None:
         """How many classes were recorded, or `None` when nothing was.
 
-        **`strict=False` is a reader's lever, passed straight through to
-        `verify_classes`** -- see there for what it stops checking and what it
-        costs. It is a parameter rather than configuration because the choice
-        belongs to whoever is looking at the result: a corpus of hard-wrapped
-        markdown wants a lenient re-read, and the same build serving a corpus
-        of prose should not have been switched over with it.
-
-        A lenient pass over a document a strict pass already examined
-        supersedes it, because `OntologyDiscovered` replaces a source's classes
-        wholesale. That is the intended way to use it -- read strictly, see the
-        gaps, read the gaps again leniently -- and it is also the hazard: the
-        strict result is gone afterwards, and only `evidence_quoted` on each
-        surviving class says which pass it came from.
-
-        **An empty result is recorded, and that is not the same as `None`.**
-        Zero says "examined, states no classes" and takes the document off the
-        sweep. `None` says "not examined" and leaves it on. Two of the three
-        `None` paths below are transient -- a reply that failed to parse, and a
-        document over the ceiling that a windowed pass would later reach -- so
-        recording either as "done" would retire a document nobody has actually
-        looked at.
-
-        The three `None` cases are deliberately not distinguished in the return
-        type. They differ in cause and agree in consequence: nothing recorded,
-        still ungrouped, and retry is the answer to all three. A richer result
-        would be three cases every caller has to handle in order to do one
-        thing.
-
-        **One chunk whose reply is unreadable is counted and skipped; only a
-        document where *every* chunk failed is `None`.** Both halves were
-        argued and neither is free.
-
-        Failing the whole document on one bad chunk is the tidier rule and was
-        rejected on arithmetic: a document at `MAX_DISCOVERY_CHARS` is a dozen
-        chunks, the sweep retries the document rather than the chunk, and a
-        per-chunk failure rate that is merely non-zero makes a long document
-        one that never completes -- it burns twelve calls per attempt to
-        discover the same one chunk failing, forever. The document most likely
-        to hit that is the longest, which is the one this change exists for.
-
-        What it costs, stated plainly: a document with a partial failure is
-        recorded as examined, comes off the sweep, and the classes stated only
-        in the failed chunk are lost until someone re-runs that document by
-        hand. The count returned does not say a chunk was skipped. That is a
-        real gap and the honest place to close it is a per-chunk record on the
-        event, which this change does not build.
-
-        All-chunks-failed stays `None` because that is the shape of a
-        transient: an endpoint down, a model refusing every prompt, a
-        deployment timing out. Recording it as "examined, no classes" would
-        retire every document in a project during one bad ten minutes.
+        Delegates to `discover_report` and returns the class count.
         """
+        report = await self.discover_report(source_id, strict=strict, on_progress=on_progress)
+        return report.class_count if report is not None else None
+
+    async def discover_report(
+        self,
+        source_id: str,
+        *,
+        strict: bool = True,
+        on_progress: DiscoveryReporter | None = None,
+    ) -> DiscoveryReport | None:
+        """Perform ontology discovery pass over `source_id` returning a full DiscoveryReport,
+        or `None` if the document was missing, oversized, or unreadable.
+        """
+        if on_progress is not None:
+            on_progress(DiscoveryProgress(source_id=source_id, stage="reading"))
+
         document = await self._corpus.read_document(source_id)
         if document is None:
+            if on_progress is not None:
+                on_progress(
+                    DiscoveryProgress(
+                        source_id=source_id, stage="failed", detail="document not found"
+                    )
+                )
             return None
         if len(document.text) > MAX_DISCOVERY_CHARS:
-            # Before the model call, not after: refusing afterwards would cost
-            # exactly as much as doing the work.
+            if on_progress is not None:
+                on_progress(
+                    DiscoveryProgress(
+                        source_id=source_id,
+                        stage="failed",
+                        detail=(
+                            f"document exceeds max chars "
+                            f"({len(document.text)} > {MAX_DISCOVERY_CHARS})"
+                        ),
+                    )
+                )
             return None
 
+        if on_progress is not None:
+            on_progress(DiscoveryProgress(source_id=source_id, stage="chunking"))
+
         chunks = self._chunker.chunk(document.text)
+        total_chunks = len(chunks)
         per_chunk: list[list[DiscoveredClass]] = []
         unreadable = 0
-        for chunk in chunks:
+
+        for idx, chunk in enumerate(chunks, 1):
+            if on_progress is not None:
+                on_progress(
+                    DiscoveryProgress(
+                        source_id=source_id,
+                        stage="generating",
+                        chunk_index=idx,
+                        total_chunks=total_chunks,
+                        classes_found_so_far=sum(len(c) for c in per_chunk),
+                    )
+                )
             proposals = parse_ontology(await self._model.generate(build_prompt(chunk.text)))
             if proposals is None:
                 unreadable += 1
                 continue
-            # Reached with `proposals == []` (the model said there are none)
-            # and with a list every member of which fails verification (the
-            # model said there are some and the chunk disagreed). Both are
-            # "examined, states none": the reply was understood, and re-running
-            # would produce the same answer at the same cost.
-            per_chunk.append(
-                verify_classes(
-                    proposals,
-                    document_text=document.text,
+
+            if on_progress is not None:
+                on_progress(
+                    DiscoveryProgress(
+                        source_id=source_id,
+                        stage="verifying",
+                        chunk_index=idx,
+                        total_chunks=total_chunks,
+                        classes_found_so_far=sum(len(c) for c in per_chunk),
+                    )
+                )
+
+            verified = verify_classes(
+                proposals,
+                document_text=document.text,
+                source_id=source_id,
+                chunk=chunk,
+                strict=strict,
+            )
+            per_chunk.append(verified)
+
+        if chunks and unreadable == len(chunks):
+            if on_progress is not None:
+                on_progress(
+                    DiscoveryProgress(
+                        source_id=source_id, stage="failed", detail="all chunks unreadable"
+                    )
+                )
+            return None
+
+        classes = merge_classes(per_chunk)
+        await self._recorder.record(source_id, self._model.model_name, classes)
+
+        total_rejected = sum(len(c.rejected_members) for c in classes)
+        if on_progress is not None:
+            on_progress(
+                DiscoveryProgress(
                     source_id=source_id,
-                    chunk=chunk,
-                    strict=strict,
+                    stage="complete",
+                    total_chunks=total_chunks,
+                    classes_found_so_far=len(classes),
                 )
             )
 
-        if chunks and unreadable == len(chunks):
-            return None
-
-        # An empty document produces no chunks and no calls, and is recorded as
-        # examined rather than refused -- there is nothing transient about it,
-        # and leaving it on the sweep would re-read it forever.
-        classes = merge_classes(per_chunk)
-        await self._recorder.record(source_id, self._model.model_name, classes)
-        return len(classes)
+        return DiscoveryReport(
+            source_id=source_id,
+            class_count=len(classes),
+            classes=tuple(classes),
+            chunks_total=total_chunks,
+            chunks_processed=total_chunks - unreadable,
+            chunks_unreadable=unreadable,
+            total_rejected_members=total_rejected,
+            strict=strict,
+        )

@@ -217,6 +217,58 @@ class JudgementsState(BaseModel):
             for first, second in (record.keys,)
         )
 
+    def all_groups(self) -> list[frozenset[EntityKey]]:
+        """Every live group holding two or more keys."""
+        seen: set[EntityKey] = set()
+        groups: list[frozenset[EntityKey]] = []
+        for record in self._live("same"):
+            for key in record.keys:
+                if key not in seen:
+                    grp = self.group_for(key)
+                    if len(grp) > 1:
+                        groups.append(grp)
+                        seen |= grp
+        return groups
+
+    def all_distinct_pairs(self) -> list[tuple[EntityKey, EntityKey]]:
+        """Every pair of keys directly held distinct by a live judgement."""
+        return [
+            (record.keys[0], record.keys[1])
+            for record in self._live("distinct")
+            if len(record.keys) >= 2
+        ]
+
+    def live_judgements(self) -> list[tuple[UUID, JudgementRecord]]:
+        """Every active (non-withdrawn) judgement, with its id."""
+        return [
+            (jid, record)
+            for jid, record in self.judgements.items()
+            if record.withdrawn_reason is None
+        ]
+
+    def withdrawn_judgements(self) -> list[tuple[UUID, JudgementRecord]]:
+        """Every retracted judgement, with its id and withdrawal reason."""
+        return [
+            (jid, record)
+            for jid, record in self.judgements.items()
+            if record.withdrawn_reason is not None
+        ]
+
+    def judgements_for(self, key: EntityKey) -> list[tuple[UUID, JudgementRecord]]:
+        """Every live judgement referencing `key` (either directly or via same-group)."""
+        key_group = self.group_for(key)
+        results: list[tuple[UUID, JudgementRecord]] = []
+        for jid, record in self.live_judgements():
+            if any(k in key_group for k in record.keys):
+                results.append((jid, record))
+        return results
+
+    def is_judged(self, key: EntityKey) -> bool:
+        """Whether `key` is part of any active judgement."""
+        return len(self.group_for(key)) > 1 or any(
+            key in record.keys for _, record in self.live_judgements()
+        )
+
 
 def initial_state() -> JudgementsState:
     return JudgementsState()
@@ -318,12 +370,17 @@ def decide(command: JudgementCommand, state: JudgementsState) -> list[DomainEven
         case HoldSame(judgements_id=judgements_id, keys=keys, reason=reason):
             if not reason.strip():
                 raise CommandRejectedError("a judgement requires a reason")
-            unique = set(keys)
-            if len(unique) < 2:
+            deduped = list(dict.fromkeys(keys))
+            if len(deduped) < 2:
                 raise CommandRejectedError(
                     "holding names the same needs at least two distinct keys"
                 )
-            group = _prospective_group(state, keys)
+            if (
+                set(deduped).issubset(state.group_for(deduped[0]))
+                and len(state.group_for(deduped[0])) > 1
+            ):
+                raise CommandRejectedError("those names are already held same")
+            group = _prospective_group(state, deduped)
             # Checked over the prospective group, not the command's own keys:
             # holding A=B is a contradiction when B already shares a group with
             # C and A is held distinct from C, and that only appears after the
@@ -336,15 +393,15 @@ def decide(command: JudgementCommand, state: JudgementsState) -> list[DomainEven
                         f"those names are held distinct by judgement {judgement_id}; "
                         f"withdraw it first"
                     )
-            return [
-                EntitiesHeldSame(aggregate_id=judgements_id, keys=list(keys), reason=reason)
-            ]
+            return [EntitiesHeldSame(aggregate_id=judgements_id, keys=deduped, reason=reason)]
 
         case HoldDistinct(judgements_id=judgements_id, left=left, right=right, reason=reason):
             if not reason.strip():
                 raise CommandRejectedError("a judgement requires a reason")
             if left == right:
                 raise CommandRejectedError("a name cannot be held distinct from itself")
+            if state.are_held_distinct(left, right):
+                raise CommandRejectedError("those names are already held distinct")
             group = state.group_for(left)
             if right in group:
                 # Name the same-record responsible, the way the HoldSame branch

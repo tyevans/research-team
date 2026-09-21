@@ -13,11 +13,23 @@ from xml.etree import ElementTree as ET
 from research_team.interfaces.web.graph_html import render_html
 from research_team.knowledge.application.graph_export import (
     build_export,
+    to_csv_edges,
+    to_csv_nodes,
+    to_cytoscape,
+    to_cytoscape_json,
+    to_dot,
     to_graphml,
     to_json,
     to_payload,
 )
-from research_team.knowledge.application.graph_layout import _EXTENT, compute_layout
+from research_team.knowledge.application.graph_layout import (
+    _EXTENT,
+    circular_layout,
+    compute_layout,
+    grid_layout,
+    hierarchical_layout,
+    radial_layout,
+)
 from research_team.knowledge.application.graph_read import (
     GraphEntity,
     GraphRelationship,
@@ -198,3 +210,120 @@ def test_the_payload_the_viewer_reads_is_the_payload_the_json_file_holds() -> No
     graph = build_export(_entities(6), _chain(6), title="t", scope="project")
 
     assert json.loads(to_json(graph)) == to_payload(graph)
+
+
+def test_to_dot_export() -> None:
+    graph = build_export(_entities(4), _chain(4), title="DOT Test", scope="project")
+    dot = to_dot(graph)
+    assert 'digraph "project"' in dot
+    assert '"e0" -> "e1"' in dot
+    assert 'pos="' in dot
+
+
+def test_to_cytoscape_export() -> None:
+    graph = build_export(_entities(4), _chain(4), title="Cytoscape Test", scope="project")
+    cyto = to_cytoscape(graph)
+    assert cyto["data"]["title"] == "Cytoscape Test"
+    assert len(cyto["elements"]["nodes"]) == 4
+    assert len(cyto["elements"]["edges"]) == 3
+    assert "position" in cyto["elements"]["nodes"][0]
+
+    cyto_json = to_cytoscape_json(graph)
+    parsed = json.loads(cyto_json)
+    assert parsed == cyto
+
+
+def test_to_csv_nodes_and_edges() -> None:
+    graph = build_export(_entities(4), _chain(4), title="CSV Test", scope="project")
+    nodes_csv = to_csv_nodes(graph)
+    edges_csv = to_csv_edges(graph)
+
+    assert "id,name,entity_type,inferred,temporal,x,y" in nodes_csv
+    assert "e0,Entity 0,event" in nodes_csv
+    assert "source,target,relationship_type,inferred,derivation" in edges_csv
+    assert "e0,e1,relates_to" in edges_csv
+
+
+def test_filtering_by_entity_type() -> None:
+    entities = _entities(10)
+    relationships = _chain(10)
+    graph = build_export(
+        entities, relationships, title="Filter", scope="project", entity_types=["concept"]
+    )
+    assert all(n.entity_type == "concept" for n in graph.nodes)
+    assert len(graph.nodes) == 5
+
+
+def test_filtering_by_relationship_type() -> None:
+    entities = _entities(4)
+    relationships = [
+        GraphRelationship(source_id="e0", target_id="e1", relationship_type="contains"),
+        GraphRelationship(source_id="e1", target_id="e2", relationship_type="relates_to"),
+    ]
+    graph = build_export(
+        entities,
+        relationships,
+        title="Filter",
+        scope="project",
+        relationship_types=["contains"],
+    )
+    assert len(graph.edges) == 1
+    assert graph.edges[0].relationship_type == "contains"
+
+
+def test_filtering_by_min_degree() -> None:
+    entities = _entities(5)
+    # e0 is connected to e1 and e2; e3 and e4 are unconnected
+    relationships = [
+        GraphRelationship(source_id="e0", target_id="e1", relationship_type="rel"),
+        GraphRelationship(source_id="e0", target_id="e2", relationship_type="rel"),
+    ]
+    graph = build_export(
+        entities, relationships, title="Degree", scope="project", min_degree=2
+    )
+    # Only e0 has degree 2
+    assert len(graph.nodes) == 1
+    assert graph.nodes[0].entity_id == "e0"
+
+
+def test_filtering_by_include_inferred() -> None:
+    entities = _entities(10)  # e0, e5 inferred=True
+    relationships = _chain(10)
+    graph = build_export(
+        entities, relationships, title="Inferred", scope="project", include_inferred=False
+    )
+    assert not any(n.inferred for n in graph.nodes)
+    assert not any(e.inferred for e in graph.edges)
+
+
+def test_filtering_by_search_query() -> None:
+    entities = _entities(6)
+    relationships = _chain(6)
+    graph = build_export(
+        entities, relationships, title="Search", scope="project", search_query="Entity 2"
+    )
+    assert len(graph.nodes) == 1
+    assert graph.nodes[0].name == "Entity 2"
+
+
+def test_layout_algorithms_execution() -> None:
+    entities = _entities(6)
+    relationships = _chain(6)
+    for algo in ("force_directed", "circular", "hierarchical", "radial", "grid"):
+        graph = build_export(
+            entities,
+            relationships,
+            title=f"Layout {algo}",
+            scope="project",
+            layout_algorithm=algo,
+        )
+        assert len(graph.nodes) == 6
+        assert all(isinstance(n.x, float) and isinstance(n.y, float) for n in graph.nodes)
+
+
+def test_standalone_layout_functions() -> None:
+    edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+    assert len(circular_layout(4, edges)) == 4
+    assert len(radial_layout(4, edges)) == 4
+    assert len(hierarchical_layout(4, edges)) == 4
+    assert len(grid_layout(4, edges)) == 4

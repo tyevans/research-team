@@ -33,9 +33,13 @@ slower than one big array on a small graph by the cost of a Python loop over
 a handful of blocks, which is not measurable next to the arithmetic.
 """
 
+import math
 from dataclasses import dataclass
+from typing import Any, Literal
 
 import numpy as np
+
+LayoutAlgorithm = Literal["force_directed", "circular", "hierarchical", "radial", "grid"]
 
 #: Rows of the pairwise repulsion matrix computed at once. Chosen so the
 #: working array stays a few megabytes at the node cap rather than hundreds:
@@ -71,16 +75,7 @@ class Layout:
 
 
 def _iterations(node_count: int) -> int:
-    """How many passes to run, which shrinks as the graph grows.
-
-    Not a constant, and the reason is that the cost per iteration is
-    quadratic while the benefit is not: a 50-node graph is visibly still
-    moving at 200 passes and settles by 400, while a 3,000-node graph is a
-    hairball whose *shape* is decided in the first hundred and whose
-    remaining passes only shuffle nodes inside clusters nobody can see apart.
-    Spending four hundred quadratic passes to improve a picture at that size
-    is a request held open for minutes with nothing to show for it.
-    """
+    """How many passes to run, which shrinks as the graph grows."""
     if node_count <= 200:
         return 400
     if node_count <= 1000:
@@ -90,59 +85,41 @@ def _iterations(node_count: int) -> int:
     return 60
 
 
-def compute_layout(node_count: int, edges: list[tuple[int, int]]) -> Layout:
-    """Lay `node_count` nodes out in 2-D, pulled together along `edges`.
-
-    `edges` are index pairs into the node order, already resolved by the
-    caller -- this module knows nothing about entity ids. Self-edges and
-    duplicate edges are harmless: a self-edge contributes a zero-length
-    displacement and a duplicate simply pulls twice, which is a reasonable
-    reading of two nodes being related two ways.
-
-    An empty graph returns an empty array rather than raising. A graph with
-    no edges lays out as a disc rather than a line, because the gravity term
-    below is the only force acting and it is radial.
-    """
-    rng = np.random.default_rng(_SEED)
+def fruchterman_reingold_layout(
+    node_count: int,
+    edges: list[tuple[int, int]],
+    *,
+    extent: float = _EXTENT,
+    seed: int = _SEED,
+) -> Layout:
+    """Lay `node_count` nodes out using Fruchterman-Reingold force-directed simulation."""
+    rng = np.random.default_rng(seed)
     if node_count == 0:
         return Layout(np.zeros((0, 2), dtype=np.float32))
     if node_count == 1:
         return Layout(np.zeros((1, 2), dtype=np.float32))
 
-    positions = rng.uniform(-_EXTENT / 2, _EXTENT / 2, size=(node_count, 2)).astype(np.float32)
+    positions = rng.uniform(-extent / 2, extent / 2, size=(node_count, 2)).astype(np.float32)
 
-    # FR's "optimal distance": the edge length the two forces balance at, for
-    # `node_count` nodes spread over an `_EXTENT` square.
-    k = _EXTENT / np.sqrt(node_count)
-
+    k = extent / np.sqrt(node_count)
     source = np.array([a for a, _ in edges], dtype=np.int64)
     target = np.array([b for _, b in edges], dtype=np.int64)
 
     passes = _iterations(node_count)
-    # The initial step, cooled linearly to nothing. A run that ended while the
-    # step was still large would hand back positions caught mid-flight, which
-    # is the same defect `GraphCanvas`'s `onEngineStop` comment describes on
-    # the client: framing a simulation that has not stopped moving.
-    temperature = _EXTENT / 10.0
+    temperature = extent / 10.0
 
     for step in range(passes):
         displacement = np.zeros_like(positions)
 
-        # Repulsion, blocked. See the module docstring.
         for start in range(0, node_count, _BLOCK):
             stop = min(start + _BLOCK, node_count)
             delta = positions[start:stop, None, :] - positions[None, :, :]
             distance = np.linalg.norm(delta, axis=-1)
-            # A floor rather than a mask on the diagonal: two nodes that
-            # random initialisation put in the same place are the same
-            # problem as a node against itself, and both are division by
-            # zero. Clipping handles the pair nobody thinks to special-case.
             np.maximum(distance, 0.01, out=distance)
             displacement[start:stop] += np.einsum(
                 "ijk,ij->ik", delta, (k * k) / (distance * distance)
             )
 
-        # Attraction along edges.
         if source.size:
             delta = positions[source] - positions[target]
             distance = np.maximum(np.linalg.norm(delta, axis=-1), 0.01)
@@ -150,40 +127,235 @@ def compute_layout(node_count: int, edges: list[tuple[int, int]]) -> Layout:
             np.add.at(displacement, source, -pull)
             np.add.at(displacement, target, pull)
 
-        # Gravity toward the origin, which plain FR has no term for. Without
-        # it a graph with more than one connected component is a set of
-        # clusters repelling each other with nothing pulling back, and they
-        # travel outward for as long as the loop runs -- the drawing ends up
-        # as a few dense knots at the corners of an empty field. Most real
-        # graphs here are disconnected: an extraction run over unrelated
-        # documents produces exactly that. Weak (0.01) so it shapes only what
-        # nothing else is acting on.
         displacement -= positions * 0.01
 
         length = np.maximum(np.linalg.norm(displacement, axis=-1), 0.01)
-        # Each node moves along its displacement by at most `temperature`.
-        # Unbounded steps make the first few passes explode, because the
-        # repulsion between two coincident nodes is enormous.
         positions += displacement * (np.minimum(length, temperature) / length)[:, None]
-        temperature = (_EXTENT / 10.0) * (1.0 - (step + 1) / passes)
+        temperature = (extent / 10.0) * (1.0 - (step + 1) / passes)
 
-    # Centred and rescaled to `_EXTENT`, which is the only thing that makes
-    # that constant true. The loop's own units are decided by the balance
-    # between repulsion and the weak gravity above, and measured on
-    # 2026-08-22 a 220-node graph settles spanning about 19,000 units against
-    # an `_EXTENT` of 1,000 -- so every claim downstream that reads a position
-    # as "somewhere in a thousand-unit square" was wrong by a factor of
-    # twenty. It cost the exported viewer its labels: its label threshold is a
-    # zoom level, and fitting a 19,000-unit drawing to a 1,280px window is a
-    # zoom of 0.035, which is below every threshold anybody would write down.
-    # Found by opening the file and seeing no labels, not by any check.
-    #
-    # Normalising also makes two exports comparable: a 40-node graph and a
-    # 900-node one now arrive at the same size, so a viewer's fit, its label
-    # threshold and its mark size mean the same thing on both.
     positions -= positions.mean(axis=0)
     span = float(max(np.ptp(positions[:, 0]), np.ptp(positions[:, 1])))
     if span > 0:
-        positions *= _EXTENT / span
+        positions *= extent / span
 
     return Layout(positions.astype(np.float32))
+
+
+def circular_layout(
+    node_count: int,
+    edges: list[tuple[int, int]] | None = None,
+    *,
+    extent: float = _EXTENT,
+    order_by_degree: bool = True,
+) -> Layout:
+    """Lay nodes out in a circle, optionally ordering them by degree."""
+    if node_count == 0:
+        return Layout(np.zeros((0, 2), dtype=np.float32))
+    if node_count == 1:
+        return Layout(np.zeros((1, 2), dtype=np.float32))
+
+    order = list(range(node_count))
+    if order_by_degree and edges:
+        degree = [0] * node_count
+        for u, v in edges:
+            if 0 <= u < node_count:
+                degree[u] += 1
+            if 0 <= v < node_count:
+                degree[v] += 1
+        order.sort(key=lambda idx: degree[idx], reverse=True)
+
+    radius = (extent / 2.0) * 0.9
+    positions = np.zeros((node_count, 2), dtype=np.float32)
+    step = 2.0 * math.pi / node_count
+
+    for pos, node_idx in enumerate(order):
+        angle = pos * step
+        positions[node_idx, 0] = round(radius * math.cos(angle), 2)
+        positions[node_idx, 1] = round(radius * math.sin(angle), 2)
+
+    return Layout(positions)
+
+
+def radial_layout(
+    node_count: int,
+    edges: list[tuple[int, int]],
+    *,
+    extent: float = _EXTENT,
+    center_node: int | None = None,
+) -> Layout:
+    """Lay nodes out in concentric rings centered on the hub or chosen center."""
+    if node_count == 0:
+        return Layout(np.zeros((0, 2), dtype=np.float32))
+    if node_count == 1:
+        return Layout(np.zeros((1, 2), dtype=np.float32))
+
+    adj: dict[int, set[int]] = {i: set() for i in range(node_count)}
+    for u, v in edges:
+        if 0 <= u < node_count and 0 <= v < node_count:
+            adj[u].add(v)
+            adj[v].add(u)
+
+    if center_node is None or not (0 <= center_node < node_count):
+        center_node = max(range(node_count), key=lambda i: len(adj[i]))
+
+    # BFS levels
+    levels: dict[int, int] = {center_node: 0}
+    queue = [center_node]
+    while queue:
+        curr = queue.pop(0)
+        curr_lvl = levels[curr]
+        for neighbor in sorted(adj[curr]):
+            if neighbor not in levels:
+                levels[neighbor] = curr_lvl + 1
+                queue.append(neighbor)
+
+    # Disconnected nodes placed on the outermost ring
+    max_level = max(levels.values()) if levels else 0
+    outer_level = max_level + 1
+    for i in range(node_count):
+        if i not in levels:
+            levels[i] = outer_level
+
+    by_level: dict[int, list[int]] = {}
+    for node, lvl in levels.items():
+        by_level.setdefault(lvl, []).append(node)
+
+    max_r = (extent / 2.0) * 0.9
+    num_rings = max(levels.values())
+    ring_spacing = max_r / max(num_rings, 1)
+
+    positions = np.zeros((node_count, 2), dtype=np.float32)
+    positions[center_node] = [0.0, 0.0]
+
+    for lvl, nodes in by_level.items():
+        if lvl == 0:
+            continue
+        r = lvl * ring_spacing
+        step = 2.0 * math.pi / len(nodes)
+        for idx, node in enumerate(nodes):
+            angle = idx * step
+            positions[node, 0] = round(r * math.cos(angle), 2)
+            positions[node, 1] = round(r * math.sin(angle), 2)
+
+    return Layout(positions)
+
+
+def hierarchical_layout(
+    node_count: int,
+    edges: list[tuple[int, int]],
+    *,
+    extent: float = _EXTENT,
+    orientation: Literal["top_bottom", "left_right"] = "top_bottom",
+) -> Layout:
+    """Lay nodes out in layered topological tiers for directed DAG/hierarchical view."""
+    if node_count == 0:
+        return Layout(np.zeros((0, 2), dtype=np.float32))
+    if node_count == 1:
+        return Layout(np.zeros((1, 2), dtype=np.float32))
+
+    in_degree = [0] * node_count
+    forward_adj: dict[int, set[int]] = {i: set() for i in range(node_count)}
+    for u, v in edges:
+        if 0 <= u < node_count and 0 <= v < node_count:
+            forward_adj[u].add(v)
+            in_degree[v] += 1
+
+    roots = [i for i, deg in enumerate(in_degree) if deg == 0]
+    if not roots:
+        roots = [0]
+
+    depths: dict[int, int] = {}
+    for root in roots:
+        depths[root] = 0
+    queue = list(roots)
+    while queue:
+        curr = queue.pop(0)
+        curr_depth = depths[curr]
+        if curr_depth >= node_count:
+            continue  # cycle guard
+        for neighbor in sorted(forward_adj[curr]):
+            if neighbor not in depths or depths[neighbor] < curr_depth + 1:
+                depths[neighbor] = curr_depth + 1
+                queue.append(neighbor)
+
+    for i in range(node_count):
+        if i not in depths:
+            depths[i] = 0
+
+    by_layer: dict[int, list[int]] = {}
+    for node, depth in depths.items():
+        by_layer.setdefault(depth, []).append(node)
+
+    num_layers = max(by_layer.keys()) + 1
+    y_step = (extent * 0.8) / max(num_layers - 1, 1)
+
+    positions = np.zeros((node_count, 2), dtype=np.float32)
+    for layer, nodes in by_layer.items():
+        y = (extent * 0.4) - (layer * y_step)
+        x_step = (extent * 0.8) / max(len(nodes) + 1, 2)
+        start_x = -extent * 0.4
+        for idx, node in enumerate(nodes):
+            x = start_x + (idx + 1) * x_step
+            if orientation == "top_bottom":
+                positions[node, 0] = round(x, 2)
+                positions[node, 1] = round(y, 2)
+            else:
+                positions[node, 0] = round(y, 2)
+                positions[node, 1] = round(x, 2)
+
+    return Layout(positions)
+
+
+def grid_layout(
+    node_count: int,
+    edges: list[tuple[int, int]] | None = None,
+    *,
+    extent: float = _EXTENT,
+) -> Layout:
+    """Lay nodes out in a compact 2-D grid."""
+    if node_count == 0:
+        return Layout(np.zeros((0, 2), dtype=np.float32))
+    if node_count == 1:
+        return Layout(np.zeros((1, 2), dtype=np.float32))
+
+    cols = math.ceil(math.sqrt(node_count))
+    rows = math.ceil(node_count / cols)
+
+    x_step = (extent * 0.8) / max(cols - 1, 1)
+    y_step = (extent * 0.8) / max(rows - 1, 1)
+
+    positions = np.zeros((node_count, 2), dtype=np.float32)
+    for i in range(node_count):
+        c = i % cols
+        r = i // cols
+        positions[i, 0] = round(-extent * 0.4 + c * x_step, 2)
+        positions[i, 1] = round(extent * 0.4 - r * y_step, 2)
+
+    return Layout(positions)
+
+
+def compute_layout(
+    node_count: int,
+    edges: list[tuple[int, int]],
+    *,
+    algorithm: LayoutAlgorithm = "force_directed",
+    **kwargs: Any,
+) -> Layout:
+    """Lay `node_count` nodes out in 2-D using the specified layout algorithm.
+
+    Defaults to Fruchterman-Reingold force-directed layout for full backwards
+    compatibility and consistent deterministic rendering.
+    """
+    match algorithm:
+        case "force_directed":
+            return fruchterman_reingold_layout(node_count, edges, **kwargs)
+        case "circular":
+            return circular_layout(node_count, edges, **kwargs)
+        case "radial":
+            return radial_layout(node_count, edges, **kwargs)
+        case "hierarchical":
+            return hierarchical_layout(node_count, edges, **kwargs)
+        case "grid":
+            return grid_layout(node_count, edges, **kwargs)
+        case _:
+            return fruchterman_reingold_layout(node_count, edges, **kwargs)
