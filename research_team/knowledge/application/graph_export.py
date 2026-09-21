@@ -15,11 +15,18 @@ redstring's, so this module is reachable from anything that can already read
 a graph and stays out of the extraction vocabulary entirely.
 """
 
+import collections
+import csv
+import io
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
-from research_team.knowledge.application.graph_layout import compute_layout
+from research_team.knowledge.application.graph_layout import (
+    LayoutAlgorithm,
+    compute_layout,
+)
 from research_team.knowledge.application.graph_read import (
     GraphEntity,
     GraphRelationship,
@@ -79,24 +86,66 @@ def build_export(
     scope: str,
     limit: int = MAX_EXPORT_NODES,
     truncated: bool = False,
+    entity_types: set[str] | Sequence[str] | None = None,
+    relationship_types: set[str] | Sequence[str] | None = None,
+    min_degree: int = 0,
+    include_inferred: bool = True,
+    search_query: str | None = None,
+    layout_algorithm: LayoutAlgorithm = "force_directed",
 ) -> ExportGraph:
     """Lay the graph out and pair each entity with its position.
 
-    Edges whose ends did not both survive the `limit` are dropped rather than
-    kept pointing at nothing. `GraphReadPort.neighborhood` already promises
-    this of its own results and the reason is the same here: an edge to a node
-    the file does not contain is a line the viewer cannot draw and Gephi will
-    reject the import over.
+    Edges whose ends did not both survive filtering or `limit` are dropped
+    rather than kept pointing at nothing.
     """
-    kept = list(entities)[:limit]
+    filtered_entities = list(entities)
+    if not include_inferred:
+        filtered_entities = [e for e in filtered_entities if not e.inferred]
+
+    if entity_types:
+        types_set = {t.casefold() for t in entity_types}
+        filtered_entities = [
+            e for e in filtered_entities if e.entity_type.casefold() in types_set
+        ]
+
+    if search_query and search_query.strip():
+        q = search_query.casefold().strip()
+        filtered_entities = [
+            e
+            for e in filtered_entities
+            if q in e.name.casefold() or (e.temporal and q in e.temporal.casefold())
+        ]
+
+    filtered_edges = list(relationships)
+    if not include_inferred:
+        filtered_edges = [e for e in filtered_edges if not e.inferred]
+
+    if relationship_types:
+        rel_types_set = {t.casefold() for t in relationship_types}
+        filtered_edges = [
+            e for e in filtered_edges if e.relationship_type.casefold() in rel_types_set
+        ]
+
+    if min_degree > 0:
+        degrees: collections.Counter[str] = collections.Counter()
+        for edge in filtered_edges:
+            degrees[edge.source_id] += 1
+            degrees[edge.target_id] += 1
+        filtered_entities = [
+            e for e in filtered_entities if degrees[e.entity_id] >= min_degree
+        ]
+
+    kept = filtered_entities[:limit]
     truncated = truncated or len(kept) < len(entities)
     index = {entity.entity_id: position for position, entity in enumerate(kept)}
 
     edges = tuple(
-        edge for edge in relationships if edge.source_id in index and edge.target_id in index
+        edge for edge in filtered_edges if edge.source_id in index and edge.target_id in index
     )
     layout = compute_layout(
-        len(kept), [(index[e.source_id], index[e.target_id]) for e in edges]
+        len(kept),
+        [(index[e.source_id], index[e.target_id]) for e in edges],
+        algorithm=layout_algorithm,
     )
 
     nodes = tuple(
@@ -106,10 +155,6 @@ def build_export(
             entity_type=entity.entity_type,
             inferred=entity.inferred,
             temporal=entity.temporal,
-            # Rounded to a tenth of a layout unit. The full float32 is noise
-            # at the scale anyone views this -- the drawing spans a thousand
-            # units -- and it roughly halves the size of the JSON blob the
-            # HTML file has to carry inline.
             x=round(float(layout.positions[position][0]), 1),
             y=round(float(layout.positions[position][1]), 1),
         )
@@ -121,10 +166,6 @@ def build_export(
 def to_payload(graph: ExportGraph) -> dict:
     """The graph as plain data, which is both the JSON file and what the
     HTML viewer is handed inline.
-
-    One function rather than two so the file somebody loads into a script and
-    the drawing they were sent cannot describe different graphs. Keys are
-    `snake_case`, matching every other JSON this server emits.
     """
     return {
         "title": graph.title,
@@ -157,6 +198,117 @@ def to_payload(graph: ExportGraph) -> dict:
 
 def to_json(graph: ExportGraph) -> str:
     return json.dumps(to_payload(graph), indent=2, ensure_ascii=False)
+
+
+def to_dot(graph: ExportGraph) -> str:
+    """The graph in Graphviz DOT format."""
+    lines = [
+        f'digraph "{graph.scope}" {{',
+        "  graph [overlap=false, splines=true];",
+        '  node [shape=box, style="rounded,filled", fillcolor="#f0f4f8"];',
+    ]
+    for node in graph.nodes:
+        shape = "ellipse" if node.inferred else "box"
+        fill = "#fef3c7" if node.inferred else "#e0e7ff"
+        label = node.name.replace('"', '\\"')
+        pos = f"{node.x},{node.y}!"
+        lines.append(
+            f'  "{node.entity_id}" [label="{label}", shape={shape}, fillcolor="{fill}", '
+            f'pos="{pos}"];'
+        )
+    for edge in graph.edges:
+        style = 'style="dashed"' if edge.inferred else 'style="solid"'
+        lbl = edge.relationship_type.replace('"', '\\"')
+        lines.append(f'  "{edge.source_id}" -> "{edge.target_id}" [label="{lbl}", {style}];')
+    lines.append("}\n")
+    return "\n".join(lines)
+
+
+def to_cytoscape(graph: ExportGraph) -> dict:
+    """The graph as Cytoscape.js elements JSON-ready dictionary."""
+    return {
+        "format_version": "1.0",
+        "generated_by": "research_team",
+        "target_cytoscapejs_version": "~3.0",
+        "data": {
+            "title": graph.title,
+            "scope": graph.scope,
+            "truncated": graph.truncated,
+        },
+        "elements": {
+            "nodes": [
+                {
+                    "data": {
+                        "id": node.entity_id,
+                        "name": node.name,
+                        "entity_type": node.entity_type,
+                        "inferred": node.inferred,
+                        "temporal": node.temporal,
+                    },
+                    "position": {
+                        "x": node.x,
+                        "y": node.y,
+                    },
+                }
+                for node in graph.nodes
+            ],
+            "edges": [
+                {
+                    "data": {
+                        "id": f"e{idx}",
+                        "source": edge.source_id,
+                        "target": edge.target_id,
+                        "relationship_type": edge.relationship_type,
+                        "inferred": edge.inferred,
+                        "derivation": edge.derivation,
+                    }
+                }
+                for idx, edge in enumerate(graph.edges)
+            ],
+        },
+    }
+
+
+def to_cytoscape_json(graph: ExportGraph, indent: int = 2) -> str:
+    return json.dumps(to_cytoscape(graph), indent=indent, ensure_ascii=False)
+
+
+def to_csv_nodes(graph: ExportGraph) -> str:
+    """Nodes exported as CSV."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id", "name", "entity_type", "inferred", "temporal", "x", "y"])
+    for node in graph.nodes:
+        writer.writerow(
+            [
+                node.entity_id,
+                node.name,
+                node.entity_type,
+                node.inferred,
+                node.temporal or "",
+                node.x,
+                node.y,
+            ]
+        )
+    return output.getvalue()
+
+
+def to_csv_edges(graph: ExportGraph) -> str:
+    """Edges exported as CSV."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["source", "target", "relationship_type", "inferred", "derivation"])
+    for edge in graph.edges:
+        writer.writerow(
+            [
+                edge.source_id,
+                edge.target_id,
+                edge.relationship_type,
+                edge.inferred,
+                edge.derivation or "",
+            ]
+        )
+    return output.getvalue()
 
 
 #: GraphML's own namespace plus yEd's `viz` extension, which is what Gephi

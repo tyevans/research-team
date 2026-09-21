@@ -99,6 +99,34 @@ class FakeCache:
     async def put(self, entity_id: UUID, definition: Definition) -> None:
         self.rows[entity_id] = definition
 
+    async def mark_stale(self, entity_id: UUID) -> None:
+        if entity_id in self.rows:
+            d = self.rows[entity_id]
+            self.rows[entity_id] = Definition(
+                text=d.text,
+                citations=d.citations,
+                model=d.model,
+                generated_at=d.generated_at,
+                stale=True,
+            )
+
+    async def delete(self, entity_id: UUID) -> None:
+        self.rows.pop(entity_id, None)
+
+    async def mark_stale_for_source(self, source_id: str) -> int:
+        count = 0
+        for entity_id, d in list(self.rows.items()):
+            if any(c.source_id == source_id for c in d.citations) and not d.stale:
+                self.rows[entity_id] = Definition(
+                    text=d.text,
+                    citations=d.citations,
+                    model=d.model,
+                    generated_at=d.generated_at,
+                    stale=True,
+                )
+                count += 1
+        return count
+
 
 def _acme_neighborhood() -> Neighborhood:
     root = GraphEntity(entity_id=str(ACME), name="Acme", entity_type="Organization")
@@ -356,3 +384,40 @@ async def test_force_regenerates_a_definition_that_is_not_stale():
     await service.define(ACME, force=True)
 
     assert model.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_invalidate_and_remove():
+    model = FakeDefinitionModel()
+    cache = FakeCache()
+    service = _service(model, cache)
+
+    def1 = await service.define(ACME)
+    assert def1 is not None and not def1.stale
+
+    await service.invalidate(ACME)
+    cached = await cache.get(ACME)
+    assert cached is not None and cached.stale
+
+    await service.remove(ACME)
+    assert await cache.get(ACME) is None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_for_source():
+    model = FakeDefinitionModel()
+    cache = FakeCache()
+    service = _service(model, cache)
+
+    await service.define(ACME)
+    cached = await cache.get(ACME)
+    assert cached is not None and not cached.stale
+
+    # Invalidate for source doc-1 (which ACME cites)
+    count = await service.invalidate_for_source("doc-1")
+    assert count == 1
+    assert (await cache.get(ACME)).stale
+
+    # Invalidate again - already stale so count is 0
+    count2 = await service.invalidate_for_source("doc-1")
+    assert count2 == 0

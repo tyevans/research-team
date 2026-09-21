@@ -239,3 +239,24 @@ async def test_every_chunk_the_chunker_produced_reaches_the_prompt():
     assert len(model.prompts) == 3
     assert [("first" in model.prompts[0]), ("second" in model.prompts[1])] == [True, True]
     assert "third" in model.prompts[2]
+
+
+async def test_discover_report_and_progress_tracking():
+    service, _ = _service()
+    stages = []
+
+    def on_progress(p):
+        stages.append(p.stage)
+
+    report = await service.discover_report("songs", on_progress=on_progress)
+    assert report is not None
+    assert report.class_count == 1
+    assert len(report.classes) == 1
+    assert report.classes[0].name == "Difficulty"
+    assert report.chunks_total == 1
+    assert report.chunks_processed == 1
+    assert report.chunks_unreadable == 0
+    assert "reading" in stages
+    assert "generating" in stages
+    assert "verifying" in stages
+    assert "complete" in stages

@@ -257,3 +257,100 @@ async def _bookkeeping(store, project_id, entity_id) -> dict:
         return {"version": version, "updated_at": updated_at}
     finally:
         await cursor.close()
+
+
+async def test_mark_stale_many(db_path):
+    project_id = uuid4()
+    e1, e2, e3 = uuid4(), uuid4(), uuid4()
+    store = await EntityDefinitionStore.open(db_path)
+    try:
+        await store.put(_row(project_id, e1))
+        await store.put(_row(project_id, e2))
+        await store.put(_row(project_id, e3))
+
+        count = await store.mark_stale_many(project_id, [e1, e2])
+        assert count == 2
+
+        assert (await store.get(project_id, e1)).stale is True
+        assert (await store.get(project_id, e2)).stale is True
+        assert (await store.get(project_id, e3)).stale is False
+
+        # Staling already stale rows should update 0
+        assert await store.mark_stale_many(project_id, [e1, e2]) == 0
+        # Empty sequence is a no-op
+        assert await store.mark_stale_many(project_id, []) == 0
+    finally:
+        await store.close()
+
+
+async def test_delete_many(db_path):
+    project_id = uuid4()
+    e1, e2, e3 = uuid4(), uuid4(), uuid4()
+    store = await EntityDefinitionStore.open(db_path)
+    try:
+        await store.put(_row(project_id, e1))
+        await store.put(_row(project_id, e2))
+        await store.put(_row(project_id, e3))
+
+        count = await store.delete_many(project_id, [e1, e3])
+        assert count == 2
+
+        assert await store.get(project_id, e1) is None
+        assert (await store.get(project_id, e2)) is not None
+        assert await store.get(project_id, e3) is None
+
+        # Empty sequence is a no-op
+        assert await store.delete_many(project_id, []) == 0
+    finally:
+        await store.close()
+
+
+async def test_mark_stale_for_source(db_path):
+    project_id = uuid4()
+    e1, e2 = uuid4(), uuid4()
+    store = await EntityDefinitionStore.open(db_path)
+    try:
+        # e1 cites doc-1
+        await store.put(
+            _row(
+                project_id,
+                e1,
+                citations=json.dumps([{"source_id": "doc-1", "start": 0, "end": 10}]),
+            )
+        )
+        # e2 cites doc-2
+        await store.put(
+            _row(
+                project_id,
+                e2,
+                citations=json.dumps([{"source_id": "doc-2", "start": 0, "end": 10}]),
+            )
+        )
+
+        count = await store.mark_stale_for_source(project_id, "doc-1")
+        assert count == 1
+
+        assert (await store.get(project_id, e1)).stale is True
+        assert (await store.get(project_id, e2)).stale is False
+
+        # Repeating does not restale
+        assert await store.mark_stale_for_source(project_id, "doc-1") == 0
+    finally:
+        await store.close()
+
+
+async def test_mark_all_stale(db_path):
+    project_id = uuid4()
+    e1, e2 = uuid4(), uuid4()
+    store = await EntityDefinitionStore.open(db_path)
+    try:
+        await store.put(_row(project_id, e1))
+        await store.put(_row(project_id, e2))
+
+        count = await store.mark_all_stale(project_id)
+        assert count == 2
+
+        assert (await store.get(project_id, e1)).stale is True
+        assert (await store.get(project_id, e2)).stale is True
+    finally:
+        await store.close()

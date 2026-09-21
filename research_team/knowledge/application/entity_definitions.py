@@ -206,6 +206,12 @@ class DefinitionCachePort(Protocol):
 
     async def put(self, entity_id: UUID, definition: Definition) -> None: ...
 
+    async def mark_stale(self, entity_id: UUID) -> None: ...
+
+    async def delete(self, entity_id: UUID) -> None: ...
+
+    async def mark_stale_for_source(self, source_id: str) -> int: ...
+
 
 PROMPT_HEADER = """\
 Define the entity below for a reader browsing this project's knowledge graph.
@@ -403,6 +409,18 @@ class DefinitionService:
             generated_at=cached.generated_at,
             stale=True,
         )
+
+    async def invalidate(self, entity_id: UUID) -> None:
+        """Mark an entity's cached definition stale."""
+        await self._cache.mark_stale(entity_id)
+
+    async def remove(self, entity_id: UUID) -> None:
+        """Delete an entity's cached definition."""
+        await self._cache.delete(entity_id)
+
+    async def invalidate_for_source(self, source_id: str) -> int:
+        """Mark stale all cached definitions citing a given source document."""
+        return await self._cache.mark_stale_for_source(source_id)
 
     async def _generate(self, entity_id: UUID) -> Definition | None:
         """A freshly generated, verified, and cached definition -- or `None`

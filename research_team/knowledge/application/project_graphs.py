@@ -256,56 +256,81 @@ class ProjectGraphs:
             if store is not None:
                 return store
             store = self._build_store()
-            # `ensure_schema` is the first call that actually talks to a
-            # Neo4j server; a no-op for the in-memory store, which has none.
-            if hasattr(store, "ensure_schema"):
-                await store.ensure_schema()
-            # Built here, one per project, the same way the graph store is --
-            # not shared like `_vector_store`, because a corpus is per-tenant
-            # data derived from *this* project's log, not a process-wide
-            # index. `None` when chunking is off, matching `build_chunk_store`.
-            chunk_store = self._build_chunk_store() if self._build_chunk_store else None
-            # Keywords, and only the ones that apply: a `rebuild` that never
-            # expects chunking (no `build_chunk_store` configured) is never
-            # called with a parameter it doesn't accept, and the same holds for
-            # a build with embeddings switched off.
-            co_mentions = self._build_co_mentions() if self._build_co_mentions else None
-            folds: dict[str, Any] = {}
-            if chunk_store is not None:
-                folds["chunks"] = chunk_store
-            if co_mentions is not None:
-                folds["co_mentions"] = co_mentions
-            # `self.vectors()` was awaited above, so this is the opened store
-            # rather than a second one. Read through the attribute rather than
-            # awaited again to keep `open` holding one lock at a time.
-            if self._vector_store is not None and self._embedding_model is not None:
-                folds["vectors"] = self._vector_store
-            card_vectors = (
-                self._build_card_vectors() if self._build_card_vectors is not None else None
-            )
-            if card_vectors is not None:
-                folds["card_vectors"] = card_vectors
-            if folds.get("vectors") is not None or card_vectors is not None:
-                folds["embedding_model"] = self._embedding_model
-            await self._rebuild(store, project_id, **folds)
-            if chunk_store is not None:
-                self._chunk_stores[project_id] = chunk_store
-            if co_mentions is not None:
-                self._co_mentions[project_id] = co_mentions
-            if card_vectors is not None:
-                self._card_vectors[project_id] = card_vectors
-            # After the replay, not inside it: cards are derived from the
-            # *folded* graph, so anything that runs before the last event is
-            # applied would card a neighbourhood that is still filling in.
-            if self._index_cards is not None and self._build_chunk_store is not None:
-                card_store = self._build_chunk_store()
-                if card_store is not None:
-                    await self._index_cards(
-                        graph=store, cards=card_store, tenant_id=project_id
-                    )
-                    self._card_stores[project_id] = card_store
-            self._stores[project_id] = store
-            return store
+            chunk_store = None
+            card_vectors = None
+            card_store = None
+            try:
+                # `ensure_schema` is the first call that actually talks to a
+                # Neo4j server; a no-op for the in-memory store, which has none.
+                if hasattr(store, "ensure_schema"):
+                    await store.ensure_schema()
+                chunk_store = self._build_chunk_store() if self._build_chunk_store else None
+                co_mentions = self._build_co_mentions() if self._build_co_mentions else None
+                folds: dict[str, Any] = {}
+                if chunk_store is not None:
+                    folds["chunks"] = chunk_store
+                if co_mentions is not None:
+                    folds["co_mentions"] = co_mentions
+                if self._vector_store is not None and self._embedding_model is not None:
+                    folds["vectors"] = self._vector_store
+                card_vectors = (
+                    self._build_card_vectors()
+                    if self._build_card_vectors is not None
+                    else None
+                )
+                if card_vectors is not None:
+                    folds["card_vectors"] = card_vectors
+                if folds.get("vectors") is not None or card_vectors is not None:
+                    folds["embedding_model"] = self._embedding_model
+                await self._rebuild(store, project_id, **folds)
+                if chunk_store is not None:
+                    self._chunk_stores[project_id] = chunk_store
+                if co_mentions is not None:
+                    self._co_mentions[project_id] = co_mentions
+                if card_vectors is not None:
+                    self._card_vectors[project_id] = card_vectors
+                if self._index_cards is not None and self._build_chunk_store is not None:
+                    card_store = self._build_chunk_store()
+                    if card_store is not None:
+                        await self._index_cards(
+                            graph=store, cards=card_store, tenant_id=project_id
+                        )
+                        self._card_stores[project_id] = card_store
+                self._stores[project_id] = store
+                return store
+            except Exception:
+                if hasattr(store, "close"):
+                    await store.close()
+                if chunk_store is not None and hasattr(chunk_store, "close"):
+                    await chunk_store.close()
+                if card_vectors is not None and hasattr(card_vectors, "close"):
+                    await card_vectors.close()
+                if card_store is not None and hasattr(card_store, "close"):
+                    await card_store.close()
+                raise
+
+    def is_open(self, project_id: UUID) -> bool:
+        """Whether `project_id` has an open store currently cached."""
+        return project_id in self._stores
+
+    def opened_projects(self) -> set[UUID]:
+        """All project ids that currently have an open store cached."""
+        return set(self._stores.keys())
+
+    def project_status(self, project_id: UUID) -> dict[str, bool]:
+        """Diagnostic state of the read models for `project_id`."""
+        return {
+            "open": project_id in self._stores,
+            "has_chunks": project_id in self._chunk_stores,
+            "has_co_mentions": project_id in self._co_mentions,
+            "has_card_vectors": project_id in self._card_vectors,
+            "has_cards": project_id in self._card_stores,
+        }
+
+    async def reload(self, project_id: UUID) -> Any:
+        """Evict and reopen `project_id`'s store clean."""
+        await self.close(project_id)
+        return await self.open(project_id)
 
     def chunks(self, project_id: UUID) -> Any | None:
         """This project's chunk store, if `open` has built one.
@@ -393,7 +418,14 @@ class ProjectGraphs:
         pool; leaving it unclosed is how a process that has finished holds
         Postgres connections until it exits.
         """
-        for project_id in list(self._stores):
+        all_projects = (
+            set(self._stores)
+            | set(self._chunk_stores)
+            | set(self._co_mentions)
+            | set(self._card_stores)
+            | set(self._card_vectors)
+        )
+        for project_id in all_projects:
             await self.close(project_id)
         store, self._vector_store = self._vector_store, None
         # Reset the latch too: a `vectors()` after `close_all` must open a new

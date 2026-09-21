@@ -24,7 +24,7 @@ import zipfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -55,9 +55,14 @@ from research_team.interfaces.web.graph_html import render_html
 from research_team.knowledge.application.graph_export import (
     MAX_EXPORT_NODES,
     build_export,
+    to_csv_edges,
+    to_csv_nodes,
+    to_cytoscape_json,
+    to_dot,
     to_graphml,
     to_json,
 )
+from research_team.knowledge.application.graph_layout import LayoutAlgorithm
 from research_team.knowledge.application.graph_read import (
     MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
@@ -222,29 +227,27 @@ def export_router(deps: ExportDeps) -> APIRouter:
     @router.get("/api/projects/{project_id}/export/graph")
     async def export_graph(
         project_id: UUID,
-        format: Literal["html", "json", "graphml"] = "html",
+        format: Literal[
+            "html", "json", "graphml", "dot", "cytoscape", "csv_nodes", "csv_edges"
+        ] = "html",
         scope: Literal["project", "area", "entity"] = "project",
         area: str | None = None,
         entity: str | None = None,
         depth: int = 1,
         limit: int = Query(default=MAX_EXPORT_NODES, le=MAX_GRAPH_NODES),
+        entity_types: Annotated[list[str] | None, Query()] = None,
+        relationship_types: Annotated[list[str] | None, Query()] = None,
+        min_degree: int = Query(default=0, ge=0),
+        include_inferred: bool = Query(default=True),
+        search: str | None = Query(default=None),
+        layout: LayoutAlgorithm = "force_directed",
     ):
         """The graph, or a cut of it, as a file.
 
         **Produced here rather than in the browser**, from the graph the log
-        already folds to. The console has settled positions on screen and
-        capturing them would be free, and it was rejected because it makes the
-        export a property of an open tab: nothing scriptable, nothing without
-        a console, and nothing for the two thirds of this feature (JSON and
-        GraphML) that have no reason to involve a browser at all. What it
-        costs is `graph_layout` -- a force-directed pass in numpy, which is
-        seconds rather than milliseconds; see `MAX_EXPORT_NODES`.
-
-        `format` and `scope` are `Literal`s, so a typo is a 422 naming the
-        allowed values rather than a silent fallback to the default. An
-        export that quietly handed back the whole project when asked for one
-        area is the failure worth a hard edge here: the file looks right and
-        is about the wrong thing.
+        already folds to. Supports HTML, JSON, GraphML, Graphviz DOT,
+        Cytoscape.js, and CSV formats, with optional type, degree, text,
+        and inference filtering.
         """
         await deps.require_project(project_id)
         reader = await deps.graph_reader(project_id)
@@ -291,15 +294,44 @@ def export_router(deps: ExportDeps) -> APIRouter:
             scope=scope if area is None else f"{scope}: {area}",
             limit=limit,
             truncated=truncated,
+            entity_types=entity_types,
+            relationship_types=relationship_types,
+            min_degree=min_degree,
+            include_inferred=include_inferred,
+            search_query=search,
+            layout_algorithm=layout,
         )
 
-        body, media, suffix = (
-            (render_html(graph), "text/html; charset=utf-8", "html")
-            if format == "html"
-            else (to_json(graph), "application/json", "json")
-            if format == "json"
-            else (to_graphml(graph), "application/xml", "graphml")
-        )
+        match format:
+            case "html":
+                body, media, suffix = render_html(graph), "text/html; charset=utf-8", "html"
+            case "json":
+                body, media, suffix = to_json(graph), "application/json", "json"
+            case "graphml":
+                body, media, suffix = to_graphml(graph), "application/xml", "graphml"
+            case "dot":
+                body, media, suffix = to_dot(graph), "text/vnd.graphviz; charset=utf-8", "dot"
+            case "cytoscape":
+                body, media, suffix = (
+                    to_cytoscape_json(graph),
+                    "application/json",
+                    "cytoscape.json",
+                )
+            case "csv_nodes":
+                body, media, suffix = (
+                    to_csv_nodes(graph),
+                    "text/csv; charset=utf-8",
+                    "nodes.csv",
+                )
+            case "csv_edges":
+                body, media, suffix = (
+                    to_csv_edges(graph),
+                    "text/csv; charset=utf-8",
+                    "edges.csv",
+                )
+            case _:
+                raise HTTPException(status_code=422, detail=f"unsupported format: {format}")
+
         return Response(
             content=body,
             media_type=media,
