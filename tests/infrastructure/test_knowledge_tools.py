@@ -80,7 +80,7 @@ async def test_remember_reports_counts_and_confidence():
 
     result = await tools["remember"].ainvoke({"text": "t", "source_id": "notes"})
 
-    assert "7" in result and "4" in result
+    assert "7 entities" in result and "4 relationships" in result
     assert "encyclopedia_wiki" in result
     # A fallback must not read like a confident choice.
     assert "0.0" in result or "gave up" in result

@@ -253,7 +253,9 @@ class ConsolidationPipeline:
 
         `UnknownMergeError` covers "never happened", "already undone" and "made
         by a different consolidator" as one case, so this cannot report which --
-        it says what it knows.
+        it says what it knows. Note that the returned `MergeRecord.reason` is `None`
+        because redstring's `Consolidator.undo` attributes reasons only to merges,
+        not their reversals (B6).
         """
         try:
             async with tenant_scope(self._project_id):

@@ -242,7 +242,11 @@ site. That half is now filed upstream (eventsource-py BACKLOG, "An unclosed
 connection-owning adapter is undiagnosable"), which is the only place it can
 actually be fixed.
 
-### B6. `undo_merge` always reports `reason=None`
+### B6. `undo_merge` always reports `reason=None` -- CLOSED 2026-09-21
+
+Closed on 2026-09-21: Documented on `MergeRecord` and `ConsolidationPipeline.undo_merge`
+that `reason=None` is by design, as redstring's `Consolidator.undo` attributes reasons
+only to merges rather than their reversals.
 
 `RedstringKnowledge.undo_merge` builds its `MergeRecord` from
 `ConsolidationReport.reason`, and `Consolidator.undo` documents that field as
@@ -257,7 +261,11 @@ the original `EntitiesMerged` off the consolidation stream and carry its reason
 through. Deferred rather than guessed at, because which one is right depends on
 whether any caller ever wants that string.
 
-### B7. One weak assertion in the knowledge-tools tests
+### B7. One weak assertion in the knowledge-tools tests -- CLOSED 2026-09-21
+
+Closed on 2026-09-21: Strengthened `test_remember_reports_counts_and_confidence`
+in `tests/infrastructure/test_knowledge_tools.py` to assert `"7 entities"` and
+`"4 relationships"` instead of bare digits.
 
 `tests/infrastructure/test_knowledge_tools.py::test_remember_reports_counts_and_confidence`
 asserts `"7" in result and "4" in result` — bare digits, which could appear

@@ -35,7 +35,8 @@ from research_team.knowledge.application.knowledge_attachment import (
 )
 from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.platform.shared.context import ContextStrategy, FullHistory
-from research_team.platform.shared.ports import (
+from research_team.platform.shared.retry import with_retry
+from research_team.session.application.ports import (
     ActivityRemark,
     ActivityReporter,
     SessionRepository,
@@ -44,7 +45,6 @@ from research_team.platform.shared.ports import (
     TurnAccountingError,
     TurnExecutor,
 )
-from research_team.platform.shared.retry import with_retry
 from research_team.session.application.summaries import SessionSummary
 from research_team.session.application.turn_runner import (
     _FILE_EVENT_TYPES as _FILE_EVENT_TYPES,

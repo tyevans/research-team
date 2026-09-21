@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from research_team.platform.shared.ports import ActivityReporter, TurnActivityBuffer
+from research_team.session.application.ports import ActivityReporter, TurnActivityBuffer
 from research_team.session.application.session_service import SessionService, TurnOutcome
 
 logger = logging.getLogger(__name__)
