@@ -849,10 +849,9 @@ class Application:
     def turns_tools(self) -> tuple[BaseTool, ...]:
         """The tools available to this instance's agent, for tests that assert on them.
 
-        Reaches into the executor's public `tools` property rather than a
-        parallel copy: the executor's tuple is the one actually bound to the
-        model, so this is what a test needs to check against."""
-        return self.service._executor.tools
+        Reads through SessionService's public tools property rather than reaching
+        into private attributes (BACKLOG B8)."""
+        return self.service.tools
 
     async def summaries_caught_up(self) -> None:
         """Wait until the `/sessions` projection has seen everything appended.

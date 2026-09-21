@@ -41,7 +41,7 @@ from uuid import UUID
 
 from research_team.curriculum.application.frontmatter import extract_title
 from research_team.curriculum.domain.learning_area import LearningArea
-from research_team.platform.components import parse_document
+from research_team.platform.components.components import parse_document
 
 #: The directory every generated course lives under.
 #:

@@ -25,13 +25,11 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
 )
 
-from research_team.curriculum.domain import (
-    LearnerProgress,
+from research_team.curriculum.application.learner_progress import (
+    LearnerProgressService,
     LearnerProgressState,
-    RecordAttempt,
-    RecordChecklistState,
 )
-from research_team.curriculum.domain.learner import initial_state as learner_initial_state
+from research_team.curriculum.domain import LearnerProgress
 from research_team.knowledge.application.knowledge_attachment import (
     KnowledgeAttachment,
 )
@@ -192,7 +190,9 @@ class SessionService:
         tracer: Tracer | None = None,
         knowledge_prompt: str = "",
         attachment: KnowledgeAttachment | None = None,
-        progress: "AggregateRepository[LearnerProgress] | None" = None,
+        progress: (
+            "AggregateRepository[LearnerProgress] | LearnerProgressService | None"
+        ) = None,
         graphs: ProjectGraphs | None = None,
     ) -> None:
         self._repository = repository
@@ -203,7 +203,10 @@ class SessionService:
         # a no-op and reading answers "nothing recorded", which is exactly what
         # this surface did before the aggregate existed -- so an older caller
         # keeps working rather than failing on an attribute it never passed.
-        self._progress = progress
+        if isinstance(progress, LearnerProgressService):
+            self._learner_progress = progress
+        else:
+            self._learner_progress = LearnerProgressService(progress)
         # `create_tracer` returns a no-op when OpenTelemetry is not installed,
         # which is the normal case here -- so spans cost a couple of attribute
         # lookups and are thrown away, and nothing has to be conditional.
@@ -243,6 +246,23 @@ class SessionService:
         return self._context.name
 
     @property
+    def tools(self) -> tuple[Any, ...]:
+        """The tools available to the session executor.
+
+        Exposed so callers and tests do not reach into private attributes (BACKLOG B8).
+        """
+        return self._executor.tools
+
+    @property
+    def _progress(self) -> "AggregateRepository[LearnerProgress] | None":
+        return self._learner_progress.repository
+
+    @property
+    def learner_progress_service(self) -> LearnerProgressService:
+        """The learner progress application service."""
+        return self._learner_progress
+
+    @property
     def projects(self) -> AggregateRepository[Project]:
         """The `Project` aggregate repository, for callers that need it directly.
 
@@ -263,9 +283,7 @@ class SessionService:
         the ordinary case rather than an error -- so this never raises for a
         stream that does not exist yet.
         """
-        if self._progress is None:
-            return learner_initial_state()
-        return (await self._progress.load_or_create(session_id)).state
+        return await self._learner_progress.get_progress(session_id)
 
     async def record_attempt(
         self,
@@ -289,50 +307,28 @@ class SessionService:
         here, because whether an answer *completes* an item depends on whether
         an earlier one already did.
         """
-        if self._progress is None:
-            return learner_initial_state()
-
-        async def record() -> LearnerProgressState:
-            aggregate = await self._progress.load_or_create(session_id)
-            aggregate.execute(
-                RecordAttempt(
-                    progress_id=session_id,
-                    path=path,
-                    component_id=component_id,
-                    component_type=component_type,
-                    digest=digest,
-                    response=response,
-                    correct=correct,
-                    score=score,
-                    at=at,
-                )
-            )
-            await self._progress.save(aggregate)
-            return aggregate.state
-
-        return await with_retry(record, what=f"recording an attempt at {component_id!r}")
+        return await self._learner_progress.record_attempt(
+            session_id,
+            path=path,
+            component_id=component_id,
+            component_type=component_type,
+            digest=digest,
+            response=response,
+            correct=correct,
+            score=score,
+            at=at,
+        )
 
     async def record_checklist(
         self, session_id: UUID, *, path: str, component_id: str, checked: list[int]
     ) -> LearnerProgressState:
         """Remember which boxes are ticked on a `persist: true` checklist."""
-        if self._progress is None:
-            return learner_initial_state()
-
-        async def record() -> LearnerProgressState:
-            aggregate = await self._progress.load_or_create(session_id)
-            aggregate.execute(
-                RecordChecklistState(
-                    progress_id=session_id,
-                    path=path,
-                    component_id=component_id,
-                    checked=checked,
-                )
-            )
-            await self._progress.save(aggregate)
-            return aggregate.state
-
-        return await with_retry(record, what=f"recording checklist {component_id!r}")
+        return await self._learner_progress.record_checklist(
+            session_id,
+            path=path,
+            component_id=component_id,
+            checked=checked,
+        )
 
     async def list_projects(self) -> list[tuple[UUID, str]]:
         """Every project's id and name, for `/project`'s listing."""

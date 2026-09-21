@@ -7,7 +7,7 @@ langchain, or deepagents; those are details chosen at composition time.
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
 from eventsource import DomainEvent
@@ -390,6 +390,11 @@ class TurnExecutor(Protocol):
 
     @property
     def model_name(self) -> str: ...
+
+    @property
+    def tools(self) -> tuple[Any, ...]:
+        """The tools currently bound to the agent."""
+        ...
 
     def encode_user_message(self, text: str) -> dict:
         """The stored payload for a user's message, in the executor's format."""

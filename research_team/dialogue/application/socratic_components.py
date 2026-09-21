@@ -24,7 +24,7 @@ from research_team.dialogue.application.component_projections import (
     parse_and_project,
     validate_components_in_doc,
 )
-from research_team.platform.components import View
+from research_team.platform.components.components import View
 
 SOCRATIC_COMPONENT_TYPES: tuple[str, ...] = ("mcq", "cloze")
 """What a socratic dialogue may author.

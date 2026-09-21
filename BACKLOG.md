@@ -269,7 +269,13 @@ domain name, the confidence disambiguation) make a false pass unlikely in
 practice — which is why it was not worth a fix round on its own. Worth
 correcting the next time that file is touched.
 
-### B8. One accessor reaches through a private attribute
+### B8. One accessor reaches through a private attribute -- CLOSED 2026-09-21
+
+Closed on 2026-09-21: `TurnExecutor` declared `@property def tools` on its
+protocol in `ports.py`, `SessionService` grew `@property def tools` delegating
+to `_executor.tools`, and `Application.turns_tools()` in
+`research_team/wiring/application.py` calls `self.service.tools`. The private
+attribute reach is eliminated.
 
 `Application.turns_tools()` in `research_team/composition.py` reads
 `self.service._executor`, so a test can inspect which tools are bound.
@@ -564,7 +570,11 @@ it did not belong in a task scoped to the read surface. It belongs beside
 `tests/integration/test_advance_stage_gate.py`, which already drives the tool
 path through a real application.
 
-### B47. The only branch of `apply_schema` that drops a table has no test naming it
+### B47. The only branch of `apply_schema` that drops a table has no test naming it -- CLOSED 2026-08-29
+
+Closed on 2026-08-29 by `test_an_empty_table_takes_the_recreate_rather_than_the_refusal`
+in `tests/infrastructure/test_summary_store.py:256`, which pins the recreate branch
+against an empty table and pairs with `test_a_refused_reconcile_leaves_the_table_untouched`.
 
 `research_team/infrastructure/persistence/read_models.py`. When
 `generate_additive_migration` refuses -- a required column with no default --
