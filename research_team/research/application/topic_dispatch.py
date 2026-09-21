@@ -299,6 +299,7 @@ class DispatchRun:
     question: str
     path: str
     reply: str
+    initial_question: str = ""
 
 
 def _briefing(detail: TopicDetail, closing: str, project_name: str = "") -> str:
@@ -544,13 +545,19 @@ class TopicDispatcher:
         finally:
             await self._session.release_project(session_id)
 
+        detail_after = await self._topics(project_id).read_topic(topic_id)
+        current_question = (
+            detail_after.view.summary.question if detail_after is not None else question
+        )
+
         return DispatchRun(
             dispatch_id=dispatch_id,
             project_id=project_id,
             topic_id=topic_id,
             session_id=session_id,
             action=action,
-            question=question,
+            question=current_question,
             path=path,
             reply=outcome.reply,
+            initial_question=question,
         )
