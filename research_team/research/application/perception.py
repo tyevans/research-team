@@ -22,7 +22,7 @@ from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
 
-from research_team.knowledge.application import MAX_DOCUMENT_CHARS
+from research_team.knowledge.application.knowledge import MAX_DOCUMENT_CHARS
 from research_team.research.application.corpus_read import MediaHandle
 from research_team.research.application.document_extraction import (
     CorpusReaders,

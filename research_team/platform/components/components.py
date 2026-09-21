@@ -86,7 +86,6 @@ from typing import Any, ClassVar, Literal
 
 import yaml
 
-from research_team.curriculum.application.frontmatter import parse_frontmatter
 from research_team.platform.components.component_definitions import (
     CLOZE_BLANK as CLOZE_BLANK,
 )
@@ -135,6 +134,7 @@ from research_team.platform.components.component_definitions import (
 from research_team.platform.components.component_definitions import (
     get_registry as get_registry,
 )
+from research_team.platform.shared.frontmatter import parse_frontmatter
 
 _YAML_LOADER: type = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 """The fastest *safe* loader this PyYAML has.

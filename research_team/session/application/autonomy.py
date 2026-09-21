@@ -13,7 +13,7 @@ langchain's `when` predicate lives in `infrastructure` instead.
 
 from typing import Any, Literal
 
-from research_team.knowledge.application import (
+from research_team.knowledge.application.knowledge import (
     REMEMBER_PAGE_TOOL,
     REMEMBER_TOOL,
     UNMERGE_TOOL,

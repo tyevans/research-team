@@ -33,6 +33,11 @@ from research_team.session.application.tool_artifacts import (
     SourceHits,
     parse_artifact,
 )
+from research_team.session.application.turn_runner import (
+    FILE_EVENT_TYPES,
+    INHERITED_EVENT_FIELDS,
+    project_context,
+)
 from research_team.session.application.turn_supervisor import (
     CANCEL_SETTLE_TIMEOUT,
     Cancellation,
@@ -56,7 +61,9 @@ __all__ = [
     "ARTIFACT_VERSION",
     "CANCEL_SETTLE_TIMEOUT",
     "DEFAULT_SYSTEM_PROMPT",
+    "FILE_EVENT_TYPES",
     "GATED_TOOLS",
+    "INHERITED_EVENT_FIELDS",
     "LEVELS",
     "NO_SEARCH_CLAUSE",
     "SHAPES",
@@ -94,4 +101,5 @@ __all__ = [
     "WorkerKind",
     "WorkerRoster",
     "parse_artifact",
+    "project_context",
 ]

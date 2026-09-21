@@ -18,6 +18,8 @@ from research_team.session.domain.commands import (
     WriteFile,
 )
 from research_team.session.domain.events import (
+    FILE_EVENT_TYPES,
+    INHERITED_EVENT_FIELDS,
     SESSION_EVENTS,
     AssistantMessageAdded,
     AutonomyChanged,
@@ -43,6 +45,8 @@ from research_team.session.domain.session import (
 )
 
 __all__ = [
+    "FILE_EVENT_TYPES",
+    "INHERITED_EVENT_FIELDS",
     "SESSION_EVENTS",
     "AssistantMessageAdded",
     "AutonomyChanged",

@@ -26,12 +26,12 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from research_team.curriculum.application import Curriculum
 from research_team.curriculum.application.course_catalog import (
     CachedOutline,
     Catalog,
     OutlineCachePort,
 )
+from research_team.curriculum.application.curriculum import Curriculum
 from research_team.curriculum.domain.catalog import CourseCandidate
 from research_team.curriculum.domain.course import CourseFit, fit_of
 from research_team.curriculum.domain.learning_area import AreaMember
