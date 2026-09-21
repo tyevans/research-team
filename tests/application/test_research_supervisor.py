@@ -15,7 +15,7 @@ from research_team.application.research_supervisor import (
     ResearchSupervisor,
     RunAlreadyActive,
 )
-from research_team.domain.research_run import Budget, ResearchRunState
+from research_team.domain.research.run import Budget, ResearchRunState
 
 
 class FakeRuns:

@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.tenant import (
+from research_team.domain.tenancy.tenant import (
     TENANT_EVENTS,
     InvitationAccepted,
     InvitationCreated,

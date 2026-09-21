@@ -27,7 +27,7 @@ from uuid import UUID, uuid4
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.ports import ActivityNote, ActivityReporter
-from research_team.domain.ask_conversation import (
+from research_team.domain.dialogue.ask import (
     AskConversation,
     RecordAskTurn,
     StartAskConversation,

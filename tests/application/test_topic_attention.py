@@ -27,7 +27,7 @@ from research_team.application.topic_attention import (
     Trigger,
     attention_for,
 )
-from research_team.domain.topic import (
+from research_team.domain.research.topic import (
     AcknowledgeTrigger,
     AddSubQuestion,
     LinkSource,

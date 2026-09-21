@@ -52,7 +52,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from research_team.application.corpus_read import CorpusReadPort
-from research_team.domain.ontology import (
+from research_team.domain.knowledge.ontology import (
     DiscoveredClass,
     DiscoveredMember,
     EvidenceSpan,

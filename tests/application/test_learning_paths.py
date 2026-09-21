@@ -19,7 +19,7 @@ from research_team.application.learning_paths import (
     full_path,
     path_to,
 )
-from research_team.domain.learning_area import AreaMember, LearningArea
+from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
 
 
 def member(eid: str, *, temporal: str | None = None) -> AreaMember:

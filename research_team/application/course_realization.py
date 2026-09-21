@@ -32,9 +32,9 @@ from research_team.application.course_catalog import (
     OutlineCachePort,
 )
 from research_team.application.curriculum import Curriculum
-from research_team.domain.course import CourseFit, fit_of
-from research_team.domain.course_catalog import CourseCandidate
-from research_team.domain.learning_area import AreaMember
+from research_team.domain.curriculum.catalog import CourseCandidate
+from research_team.domain.curriculum.course import CourseFit, fit_of
+from research_team.domain.curriculum.learning_area import AreaMember
 
 
 @dataclass(frozen=True)

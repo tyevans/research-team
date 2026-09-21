@@ -18,7 +18,7 @@ from research_team.application.corpus_read import SourceListing, StoredDocument
 from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
 from research_team.application.knowledge import ExtractionNote, IngestReport, SourceRef
 from research_team.domain import TextRecord
-from research_team.domain.corpus import MediaRecord
+from research_team.domain.research.corpus import MediaRecord
 
 
 class Corpus:

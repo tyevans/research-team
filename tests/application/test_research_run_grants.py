@@ -13,7 +13,7 @@ from research_team.application.research_run import (
     RoundOutcome,
 )
 from research_team.application.topic_attention import Finding, TopicAttention
-from research_team.domain.research_run import ResearchRun
+from research_team.domain.research.run import ResearchRun
 
 
 def attention(topic_id=None, triggers=("topic.never_investigated",), evidence=()):

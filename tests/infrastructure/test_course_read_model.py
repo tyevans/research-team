@@ -13,7 +13,11 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.course import CourseAbandoned, CourseRealized, course_stream_id
+from research_team.domain.curriculum.course import (
+    CourseAbandoned,
+    CourseRealized,
+    course_stream_id,
+)
 from research_team.infrastructure.persistence.read_models import (
     CATALOG_NAMESPACE,
     CatalogFeatureRow,

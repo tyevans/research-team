@@ -35,7 +35,7 @@ from uuid import UUID, uuid4
 
 from research_team.application.grants import FetchGrant, GrantRegistry
 from research_team.application.topic_attention import TopicAttention
-from research_team.domain.research_run import (
+from research_team.domain.research.run import (
     BeginRound,
     Budget,
     CompleteRound,
@@ -43,7 +43,7 @@ from research_team.domain.research_run import (
     StartRun,
     StopRun,
 )
-from research_team.domain.topic import RecordInvestigation
+from research_team.domain.research.topic import RecordInvestigation
 
 logger = logging.getLogger(__name__)
 

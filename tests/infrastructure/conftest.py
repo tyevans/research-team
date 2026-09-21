@@ -23,7 +23,7 @@ from research_team.application.corpus_read import (
 )
 from research_team.application.knowledge import SourceRef
 from research_team.application.topics import TopicError
-from research_team.domain.corpus import Corpus, StoreSourceDocument
+from research_team.domain.research.corpus import Corpus, StoreSourceDocument
 from research_team.infrastructure.agent.corpus_tools import build_corpus_tools
 from research_team.infrastructure.agent.fetch import build_fetch_tool
 from research_team.infrastructure.agent.knowledge_tools import build_knowledge_tools

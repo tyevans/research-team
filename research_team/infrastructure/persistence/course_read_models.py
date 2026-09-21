@@ -23,8 +23,8 @@ from eventsource.ports.readmodels import (
 )
 from pydantic import Field, field_validator
 
-from research_team.domain.catalog_curation import CourseFeatured, CourseUnfeatured
-from research_team.domain.course import CourseAbandoned, CourseRealized
+from research_team.domain.curriculum.course import CourseAbandoned, CourseRealized
+from research_team.domain.curriculum.curation import CourseFeatured, CourseUnfeatured
 from research_team.infrastructure.persistence.store_base import (
     CATALOG_NAMESPACE,
     LOCAL_RETRY_POLICY,

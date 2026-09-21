@@ -16,7 +16,7 @@ from research_team.application.course_authoring import (
     learning_plan_prompt,
     path_overview_prompt,
 )
-from research_team.domain.learning_area import (
+from research_team.domain.curriculum.learning_area import (
     AreaMember,
     LearningArea,
     LearningPath,

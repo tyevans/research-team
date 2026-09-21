@@ -3,7 +3,7 @@ import inspect
 import pytest
 from deepagents.backends.state import StateBackend
 
-from research_team.domain.events import FileDeleted, FileEdited, FileWritten
+from research_team.domain.session.events import FileDeleted, FileEdited, FileWritten
 from research_team.infrastructure.agent.backend import EventSourcedBackend
 
 

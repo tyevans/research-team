@@ -39,12 +39,12 @@ from uuid import UUID, uuid4
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.topic_read import TopicDetail, TopicReadPort
-from research_team.domain.media_proposals import (
+from research_team.domain.research.media_proposals import (
     IdentifyMediaNeeds,
     MediaProposals,
     ProposeMedia,
 )
-from research_team.domain.urls import normalize_url
+from research_team.domain.research.urls import normalize_url
 
 logger = logging.getLogger(__name__)
 

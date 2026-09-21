@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from eventsource import ExpectedVersion, InMemoryEventBus, StreamId
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.domain.user import (
+from research_team.domain.tenancy.user import (
     USER_AGGREGATE_TYPE,
     UserProfileChanged,
     UserSignedIn,

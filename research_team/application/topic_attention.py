@@ -62,7 +62,7 @@ from dataclasses import dataclass, field, replace
 from uuid import UUID
 
 from research_team.application.findings import Finding, FindingSeverity
-from research_team.domain.topic import TopicState
+from research_team.domain.research.topic import TopicState
 
 DEFAULT_MIN_SOURCES = 2
 """How many live sources a topic wants before its coverage stops being a finding.

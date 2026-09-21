@@ -29,7 +29,7 @@ from research_team.application.socratic import (
     SocraticObservation,
     SocraticPrompt,
 )
-from research_team.domain.socratic_dialogue import (
+from research_team.domain.dialogue.socratic import (
     SocraticDialogue,
     SocraticDialogueConcluded,
     SocraticDialogueStarted,

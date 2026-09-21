@@ -7,7 +7,7 @@ settings_registry.py.
 from __future__ import annotations
 
 import research_team.domain.settings as _settings
-from research_team.domain.settings import (
+from research_team.domain.settings.spec import (
     Scope,
     SettingSpec,
     SettingType,

@@ -37,7 +37,7 @@ their prompts.
 from collections.abc import Sequence
 
 from research_team.application.course_authoring import PROMPT_ANCHORS
-from research_team.domain.learning_area import AreaMember
+from research_team.domain.curriculum.learning_area import AreaMember
 
 __all__ = [
     "PROMPT_ANCHORS",

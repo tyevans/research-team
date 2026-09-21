@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.interaction import (
+from research_team.domain.dialogue.interaction import (
     INTERACTION_EVENTS,
     ActionRetried,
     ActionUndone,

@@ -14,7 +14,7 @@ from typing import Protocol
 from uuid import UUID
 
 from research_team.application.curriculum import Curriculum
-from research_team.domain.course_catalog import (
+from research_team.domain.curriculum.catalog import (
     ArtRef,
     Blurb,
     CatalogSections,
@@ -24,7 +24,7 @@ from research_team.domain.course_catalog import (
     membership_hash,
     prominence_of,
 )
-from research_team.domain.learning_area import AreaMember, LearningArea
+from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
 
 
 class CategoryGrouper(Protocol):

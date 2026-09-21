@@ -25,7 +25,12 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from research_team.application.corpus_read import MediaHandle
 from research_team.application.document_extraction import CorpusReaders, UnknownDocument
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS
-from research_team.domain.corpus import Corpus, MediaRecord, StoreDerivedText, TextRecord
+from research_team.domain.research.corpus import (
+    Corpus,
+    MediaRecord,
+    StoreDerivedText,
+    TextRecord,
+)
 
 LOCATOR_KINDS = ("time", "page", "bbox", "char", "byte")
 """Every `kind` a `LocatorSpan.locator` may carry.

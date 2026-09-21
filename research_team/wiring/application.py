@@ -42,10 +42,10 @@ from research_team.application.socratic import SocraticDialogueService
 from research_team.application.topic_dispatch import TopicDispatcher
 from research_team.application.topic_read import TopicReadPort
 from research_team.application.topic_seeding import TopicSeeder
-from research_team.domain.course import Course
-from research_team.domain.course_authoring_run import CourseAuthoringRun
-from research_team.domain.media_proposals import MediaProposals
-from research_team.domain.topic import Topic
+from research_team.domain.curriculum.authoring_run import CourseAuthoringRun
+from research_team.domain.curriculum.course import Course
+from research_team.domain.research.media_proposals import MediaProposals
+from research_team.domain.research.topic import Topic
 from research_team.infrastructure import config
 from research_team.infrastructure.identity import EventStoreUserRecorder
 from research_team.infrastructure.interaction.recorder import EventStoreInteractionRecorder

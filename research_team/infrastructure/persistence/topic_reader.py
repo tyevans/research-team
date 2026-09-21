@@ -37,7 +37,7 @@ from research_team.application.topic_read import (
     TopicView,
 )
 from research_team.application.topics import TopicSummary
-from research_team.domain.topic import Topic, TopicFindingRecorded
+from research_team.domain.research.topic import Topic, TopicFindingRecorded
 from research_team.infrastructure.persistence.topics import TopicRunner
 
 

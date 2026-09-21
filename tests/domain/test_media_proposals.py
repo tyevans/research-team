@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError, DomainEvent
 
-from research_team.domain.media_proposals import (
+from research_team.domain.research.media_proposals import (
     AcceptMediaProposal,
     FailMediaProposal,
     MediaAssetIgnored,

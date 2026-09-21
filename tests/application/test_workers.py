@@ -9,7 +9,7 @@ from research_team.application.workers import (
     ExtractionSnapshot,
     WorkerRoster,
 )
-from research_team.domain.project import ProjectState
+from research_team.domain.tenancy.project import ProjectState
 
 AT = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 

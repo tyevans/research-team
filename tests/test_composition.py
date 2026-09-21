@@ -337,7 +337,7 @@ async def test_the_course_projection_is_registered(build_application):
     """
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
-    from research_team.domain.course import RealizeCourse, course_stream_id
+    from research_team.domain.curriculum.course import RealizeCourse, course_stream_id
 
     application = await build_application(model=FakeMessagesListChatModel(responses=[]))
 
@@ -373,7 +373,7 @@ async def test_a_realized_course_survives_a_restart(db_path):
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
     from research_team import composition
-    from research_team.domain.course import RealizeCourse, course_stream_id
+    from research_team.domain.curriculum.course import RealizeCourse, course_stream_id
 
     project_id = uuid4()
     stream = course_stream_id(project_id, "warp-drive")

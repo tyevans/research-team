@@ -29,19 +29,19 @@ surface are all elsewhere.
 from dataclasses import dataclass
 from enum import StrEnum
 
-from research_team.domain.settings_models import (
+from research_team.domain.settings.models import (
     CONNECTIONS as CONNECTIONS,
 )
-from research_team.domain.settings_models import (
+from research_team.domain.settings.models import (
     ROLE_MODEL_KEYS as ROLE_MODEL_KEYS,
 )
-from research_team.domain.settings_models import (
+from research_team.domain.settings.models import (
     Connection as Connection,
 )
-from research_team.domain.settings_models import (
+from research_team.domain.settings.models import (
     ModelProfile as ModelProfile,
 )
-from research_team.domain.settings_models import (
+from research_team.domain.settings.models import (
     ModelRole as ModelRole,
 )
 
@@ -252,10 +252,10 @@ def _spec(
 
 
 try:
-    from research_team.domain.settings_registry import (
+    from research_team.domain.settings.registry import (
         _DEPLOYMENT as _DEPLOYMENT,
     )
-    from research_team.domain.settings_registry import (
+    from research_team.domain.settings.registry import (
         SETTINGS as SETTINGS,
     )
 except ImportError:
@@ -342,28 +342,28 @@ def spec_for(key: str) -> SettingSpec:
 
 
 try:
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         PROVIDER_KEY_GROUP as PROVIDER_KEY_GROUP,
     )
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         PROVIDER_KEY_PREFIX as PROVIDER_KEY_PREFIX,
     )
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         _credential_of as _credential_of,
     )
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         _provider_env_var as _provider_env_var,
     )
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         dynamic_spec_for as dynamic_spec_for,
     )
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         dynamic_specs as dynamic_specs,
     )
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         provider_key as provider_key,
     )
-    from research_team.domain.settings_providers import (
+    from research_team.domain.settings.provider_specs import (
         resolve_spec as resolve_spec,
     )
 except ImportError:

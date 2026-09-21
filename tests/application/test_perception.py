@@ -44,7 +44,7 @@ from research_team.application.perception import (
     PerceptionUnavailable,
     SourceDropped,
 )
-from research_team.domain.corpus import (
+from research_team.domain.research.corpus import (
     Corpus,
     CorpusDocumentDropped,
     CorpusDocumentStored,

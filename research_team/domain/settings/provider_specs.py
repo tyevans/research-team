@@ -7,8 +7,8 @@ specification generation into settings_providers.py.
 from __future__ import annotations
 
 import research_team.domain.settings as _settings
-from research_team.domain.providers import BY_ID, Credential, Provider
-from research_team.domain.settings import (
+from research_team.domain.settings.providers import BY_ID, Credential, Provider
+from research_team.domain.settings.spec import (
     RESOLUTION_ORDER,
     SettingError,
     SettingSpec,

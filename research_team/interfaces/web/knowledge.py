@@ -36,7 +36,7 @@ from research_team.application.timeline_read import (
     TimelineInterval,
     TimelineReadPort,
 )
-from research_team.domain.media_proposals import (
+from research_team.domain.research.media_proposals import (
     AcceptMediaProposal,
     IgnoreMediaAsset,
     IgnoreMediaHost,

@@ -8,7 +8,7 @@ import pytest
 from eventsource import ExpectedVersion, StreamId
 from redstring import DocumentExtracted
 
-from research_team.domain.ontology import (
+from research_team.domain.knowledge.ontology import (
     ONTOLOGY_AGGREGATE_TYPE,
     DiscoveredClass,
     DiscoveredMember,

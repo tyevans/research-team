@@ -22,12 +22,12 @@ from uuid import uuid4
 import pytest
 from eventsource import AggregateIdMismatchError
 
-from research_team.domain.commands import SessionPurpose, StartSession
-from research_team.domain.corpus import Corpus, StoreSourceDocument
-from research_team.domain.project import CreateProject, Project
-from research_team.domain.research_run import ResearchRun, StartRun
+from research_team.domain.research.corpus import Corpus, StoreSourceDocument
+from research_team.domain.research.run import ResearchRun, StartRun
+from research_team.domain.research.topic import OpenTopic, Topic
 from research_team.domain.session import Session
-from research_team.domain.topic import OpenTopic, Topic
+from research_team.domain.session.commands import SessionPurpose, StartSession
+from research_team.domain.tenancy.project import CreateProject, Project
 
 
 def test_a_project_refuses_a_command_naming_another_project() -> None:

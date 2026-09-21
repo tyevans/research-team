@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from research_team.application.course_catalog import CachedBlurb, CatalogService
 from research_team.application.curriculum import Curriculum
-from research_team.domain.learning_area import (
+from research_team.domain.curriculum.learning_area import (
     AreaMember,
     AreaProjection,
     LearningArea,

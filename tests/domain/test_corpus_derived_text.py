@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain.corpus import (
+from research_team.domain.research.corpus import (
     UNREADABLE_DEGRADATIONS,
     CorpusDerivedTextStored,
     CorpusState,

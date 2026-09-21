@@ -19,7 +19,7 @@ from research_team.application.perception import (
     PerceptionCapabilities,
     derived_source_id,
 )
-from research_team.domain.corpus import (
+from research_team.domain.research.corpus import (
     Corpus,
     CorpusDocumentDropped,
     CorpusDocumentStored,

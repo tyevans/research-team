@@ -24,7 +24,7 @@ from research_team.application.research_run import (
     RunReport,
 )
 from research_team.application.topic_attention import Finding, TopicAttention
-from research_team.domain.research_run import (
+from research_team.domain.research.run import (
     BeginRound,
     Budget,
     CompleteRound,

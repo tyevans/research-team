@@ -24,7 +24,7 @@ from research_team.application.media_curation import (
 from research_team.application.topic_attention import TopicAttention
 from research_team.application.topic_read import SubQuestionView, TopicDetail, TopicView
 from research_team.application.topics import TopicSummary
-from research_team.domain.media_proposals import (
+from research_team.domain.research.media_proposals import (
     IgnoreMediaHost,
     MediaNeedsIdentified,
     MediaProposals,

@@ -82,7 +82,7 @@ from research_team.application.course_catalog import (
     DraftOutline,
     OutlineCachePort,
 )
-from research_team.domain.learning_area import AreaMember
+from research_team.domain.curriculum.learning_area import AreaMember
 from research_team.infrastructure.config import catalog_sweep_concurrency
 
 _logger = logging.getLogger(__name__)

@@ -45,7 +45,7 @@ from research_team.application.perception import (
     PerceptionCapabilities,
 )
 from research_team.composition import build_application
-from research_team.domain.media_proposals import ProposeMedia
+from research_team.domain.research.media_proposals import ProposeMedia
 from research_team.interfaces.web.app import create_app
 
 pytestmark = pytest.mark.asyncio

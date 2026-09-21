@@ -48,8 +48,8 @@ from research_team.application.topic_attention import (
     attention_for,
     corpus_position,
 )
-from research_team.domain.corpus import CorpusDocumentDropped, CorpusDocumentStored
-from research_team.domain.topic import (
+from research_team.domain.research.corpus import CorpusDocumentDropped, CorpusDocumentStored
+from research_team.domain.research.topic import (
     Acknowledgement,
     Contest,
     SubQuestion,

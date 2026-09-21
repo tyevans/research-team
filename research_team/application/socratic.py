@@ -41,13 +41,13 @@ from uuid import UUID, uuid4
 from eventsource.application.aggregates.repository import AggregateRepository
 
 from research_team.application.ports import ActivityNote, ActivityReporter
-from research_team.domain.learner import (
+from research_team.domain.curriculum.learner import (
     LearnerProgress,
     LearnerProgressState,
     RecordAttempt,
 )
-from research_team.domain.learner import initial_state as learner_initial_state
-from research_team.domain.socratic_dialogue import (
+from research_team.domain.curriculum.learner import initial_state as learner_initial_state
+from research_team.domain.dialogue.socratic import (
     Citation,
     ConcludeSocraticDialogue,
     EvidenceKind,

@@ -19,7 +19,7 @@ from uuid import uuid4
 import pytest
 from eventsource import ExpectedVersion, StreamId
 
-from research_team.domain.media_proposals import (
+from research_team.domain.research.media_proposals import (
     MediaAssetIgnored,
     MediaAssetUnignored,
     MediaHostIgnored,

@@ -31,12 +31,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
-from research_team.domain.providers import (
-    ProbeResult,
-    Provider,
-    UnknownProvider,
-    provider_for,
-)
 from research_team.domain.settings import (
     DEFAULT_LAYER,
     ENVIRONMENT_LAYER,
@@ -52,6 +46,12 @@ from research_team.domain.settings import (
     SettingSpec,
     mask,
     resolve_spec,
+)
+from research_team.domain.settings.providers import (
+    ProbeResult,
+    Provider,
+    UnknownProvider,
+    provider_for,
 )
 
 

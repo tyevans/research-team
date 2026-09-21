@@ -23,7 +23,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain.learner import (
+from research_team.domain.curriculum.learner import (
     LearnerChecklistRecorded,
     LearnerItemAnswered,
     LearnerItemCompleted,
@@ -337,7 +337,7 @@ def test_an_attempt_without_an_address_is_refused(path, component_id):
 def test_an_unknown_event_leaves_the_state_alone():
     """A stream carrying an event this build does not know about still replays
     instead of failing halfway through."""
-    from research_team.domain.events import TurnCompleted
+    from research_team.domain.session.events import TurnCompleted
 
     state = _with(
         LearnerItemAnswered(

@@ -1,6 +1,6 @@
 """Grouping areas by what their anchors are, over areas shaped like real ones."""
 
-from research_team.domain.learning_area import AreaMember, LearningArea
+from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
 from research_team.infrastructure.knowledge.type_plurality_grouper import (
     TypePluralityGrouper,
 )

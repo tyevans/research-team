@@ -33,7 +33,12 @@ from research_team.application.course_catalog import (
 from research_team.application.course_realization import CourseService
 from research_team.application.curriculum import CurriculumService
 from research_team.application.frontmatter import parse_frontmatter
-from research_team.domain.course import AbandonCourse, Course, RealizeCourse, course_stream_id
+from research_team.domain.curriculum.course import (
+    AbandonCourse,
+    Course,
+    RealizeCourse,
+    course_stream_id,
+)
 from research_team.infrastructure.knowledge.library_art import LibraryArtProvider
 from research_team.infrastructure.persistence.read_models import CatalogFeatureStore
 from research_team.interfaces.web.art_sweep import (

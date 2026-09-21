@@ -27,7 +27,7 @@ from research_team.application.authorization import (
     RoleTableAuthorizer,
     Subject,
 )
-from research_team.domain.tenant import (
+from research_team.domain.tenancy.tenant import (
     LOCAL_SUBJECT,
     LOCAL_TENANT,
     MemberAdded,

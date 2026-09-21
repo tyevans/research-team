@@ -15,7 +15,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from research_team.application.course_catalog import DraftArt
-from research_team.domain.learning_area import AreaMember
+from research_team.domain.curriculum.learning_area import AreaMember
 from research_team.infrastructure.knowledge.anchors import anchor_lines
 from research_team.infrastructure.knowledge.svg_sanitiser import SvgSanitiser
 

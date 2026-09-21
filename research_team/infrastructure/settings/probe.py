@@ -30,7 +30,7 @@ import time
 
 import httpx
 
-from research_team.domain.providers import Auth, ProbeOutcome, ProbeResult, Provider
+from research_team.domain.settings.providers import Auth, ProbeOutcome, ProbeResult, Provider
 
 logger = logging.getLogger(__name__)
 

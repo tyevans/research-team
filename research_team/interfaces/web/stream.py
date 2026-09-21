@@ -17,10 +17,10 @@ from fastapi import APIRouter, Request
 from starlette.responses import StreamingResponse
 
 from research_team.application import LiveFeed
-from research_team.domain.corpus import Corpus
-from research_team.domain.media_proposals import MediaProposals
-from research_team.domain.project import Project
-from research_team.domain.topic import Topic
+from research_team.domain.research.corpus import Corpus
+from research_team.domain.research.media_proposals import MediaProposals
+from research_team.domain.research.topic import Topic
+from research_team.domain.tenancy.project import Project
 from research_team.infrastructure.persistence.event_store import KNOWLEDGE_CATEGORIES
 from research_team.interfaces.web.activity import TurnActivity
 from research_team.interfaces.web.approvals import WebApprovals

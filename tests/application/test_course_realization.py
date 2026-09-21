@@ -22,7 +22,7 @@ from research_team.application.course_realization import (
     RealizedCourse,
 )
 from research_team.application.curriculum import Curriculum
-from research_team.domain.learning_area import (
+from research_team.domain.curriculum.learning_area import (
     AreaMember,
     AreaProjection,
     LearningArea,
@@ -130,7 +130,7 @@ def _realized(
 
 
 def _candidate(slug: str = "warp-drive", membership_hash: str = "hash-v1"):
-    from research_team.domain.course_catalog import ArtRef, CourseCandidate
+    from research_team.domain.curriculum.catalog import ArtRef, CourseCandidate
 
     area = _area(slug, "e1", "e2")
     return CourseCandidate(

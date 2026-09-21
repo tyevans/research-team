@@ -13,8 +13,9 @@ from uuid import uuid4
 import aiosqlite
 from eventsource import StreamId, collect, replay
 
-from research_team.domain.catalog_curation import CourseFeatured
-from research_team.domain.judgements import (
+from research_team.domain.curriculum.curation import CourseFeatured
+from research_team.domain.dialogue.socratic import SocraticProgressObserved
+from research_team.domain.knowledge.judgements import (
     EntitiesHeldDistinct,
     EntitiesHeldSame,
     EntityKey,
@@ -23,9 +24,8 @@ from research_team.domain.judgements import (
     JudgementWithdrawn,
     WithdrawJudgement,
 )
-from research_team.domain.media_proposals import MediaProposed
-from research_team.domain.ontology import OntologyDiscovered
-from research_team.domain.socratic_dialogue import SocraticProgressObserved
+from research_team.domain.knowledge.ontology import OntologyDiscovered
+from research_team.domain.research.media_proposals import MediaProposed
 from research_team.infrastructure.persistence.event_store import (
     build_judgements_repository,
     build_socratic_dialogue_repository,

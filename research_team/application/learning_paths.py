@@ -22,7 +22,11 @@ from dataclasses import dataclass
 
 from research_team.application.area_projection import slugify
 from research_team.application.graph_read import GraphRelationship
-from research_team.domain.learning_area import LearningArea, LearningPath, PrerequisiteEdge
+from research_team.domain.curriculum.learning_area import (
+    LearningArea,
+    LearningPath,
+    PrerequisiteEdge,
+)
 
 #: How much one directed relationship between two areas' entities counts.
 #:

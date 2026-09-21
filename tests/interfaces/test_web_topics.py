@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from research_team.application import SummaryProjects, WorkerRoster
 from research_team.application.knowledge import ExtractionNote
 from research_team.composition import build_application as _build_application
-from research_team.domain.topic import OpenTopic, RecordFinding
+from research_team.domain.research.topic import OpenTopic, RecordFinding
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.extraction import ExtractionActivity

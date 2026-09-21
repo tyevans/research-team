@@ -15,7 +15,7 @@ import httpx
 import pytest
 from langchain_openai import ChatOpenAI
 
-from research_team.domain.learning_area import AreaMember
+from research_team.domain.curriculum.learning_area import AreaMember
 from research_team.infrastructure.knowledge.svg_artist import ModelSvgArtist
 
 pytestmark = pytest.mark.asyncio

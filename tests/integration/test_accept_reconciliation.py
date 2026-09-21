@@ -42,7 +42,7 @@ from research_team.application.perception import (
     PerceptionCapabilities,
 )
 from research_team.composition import build_application
-from research_team.domain.media_proposals import (
+from research_team.domain.research.media_proposals import (
     AcceptMediaProposal,
     ProposeMedia,
     StoreMediaProposal,

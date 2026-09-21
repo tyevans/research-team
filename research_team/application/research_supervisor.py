@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from research_team.application.research_run import RunReport
-from research_team.domain.research_run import Budget, ResearchRunState
+from research_team.domain.research.run import Budget, ResearchRunState
 
 logger = logging.getLogger(__name__)
 

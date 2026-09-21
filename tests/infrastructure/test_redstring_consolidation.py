@@ -5,7 +5,7 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from redstring import FakeLlmProvider, LlmProviderError
 
 from research_team.application.knowledge import KnowledgeError, SourceRef
-from research_team.domain.judgements import EntityKey, HoldSame
+from research_team.domain.knowledge.judgements import EntityKey, HoldSame
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.persistence.event_store import (
     build_corpus_repository,

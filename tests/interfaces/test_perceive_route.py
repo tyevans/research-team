@@ -25,7 +25,7 @@ from research_team.application.perception import (
     PerceptionCapabilities,
 )
 from research_team.composition import build_application
-from research_team.domain.corpus import StoreSourceMedia
+from research_team.domain.research.corpus import StoreSourceMedia
 from research_team.interfaces.web.app import create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.extraction_queue import ExtractionQueue

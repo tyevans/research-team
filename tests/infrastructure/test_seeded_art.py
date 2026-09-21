@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from research_team.domain.course_catalog import CourseCandidate
+from research_team.domain.curriculum.catalog import CourseCandidate
 from research_team.infrastructure.knowledge.seeded_art import _PALETTES, SeededArtProvider
 from research_team.infrastructure.knowledge.type_plurality_grouper import (
     CATEGORY_LABELS,
@@ -63,7 +63,7 @@ async def test_the_art_is_stable_across_processes_not_just_within_one():
     code = (
         "import asyncio;"
         "from uuid import uuid4;"
-        "from research_team.domain.course_catalog import CourseCandidate;"
+        "from research_team.domain.curriculum.catalog import CourseCandidate;"
         "from research_team.infrastructure.knowledge.seeded_art import SeededArtProvider;"
         "c = CourseCandidate(slug='warp', title='warp', category='work', prominence=1.0,"
         " size=1, membership_hash='h', anchors=(), art=None);"

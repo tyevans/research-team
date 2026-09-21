@@ -15,7 +15,7 @@ import pytest
 from eventsource import CommandRejectedError
 
 from research_team.domain import UserMessageSent
-from research_team.domain.course_authoring_run import (
+from research_team.domain.curriculum.authoring_run import (
     CourseAuthored,
     CourseAuthoringRunSettled,
     RecordAuthoredCourse,

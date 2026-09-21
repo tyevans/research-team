@@ -92,7 +92,7 @@ from research_team.application.document_extraction import (
     UnknownDocument,
 )
 from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
-from research_team.domain.corpus import (
+from research_team.domain.research.corpus import (
     Corpus,
     DropSourceDocument,
     MediaRecord,

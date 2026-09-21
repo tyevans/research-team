@@ -48,7 +48,7 @@ from eventsource.ports.readmodels import Query, ReadModelRepository
 from eventsource.ports.readmodels.query import Filter
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from research_team.domain.tenant import (
+from research_team.domain.tenancy.tenant import (
     LOCAL_SUBJECT,
     LOCAL_TENANT,
     TENANT_NAMESPACE,

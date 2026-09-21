@@ -19,7 +19,7 @@ from research_team.domain import (
     StartSession,
     StoreSourceDocument,
 )
-from research_team.domain.topic import OpenTopic
+from research_team.domain.research.topic import OpenTopic
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import create_app
@@ -364,7 +364,7 @@ async def test_sse_frames_a_media_proposal_change_as_a_media_frame(repository):
     from eventsource import AggregateRepository
 
     from research_team.application import LiveFeed
-    from research_team.domain.media_proposals import (
+    from research_team.domain.research.media_proposals import (
         AcceptMediaProposal,
         MediaProposals,
         ProposeMedia,
@@ -431,7 +431,7 @@ async def test_sse_frames_a_project_change_as_a_project_frame(repository):
     per aggregate rather than per event class.
     """
     from research_team.application import LiveFeed
-    from research_team.domain.project import CreateProject, JoinProject
+    from research_team.domain.tenancy.project import CreateProject, JoinProject
     from research_team.interfaces.web.app import _sse
 
     feed = LiveFeed(repository, poll_interval=0.01)

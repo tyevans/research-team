@@ -33,8 +33,8 @@ from research_team.domain import (
     ToolCallDecided,
     TurnFailed,
 )
-from research_team.domain.research_run import ResearchRunStarted
-from research_team.domain.topic import OpenTopic, TopicInvestigated
+from research_team.domain.research.run import ResearchRunStarted
+from research_team.domain.research.topic import OpenTopic, TopicInvestigated
 from research_team.infrastructure.persistence.event_store import (
     build_research_run_repository,
     build_topic_repository,
