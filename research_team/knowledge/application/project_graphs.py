@@ -18,6 +18,7 @@ just read" the same graph rather than two that happen to agree by luck.
 """
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
@@ -88,6 +89,21 @@ BuildCardVectors = Callable[[], Any | None]
 #: predates it is in, and the state a `rebuild` that does not accept a
 #: `co_mentions=` keyword needs this class to stay in.
 BuildCoMentions = Callable[[], Any | None]
+
+
+async def _safe_close(resource: Any) -> None:
+    """Close a resource safely, catching and ignoring any exceptions."""
+    if resource is None:
+        return
+    try:
+        if hasattr(resource, "close"):
+            close_fn = resource.close
+            if callable(close_fn):
+                res = close_fn()
+                if inspect.isawaitable(res):
+                    await res
+    except Exception:  # noqa: BLE001 -- a failing close must not crash cleanup
+        pass
 
 
 class ProjectGraphs:
@@ -299,14 +315,10 @@ class ProjectGraphs:
                 self._stores[project_id] = store
                 return store
             except Exception:
-                if hasattr(store, "close"):
-                    await store.close()
-                if chunk_store is not None and hasattr(chunk_store, "close"):
-                    await chunk_store.close()
-                if card_vectors is not None and hasattr(card_vectors, "close"):
-                    await card_vectors.close()
-                if card_store is not None and hasattr(card_store, "close"):
-                    await card_store.close()
+                await _safe_close(store)
+                await _safe_close(chunk_store)
+                await _safe_close(card_vectors)
+                await _safe_close(card_store)
                 raise
 
     def is_open(self, project_id: UUID) -> bool:
@@ -393,21 +405,19 @@ class ProjectGraphs:
         dict rather than being torn down out from under a caller that is
         still waiting on it.
         """
-        store = self._stores.pop(project_id, None)
-        if store is not None and hasattr(store, "close"):
-            await store.close()
-        chunk_store = self._chunk_stores.pop(project_id, None)
-        if chunk_store is not None and hasattr(chunk_store, "close"):
-            await chunk_store.close()
-        # Popped, not closed: it holds no connection and no file. Evicting it
-        # is the whole of releasing it, and a later `open` folds a fresh one.
-        self._co_mentions.pop(project_id, None)
-        card_store = self._card_stores.pop(project_id, None)
-        if card_store is not None and hasattr(card_store, "close"):
-            await card_store.close()
-        card_vectors = self._card_vectors.pop(project_id, None)
-        if card_vectors is not None and hasattr(card_vectors, "close"):
-            await card_vectors.close()
+        async with self._lock_for(project_id):
+            store = self._stores.pop(project_id, None)
+            chunk_store = self._chunk_stores.pop(project_id, None)
+            # Popped, not closed: it holds no connection and no file. Evicting it
+            # is the whole of releasing it, and a later `open` folds a fresh one.
+            self._co_mentions.pop(project_id, None)
+            card_store = self._card_stores.pop(project_id, None)
+            card_vectors = self._card_vectors.pop(project_id, None)
+
+            await _safe_close(store)
+            await _safe_close(chunk_store)
+            await _safe_close(card_store)
+            await _safe_close(card_vectors)
 
     async def close_all(self) -> None:
         """Close every cached store, and the shared vector store. For shutdown.
@@ -427,9 +437,9 @@ class ProjectGraphs:
         )
         for project_id in all_projects:
             await self.close(project_id)
-        store, self._vector_store = self._vector_store, None
-        # Reset the latch too: a `vectors()` after `close_all` must open a new
-        # store rather than hand back the closed one.
-        self._vector_ready = False
-        if store is not None and hasattr(store, "close"):
-            await store.close()
+        async with self._vector_lock:
+            store, self._vector_store = self._vector_store, None
+            # Reset the latch too: a `vectors()` after `close_all` must open a new
+            # store rather than hand back the closed one.
+            self._vector_ready = False
+            await _safe_close(store)

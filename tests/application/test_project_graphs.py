@@ -563,3 +563,120 @@ async def test_open_cleans_up_on_rebuild_error():
         await graphs.open(pid)
 
     assert not graphs.is_open(pid)
+
+
+async def test_close_continues_closing_subsequent_stores_when_one_raises():
+    class FailingStore:
+        async def close(self) -> None:
+            raise RuntimeError("store close failed")
+
+    chunk_store = _FakeChunkStore()
+    card_vectors = _FakeChunkStore()
+
+    graphs = ProjectGraphs(
+        build_store=FailingStore,
+        rebuild=_RecordingRebuild(),
+        build_chunk_store=lambda: chunk_store,
+        build_card_vectors=lambda: card_vectors,
+    )
+    pid = uuid4()
+    await graphs.open(pid)
+
+    assert graphs.is_open(pid)
+    assert graphs.chunks(pid) is chunk_store
+    assert graphs.card_vectors(pid) is card_vectors
+
+    # close should not raise, even though FailingStore.close() raises
+    await graphs.close(pid)
+
+    assert chunk_store.closed is True
+    assert card_vectors.closed is True
+    assert not graphs.is_open(pid)
+    assert graphs.chunks(pid) is None
+    assert graphs.card_vectors(pid) is None
+
+
+async def test_open_cleans_up_all_resources_when_resource_close_raises():
+    class FailingCloseStore:
+        async def close(self) -> None:
+            raise RuntimeError("store close failed")
+
+    class FailingRebuild:
+        async def __call__(self, store, project_id, **kwargs):
+            raise RuntimeError("rebuild failure")
+
+    chunk_store = _FakeChunkStore()
+    card_vectors = _FakeChunkStore()
+
+    graphs = ProjectGraphs(
+        build_store=FailingCloseStore,
+        rebuild=FailingRebuild(),
+        build_chunk_store=lambda: chunk_store,
+        build_card_vectors=lambda: card_vectors,
+    )
+    pid = uuid4()
+    with pytest.raises(RuntimeError, match="rebuild failure"):
+        await graphs.open(pid)
+
+    assert chunk_store.closed is True
+    assert card_vectors.closed is True
+    assert not graphs.is_open(pid)
+    assert graphs.chunks(pid) is None
+    assert graphs.card_vectors(pid) is None
+
+
+async def test_close_all_resets_state_properly():
+    vector_store = _SchemaVectorStore()
+    opener = _CountingOpen(vector_store)
+    graphs = ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_CountingRebuild(),
+        open_vector_store=opener,
+    )
+    p1, p2 = uuid4(), uuid4()
+    s1 = await graphs.open(p1)
+    s2 = await graphs.open(p2)
+    assert await graphs.vectors() is vector_store
+    assert graphs._vector_ready is True
+    assert graphs.is_open(p1)
+    assert graphs.is_open(p2)
+
+    await graphs.close_all()
+
+    assert s1.closed is True
+    assert s2.closed is True
+    assert vector_store.closed is True
+    assert graphs._vector_store is None
+    assert graphs._vector_ready is False
+    assert not graphs.is_open(p1)
+    assert not graphs.is_open(p2)
+    assert graphs.opened_projects() == set()
+
+    # Verify calling vectors() again re-opens a new vector store
+    new_vector_store = _SchemaVectorStore()
+    opener.store = new_vector_store
+    assert await graphs.vectors() is new_vector_store
+    assert opener.calls == 2
+    assert graphs._vector_ready is True
+
+
+async def test_close_all_resets_state_even_if_vector_store_close_raises():
+    class FailingVectorStore:
+        async def close(self) -> None:
+            raise RuntimeError("vector store close failed")
+
+    opener = _CountingOpen(FailingVectorStore())
+    graphs = ProjectGraphs(
+        build_store=_FakeStore,
+        rebuild=_CountingRebuild(),
+        open_vector_store=opener,
+    )
+    pid = uuid4()
+    store = await graphs.open(pid)
+
+    await graphs.close_all()
+
+    assert store.closed is True
+    assert graphs._vector_store is None
+    assert graphs._vector_ready is False
+    assert not graphs.is_open(pid)
