@@ -11,7 +11,7 @@ import type { DocumentBlock } from '@domain/lesson/document.ts'
  *  narrowed to the one kind a server can actually send.
  */
 export interface Citation {
-  readonly kind: 'source'
+  readonly kind: 'source' | 'topic'
   readonly id: string
 }
 

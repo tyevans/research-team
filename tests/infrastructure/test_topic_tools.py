@@ -21,6 +21,7 @@ from research_team.research.application.topics import (
     TopicSummary,
     format_topics,
 )
+from research_team.research.domain.topic import TopicState
 
 
 class FakeTopics:
@@ -34,10 +35,13 @@ class FakeTopics:
         self.gaps: list[tuple[UUID, str, list[str]]] = []
         self.links: list[tuple[UUID, str]] = []
         self.restated: list[tuple[UUID, str, str]] = []
-        self.known: set[UUID] = set()
+        self.known: dict[UUID, TopicState] = {}
 
     async def list_topics(self, project_id):
         return self.summaries
+
+    async def get_topic(self, topic_id: UUID) -> TopicState | None:
+        return self.known.get(topic_id)
 
     async def open_topic(self, project_id, question, rationale, scope=""):
         if self.live >= MAX_OPEN_TOPICS:
@@ -47,7 +51,13 @@ class FakeTopics:
             )
         self.opened.append((question, rationale))
         topic_id = uuid4()
-        self.known.add(topic_id)
+        self.known[topic_id] = TopicState(
+            topic_id=topic_id,
+            project_id=project_id,
+            question=question,
+            rationale=rationale,
+            scope=scope,
+        )
         return topic_id
 
     async def restate_question(self, topic_id, question, rationale=""):
@@ -532,3 +542,40 @@ async def test_record_gap_does_not_acknowledge_any_trigger(tmp_path):
     finally:
         await snapshot_store.close()
         await store.close()
+
+
+# ---------------- get_topic (B52) ----------------
+
+
+async def test_get_topic_returns_formatted_topic_and_artifact():
+    port = FakeTopics()
+    tools = tools_for(port)
+
+    topic_id = await port.open_topic(
+        uuid4(), "What is the threshold?", "SME discrepancy", "pilot study"
+    )
+
+    answer = await tools["get_topic"].ainvoke({"topic_id": str(topic_id)})
+    assert "Topic " in answer
+    assert "What is the threshold?" in answer
+    assert "Status: new" in answer
+    assert "Rationale: SME discrepancy" in answer
+
+
+async def test_get_topic_with_unknown_id_returns_guidance():
+    port = FakeTopics()
+    tools = tools_for(port)
+    unknown = str(uuid4())
+
+    answer = await tools["get_topic"].ainvoke({"topic_id": unknown})
+    assert f"no topic {unknown}" in answer
+    assert "list_topics" in answer
+
+
+async def test_get_topic_with_invalid_uuid_returns_guidance():
+    port = FakeTopics()
+    tools = tools_for(port)
+
+    answer = await tools["get_topic"].ainvoke({"topic_id": "not-a-uuid"})
+    assert "'not-a-uuid' is not a topic id" in answer
+    assert "list_topics" in answer

@@ -30,7 +30,7 @@ from research_team.research.application.corpus_read import (
     READ_SOURCE_TOOL,
     REFERENCE_SYNTAX_PROMPT,
 )
-from research_team.research.application.topics import LIST_TOPICS_TOOL
+from research_team.research.application.topics import GET_TOPIC_TOOL, LIST_TOPICS_TOOL
 
 READ_ONLY_TOOLS = frozenset(
     {
@@ -38,6 +38,7 @@ READ_ONLY_TOOLS = frozenset(
         READ_SOURCE_TOOL,
         GRAPH_SEARCH_TOOL,
         LIST_TOPICS_TOOL,
+        GET_TOPIC_TOOL,
     }
 )
 """The tools the ask agent may hold.
@@ -50,11 +51,7 @@ to gate.
 `open_topic` was named here when this was written, on the spec's description of
 it as a reader. It is not: it runs an `OpenTopic` command and creates a `Topic`
 aggregate, so a page whose whole contract is that it changes nothing cannot
-hold it. Every other topic tool was already excluded for the same reason.
-
-The names are imported from the application layer rather than retyped, so a
-tool renamed at its definition cannot leave a stale string here silently
-filtering it out.
+hold it. `get_topic` is the genuine read-only reader (B52).
 """
 
 READ_ONLY_FILE_TOOLS = ["ls", "read_file", "glob", "grep"]
@@ -75,7 +72,10 @@ offered; the backend decides what could ever land, and neither is trusted to
 be the only one.
 """
 
-CITED_BY_TOOL = {READ_SOURCE_TOOL: ("source", "source_id")}
+CITED_BY_TOOL = {
+    READ_SOURCE_TOOL: ("source", "source_id"),
+    GET_TOPIC_TOOL: ("topic", "topic_id"),
+}
 """Tool name -> (citation kind, the argument naming what was read).
 
 `read_source` alone: it is the only admitted tool that opens one identified

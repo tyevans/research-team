@@ -8,7 +8,7 @@ import { expect, it, vi } from 'vitest'
 import type { Container as AppContainer } from '@app/container.ts'
 import { ContainerProvider } from '@app/container-context.tsx'
 import type { AskRepository } from '@application/ports/repositories.ts'
-import type { AskEvent } from '@domain/ask/conversation.ts'
+import type { AskEvent, Citation } from '@domain/ask/conversation.ts'
 import { ComponentId, ProjectId } from '@domain/shared/identifier.ts'
 
 import { AskView } from './AskView.tsx'
@@ -36,10 +36,8 @@ const renderAsk = (ask: Partial<AskRepository>, conversationId: string | null = 
   return render(<AskView projectId={PROJECT} conversationId={conversationId} />, { wrapper })
 }
 
-/** `Citation.kind` is `'source'` alone -- the tool that would have produced a
- *  topic citation created topics rather than read them and was dropped from
- *  this read-only page, so nothing can emit one. */
-const answering = (text: string, citations: { kind: 'source'; id: string }[] = []) =>
+/** `Citation.kind` can be `'source'` or `'topic'` (B52). */
+const answering = (text: string, citations: Citation[] = []) =>
   vi.fn(
     async (
       _p: ProjectId,
