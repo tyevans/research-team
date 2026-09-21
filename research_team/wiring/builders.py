@@ -10,20 +10,6 @@ from eventsource.observability import Tracer
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from research_team.application.research.media_curation import (
-    MediaCurationTextPort,
-    MediaSearchPort,
-)
-from research_team.application.session.session_service import NO_SEARCH_CLAUSE
-from research_team.application.settings.effective import (
-    EffectiveSettings,
-    SettingsRevision,
-)
-from research_team.application.tenancy.authorization import (
-    Authorizer,
-    PermissiveAuthorizer,
-    RoleTableAuthorizer,
-)
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.fetch import (
     FETCH_PROMPT,
@@ -64,6 +50,20 @@ from research_team.infrastructure.settings import (
 )
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.interfaces.web.settings import SettingsDeps
+from research_team.research.application.media_curation import (
+    MediaCurationTextPort,
+    MediaSearchPort,
+)
+from research_team.session.application.session_service import NO_SEARCH_CLAUSE
+from research_team.settings.application.effective import (
+    EffectiveSettings,
+    SettingsRevision,
+)
+from research_team.tenancy.application.authorization import (
+    Authorizer,
+    PermissiveAuthorizer,
+    RoleTableAuthorizer,
+)
 from research_team.wiring.lifecycle import _close_every_step, _run_detached
 from research_team.wiring.resources import (
     _LazyArtStore,

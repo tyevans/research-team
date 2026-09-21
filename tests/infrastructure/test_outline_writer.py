@@ -10,7 +10,7 @@ how many sections count as an outline.
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from research_team.domain.curriculum.learning_area import AreaMember
+from research_team.curriculum.domain.learning_area import AreaMember
 from research_team.infrastructure.knowledge.outline_writer import ModelOutlineWriter
 
 ANCHORS = (

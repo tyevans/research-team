@@ -19,16 +19,16 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application.research.perception import (
+from research_team.composition import build_application
+from research_team.interfaces.web.app import create_app
+from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.interfaces.web.extraction_queue import ExtractionQueue
+from research_team.research.application.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,
 )
-from research_team.composition import build_application
-from research_team.domain.research.corpus import StoreSourceMedia
-from research_team.interfaces.web.app import create_app
-from research_team.interfaces.web.extraction import ExtractionActivity
-from research_team.interfaces.web.extraction_queue import ExtractionQueue
+from research_team.research.domain.corpus import StoreSourceMedia
 
 
 class FakePerception:

@@ -18,24 +18,27 @@ from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
 from redstring.events.streams import CONSOLIDATION_CATEGORY, DOCUMENT_CATEGORY
 
-from research_team.application import FeedEntry
-from research_team.domain import Corpus, EntityJudgements, Project, Session
-from research_team.domain.curriculum.authoring_run import (
+from research_team.curriculum.domain.authoring_run import (
     COURSE_AUTHORING_RUN_AGGREGATE_TYPE,
     CourseAuthoringRun,
 )
-from research_team.domain.curriculum.course import Course
-from research_team.domain.curriculum.curation import CATALOG_AGGREGATE_TYPE
-from research_team.domain.curriculum.learner import LearnerProgress
-from research_team.domain.dialogue.ask import AskConversation
-from research_team.domain.dialogue.interaction import BROWSER_SESSION_AGGREGATE_TYPE
-from research_team.domain.dialogue.socratic import SocraticDialogue
-from research_team.domain.knowledge.ontology import ONTOLOGY_AGGREGATE_TYPE
-from research_team.domain.research.media_proposals import MediaProposals
-from research_team.domain.research.run import ResearchRun
-from research_team.domain.research.topic import Topic
-from research_team.domain.tenancy.tenant import TENANT_AGGREGATE_TYPE
-from research_team.domain.tenancy.user import USER_AGGREGATE_TYPE
+from research_team.curriculum.domain.course import Course
+from research_team.curriculum.domain.curation import CATALOG_AGGREGATE_TYPE
+from research_team.curriculum.domain.learner import LearnerProgress
+from research_team.dialogue.domain.ask import AskConversation
+from research_team.dialogue.domain.interaction import BROWSER_SESSION_AGGREGATE_TYPE
+from research_team.dialogue.domain.socratic import SocraticDialogue
+from research_team.knowledge.domain import EntityJudgements
+from research_team.knowledge.domain.ontology import ONTOLOGY_AGGREGATE_TYPE
+from research_team.platform.shared.ports import FeedEntry
+from research_team.research.domain import Corpus
+from research_team.research.domain.media_proposals import MediaProposals
+from research_team.research.domain.run import ResearchRun
+from research_team.research.domain.topic import Topic
+from research_team.session.domain import Session
+from research_team.tenancy.domain import Project
+from research_team.tenancy.domain.tenant import TENANT_AGGREGATE_TYPE
+from research_team.tenancy.domain.user import USER_AGGREGATE_TYPE
 
 SNAPSHOT_THRESHOLD = 50
 

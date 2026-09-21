@@ -7,17 +7,17 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.research.corpus import (
+from research_team.infrastructure.persistence.read_models import (
+    CorpusDocumentRow,
+    CorpusStore,
+    to_record,
+)
+from research_team.research.domain.corpus import (
     UNREADABLE_DEGRADATIONS,
     CorpusDerivedTextStored,
     CorpusDocumentDropped,
     CorpusDocumentStored,
     CorpusMediaStored,
-)
-from research_team.infrastructure.persistence.read_models import (
-    CorpusDocumentRow,
-    CorpusStore,
-    to_record,
 )
 
 

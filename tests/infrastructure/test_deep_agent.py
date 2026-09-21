@@ -18,11 +18,19 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
-from research_team.application import ApprovalDecision, ApprovalRefused, AutonomyPolicy
-from research_team.application.shared.ports import ActivityDelta
-from research_team.domain import Session, SessionPurpose, StartSession
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool
+from research_team.platform.shared.ports import (
+    ActivityDelta,
+    ApprovalDecision,
+    ApprovalRefused,
+)
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
+    StartSession,
+)
 from tests.conftest import ToolAwareFakeChatModel
 
 PAYLOAD = {"results": [{"title": "Hit", "url": "https://a.example", "content": "A snippet."}]}

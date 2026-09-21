@@ -19,12 +19,12 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application.knowledge import IngestReport, SourceRef
-from research_team.application.research.document_extraction import DocumentExtractor
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.read_models import CorpusDocumentRow
 from research_team.interfaces.web.app import create_app
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
+from research_team.knowledge.application import IngestReport, SourceRef
+from research_team.research.application.document_extraction import DocumentExtractor
 
 PROJECT = UUID("11111111-1111-1111-1111-111111111111")
 

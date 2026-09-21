@@ -10,12 +10,12 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.research.research_run import RunReport
-from research_team.application.research.research_supervisor import (
+from research_team.research.application.research_run import RunReport
+from research_team.research.application.research_supervisor import (
     ResearchSupervisor,
     RunAlreadyActive,
 )
-from research_team.domain.research.run import Budget, ResearchRunState
+from research_team.research.domain.run import Budget, ResearchRunState
 
 
 class FakeRuns:

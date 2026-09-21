@@ -22,7 +22,13 @@ from eventsource.ports.readmodels import (
 )
 from redstring import DocumentExtracted
 
-from research_team.domain import (
+from research_team.infrastructure.persistence.store_base import (
+    LOCAL_RETRY_POLICY,
+    BaseProjectionRunner,
+    BaseReadModelStore,
+    open_readmodel_connection,
+)
+from research_team.research.domain import (
     UNREADABLE_DEGRADATIONS,
     CorpusDerivedTextStored,
     CorpusDocumentDropped,
@@ -31,12 +37,6 @@ from research_team.domain import (
     MediaRecord,
     SourceRecord,
     TextRecord,
-)
-from research_team.infrastructure.persistence.store_base import (
-    LOCAL_RETRY_POLICY,
-    BaseProjectionRunner,
-    BaseReadModelStore,
-    open_readmodel_connection,
 )
 
 CORPUS_NAMESPACE = UUID("6f1f5f8e-0c4a-5c8f-9b3a-7d2f4c9e1a60")

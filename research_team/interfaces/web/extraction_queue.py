@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from research_team.application.knowledge import IngestReport
+from research_team.knowledge.application import IngestReport
 
 
 @dataclass

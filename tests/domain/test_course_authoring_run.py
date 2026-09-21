@@ -14,8 +14,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain import UserMessageSent
-from research_team.domain.curriculum.authoring_run import (
+from research_team.curriculum.domain.authoring_run import (
     CourseAuthored,
     CourseAuthoringRunSettled,
     RecordAuthoredCourse,
@@ -26,6 +25,7 @@ from research_team.domain.curriculum.authoring_run import (
     evolve,
     initial_state,
 )
+from research_team.session.domain import UserMessageSent
 
 RUN = uuid4()
 PROJECT = uuid4()

@@ -11,7 +11,8 @@ import pytest
 from redstring.consolidation.candidates import ScoredCandidate
 from redstring.domain.similarity import SimilarityFeatures
 
-from research_team.domain.knowledge.judgements import (
+from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
+from research_team.knowledge.domain.judgements import (
     EntitiesHeldDistinct,
     EntitiesHeldSame,
     EntityKey,
@@ -19,7 +20,6 @@ from research_team.domain.knowledge.judgements import (
     initial_state,
     normalize_name,
 )
-from research_team.infrastructure.knowledge.judged_candidates import JudgedCandidates
 
 TENANT = uuid4()
 

@@ -5,11 +5,15 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application import GATED_TOOLS, SummaryProjects, WorkerRoster
 from research_team.composition import build_application as _build_application
-from research_team.domain import AutonomyChanged
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.session.application.autonomy import GATED_TOOLS
+from research_team.session.application.workers import (
+    SummaryProjects,
+    WorkerRoster,
+)
+from research_team.session.domain import AutonomyChanged
 
 
 async def _started(**kwargs):

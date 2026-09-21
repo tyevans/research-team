@@ -12,11 +12,11 @@ from uuid import uuid4
 import pytest
 from redstring import InMemoryGraphStore
 
-from research_team.application.knowledge.knowledge_attachment import (
-    KnowledgeAttachment,
-)
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.persistence.event_store import build_corpus_repository
+from research_team.knowledge.application.knowledge_attachment import (
+    KnowledgeAttachment,
+)
 from tests.conftest import fake_provider
 
 

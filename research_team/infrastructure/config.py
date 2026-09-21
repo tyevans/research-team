@@ -28,7 +28,7 @@ and an enum is lowercased and validated against its declared choices.
 import os
 from pathlib import Path
 
-from research_team.domain.settings import BY_KEY, SettingType
+from research_team.settings.domain import BY_KEY, SettingType
 
 
 def _value(key: str) -> object | None:

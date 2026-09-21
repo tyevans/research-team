@@ -2,15 +2,17 @@
 
 from typing import Any
 
-from research_team.application import (
+from research_team.interfaces.web.presenter_modules.sessions import reading_head
+from research_team.research.application.topic_read import TopicDetail, TopicView
+from research_team.session.application.autonomy import (
     GATED_TOOLS,
     AutonomyPolicy,
+)
+from research_team.session.application.workers import (
     Roster,
     Worker,
 )
-from research_team.application.research.topic_read import TopicDetail, TopicView
-from research_team.domain import ProjectState
-from research_team.interfaces.web.presenter_modules.sessions import reading_head
+from research_team.tenancy.domain import ProjectState
 
 
 def topic_view(view: TopicView) -> dict[str, Any]:

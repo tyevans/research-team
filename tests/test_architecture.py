@@ -42,8 +42,18 @@ ALLOWED_FRAMEWORKS = {
 }
 
 
+def _layer_of_module(module: Path) -> str | None:
+    parts = module.relative_to(PACKAGE).parts
+    for layer in ("domain", "application", "infrastructure", "interfaces"):
+        if layer in parts:
+            return layer
+    if "platform" in parts:
+        return "application"
+    return None
+
+
 def _modules(layer: str) -> list[Path]:
-    return sorted((PACKAGE / layer).rglob("*.py"))
+    return sorted(p for p in PACKAGE.rglob("*.py") if _layer_of_module(p) == layer)
 
 
 def _imported_roots(module: Path) -> set[str]:
@@ -75,20 +85,32 @@ def _imported_paths(module: Path) -> set[str]:
     return paths
 
 
+def _layer_of_target(target: str) -> str | None:
+    parts = target.split(".")
+    for layer in ("domain", "application", "infrastructure", "interfaces"):
+        if layer in parts:
+            return layer
+    if "platform" in parts:
+        return "application"
+    if "composition" in parts or "wiring" in parts:
+        return "composition"
+    return None
+
+
 def _imported_layers(module: Path) -> set[str]:
     tree = ast.parse(module.read_text())
     layers: set[str] = set()
     for node in ast.walk(tree):
-        target = None
+        targets: list[str] = []
         if isinstance(node, ast.ImportFrom) and node.module:
-            target = node.module
+            targets.append(node.module)
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith("research_team."):
-                    layers.add(alias.name.split(".")[1])
-            continue
-        if target and target.startswith("research_team."):
-            layers.add(target.split(".")[1])
+            targets.extend(alias.name for alias in node.names)
+        for target in targets:
+            if target.startswith("research_team."):
+                layer = _layer_of_target(target)
+                if layer:
+                    layers.add(layer)
     return layers
 
 
@@ -98,7 +120,7 @@ ALL_MODULES = [(layer, module) for layer in LAYERS for module in _modules(layer)
 @pytest.mark.parametrize(
     ("layer", "module"),
     ALL_MODULES,
-    ids=[f"{layer}/{module.name}" for layer, module in ALL_MODULES],
+    ids=[f"{layer}/{module.relative_to(PACKAGE)}" for layer, module in ALL_MODULES],
 )
 def test_imports_point_inward(layer: str, module: Path) -> None:
     permitted = set(LAYERS[: LAYERS.index(layer) + 1])
@@ -110,7 +132,7 @@ def test_imports_point_inward(layer: str, module: Path) -> None:
     ("layer", "module"),
     [(layer, module) for layer, module in ALL_MODULES if layer in ALLOWED_FRAMEWORKS],
     ids=[
-        f"{layer}/{module.name}"
+        f"{layer}/{module.relative_to(PACKAGE)}"
         for layer, module in ALL_MODULES
         if layer in ALLOWED_FRAMEWORKS
     ],
@@ -127,7 +149,7 @@ def test_inner_layers_name_no_framework(layer: str, module: Path) -> None:
 @pytest.mark.parametrize(
     ("layer", "module"),
     ALL_MODULES,
-    ids=[f"{layer}/{module.name}" for layer, module in ALL_MODULES],
+    ids=[f"{layer}/{module.relative_to(PACKAGE)}" for layer, module in ALL_MODULES],
 )
 def test_redstring_is_named_only_through_its_public_surface(layer: str, module: Path) -> None:
     """Anything under `redstring.domain.` is out; everything else is in.

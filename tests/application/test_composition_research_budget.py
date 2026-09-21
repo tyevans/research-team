@@ -17,8 +17,12 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain import Session, SessionPurpose, StartSession
 from research_team.infrastructure.agent.research_budget import ResearchBudget
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
+    StartSession,
+)
 
 
 def _session(purpose: SessionPurpose) -> Session:

@@ -2,7 +2,7 @@
 
 import pytest
 
-from research_team.application.components import (
+from research_team.platform.components import (
     component_reference,
     parse_document,
     validation_report,
@@ -50,7 +50,7 @@ def test_the_generated_reference_covers_every_registered_type():
     check on the registry rather than a check that some strings exist: an
     example that stopped satisfying its own schema fails here.
     """
-    from research_team.application.components import REGISTRY
+    from research_team.platform.components import REGISTRY
 
     reference = component_reference()
     for name, component in REGISTRY.items():
@@ -107,7 +107,7 @@ def test_the_c_yaml_loader_is_used_when_the_extension_is_available():
     the decision that produced the speedup, which is the durable part."""
     import yaml
 
-    from research_team.application.components.components import _YAML_LOADER
+    from research_team.platform.components.components import _YAML_LOADER
 
     if hasattr(yaml, "CSafeLoader"):
         assert _YAML_LOADER is yaml.CSafeLoader

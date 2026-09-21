@@ -1,6 +1,6 @@
 """The activity note types the executor reports and the web layer buffers."""
 
-from research_team.application.shared.ports import (
+from research_team.platform.shared.ports import (
     ActivityDelta,
     ActivityMessage,
     ActivityRemark,

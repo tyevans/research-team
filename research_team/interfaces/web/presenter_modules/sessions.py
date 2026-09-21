@@ -5,14 +5,21 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import ForkNode, SessionSummary
-from research_team.application.tenancy.project_summaries import ProjectSummary
-from research_team.domain import FileEdited, ProjectState, Session
 from research_team.interfaces.web.presenter_modules.events import (
     FILE_EVENTS,
     _revision_counts,
     message_view,
 )
+from research_team.session.application.summaries import (
+    ForkNode,
+    SessionSummary,
+)
+from research_team.session.domain import (
+    FileEdited,
+    Session,
+)
+from research_team.tenancy.application.project_summaries import ProjectSummary
+from research_team.tenancy.domain import ProjectState
 
 
 def session_view(

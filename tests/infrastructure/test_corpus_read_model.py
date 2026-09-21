@@ -12,13 +12,6 @@ from uuid import uuid4
 import pytest
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 
-from research_team.domain.research.corpus import (
-    Corpus,
-    CorpusMediaStored,
-    DropSourceDocument,
-    StoreSourceDocument,
-    TextRecord,
-)
 from research_team.infrastructure.persistence.event_store import build_corpus_repository
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
@@ -27,6 +20,13 @@ from research_team.infrastructure.persistence.read_models import (
     CorpusRunner,
     CorpusStore,
     to_record,
+)
+from research_team.research.domain.corpus import (
+    Corpus,
+    CorpusMediaStored,
+    DropSourceDocument,
+    StoreSourceDocument,
+    TextRecord,
 )
 
 ADVERSARIAL_TEXTS = [

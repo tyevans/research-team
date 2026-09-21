@@ -9,12 +9,12 @@ from langchain_core.messages import (
     message_to_dict,
 )
 
-from research_team.application import TurnAccountingError
 from research_team.infrastructure.agent.messages import (
     new_messages,
     to_payload_messages,
     to_recorded,
 )
+from research_team.platform.shared.ports import TurnAccountingError
 
 
 def payloads(*messages) -> list[dict]:

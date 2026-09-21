@@ -3,13 +3,6 @@
 import re
 from uuid import UUID, uuid4
 
-from research_team.application.components import ComponentBlock
-from research_team.application.knowledge.graph_export import build_export
-from research_team.application.knowledge.graph_read import (
-    GraphEntity,
-    GraphRelationship,
-)
-from research_team.application.knowledge.timeline_read import TimelineBand
 from research_team.interfaces.web import course_html
 from research_team.interfaces.web.course_html import (
     CourseArea,
@@ -41,6 +34,13 @@ from research_team.interfaces.web.course_html_widgets import (
     render_passages,
 )
 from research_team.interfaces.web.graph_html import color_for_type
+from research_team.knowledge.application.graph_export import build_export
+from research_team.knowledge.application.graph_read import (
+    GraphEntity,
+    GraphRelationship,
+)
+from research_team.knowledge.application.timeline_read import TimelineBand
+from research_team.platform.components import ComponentBlock
 
 
 def _empty_book() -> CourseBook:

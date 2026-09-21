@@ -11,14 +11,17 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from research_team.application import (
-    GATED_TOOLS,
+from research_team.knowledge.application import (
     GRAPH_SEARCH_TOOL,
     REMEMBER_TOOL,
     UNMERGE_TOOL,
+)
+from research_team.session.application.autonomy import (
+    FETCH_MEDIA_TOOL,
+    GATED_TOOLS,
+    TOOL_FLOORS,
     AutonomyPolicy,
 )
-from research_team.application.session.autonomy import FETCH_MEDIA_TOOL, TOOL_FLOORS
 
 LEVELS = ("auto", "ask", "deny")
 

@@ -7,19 +7,19 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.research.corpus_editing import CorpusEditor
-from research_team.application.research.media_acquisition import (
+from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
+from research_team.research.application.corpus_editing import CorpusEditor
+from research_team.research.application.media_acquisition import (
     AcceptedProposal,
     MediaAcceptWorker,
 )
-from research_team.domain.research.corpus import Corpus
-from research_team.domain.research.media_proposals import (
+from research_team.research.domain.corpus import Corpus
+from research_team.research.domain.media_proposals import (
     AcceptMediaProposal,
     MediaProposalFailed,
     MediaProposals,
     ProposeMedia,
 )
-from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
 
 
 def _client(handler) -> httpx.AsyncClient:

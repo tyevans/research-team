@@ -7,8 +7,8 @@ a `Repl` over a fresh in-memory-backed service, and commands run through
 
 import pytest
 
-from research_team.domain import SessionPurpose
 from research_team.interfaces.cli import repl
+from research_team.session.domain import SessionPurpose
 from tests.conftest import start_session
 
 

@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application import summarize_sessions
-from research_team.domain import (
+from research_team.session.application.summaries import summarize_sessions
+from research_team.session.domain import (
     CompleteTurn,
     DeleteFile,
     FailTurn,

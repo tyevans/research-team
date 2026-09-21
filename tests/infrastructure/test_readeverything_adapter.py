@@ -28,13 +28,13 @@ from readeverything import (
     TimeSpan,
 )
 
-from research_team.application.research.perception import LOCATOR_KINDS
 from research_team.infrastructure.perception import (
     ReadEverythingPerception,
     build_perception_adapter,
     readeverything_adapter,
 )
 from research_team.infrastructure.perception.readeverything_adapter import _locator_to_dict
+from research_team.research.application.perception import LOCATOR_KINDS
 
 PNG_BYTES = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"

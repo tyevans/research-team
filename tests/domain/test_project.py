@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain.tenancy.project import (
+from research_team.tenancy.domain.project import (
     AdvanceTip,
     CreateProject,
     DeleteProject,

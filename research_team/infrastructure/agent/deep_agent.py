@@ -16,26 +16,6 @@ from redstring import EmbeddingProvider
 from redstring.llm.adapters.langchain import NO_THINKING
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
-from research_team.application import (
-    ActivityReporter,
-    ApprovalDecision,
-    ApprovalPort,
-    ApprovalRefused,
-    ApprovalRequest,
-    AutonomyPolicy,
-    TurnResult,
-)
-from research_team.application.knowledge.knowledge_attachment import _compose
-from research_team.application.settings.effective import (
-    ExtractionSettings,
-    ResearchSettings,
-)
-from research_team.application.shared.ports import (
-    ActivityDelta,
-    ActivityMessage,
-)
-from research_team.application.tenancy.grants import GrantRegistry
-from research_team.domain import RecordToolDecision, Session
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.backend import EventSourcedBackend
@@ -46,6 +26,27 @@ from research_team.infrastructure.agent.messages import (
     to_payload_messages,
     to_recorded,
 )
+from research_team.knowledge.application.knowledge_attachment import _compose
+from research_team.platform.shared.ports import (
+    ActivityDelta,
+    ActivityMessage,
+    ActivityReporter,
+    ApprovalDecision,
+    ApprovalPort,
+    ApprovalRefused,
+    ApprovalRequest,
+    TurnResult,
+)
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.domain import (
+    RecordToolDecision,
+    Session,
+)
+from research_team.settings.application.effective import (
+    ExtractionSettings,
+    ResearchSettings,
+)
+from research_team.tenancy.application.grants import GrantRegistry
 
 logger = logging.getLogger(__name__)
 

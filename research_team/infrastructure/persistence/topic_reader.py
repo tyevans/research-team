@@ -30,15 +30,15 @@ from eventsource import StreamId, collect
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.domain.exceptions import AggregateNotFoundError
 
-from research_team.application.research.topic_attention import CorpusFacts, attention_for
-from research_team.application.research.topic_read import (
+from research_team.infrastructure.persistence.topics import TopicRunner
+from research_team.research.application.topic_attention import CorpusFacts, attention_for
+from research_team.research.application.topic_read import (
     SubQuestionView,
     TopicDetail,
     TopicView,
 )
-from research_team.application.research.topics import TopicSummary
-from research_team.domain.research.topic import Topic, TopicFindingRecorded
-from research_team.infrastructure.persistence.topics import TopicRunner
+from research_team.research.application.topics import TopicSummary
+from research_team.research.domain.topic import Topic, TopicFindingRecorded
 
 
 class ProjectTopicReader:

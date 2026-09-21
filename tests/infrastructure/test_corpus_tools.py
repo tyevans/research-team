@@ -14,7 +14,13 @@ import hashlib
 
 import pytest
 
-from research_team.application.research.corpus_read import (
+from research_team.infrastructure.agent.corpus_tools import (
+    CORPUS_PROMPT,
+    MAX_PER_SOURCE,
+    build_corpus_tools,
+    format_listing,
+)
+from research_team.research.application.corpus_read import (
     LIST_SOURCES_TOOL,
     READ_SOURCE_TOOL,
     REFERENCE_SYNTAX_PROMPT,
@@ -23,14 +29,11 @@ from research_team.application.research.corpus_read import (
     SourceListing,
     StoredDocument,
 )
-from research_team.application.session.autonomy import GATED_TOOLS
-from research_team.domain import MediaRecord, TextRecord
-from research_team.infrastructure.agent.corpus_tools import (
-    CORPUS_PROMPT,
-    MAX_PER_SOURCE,
-    build_corpus_tools,
-    format_listing,
+from research_team.research.domain import (
+    MediaRecord,
+    TextRecord,
 )
+from research_team.session.application.autonomy import GATED_TOOLS
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyz "
 

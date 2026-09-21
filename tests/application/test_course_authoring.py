@@ -14,12 +14,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.curriculum.authoring_checkpoints import (
+from research_team.curriculum.application.authoring_checkpoints import (
     PERFORMANCE_TASK_MARKER,
     CheckpointFailed,
     lesson_paths,
 )
-from research_team.application.curriculum.course_authoring import (
+from research_team.curriculum.application.course_authoring import (
     AREAS_DIR,
     COMPONENT_GUIDE,
     PROMPT_ANCHORS,
@@ -27,11 +27,11 @@ from research_team.application.curriculum.course_authoring import (
     CourseAuthor,
     learning_plan_prompt,
 )
-from research_team.domain import SessionPurpose
-from research_team.domain.curriculum.learning_area import (
+from research_team.curriculum.domain.learning_area import (
     AreaMember,
     LearningArea,
 )
+from research_team.session.domain import SessionPurpose
 
 
 class Outcome:

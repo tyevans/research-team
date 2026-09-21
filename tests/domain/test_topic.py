@@ -13,8 +13,8 @@ from uuid import uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.domain.research.corpus import CorpusDocumentStored
-from research_team.domain.research.topic import (
+from research_team.research.domain.corpus import CorpusDocumentStored
+from research_team.research.domain.topic import (
     AcknowledgeTrigger,
     AddSubQuestion,
     LinkEntity,

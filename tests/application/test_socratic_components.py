@@ -15,7 +15,7 @@ direction the dependency runs -- an `application/` test reaching into
 `infrastructure/` for the one assertion that touches a real prompt.
 """
 
-from research_team.application.dialogue.socratic_components import (
+from research_team.dialogue.application.socratic_components import (
     SOCRATIC_COMPONENT_TYPES,
     dialogue_document,
 )
@@ -99,7 +99,7 @@ def test_a_dialogue_offers_no_component_the_ask_withholds_nothing_for():
     one is about what may enter the tuple at all, which is the check that has
     to bite when a registry entry joins by existing.
     """
-    from research_team.application.components import REGISTRY
+    from research_team.platform.components import REGISTRY
 
     for name in SOCRATIC_COMPONENT_TYPES:
         component = REGISTRY[name]

@@ -17,7 +17,7 @@ import pytest
 from eventsource import CommandRejectedError
 from pydantic import ValidationError
 
-from research_team.domain import (
+from research_team.session.domain import (
     AutonomyChanged,
     ChangeAutonomy,
     CompactConversation,

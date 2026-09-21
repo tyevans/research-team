@@ -7,12 +7,7 @@ from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
 from redstring import DocumentExtracted, document_stream
 
-from research_team.application.research.topics import TOPICS_PROMPT
-from research_team.application.session.session_service import NO_SEARCH_CLAUSE, project_context
-from research_team.domain import SessionPurpose, StartSession, StoreSourceDocument
-from research_team.domain.curriculum.learner import LearnerChecklistRecorded
-from research_team.domain.research.topic import OpenTopic
-from research_team.domain.tenancy.project import CreateProject, JoinProject
+from research_team.curriculum.domain.learner import LearnerChecklistRecorded
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
 from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT, FETCH_PROMPT
 from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
@@ -23,6 +18,15 @@ from research_team.infrastructure.persistence import (
     build_corpus_repository,
 )
 from research_team.infrastructure.persistence.event_store import build_topic_repository
+from research_team.research.application.topics import TOPICS_PROMPT
+from research_team.research.domain import StoreSourceDocument
+from research_team.research.domain.topic import OpenTopic
+from research_team.session.application.session_service import NO_SEARCH_CLAUSE, project_context
+from research_team.session.domain import (
+    SessionPurpose,
+    StartSession,
+)
+from research_team.tenancy.domain.project import CreateProject, JoinProject
 from tests.conftest import start_session
 
 

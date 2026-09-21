@@ -14,16 +14,16 @@ are all adapter behaviour a fake would have been free to get right.
 
 import pytest
 
-from research_team.application.settings import ModelProfileService, SettingsResolver
-from research_team.domain.settings import (
+from research_team.infrastructure.settings.profiles import ModelProfileStore
+from research_team.infrastructure.settings.store import SettingsStore
+from research_team.settings.application import ModelProfileService, SettingsResolver
+from research_team.settings.domain import (
     ModelProfile,
     ModelRole,
     Scope,
     ScopeRef,
     SettingError,
 )
-from research_team.infrastructure.settings.profiles import ModelProfileStore
-from research_team.infrastructure.settings.store import SettingsStore
 
 PROJECT = ScopeRef(scope=Scope.PROJECT, scope_id="project-1")
 USER = ScopeRef(scope=Scope.USER, scope_id="user-1")

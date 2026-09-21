@@ -23,7 +23,7 @@ every older reader treating a newer lesson as broken.
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from research_team.application.components import (
+from research_team.platform.components import (
     ComponentBlock,
     MarkdownBlock,
     derive_id,

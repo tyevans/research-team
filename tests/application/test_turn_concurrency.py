@@ -10,8 +10,12 @@ it in production: the operator flips a switch while the agent is thinking.
 import pytest
 from eventsource import OptimisticLockError
 
-from research_team.domain import AutonomyChanged, TurnCompleted, UserMessageSent
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
+from research_team.session.domain import (
+    AutonomyChanged,
+    TurnCompleted,
+    UserMessageSent,
+)
 from tests.conftest import start_session
 
 

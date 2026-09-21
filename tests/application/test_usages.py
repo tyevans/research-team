@@ -11,7 +11,7 @@ level, which catches a stray redstring type hiding behind `Any`).
 import dataclasses
 from typing import Protocol
 
-from research_team.application.knowledge.usages import Usage, UsageReadPort
+from research_team.knowledge.application.usages import Usage, UsageReadPort
 
 
 def test_usage_is_a_frozen_dataclass_of_plain_types():

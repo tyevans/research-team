@@ -2,19 +2,19 @@
 
 from typing import Any
 
-from research_team.application.knowledge.entity_definitions import (
+from research_team.knowledge.application.entity_definitions import (
     Definition,
     ServedCitation,
 )
-from research_team.application.knowledge.graph_read import (
+from research_team.knowledge.application.graph_read import (
     EntityPage,
     Graph,
     GraphEntity,
     GraphRelationship,
     Neighborhood,
 )
-from research_team.application.knowledge.timeline_read import Timeline, TimelineBand
-from research_team.application.knowledge.usages import Usage
+from research_team.knowledge.application.timeline_read import Timeline, TimelineBand
+from research_team.knowledge.application.usages import Usage
 
 
 def entity_view(entity: GraphEntity) -> dict[str, Any]:

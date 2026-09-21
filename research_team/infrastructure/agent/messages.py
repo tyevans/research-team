@@ -15,7 +15,10 @@ from langchain_core.messages import (
     messages_from_dict,
 )
 
-from research_team.application import RecordedMessage, TurnAccountingError
+from research_team.platform.shared.ports import (
+    RecordedMessage,
+    TurnAccountingError,
+)
 
 
 def to_payload_messages(payloads: list[dict]) -> list[BaseMessage]:

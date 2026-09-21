@@ -1,4 +1,4 @@
-from research_team.application.dialogue.ask_components import (
+from research_team.dialogue.application.ask_components import (
     ASK_COMPONENT_TYPES,
     answer_document,
 )

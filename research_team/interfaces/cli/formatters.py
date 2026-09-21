@@ -5,14 +5,16 @@ from uuid import UUID
 
 from eventsource import DomainEvent
 
-from research_team.application import (
-    RunReport,
-    SessionSummary,
+from research_team.platform.shared.ports import (
+    ActivityDelta,
+    ActivityNote,
+    ActivityRemark,
     SummaryHealth,
-    TurnOutcome,
 )
-from research_team.application.shared.ports import ActivityDelta, ActivityNote, ActivityRemark
-from research_team.domain import (
+from research_team.research.application.research_run import RunReport
+from research_team.session.application.session_service import TurnOutcome
+from research_team.session.application.summaries import SessionSummary
+from research_team.session.domain import (
     ConversationCompacted,
     FileDeleted,
     FileEdited,

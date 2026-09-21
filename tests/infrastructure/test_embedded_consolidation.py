@@ -58,7 +58,7 @@ from redstring.domain.similarity import (
     string_similarity,
 )
 
-from research_team.application.knowledge import SourceRef
+from research_team.knowledge.application import SourceRef
 from tests.infrastructure.test_redstring_adapter import (
     _BREED_AND_HUNTING,
     _BREED_IN_CANADA,

@@ -19,8 +19,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from redstring import Entity, ExtractionMethod, Provenance, Relationship
 
-from research_team.application.curriculum import CurriculumService
 from research_team.composition import build_application
+from research_team.curriculum.application import CurriculumService
 from research_team.interfaces.web import create_app
 
 pytestmark = pytest.mark.asyncio

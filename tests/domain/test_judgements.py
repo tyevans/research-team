@@ -8,8 +8,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from research_team.domain import EntityJudgements
-from research_team.domain.knowledge.judgements import (
+from research_team.knowledge.domain import EntityJudgements
+from research_team.knowledge.domain.judgements import (
     EntitiesHeldDistinct,
     EntitiesHeldSame,
     EntityKey,
@@ -22,7 +22,7 @@ from research_team.domain.knowledge.judgements import (
     initial_state,
     normalize_name,
 )
-from research_team.domain.research.corpus import CorpusDocumentStored
+from research_team.research.domain.corpus import CorpusDocumentStored
 
 PROJECT = uuid4()
 

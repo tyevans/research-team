@@ -14,7 +14,7 @@ the kind of property that stops holding silently.
 
 import pytest
 
-from research_team.application.components import (
+from research_team.platform.components import (
     REGISTRY,
     ComponentType,
     Spec,

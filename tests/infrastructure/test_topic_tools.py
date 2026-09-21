@@ -14,13 +14,13 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.research.topics import (
+from research_team.infrastructure.agent.topic_tools import build_topic_tools
+from research_team.research.application.topics import (
     MAX_OPEN_TOPICS,
     TopicError,
     TopicSummary,
     format_topics,
 )
-from research_team.infrastructure.agent.topic_tools import build_topic_tools
 
 
 class FakeTopics:
@@ -316,7 +316,7 @@ async def test_two_findings_recorded_at_once_both_land(tmp_path):
 
         # Opened straight through the aggregate: `open_topic` consults the
         # queue projection for its cap, and this test is about the writes.
-        from research_team.domain.research.topic import OpenTopic
+        from research_team.research.domain.topic import OpenTopic
 
         topic = topics.create_new(uuid4())
         topic.execute(
@@ -360,9 +360,9 @@ async def test_record_gap_does_not_change_the_topic_status(tmp_path):
     from eventsource.adapters.sqlite import SQLiteEventStore
     from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
-    from research_team.domain.research.topic import OpenTopic
     from research_team.infrastructure.agent.topic_tools import RepositoryTopics
     from research_team.infrastructure.persistence import build_topic_repository
+    from research_team.research.domain.topic import OpenTopic
 
     db_path = str(tmp_path / "sessions.db")
     store = SQLiteEventStore(db_path)
@@ -406,9 +406,9 @@ async def test_record_gap_does_not_acknowledge_any_trigger(tmp_path):
     from eventsource.adapters.sqlite import SQLiteEventStore
     from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 
-    from research_team.domain.research.topic import OpenTopic
     from research_team.infrastructure.agent.topic_tools import RepositoryTopics
     from research_team.infrastructure.persistence import build_topic_repository
+    from research_team.research.domain.topic import OpenTopic
 
     db_path = str(tmp_path / "sessions.db")
     store = SQLiteEventStore(db_path)

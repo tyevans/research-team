@@ -16,8 +16,7 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.application import TurnSupervisor
-from research_team.application.research.topic_dispatch import (
+from research_team.research.application.topic_dispatch import (
     DISPATCH_ACTIONS,
     REFINE_PROMPT,
     RESEARCH_PROMPT,
@@ -30,7 +29,8 @@ from research_team.application.research.topic_dispatch import (
     refinement_path,
     understanding_path,
 )
-from research_team.domain import CreateProject
+from research_team.session.application.turn_supervisor import TurnSupervisor
+from research_team.tenancy.domain import CreateProject
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ def _writes(path: str, text: str, call_id: str = "w1") -> AIMessage:
 
 async def _seed_topic(service, dispatcher, fake_model, project_id, question: str):
     """Open one topic through a real turn, so it exists in the read model."""
-    from research_team.application.research.topic_seeding import TopicSeeder
+    from research_team.research.application.topic_seeding import TopicSeeder
 
     seeder = TopicSeeder(service, TurnSupervisor(service))
     fake_model.responses = [_opens_topic(question), AIMessage(content="opened", id="done")]
@@ -255,7 +255,7 @@ async def test_the_number_follows_the_topic_s_position_in_the_project_s_list(
         _opens_topic("Second question?"),
         AIMessage(content="opened", id="d2"),
     ]
-    from research_team.application.research.topic_seeding import TopicSeeder
+    from research_team.research.application.topic_seeding import TopicSeeder
 
     fake_model.responses = seeder_model_responses
     await TopicSeeder(service, TurnSupervisor(service)).seed(project_id, "more", max_topics=8)

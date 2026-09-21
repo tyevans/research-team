@@ -29,32 +29,29 @@ import pkgutil
 
 from eventsource import DomainEvent
 
-import research_team.domain
 from research_team.infrastructure.persistence.event_store import (
     FEED_AGGREGATE_TYPES,
     KNOWLEDGE_CATEGORIES,
     UNROUTED_AGGREGATE_TYPES,
 )
 
+CONTEXT_NAMES = (
+    "curriculum",
+    "research",
+    "knowledge",
+    "dialogue",
+    "session",
+    "tenancy",
+    "settings",
+)
+
 
 def _domain_aggregate_types() -> set[str]:
-    """Every `aggregate_type` any event in `research_team.domain` declares.
-
-    Read off the classes rather than listed here, which is the entire point --
-    a hand-written list would rot on the next aggregate added, and rotting
-    silently is the failure being guarded against.
-
-    Every module in the package is imported first. `DomainEvent.__subclasses__`
-    only knows about classes that have actually been imported, and the domain
-    package's `__init__` does not re-export all of them -- `learner` and
-    `research_run` in particular are reached only through their own modules.
-    Without this walk the guard would pass by not looking, which is the same
-    shape as the bug.
-    """
-    for module in pkgutil.walk_packages(
-        research_team.domain.__path__, f"{research_team.domain.__name__}."
-    ):
-        importlib.import_module(module.name)
+    """Every `aggregate_type` any event in any context domain declares."""
+    for ctx in CONTEXT_NAMES:
+        domain_pkg = importlib.import_module(f"research_team.{ctx}.domain")
+        for module in pkgutil.walk_packages(domain_pkg.__path__, f"{domain_pkg.__name__}."):
+            importlib.import_module(module.name)
 
     def descendants(cls: type) -> set[type]:
         found = set(cls.__subclasses__())
@@ -62,16 +59,11 @@ def _domain_aggregate_types() -> set[str]:
 
     types = set()
     for event in descendants(DomainEvent):
-        # Scoped to this application's own domain, because `__subclasses__` is
-        # global: `eventsource.testing.conformance` declares an event under an
-        # aggregate type of `Conformance`, and any test that imports the
-        # library's suite puts it in this walk. The first run of this guard
-        # failed on exactly that -- passing alone and failing in the full
-        # suite, which is the signature of a global registry read as if it
-        # were a local one. A library's test double is not an aggregate this
-        # feed could ever be asked to carry, so it is not this guard's to
-        # decide about.
-        if not event.__module__.startswith(f"{research_team.domain.__name__}."):
+        # Scoped to this application's own domain events across bounded contexts
+        if not any(
+            event.__module__.startswith(f"research_team.{ctx}.domain.")
+            for ctx in CONTEXT_NAMES
+        ):
             continue
         declared = event.model_fields.get("aggregate_type")
         # Abstract intermediates redeclare nothing and have no default; only a

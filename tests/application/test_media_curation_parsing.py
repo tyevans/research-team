@@ -7,7 +7,7 @@ prose reply that yields nothing, and the per-topic/per-need cap.
 
 import json
 
-from research_team.application.research.media_curation import (
+from research_team.research.application.media_curation import (
     MAX_CANDIDATES_PER_NEED,
     MAX_NEEDS_PER_TOPIC,
     MAX_QUERIES_PER_NEED,

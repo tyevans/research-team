@@ -8,11 +8,10 @@ from uuid import UUID
 
 import aiosqlite
 
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application.course_catalog import (
     CachedBlurb,
     CachedOutline,
 )
-from research_team.application.tenancy.project_summaries import ProjectSummary
 from research_team.infrastructure.persistence.project_summaries import (
     SqliteProjectSummaries,
 )
@@ -24,6 +23,7 @@ from research_team.infrastructure.persistence.read_models import (
     CourseBlurbStore,
     CourseOutlineStore,
 )
+from research_team.tenancy.application.project_summaries import ProjectSummary
 
 
 class LazyAsyncResource[T]:

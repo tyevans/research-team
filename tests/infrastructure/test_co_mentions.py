@@ -27,10 +27,10 @@ from uuid import UUID, uuid4
 import pytest
 from redstring import FakeLlmProvider, InMemoryChunkStore, InMemoryGraphStore
 
-from research_team.application.knowledge import SourceRef
 from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.rebuild import rebuild_graph
+from research_team.knowledge.application import SourceRef
 from tests.conftest import TWO_PEOPLE
 
 DIMENSION = 8

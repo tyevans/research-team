@@ -11,8 +11,8 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from research_team.application.components import ComponentBlock
 from research_team.interfaces.web.course_html_figures import esc
+from research_team.platform.components import ComponentBlock
 
 if TYPE_CHECKING:
     from research_team.interfaces.web.course_html import CourseBook, Passage, Resolution

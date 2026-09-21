@@ -11,15 +11,15 @@ import random
 
 import pytest
 
-from research_team.application.curriculum.learning_paths import (
+from research_team.curriculum.application.learning_paths import (
     MIN_EDGE_WEIGHT,
     _breadth,
     _leading_year,
     full_path,
     path_to,
 )
-from research_team.application.knowledge.graph_read import GraphRelationship
-from research_team.domain.curriculum.learning_area import AreaMember, LearningArea
+from research_team.curriculum.domain.learning_area import AreaMember, LearningArea
+from research_team.knowledge.application.graph_read import GraphRelationship
 
 
 def member(eid: str, *, temporal: str | None = None) -> AreaMember:

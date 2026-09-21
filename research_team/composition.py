@@ -27,36 +27,11 @@ from langchain_core.tools import BaseTool
 from redstring import SlidingWindowChunker
 from redstring.llm.adapters.langchain import LangChainLlmProvider
 
-from research_team.application import (
-    DEFAULT_SYSTEM_PROMPT,
-    ApprovalPort,
-    AutonomyPolicy,
-    DispatchesInFlight,
-    ExtractionChannel,
-    KnowledgeAttachment,
-    LiveFeed,
-    ProjectGraphs,
-    SessionService,
-    TurnActivityBuffer,
-    WorkerRoster,
-)
-from research_team.application.dialogue.ask import AskService, ConversationRegistry
-from research_team.application.dialogue.socratic import (
+from research_team.dialogue.application.ask import AskService, ConversationRegistry
+from research_team.dialogue.application.socratic import (
     DialogueRegistry,
     SocraticDialogueService,
 )
-from research_team.application.knowledge import (
-    KnowledgeError,
-    SourceRef,
-    source_id_for_url,
-)
-from research_team.application.research.corpus_editing import CorpusEditor
-from research_team.application.research.document_extraction import DocumentExtractor
-from research_team.application.research.perception import MediaPerceiver, PerceptionPort
-from research_team.application.research.topics import TOPICS_PROMPT
-from research_team.application.tenancy.grants import GrantRegistry
-from research_team.domain import Session, SessionPurpose
-from research_team.domain.research.media_proposals import MediaProposals
 from research_team.infrastructure import config
 from research_team.infrastructure.agent import (
     DeepAgentTurnExecutor,
@@ -121,6 +96,38 @@ from research_team.infrastructure.persistence.event_store import (
     build_socratic_dialogue_repository,
 )
 from research_team.infrastructure.telemetry import build_tracer
+from research_team.knowledge.application import (
+    KnowledgeError,
+    SourceRef,
+    source_id_for_url,
+)
+from research_team.knowledge.application.knowledge_attachment import KnowledgeAttachment
+from research_team.knowledge.application.project_graphs import ProjectGraphs
+from research_team.platform.shared.live_feed import LiveFeed
+from research_team.platform.shared.ports import (
+    ApprovalPort,
+    TurnActivityBuffer,
+)
+from research_team.research.application.corpus_editing import CorpusEditor
+from research_team.research.application.document_extraction import DocumentExtractor
+from research_team.research.application.perception import MediaPerceiver, PerceptionPort
+from research_team.research.application.topics import TOPICS_PROMPT
+from research_team.research.domain.media_proposals import MediaProposals
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.session_service import (
+    DEFAULT_SYSTEM_PROMPT,
+    SessionService,
+)
+from research_team.session.application.workers import (
+    DispatchesInFlight,
+    ExtractionChannel,
+    WorkerRoster,
+)
+from research_team.session.domain import (
+    Session,
+    SessionPurpose,
+)
+from research_team.tenancy.application.grants import GrantRegistry
 from research_team.wiring import (
     _PARTIAL_BUILD_RESOURCES,
     BuiltStores,

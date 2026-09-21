@@ -14,14 +14,14 @@ from datetime import UTC, datetime
 from eventsource import ExpectedVersion, InMemoryEventBus, StreamId
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.domain.tenancy.user import (
+from research_team.infrastructure.identity.oidc import Claims
+from research_team.infrastructure.persistence.users import UserRow
+from research_team.tenancy.domain.user import (
     USER_AGGREGATE_TYPE,
     UserProfileChanged,
     UserSignedIn,
     stream_id_for,
 )
-from research_team.infrastructure.identity.oidc import Claims
-from research_team.infrastructure.persistence.users import UserRow
 
 
 class EventStoreUserRecorder:

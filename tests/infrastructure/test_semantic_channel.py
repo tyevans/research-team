@@ -69,13 +69,13 @@ from uuid import UUID, uuid4
 import pytest
 from redstring import InMemoryChunkStore, InMemoryVectorStore
 
-from research_team.application.curriculum import CurriculumService
-from research_team.application.knowledge import SourceRef
+from research_team.curriculum.application import CurriculumService
 from research_team.infrastructure.knowledge.co_mention_reader import RecordedCoMentions
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.entity_cards import Neighbour, card_text
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.semantic_neighbours import VectorNeighbours
+from research_team.knowledge.application import SourceRef
 from tests.conftest import fake_provider
 
 #: Wide enough that two different words rarely share a slot, narrow enough that

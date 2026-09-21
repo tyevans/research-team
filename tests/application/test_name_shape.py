@@ -12,7 +12,7 @@ who wrote the signal list -- the failure `CLAUDE.md` records under
 
 import pytest
 
-from research_team.application.knowledge.name_shape import (
+from research_team.knowledge.application.name_shape import (
     DETERMINER_MIN_WORDS,
     MAX_NAME_WORDS,
     _report,

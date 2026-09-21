@@ -3,8 +3,9 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from research_team.application import TurnAccountingError
-from research_team.domain import (
+from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
+from research_team.platform.shared.ports import TurnAccountingError
+from research_team.session.domain import (
     AssistantMessageAdded,
     FileWritten,
     SessionPurpose,
@@ -14,7 +15,6 @@ from research_team.domain import (
     TurnFailed,
     UserMessageSent,
 )
-from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from tests.conftest import start_session
 
 

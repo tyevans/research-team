@@ -18,9 +18,13 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application import ApprovalDecision, ApprovalRefused, ApprovalRequest
-from research_team.application.tenancy.grants import FetchGrant, GrantRegistry
 from research_team.interfaces.web.approvals import UNATTENDED_TIMEOUT_S, WebApprovals
+from research_team.platform.shared.ports import (
+    ApprovalDecision,
+    ApprovalRefused,
+    ApprovalRequest,
+)
+from research_team.tenancy.application.grants import FetchGrant, GrantRegistry
 
 
 def _request(session_id) -> ApprovalRequest:

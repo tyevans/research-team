@@ -59,7 +59,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application.course_catalog import (
     ArtGeneratorPort,
     CourseCandidate,
 )

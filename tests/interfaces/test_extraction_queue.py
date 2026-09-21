@@ -15,8 +15,8 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.knowledge import IngestReport
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
+from research_team.knowledge.application import IngestReport
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """Discovery's pure half: what the model is asked, and what is believed back."""
 
-from research_team.application.knowledge.ontology_discovery import (
+from research_team.knowledge.application.ontology_discovery import (
     build_prompt,
     parse_ontology,
     verify_classes,

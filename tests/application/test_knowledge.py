@@ -1,4 +1,4 @@
-from research_team.application.knowledge import (
+from research_team.knowledge.application import (
     IngestReport,
     KnowledgePort,
     Match,
@@ -60,7 +60,7 @@ def test_an_extraction_note_defaults_everything_it_does_not_know():
     `storing` note has no entity count, and reporting one as `0` would say
     extraction found nothing.
     """
-    from research_team.application.knowledge import ExtractionNote
+    from research_team.knowledge.application import ExtractionNote
 
     note = ExtractionNote(source_id="notes", stage="storing")
 
@@ -77,7 +77,7 @@ def test_a_note_keeps_a_zero_confidence_distinct_from_an_absent_one():
     Collapsing them would report a fallback as a confident choice, which is
     the one thing `IngestReport.domain_confidence` exists to prevent.
     """
-    from research_team.application.knowledge import ExtractionNote
+    from research_team.knowledge.application import ExtractionNote
 
     gave_up = ExtractionNote(
         source_id="n", stage="extracted", domain="x", domain_confidence=0.0

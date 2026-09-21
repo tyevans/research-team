@@ -35,15 +35,15 @@ from uuid import UUID
 import httpx
 from langchain_core.tools import BaseTool, tool
 
-from research_team.application.research.corpus_editing import CorpusEditor
-from research_team.application.research.media_acquisition import (
+from research_team.research.application.corpus_editing import CorpusEditor
+from research_team.research.application.media_acquisition import (
     MAX_UPLOAD_BYTES,
     MediaMoved,
     MediaTooLarge,
     UnsupportedMedia,
     download_media,
 )
-from research_team.application.session.autonomy import FETCH_MEDIA_TOOL
+from research_team.session.application.autonomy import FETCH_MEDIA_TOOL
 
 TIMEOUT = httpx.Timeout(30.0)
 """Longer than `fetch.py`'s 15s: a media asset is commonly larger than a page

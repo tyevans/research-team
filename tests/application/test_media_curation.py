@@ -14,21 +14,21 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.research.media_curation import (
+from research_team.research.application.media_curation import (
     CurationUnavailable,
     MediaCurationService,
     MediaNeed,
     SearchResult,
     _judge_prompt,
 )
-from research_team.application.research.topic_attention import TopicAttention
-from research_team.application.research.topic_read import (
+from research_team.research.application.topic_attention import TopicAttention
+from research_team.research.application.topic_read import (
     SubQuestionView,
     TopicDetail,
     TopicView,
 )
-from research_team.application.research.topics import TopicSummary
-from research_team.domain.research.media_proposals import (
+from research_team.research.application.topics import TopicSummary
+from research_team.research.domain.media_proposals import (
     IgnoreMediaHost,
     MediaNeedsIdentified,
     MediaProposals,

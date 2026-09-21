@@ -76,13 +76,13 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application.course_catalog import (
     BlurbCachePort,
     DraftBlurb,
     DraftOutline,
     OutlineCachePort,
 )
-from research_team.domain.curriculum.learning_area import AreaMember
+from research_team.curriculum.domain.learning_area import AreaMember
 from research_team.infrastructure.config import catalog_sweep_concurrency
 
 _logger = logging.getLogger(__name__)

@@ -14,7 +14,7 @@ from redstring import (
     tokenize,
 )
 
-from research_team.application.knowledge import (
+from research_team.knowledge.application import (
     KnowledgeError,
     Match,
     SearchMode,

@@ -3,19 +3,19 @@
 from collections.abc import Sequence
 from typing import Any
 
-from research_team.application.curriculum import Curriculum
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application import Curriculum
+from research_team.curriculum.application.course_catalog import (
     CachedOutline,
     Catalog,
 )
-from research_team.application.curriculum.course_realization import (
+from research_team.curriculum.application.course_realization import (
     CourseDetail,
     RealizedCourse,
 )
-from research_team.domain.curriculum.catalog import Category, CourseCandidate
-from research_team.domain.curriculum.course import CourseFit
-from research_team.domain.curriculum.learner import LearnerProgressState
-from research_team.domain.curriculum.learning_area import (
+from research_team.curriculum.domain.catalog import Category, CourseCandidate
+from research_team.curriculum.domain.course import CourseFit
+from research_team.curriculum.domain.learner import LearnerProgressState
+from research_team.curriculum.domain.learning_area import (
     AreaMember,
     LearningArea,
     LearningPath,

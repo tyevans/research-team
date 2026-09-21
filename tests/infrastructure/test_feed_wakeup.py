@@ -8,7 +8,7 @@ promptly, and that its absence costs nothing worse than the poll interval.
 import asyncio
 from uuid import uuid4
 
-from research_team.domain import (
+from research_team.session.domain import (
     SessionPurpose,
     StartSession,
 )

@@ -1,0 +1,207 @@
+"""The course detail read: a candidate, its outline, its full membership, and
+-- for a realized course -- how far the cluster has drifted since it was
+frozen.
+
+`OutlineTextPort`, `OutlineCachePort`, `CachedOutline` and `DraftOutline` live
+in `course_catalog.py` rather than here (Task 4; controller ruling R2) -- this
+module holds only the port over realized courses and the assembler that joins
+a catalog candidate to its frozen counterpart.
+
+**`CourseService` no longer calls `OutlineTextPort.write` at all.** It used
+to, on a cache miss inside the request that renders this page -- a model
+call awaited synchronously behind a click, with no spinner distinguishable
+from a slow network and no way to cancel it, and two readers of the same
+slug racing to pay for two generations. Outline generation now happens only
+in the background sweep (`interfaces/web/blurb_sweep.py`, folded into the
+existing copy sweep rather than a second one beside it -- see its module
+docstring). `_outline_for` here is cache-read-only: a fresh hit is returned,
+anything else -- no row, or a row whose `membership_hash` has drifted -- is
+`None`, exactly the shape `CourseDetail.outline`'s docstring already gives
+"never generated" and "refused".
+"""
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
+from uuid import UUID
+
+from research_team.curriculum.application import Curriculum
+from research_team.curriculum.application.course_catalog import (
+    CachedOutline,
+    Catalog,
+    OutlineCachePort,
+)
+from research_team.curriculum.domain.catalog import CourseCandidate
+from research_team.curriculum.domain.course import CourseFit, fit_of
+from research_team.curriculum.domain.learning_area import AreaMember
+
+
+@dataclass(frozen=True)
+class RealizedCourse:
+    """A realized course, in this layer's own vocabulary.
+
+    Not `CourseRow`: that type carries a `project_id` a caller already
+    supplied and an `abandoned` flag this layer never needs to see --
+    `RealizedCoursePort` implementations only ever return non-abandoned rows
+    -- and importing it here would put `infrastructure.persistence` in a
+    module `tests/test_architecture.py` keeps free of it, `CachedBlurb`'s
+    reason restated for this port.
+    """
+
+    slug: str
+    title: str
+    member_entity_ids: tuple[str, ...]
+    membership_hash: str
+    realized_at: datetime
+    authored_session_id: UUID | None
+
+
+class RealizedCoursePort(Protocol):
+    """The stored realized courses for one project.
+
+    Backed by `CourseStore` at composition time, joined against
+    `AuthoringRunStore.authored_session_for` for `authored_session_id` --
+    that join is the adapter's job, not this port's; the port hands back
+    the already-joined `RealizedCourse`.
+    """
+
+    async def for_project(self, project_id: UUID) -> Sequence[RealizedCourse]: ...
+
+    async def get(self, project_id: UUID, slug: str) -> RealizedCourse | None: ...
+
+
+@dataclass(frozen=True)
+class RealizedCourseView:
+    """A realized course's frozen facts plus how it compares to the live
+    cluster right now -- the whole reason `CourseDetail.course` is this and
+    not the bare `RealizedCourse`, which knows nothing about drift."""
+
+    realized_at: datetime
+    membership_hash: str
+    fit: CourseFit
+    authored_session_id: UUID | None
+
+
+@dataclass(frozen=True)
+class CourseDetail:
+    """One course detail page's worth of state.
+
+    `course` is `None` for a candidate nobody has realized -- an ordinary
+    state, not a degraded one: every cluster is browsable before anyone
+    decides it is a course. `outline` is `None` both when nothing has been
+    generated yet and when the model refused; the page cannot tell those
+    apart from this value alone, and does not need to -- both render as "no
+    outline yet".
+    """
+
+    candidate: CourseCandidate
+    outline: CachedOutline | None
+    members: tuple[AreaMember, ...] = ()
+    """The cluster's full membership now -- not just its anchors, so a reader
+    can check the outline's claims about coverage against the population the
+    claims were made over.
+
+    `()` means the slug names no cluster, which on the wire is
+    indistinguishable from a cluster with no members. That collision is
+    tolerable only because `course.fit.orphaned` answers the same question
+    unambiguously on the same object; a caller reading `members` alone to
+    decide whether the cluster still exists is reading the wrong field. It is
+    written down for the reason `outline: None` is: a field with two meanings
+    and no note is one a later reader resolves by guessing.
+    """
+    course: RealizedCourseView | None = None
+
+
+class CourseService:
+    """Assembles a course detail page from a curriculum, a catalog and the
+    realized-course store."""
+
+    def __init__(
+        self,
+        *,
+        realized: RealizedCoursePort,
+        outline_cache: OutlineCachePort,
+    ) -> None:
+        self._realized = realized
+        self._outline_cache = outline_cache
+
+    async def detail(
+        self,
+        project_id: UUID,
+        curriculum: Curriculum,
+        catalog: Catalog,
+        slug: str,
+    ) -> CourseDetail | None:
+        """The candidate, its outline and (if realized) its drift.
+
+        `None` when `slug` names no candidate in `catalog.all_candidates` --
+        the route has nothing to render, matching `CatalogService`'s own
+        "unplaceable" handling rather than inventing a page for a slug that
+        does not exist in the current catalog. A stranded realized course
+        (its slug names no *current cluster*) is exactly this case and is
+        deliberately not reachable here -- see `orphans()`.
+        """
+        candidate = next((c for c in catalog.all_candidates if c.slug == slug), None)
+        if candidate is None:
+            return None
+
+        outline = await self._outline_for(project_id, candidate)
+
+        area = curriculum.area(slug)
+        members = tuple(area.members) if area is not None else ()
+
+        course_view: RealizedCourseView | None = None
+        realized = await self._realized.get(project_id, slug)
+        if realized is not None:
+            course_view = RealizedCourseView(
+                realized_at=realized.realized_at,
+                membership_hash=realized.membership_hash,
+                fit=fit_of(realized.member_entity_ids, area),
+                authored_session_id=realized.authored_session_id,
+            )
+
+        return CourseDetail(
+            candidate=candidate, outline=outline, members=members, course=course_view
+        )
+
+    async def _outline_for(
+        self, project_id: UUID, candidate: CourseCandidate
+    ) -> CachedOutline | None:
+        """The cached outline if it is fresh, else `None` -- never a model
+        call.
+
+        A miss and a stale hit (`membership_hash` disagrees) take the same
+        path: no outline, and nothing generated. This method used to write
+        one on either of those, inside the request that renders this page --
+        a model call awaited behind a click, with two readers of the same
+        slug racing to pay for two generations, and a refusal that must not
+        be cached (see the module docstring on `CourseDetail.outline`)
+        meaning a refusal-prone cluster paid the call again on every view.
+        Generation now happens only in the background sweep; a slug this
+        cache has nothing fresh for renders "no outline yet", exactly what a
+        slug nobody has swept renders.
+        """
+        cached = await self._outline_cache.get(project_id, candidate.slug)
+        if cached is not None and cached.membership_hash == candidate.membership_hash:
+            return cached
+        return None
+
+    async def orphans(
+        self, project_id: UUID, curriculum: Curriculum
+    ) -> tuple[RealizedCourse, ...]:
+        """Realized courses whose slug names no cluster in the current
+        curriculum.
+
+        The only surface these have: `detail()` looks the slug up in
+        `catalog.all_candidates`, which a stranded course is by definition
+        absent from -- re-clustering moved the slug it was realized under,
+        so there is no candidate for a route to key on. Compared against
+        `curriculum.by_slug` rather than the catalog, because a candidate can
+        be absent from the catalog for reasons that have nothing to do with
+        stranding (see `Catalog.unplaceable_featured`'s own case) -- what
+        `orphans()` reports on is specifically "no cluster", not "no card".
+        """
+        by_slug = curriculum.by_slug
+        courses = await self._realized.for_project(project_id)
+        return tuple(c for c in courses if c.slug not in by_slug)

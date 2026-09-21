@@ -15,18 +15,6 @@ from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError
 
-from research_team.application import (
-    ActivityReporter,
-    ApprovalDecision,
-    ApprovalRequest,
-    AutonomyPolicy,
-    ResearchSupervisor,
-    RunAlreadyActive,
-    SessionService,
-)
-from research_team.application.shared.ports import ActivityNote
-from research_team.domain import CreateProject, SessionPurpose
-from research_team.domain.research.run import Budget
 from research_team.infrastructure import config
 from research_team.interfaces.cli.formatters import (
     format_activity,
@@ -43,6 +31,21 @@ from research_team.interfaces.cli.formatters import (
     format_summary_health,
     format_turn,
 )
+from research_team.platform.shared.ports import (
+    ActivityNote,
+    ActivityReporter,
+    ApprovalDecision,
+    ApprovalRequest,
+)
+from research_team.research.application.research_supervisor import (
+    ResearchSupervisor,
+    RunAlreadyActive,
+)
+from research_team.research.domain.run import Budget
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.session_service import SessionService
+from research_team.session.domain import SessionPurpose
+from research_team.tenancy.domain import CreateProject
 
 HELP = """\
 Workspace

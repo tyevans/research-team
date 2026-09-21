@@ -3,13 +3,13 @@ timeline, and compare."""
 
 import pytest
 
-from research_team.application.components import (
+from research_team.knowledge.application.graph_read import MAX_NEIGHBORHOOD_DEPTH
+from research_team.knowledge.application.timeline_read import MAX_TIMELINE_BANDS
+from research_team.platform.components import (
     component_reference,
     parse_document,
     project,
 )
-from research_team.application.knowledge.graph_read import MAX_NEIGHBORHOOD_DEPTH
-from research_team.application.knowledge.timeline_read import MAX_TIMELINE_BANDS
 
 DEFINITION = """\
 ```component:definition
@@ -278,7 +278,7 @@ def test_every_resolved_type_tells_the_model_how_to_write_a_good_one(name):
     model inventing a tidy canonical name for an entity extraction stored as
     it appeared. A type with no craft notes is one whose failure mode nobody
     wrote down, and the model reads this every time it authors."""
-    from research_team.application.components import REGISTRY
+    from research_team.platform.components import REGISTRY
 
     component = REGISTRY[name]
 
@@ -296,7 +296,7 @@ def test_every_name_resolved_type_warns_about_inventing_a_canonical_name(name):
     'Constantine I' for an entity stored as 'Constantine' resolves to nothing,
     the widget renders as a plain word, and nothing tells the author why.
     """
-    from research_team.application.components import REGISTRY
+    from research_team.platform.components import REGISTRY
 
     craft = " ".join(REGISTRY[name].craft).lower()
 
@@ -314,7 +314,7 @@ def test_timeline_craft_says_limit_does_not_make_the_read_cheaper():
     Red against craft notes that describe `limit` only as a way to keep the
     widget readable.
     """
-    from research_team.application.components import REGISTRY
+    from research_team.platform.components import REGISTRY
 
     craft = " ".join(REGISTRY["timeline"].craft).lower()
 

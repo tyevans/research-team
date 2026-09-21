@@ -39,14 +39,14 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application.research.perception import (
+from research_team.composition import build_application
+from research_team.interfaces.web.app import create_app
+from research_team.research.application.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,
 )
-from research_team.composition import build_application
-from research_team.domain.research.media_proposals import ProposeMedia
-from research_team.interfaces.web.app import create_app
+from research_team.research.domain.media_proposals import ProposeMedia
 
 pytestmark = pytest.mark.asyncio
 

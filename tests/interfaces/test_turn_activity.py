@@ -5,16 +5,16 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.application.shared.ports import (
-    ActivityDelta,
-    ActivityMessage,
-    ActivityRemark,
-)
 from research_team.interfaces.web.activity import (
     ACTIVITY,
     REMARK,
     REMARK_ID_PREFIX,
     TurnActivity,
+)
+from research_team.platform.shared.ports import (
+    ActivityDelta,
+    ActivityMessage,
+    ActivityRemark,
 )
 from tests.conftest import start_session
 

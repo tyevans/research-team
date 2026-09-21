@@ -22,7 +22,7 @@ from uuid import uuid4
 import pytest
 from redstring import FakeEmbeddingProvider, FakeLlmProvider, InMemoryVectorStore
 
-from research_team.application.knowledge import SourceRef
+from research_team.knowledge.application import SourceRef
 
 EMBEDDING_DIMENSION = 64
 

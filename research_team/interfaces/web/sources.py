@@ -16,26 +16,6 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from research_team.application.knowledge import ExtractionNote, KnowledgeError
-from research_team.application.research.corpus_editing import (
-    CorpusEditor,
-    DocumentExists,
-    NotDropped,
-)
-from research_team.application.research.corpus_spans import quote
-from research_team.application.research.document_extraction import (
-    DocumentExtractor,
-    UnknownDocument,
-)
-from research_team.application.research.media_acquisition import MAX_UPLOAD_BYTES
-from research_team.application.research.perception import (
-    MediaBytesMissing,
-    MediaPerceiver,
-    NotPerceivable,
-    PerceptionPort,
-    SourceDropped,
-)
-from research_team.application.shared.blobs import BlobStorePort
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.read_models import OntologyRunner
@@ -44,6 +24,26 @@ from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.presenters import (
     source_text_view,
     source_view,
+)
+from research_team.knowledge.application import ExtractionNote, KnowledgeError
+from research_team.platform.shared.blobs import BlobStorePort
+from research_team.research.application.corpus_editing import (
+    CorpusEditor,
+    DocumentExists,
+    NotDropped,
+)
+from research_team.research.application.corpus_spans import quote
+from research_team.research.application.document_extraction import (
+    DocumentExtractor,
+    UnknownDocument,
+)
+from research_team.research.application.media_acquisition import MAX_UPLOAD_BYTES
+from research_team.research.application.perception import (
+    MediaBytesMissing,
+    MediaPerceiver,
+    NotPerceivable,
+    PerceptionPort,
+    SourceDropped,
 )
 
 UPLOAD_CHUNK_BYTES = 1024 * 1024

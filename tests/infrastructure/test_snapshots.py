@@ -7,13 +7,13 @@ which is the wrong way round -- replays are rare and turns are not.
 
 from uuid import uuid4
 
-from research_team.domain import (
+from research_team.infrastructure.persistence import SNAPSHOT_THRESHOLD
+from research_team.session.domain import (
     SendUserMessage,
     Session,
     SessionPurpose,
     StartSession,
 )
-from research_team.infrastructure.persistence import SNAPSHOT_THRESHOLD
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 

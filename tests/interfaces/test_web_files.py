@@ -6,14 +6,17 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
-from research_team.application import SummaryProjects, WorkerRoster
 from research_team.composition import build_application as _build_application
-from research_team.domain import (
+from research_team.interfaces.web import create_app
+from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.session.application.workers import (
+    SummaryProjects,
+    WorkerRoster,
+)
+from research_team.session.domain import (
     DeleteFile,
     WriteFile,
 )
-from research_team.interfaces.web import create_app
-from research_team.interfaces.web.extraction import ExtractionActivity
 from tests.conftest import start_session
 
 

@@ -27,11 +27,11 @@ from redstring.events.document import DocumentChunked
 from redstring.ports.chunk_store import ChunkWriter
 from redstring.ports.vector_store import VectorWriter
 
-from research_team.application.knowledge import KnowledgeError
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.entity_embeddings import (
     PROJECT_EMBEDDING_SOURCE,
 )
+from research_team.knowledge.application import KnowledgeError
 
 logger = logging.getLogger(__name__)
 

@@ -11,8 +11,9 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.application.research.topics import SELF_CONTAINED_QUESTION
-from research_team.domain import CreateProject, SessionPurpose
+from research_team.research.application.topics import SELF_CONTAINED_QUESTION
+from research_team.session.domain import SessionPurpose
+from research_team.tenancy.domain import CreateProject
 from tests.conftest import start_session
 
 

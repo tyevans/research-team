@@ -13,19 +13,8 @@ from uuid import uuid4
 import aiosqlite
 from eventsource import StreamId, collect, replay
 
-from research_team.domain.curriculum.curation import CourseFeatured
-from research_team.domain.dialogue.socratic import SocraticProgressObserved
-from research_team.domain.knowledge.judgements import (
-    EntitiesHeldDistinct,
-    EntitiesHeldSame,
-    EntityKey,
-    HoldDistinct,
-    HoldSame,
-    JudgementWithdrawn,
-    WithdrawJudgement,
-)
-from research_team.domain.knowledge.ontology import OntologyDiscovered
-from research_team.domain.research.media_proposals import MediaProposed
+from research_team.curriculum.domain.curation import CourseFeatured
+from research_team.dialogue.domain.socratic import SocraticProgressObserved
 from research_team.infrastructure.persistence.event_store import (
     build_judgements_repository,
     build_socratic_dialogue_repository,
@@ -34,6 +23,17 @@ from research_team.infrastructure.persistence.read_models import (
     CorpusStore,
     SessionSummaryStore,
 )
+from research_team.knowledge.domain.judgements import (
+    EntitiesHeldDistinct,
+    EntitiesHeldSame,
+    EntityKey,
+    HoldDistinct,
+    HoldSame,
+    JudgementWithdrawn,
+    WithdrawJudgement,
+)
+from research_team.knowledge.domain.ontology import OntologyDiscovered
+from research_team.research.domain.media_proposals import MediaProposed
 
 
 async def _write_old_event(

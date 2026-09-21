@@ -21,13 +21,14 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.tenancy.authorization import (
+from research_team.infrastructure.persistence.tenants import TenantRunner
+from research_team.tenancy.application.authorization import (
     PermissiveAuthorizer,
     Resource,
     RoleTableAuthorizer,
     Subject,
 )
-from research_team.domain.tenancy.tenant import (
+from research_team.tenancy.domain.tenant import (
     LOCAL_SUBJECT,
     LOCAL_TENANT,
     MemberAdded,
@@ -37,7 +38,6 @@ from research_team.domain.tenancy.tenant import (
     TenantCreated,
     tenant_aggregate_id,
 )
-from research_team.infrastructure.persistence.tenants import TenantRunner
 
 TENANT = "org-42"
 OTHER_TENANT = "org-99"

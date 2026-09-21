@@ -2,8 +2,8 @@
 
 from uuid import uuid4
 
-from research_team.application.knowledge import ExtractionNote
 from research_team.interfaces.web.extraction import EXTRACTION, ExtractionActivity
+from research_team.knowledge.application import ExtractionNote
 
 
 def note(**over) -> ExtractionNote:

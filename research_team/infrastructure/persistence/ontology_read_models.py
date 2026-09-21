@@ -20,16 +20,16 @@ from eventsource.ports.readmodels import ReadModelRepository
 from redstring import DocumentExtracted, EntitiesMerged
 from redstring.events.streams import DOCUMENT_CATEGORY
 
-from research_team.domain.knowledge.ontology import (
-    ONTOLOGY_AGGREGATE_TYPE,
-    DiscoveredClass,
-    OntologyDiscovered,
-)
 from research_team.infrastructure.persistence.store_base import (
     LOCAL_RETRY_POLICY,
     BaseProjectionRunner,
     BaseReadModelStore,
     open_readmodel_connection,
+)
+from research_team.knowledge.domain.ontology import (
+    ONTOLOGY_AGGREGATE_TYPE,
+    DiscoveredClass,
+    OntologyDiscovered,
 )
 
 DEFINITION_NAMESPACE = UUID("8a2c1e6d-4b9f-5a71-9e3c-2d6f8b1a0c45")

@@ -16,13 +16,13 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from research_team.domain.settings import RESOLUTION_ORDER, SETTINGS, dynamic_specs
-from research_team.domain.settings.providers import PROVIDERS, ProbeOutcome, ProbeResult
 from research_team.infrastructure.settings.profiles import ModelProfileStore
 from research_team.infrastructure.settings.secrets import AesGcmSecretBox
 from research_team.infrastructure.settings.store import SettingsStore
 from research_team.interfaces.web.app import create_app
 from research_team.interfaces.web.settings import SettingsDeps
+from research_team.settings.domain import RESOLUTION_ORDER, SETTINGS, dynamic_specs
+from research_team.settings.domain.providers import PROVIDERS, ProbeOutcome, ProbeResult
 
 
 class RecordingProbe:

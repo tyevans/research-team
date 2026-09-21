@@ -8,19 +8,19 @@ import pytest
 from eventsource import ExpectedVersion, StreamId
 from redstring import DocumentExtracted
 
-from research_team.domain.knowledge.ontology import (
+from research_team.infrastructure.persistence.read_models import (
+    OntologyClassRow,
+    OntologyMembershipRow,
+    OntologyRunner,
+    OntologyStore,
+)
+from research_team.knowledge.domain.ontology import (
     ONTOLOGY_AGGREGATE_TYPE,
     DiscoveredClass,
     DiscoveredMember,
     EvidenceSpan,
     OntologyDiscovered,
     RejectedMember,
-)
-from research_team.infrastructure.persistence.read_models import (
-    OntologyClassRow,
-    OntologyMembershipRow,
-    OntologyRunner,
-    OntologyStore,
 )
 
 

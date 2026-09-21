@@ -4,10 +4,14 @@ import pytest
 from eventsource.testing.assertions import EventAssertions
 from langchain_core.messages import AIMessage
 
-from research_team.domain import SessionForkedFrom, ToolResultRecorded, TurnFailed
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.interfaces.cli import repl
 from research_team.interfaces.cli.formatters import format_log
+from research_team.session.domain import (
+    SessionForkedFrom,
+    ToolResultRecorded,
+    TurnFailed,
+)
 from tests.conftest import start_session
 
 

@@ -19,30 +19,30 @@ from eventsource import CommandRejectedError
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.knowledge import (
+from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
+from research_team.knowledge.application import (
     MAX_DOCUMENT_CHARS,
     KnowledgeError,
     SourceRef,
 )
-from research_team.application.research.corpus_editing import (
+from research_team.research.application.corpus_editing import (
     CorpusEditor,
     DocumentExists,
     NotDropped,
 )
-from research_team.application.research.corpus_read import (
+from research_team.research.application.corpus_read import (
     MediaHandle,
     SourceListing,
     StoredDocument,
 )
-from research_team.application.research.document_extraction import UnknownDocument
-from research_team.domain.research.corpus import (
+from research_team.research.application.document_extraction import UnknownDocument
+from research_team.research.domain.corpus import (
     Corpus,
     MediaRecord,
     StoreSourceDocument,
     StoreSourceMedia,
     TextRecord,
 )
-from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore
 
 
 async def chunks(payload: bytes) -> AsyncIterator[bytes]:

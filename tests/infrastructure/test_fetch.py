@@ -12,14 +12,6 @@ import itertools
 import httpx
 import pytest
 
-from research_team.application.research.corpus_read import (
-    CorpusReadError,
-    SourceListing,
-    StoredDocument,
-    TextSourceUri,
-)
-from research_team.application.session.autonomy import FETCH_TOOL
-from research_team.domain import TextRecord
 from research_team.infrastructure.agent.fetch import (
     UNREADABLE,
     build_fetch_tool,
@@ -27,6 +19,14 @@ from research_team.infrastructure.agent.fetch import (
 )
 from research_team.infrastructure.agent.recall import Recall, url_key
 from research_team.infrastructure.agent.search import build_search_tool
+from research_team.research.application.corpus_read import (
+    CorpusReadError,
+    SourceListing,
+    StoredDocument,
+    TextSourceUri,
+)
+from research_team.research.domain import TextRecord
+from research_team.session.application.autonomy import FETCH_TOOL
 
 SEARCH_PAYLOAD = {
     "results": [

@@ -6,9 +6,8 @@ component guide alignment, and phase-specific prompting constraints.
 
 import pytest
 
-from research_team.application.components import REGISTRY
-from research_team.application.curriculum.authoring_checkpoints import lesson_paths
-from research_team.application.curriculum.course_authoring import (
+from research_team.curriculum.application.authoring_checkpoints import lesson_paths
+from research_team.curriculum.application.course_authoring import (
     COMPONENT_GUIDE,
     PROMPT_ANCHORS,
     assessment_prompt,
@@ -16,12 +15,13 @@ from research_team.application.curriculum.course_authoring import (
     learning_plan_prompt,
     path_overview_prompt,
 )
-from research_team.domain.curriculum.learning_area import (
+from research_team.curriculum.domain.learning_area import (
     AreaMember,
     LearningArea,
     LearningPath,
     PrerequisiteEdge,
 )
+from research_team.platform.components import REGISTRY
 
 
 def member(eid: str, name: str, centrality: float) -> AreaMember:

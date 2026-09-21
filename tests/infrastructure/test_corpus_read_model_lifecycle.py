@@ -8,16 +8,16 @@ import pytest
 from eventsource.adapters.memory.readmodels import InMemoryReadModelRepository
 from redstring import DocumentExtracted
 
-from research_team.domain.research.corpus import (
-    Corpus,
-    CorpusMediaStored,
-    StoreSourceDocument,
-)
 from research_team.infrastructure.persistence.read_models import (
     CorpusDocumentRow,
     CorpusMediaRow,
     CorpusProjection,
     CorpusStore,
+)
+from research_team.research.domain.corpus import (
+    Corpus,
+    CorpusMediaStored,
+    StoreSourceDocument,
 )
 
 

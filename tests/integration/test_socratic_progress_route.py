@@ -27,8 +27,8 @@ from uuid import UUID, uuid4
 from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
-from research_team.application.dialogue.socratic import SocraticFraming, SocraticPrompt
 from research_team.composition import build_application
+from research_team.dialogue.application.socratic import SocraticFraming, SocraticPrompt
 from research_team.interfaces.web import create_app
 
 MCQ = (

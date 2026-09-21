@@ -4,8 +4,8 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 
-from research_team.domain import SessionState
 from research_team.infrastructure.agent.compaction import SummarizingStrategy
+from research_team.session.domain import SessionState
 from tests.conftest import ToolAwareFakeChatModel
 
 

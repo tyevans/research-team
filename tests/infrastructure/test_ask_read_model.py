@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.domain.dialogue.ask import RecordAskTurn, StartAskConversation
+from research_team.dialogue.domain.ask import RecordAskTurn, StartAskConversation
 from research_team.infrastructure.persistence.event_store import (
     build_ask_conversation_repository,
 )

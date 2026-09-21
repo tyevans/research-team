@@ -4,7 +4,7 @@ import pytest
 from eventsource.domain.event_registry import get_event_class
 from pydantic import ValidationError
 
-from research_team.domain.session.events import (
+from research_team.session.domain.events import (
     SESSION_EVENTS,
     AssistantMessageAdded,
     AutonomyChanged,

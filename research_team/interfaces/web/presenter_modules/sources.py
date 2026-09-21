@@ -2,9 +2,9 @@
 
 from typing import Any
 
-from research_team.application.research.corpus_read import SourceListing, StoredDocument
-from research_team.application.research.corpus_spans import Span
-from research_team.domain import SourceRecord
+from research_team.research.application.corpus_read import SourceListing, StoredDocument
+from research_team.research.application.corpus_spans import Span
+from research_team.research.domain import SourceRecord
 
 
 def _record_view(summary: SourceRecord) -> dict[str, Any]:

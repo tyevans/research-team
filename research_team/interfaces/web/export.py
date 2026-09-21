@@ -29,18 +29,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from research_team.application.curriculum import Curriculum
-from research_team.application.knowledge.graph_export import (
-    MAX_EXPORT_NODES,
-    build_export,
-    to_graphml,
-    to_json,
-)
-from research_team.application.knowledge.graph_read import (
-    MAX_GRAPH_NODES,
-    MAX_NEIGHBORHOOD_DEPTH,
-    GraphReadPort,
-)
+from research_team.curriculum.application import Curriculum
 
 #: Where the authoring turns write, and how a run's targets map onto a
 #: workspace. Moved to `authored_files.py` when the console's read route
@@ -63,6 +52,17 @@ from research_team.interfaces.web.course_html import (
     render_course_html,
 )
 from research_team.interfaces.web.graph_html import render_html
+from research_team.knowledge.application.graph_export import (
+    MAX_EXPORT_NODES,
+    build_export,
+    to_graphml,
+    to_json,
+)
+from research_team.knowledge.application.graph_read import (
+    MAX_GRAPH_NODES,
+    MAX_NEIGHBORHOOD_DEPTH,
+    GraphReadPort,
+)
 
 
 @dataclass(frozen=True)

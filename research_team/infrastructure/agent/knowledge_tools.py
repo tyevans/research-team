@@ -11,7 +11,8 @@ from uuid import UUID
 
 from langchain_core.tools import BaseTool, tool
 
-from research_team.application.knowledge import (
+from research_team.infrastructure.agent.recall import PageMemo
+from research_team.knowledge.application import (
     GRAPH_DESCRIBE_TOOL,
     GRAPH_SEARCH_TOOL,
     REMEMBER_PAGE_TOOL,
@@ -26,12 +27,11 @@ from research_team.application.knowledge import (
     SourceRef,
     source_id_for_url,
 )
-from research_team.application.session.tool_artifacts import (
+from research_team.session.application.tool_artifacts import (
     Acknowledgement,
     EntityList,
     EntityRef,
 )
-from research_team.infrastructure.agent.recall import PageMemo
 
 
 def format_ingest(report: IngestReport) -> str:

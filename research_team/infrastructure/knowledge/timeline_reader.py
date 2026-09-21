@@ -22,15 +22,15 @@ from uuid import UUID
 from eventsource.domain.tenant_context import tenant_scope
 from redstring import Bounds, TemporalQuery
 
-from research_team.application.knowledge.timeline_read import (
+from research_team.infrastructure.knowledge.temporal_interval import extent_bounds
+from research_team.infrastructure.knowledge.temporal_rendering import (
+    entity_extent_label,
+)
+from research_team.knowledge.application.timeline_read import (
     MAX_TIMELINE_BANDS,
     Timeline,
     TimelineBand,
     TimelineInterval,
-)
-from research_team.infrastructure.knowledge.temporal_interval import extent_bounds
-from research_team.infrastructure.knowledge.temporal_rendering import (
-    entity_extent_label,
 )
 
 

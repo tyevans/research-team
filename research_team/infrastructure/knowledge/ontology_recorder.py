@@ -13,7 +13,7 @@ from uuid import UUID
 from eventsource import ExpectedVersion, InMemoryEventBus, StreamId
 from eventsource.adapters.sqlite import SQLiteEventStore
 
-from research_team.domain.knowledge.ontology import (
+from research_team.knowledge.domain.ontology import (
     ONTOLOGY_AGGREGATE_TYPE,
     DiscoveredClass,
     OntologyDiscovered,

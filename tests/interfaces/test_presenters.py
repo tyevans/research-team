@@ -3,34 +3,17 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application.course_catalog import (
     CachedOutline,
     Catalog,
 )
-from research_team.application.curriculum.course_realization import (
+from research_team.curriculum.application.course_realization import (
     CourseDetail,
     RealizedCourse,
 )
-from research_team.application.research.corpus_read import SourceListing
-from research_team.domain import (
-    AssistantMessageAdded,
-    AutonomyChanged,
-    FileDeleted,
-    FileEdited,
-    FileWritten,
-    MediaRecord,
-    SessionForkedFrom,
-    SessionPurpose,
-    SessionStarted,
-    TextRecord,
-    ToolResultRecorded,
-    TurnCompleted,
-    TurnFailed,
-    UserMessageSent,
-)
-from research_team.domain.curriculum.catalog import ArtRef, CatalogSections, CourseCandidate
-from research_team.domain.curriculum.course import CourseFit
-from research_team.domain.curriculum.learning_area import AreaMember
+from research_team.curriculum.domain.catalog import ArtRef, CatalogSections, CourseCandidate
+from research_team.curriculum.domain.course import CourseFit
+from research_team.curriculum.domain.learning_area import AreaMember
 from research_team.interfaces.web.presenters import (
     SUMMARY_LIMIT,
     catalog_view,
@@ -42,6 +25,25 @@ from research_team.interfaces.web.presenters import (
     file_history,
     message_view,
     source_view,
+)
+from research_team.research.application.corpus_read import SourceListing
+from research_team.research.domain import (
+    MediaRecord,
+    TextRecord,
+)
+from research_team.session.domain import (
+    AssistantMessageAdded,
+    AutonomyChanged,
+    FileDeleted,
+    FileEdited,
+    FileWritten,
+    SessionForkedFrom,
+    SessionPurpose,
+    SessionStarted,
+    ToolResultRecorded,
+    TurnCompleted,
+    TurnFailed,
+    UserMessageSent,
 )
 
 AGGREGATE = uuid4()

@@ -15,15 +15,6 @@ from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from redstring import FakeLlmProvider, InMemoryGraphStore
 
-from research_team.application.knowledge import SourceRef
-from research_team.application.research.corpus_read import (
-    CorpusReadError,
-    SourceListing,
-    StoredDocument,
-    TextSourceUri,
-)
-from research_team.application.research.topics import TopicError
-from research_team.domain.research.corpus import Corpus, StoreSourceDocument
 from research_team.infrastructure.agent.corpus_tools import build_corpus_tools
 from research_team.infrastructure.agent.fetch import build_fetch_tool
 from research_team.infrastructure.agent.knowledge_tools import build_knowledge_tools
@@ -35,6 +26,15 @@ from research_team.infrastructure.persistence.event_store import (
     build_judgements_repository,
 )
 from research_team.infrastructure.persistence.read_models import CorpusStore, to_record
+from research_team.knowledge.application import SourceRef
+from research_team.research.application.corpus_read import (
+    CorpusReadError,
+    SourceListing,
+    StoredDocument,
+    TextSourceUri,
+)
+from research_team.research.application.topics import TopicError
+from research_team.research.domain.corpus import Corpus, StoreSourceDocument
 from tests.conftest import TWO_PEOPLE, fake_provider
 
 

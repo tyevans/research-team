@@ -18,14 +18,14 @@ from eventsource import (
 from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
 from pydantic import ValidationError
 
-from research_team.domain import (
-    Project,
-    SessionPurpose,
-    StartSession,
-)
 from research_team.infrastructure.persistence.event_store import (
     build_project_repository,
 )
+from research_team.session.domain import (
+    SessionPurpose,
+    StartSession,
+)
+from research_team.tenancy.domain import Project
 from tests.conftest import MODEL_NAME, SYSTEM_PROMPT
 
 

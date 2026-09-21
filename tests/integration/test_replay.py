@@ -1,7 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 
-from research_team.domain import Session
+from research_team.session.domain import Session
 from tests.conftest import start_session
 
 

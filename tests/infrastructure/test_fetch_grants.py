@@ -11,19 +11,18 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from research_team.application import AutonomyPolicy
-from research_team.application.research.corpus_read import (
-    SourceListing,
-    StoredDocument,
-    TextSourceUri,
-)
-from research_team.application.session.autonomy import FETCH_TOOL, GATED_TOOLS
-from research_team.application.tenancy.grants import FetchGrant, GrantRegistry
-from research_team.domain import TextRecord
 from research_team.infrastructure.agent import fetch as fetch_module
 from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.fetch import build_fetch_tool
 from research_team.infrastructure.agent.recall import Recall
+from research_team.research.application.corpus_read import (
+    SourceListing,
+    StoredDocument,
+    TextSourceUri,
+)
+from research_team.research.domain import TextRecord
+from research_team.session.application.autonomy import FETCH_TOOL, GATED_TOOLS, AutonomyPolicy
+from research_team.tenancy.application.grants import FetchGrant, GrantRegistry
 
 ARTICLE = (
     "<html><head><title>Incident severity</title></head><body>"

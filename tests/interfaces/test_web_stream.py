@@ -13,16 +13,16 @@ from redstring import (
 )
 
 from research_team.composition import build_application as _build_application
-from research_team.domain import (
-    SendUserMessage,
-    SessionPurpose,
-    StartSession,
-    StoreSourceDocument,
-)
-from research_team.domain.research.topic import OpenTopic
 from research_team.infrastructure.persistence import build_corpus_repository
 from research_team.infrastructure.persistence.event_store import build_topic_repository
 from research_team.interfaces.web import create_app
+from research_team.research.domain import StoreSourceDocument
+from research_team.research.domain.topic import OpenTopic
+from research_team.session.domain import (
+    SendUserMessage,
+    SessionPurpose,
+    StartSession,
+)
 
 
 async def _started(**kwargs):
@@ -136,8 +136,8 @@ async def _watch(feed, resume_from=None, wanted: int = 1):
 
 
 async def test_sse_frames_each_event_as_a_data_line(repository, session_id):
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     aggregate = repository.create(session_id)
@@ -186,8 +186,8 @@ async def test_the_first_event_in_an_empty_log_still_reaches_a_subscriber(reposi
     0.05s sleep this file used to use, the append landed after the cursor was
     taken by luck and the bug was invisible.
     """
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     topics = build_topic_repository(repository.store)
@@ -225,8 +225,8 @@ async def test_sse_frames_a_topic_change_as_its_own_project_shaped_frame(reposit
     `Extraction`, a topic change *is* a log entry, so a browser that drops
     mid-run replays it from `Last-Event-ID` rather than losing it.
     """
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     topics = build_topic_repository(repository.store)
@@ -272,8 +272,8 @@ async def test_sse_frames_a_graph_change_addressed_to_its_project(repository):
     frame already and costs no read-model lookup on a connection every browser
     holds open.
     """
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     project_id = uuid4()
@@ -319,8 +319,8 @@ async def test_sse_frames_a_stored_document_as_a_corpus_frame(repository):
     exactly the sources whose failure a reader needs to see. `project_id` is
     the corpus's own aggregate id -- a corpus shares its project's UUID.
     """
-    from research_team.application import LiveFeed
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
 
     feed = LiveFeed(repository, poll_interval=0.01)
     project_id = uuid4()
@@ -363,13 +363,13 @@ async def test_sse_frames_a_media_proposal_change_as_a_media_frame(repository):
     """
     from eventsource import AggregateRepository
 
-    from research_team.application import LiveFeed
-    from research_team.domain.research.media_proposals import (
+    from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
+    from research_team.research.domain.media_proposals import (
         AcceptMediaProposal,
         MediaProposals,
         ProposeMedia,
     )
-    from research_team.interfaces.web.app import _sse
 
     feed = LiveFeed(repository, poll_interval=0.01)
     project_id = uuid4()
@@ -430,9 +430,9 @@ async def test_sse_frames_a_project_change_as_a_project_frame(repository):
     to assert; a join makes the identical point about the admission, which is
     per aggregate rather than per event class.
     """
-    from research_team.application import LiveFeed
-    from research_team.domain.tenancy.project import CreateProject, JoinProject
     from research_team.interfaces.web.app import _sse
+    from research_team.platform.shared.live_feed import LiveFeed
+    from research_team.tenancy.domain.project import CreateProject, JoinProject
 
     feed = LiveFeed(repository, poll_interval=0.01)
     project_id = uuid4()

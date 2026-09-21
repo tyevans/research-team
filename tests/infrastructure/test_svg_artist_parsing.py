@@ -4,7 +4,7 @@ is the both-ends test with a real model."""
 
 from langchain_core.messages import AIMessage
 
-from research_team.domain.curriculum.learning_area import AreaMember
+from research_team.curriculum.domain.learning_area import AreaMember
 from research_team.infrastructure.knowledge.svg_artist import ModelSvgArtist
 
 _ANCHOR = AreaMember(entity_id="1", name="Warp Drive", entity_type="concept", centrality=1.0)

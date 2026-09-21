@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from research_team.composition import build_application
-from research_team.domain.dialogue.interaction import ViewEntered
+from research_team.dialogue.domain.interaction import ViewEntered
 
 
 async def test_a_composed_application_stores_what_the_browser_reported(db_path, tmp_path):

@@ -241,7 +241,7 @@ def test_perception_max_chars_matches_the_document_cap(monkeypatch):
     a test, which sits above both layers and is the only place the two
     constants can be compared at all.
     """
-    from research_team.application.knowledge import MAX_DOCUMENT_CHARS
+    from research_team.knowledge.application import MAX_DOCUMENT_CHARS
 
     monkeypatch.delenv("AGENT_PERCEPTION_MAX_CHARS", raising=False)
     assert config.DEFAULT_PERCEPTION_MAX_CHARS == MAX_DOCUMENT_CHARS

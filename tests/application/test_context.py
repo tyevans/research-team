@@ -4,8 +4,11 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application import ElideToolResults, FullHistory
-from research_team.domain import SessionState
+from research_team.platform.shared.context import (
+    ElideToolResults,
+    FullHistory,
+)
+from research_team.session.domain import SessionState
 
 
 def message(kind: str, content: str, **data) -> dict:

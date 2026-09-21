@@ -22,18 +22,18 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from research_team.application.curriculum import CurriculumService
-from research_team.application.curriculum.course_authoring import CourseAuthor
-from research_team.application.curriculum.course_catalog import (
+from research_team.curriculum.application import CurriculumService
+from research_team.curriculum.application.course_authoring import CourseAuthor
+from research_team.curriculum.application.course_catalog import (
     ArtGeneratorPort,
     BlurbTextPort,
     Catalog,
     CatalogService,
     OutlineTextPort,
 )
-from research_team.application.curriculum.course_realization import CourseService
-from research_team.application.curriculum.frontmatter import parse_frontmatter
-from research_team.domain.curriculum.course import (
+from research_team.curriculum.application.course_realization import CourseService
+from research_team.curriculum.application.frontmatter import parse_frontmatter
+from research_team.curriculum.domain.course import (
     AbandonCourse,
     Course,
     RealizeCourse,

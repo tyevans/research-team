@@ -47,17 +47,6 @@ from redstring import (
 )
 from redstring.events.document import DocumentChunked
 
-from research_team.application.knowledge import (
-    MAX_DOCUMENT_CHARS,
-    ExtractionReporter,
-    IngestReport,
-    KnowledgeError,
-    MergeRecord,
-    SearchOutcome,
-    SourceRef,
-)
-from research_team.application.shared.retry import with_retry
-from research_team.domain import Corpus, EntityJudgements, StoreSourceDocument
 from research_team.infrastructure.config import DEFAULT_CONSOLIDATION_BATCH
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex
 from research_team.infrastructure.knowledge.domain_schemas import (
@@ -90,6 +79,21 @@ from research_team.infrastructure.knowledge.redstring_query import (
 )
 from research_team.infrastructure.knowledge.temporal_expressions import (
     RAW_TEMPORAL_PROPERTY,
+)
+from research_team.knowledge.application import (
+    MAX_DOCUMENT_CHARS,
+    ExtractionReporter,
+    IngestReport,
+    KnowledgeError,
+    MergeRecord,
+    SearchOutcome,
+    SourceRef,
+)
+from research_team.knowledge.domain import EntityJudgements
+from research_team.platform.shared.retry import with_retry
+from research_team.research.domain import (
+    Corpus,
+    StoreSourceDocument,
 )
 
 #: Re-exported: written here, defined next to the normalisation it compensates

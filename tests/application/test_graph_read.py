@@ -18,14 +18,14 @@ from redstring import (
     TemporalExtent,
 )
 
-from research_team.application.knowledge.graph_read import (
+from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
+from research_team.knowledge.application.graph_read import (
     MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
     Graph,
     GraphEntity,
     GraphRelationship,
 )
-from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 
 TENANT_ID = uuid4()
 

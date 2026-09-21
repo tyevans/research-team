@@ -21,9 +21,12 @@ from uuid import uuid4
 from eventsource import StreamId, collect
 from langchain_core.messages import AIMessage
 
-from research_team.application.dialogue.ask import AskAnswer, AskConversationOpened
-from research_team.domain import CreateProject, Project
-from research_team.domain.research.corpus import StoreSourceDocument
+from research_team.dialogue.application.ask import AskAnswer, AskConversationOpened
+from research_team.research.domain.corpus import StoreSourceDocument
+from research_team.tenancy.domain import (
+    CreateProject,
+    Project,
+)
 from tests.conftest import ToolAwareFakeChatModel
 
 

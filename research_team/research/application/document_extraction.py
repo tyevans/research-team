@@ -1,0 +1,245 @@
+"""Extracting a document the corpus already holds.
+
+`remember` fetches text and extracts it in one call, which is right for an
+agent: it has just read something and wants it in the graph. It is wrong for a
+person looking at the Documents page, where the text is already stored and the
+only thing missing is the graph -- re-fetching to re-extract would go back to
+the network for bytes the corpus can already produce, and would fail outright
+for a URL that has since gone.
+
+So this reads the stored text and ingests it. `KnowledgePort.ingest` stores
+before it extracts, and the corpus swallows a re-store of identical bytes, so
+handing back text the corpus already has is a no-op on the corpus and an
+extraction on the graph -- which is exactly the operation wanted, without a
+second ingest path that could store differently from the first.
+
+A service rather than a route body because it needs two things the web layer
+has no business assembling: a project's `KnowledgePort` (which only
+`open_graph`'s closure can build) and its `CorpusReadPort`. `AskService` is
+the precedent -- a read path that needs the same closure, constructed inside
+`build_application` for the same reason.
+"""
+
+from collections.abc import Awaitable, Callable
+from uuid import UUID
+
+from research_team.knowledge.application import (
+    ExtractionReporter,
+    IngestReport,
+    KnowledgePort,
+    SourceRef,
+)
+from research_team.research.application.corpus_read import CorpusReadPort
+
+#: Opens one project's `KnowledgePort`. A callable rather than a port because a
+#: port belongs to one project and this service serves any of them.
+OpenKnowledge = Callable[[UUID], Awaitable[KnowledgePort]]
+
+#: One project's `CorpusReadPort`, built per call. Matches how `app.py` and
+#: `composition.py` already hand out corpus readers.
+CorpusReaders = Callable[[UUID], CorpusReadPort]
+
+#: One project's `ExtractionReporter`, or None with no web layer listening.
+Reporters = Callable[[UUID], ExtractionReporter]
+
+
+class UnknownDocument(Exception):
+    """This project's corpus holds no such `source_id`.
+
+    Its own type rather than `CorpusReadError`, which means storage failed:
+    only one of the two is a bug, and a caller that wants to answer 404 needs
+    to tell them apart. `read_document` draws the same distinction by
+    answering None rather than raising, and this is that None given a name at
+    the one call site that cannot proceed without the document.
+    """
+
+
+class DocumentExtractor:
+    """Puts a stored document through extraction, into its project's graph."""
+
+    def __init__(
+        self,
+        *,
+        open_knowledge: OpenKnowledge,
+        corpus_readers: CorpusReaders,
+        reporters: Reporters | None = None,
+    ) -> None:
+        self._open_knowledge = open_knowledge
+        self._corpus_readers = corpus_readers
+        self._reporters = reporters
+
+    async def extract(self, project_id: UUID, source_id: str) -> IngestReport:
+        """Extract one stored document. Raises `UnknownDocument` if it is not there.
+
+        The document is read *here* rather than inside whatever defers this
+        call, so a bad `source_id` surfaces to the caller that can still answer
+        for it. Deferred, it would fail asynchronously and show up as a failure
+        against a document that does not exist -- which is to say, nowhere.
+
+        Every field the record carries is passed back through, so the re-stored
+        document keeps the title, URI and dates the original fetch established.
+        Rebuilding a `SourceRef` from the text alone would silently strip the
+        provenance that makes a citation checkable.
+
+        `fetched_at` is deliberately not set: it means "when this text was read
+        off the network", and that was some earlier fetch, not this call.
+        Stamping it now would date the bytes to the moment somebody pressed a
+        button.
+        """
+        stored = await self._corpus_readers(project_id).read_document(source_id)
+        if stored is None:
+            raise UnknownDocument(f"no document {source_id!r} in project {project_id}")
+
+        knowledge = await self._open_knowledge(project_id)
+        record = stored.record
+        return await knowledge.ingest(
+            SourceRef(
+                source_id=record.source_id,
+                text=stored.text,
+                note=record.note,
+                uri=record.uri,
+                title=record.title,
+                published_at=record.published_at,
+            ),
+            report=self._reporters(project_id) if self._reporters is not None else None,
+        )
+
+    async def unextracted(self, project_id: UUID) -> tuple[str, ...]:
+        """Every live document with no graph, in listing order.
+
+        Dropped documents are excluded because `list_sources` excludes them
+        by default, and that default is the right one here: a drop is a
+        judgement that the document should not inform the project, and
+        extracting it would put it into the graph the drop was meant to keep
+        it out of.
+
+        Media sources are excluded too, and the reason has changed while the
+        filter has not. A medium is still never extracted -- every one of them
+        reads `extracted=False`, honestly, per `SourceListing` -- but it now
+        reaches the graph *through* its derived text: `MediaPerceiver` stores
+        a transcript as an ordinary text source, and that source queues here
+        on its own, with no filter widened and no media branch added. The
+        `kind == "text"` test below is the whole of it, which is the part
+        worth writing down: the thing to resist is teaching this method about
+        media, because the moment it knows, a video and its transcript are two
+        queue entries for one extraction.
+
+        Order is the listing's, so "extract all" runs the queue in the order
+        the page shows -- a progress pane that jumped around a list the reader
+        is looking at would be harder to follow than one that walks it.
+        """
+        listings = await self._corpus_readers(project_id).list_sources()
+        return tuple(
+            listing.record.source_id
+            for listing in listings
+            if listing.record.kind == "text" and not listing.extracted
+        )
+
+    async def ungrouped(self, project_id: UUID, *, examined: set[str]) -> tuple[str, ...]:
+        """Every extracted document no ontology pass has examined, in listing order.
+
+        **`examined` is a parameter rather than something this class fetches.**
+        `DocumentExtractor` knows the corpus and the graph; ontology tables
+        belong to a projection it has no reason to depend on, and taking the
+        set as an argument keeps this testable without standing one up. The
+        route joins the two.
+
+        **Extracted, not merely stored.** A document with no graph has no
+        entities for a class's memberships to resolve against, so grouping it
+        would produce a class every one of whose members is unresolvable. The
+        useful order is extract first, group second.
+
+        **Examined is not the same as "has classes", and the distinction is
+        load-bearing.** A document the pass read and found nothing in is done.
+        If "no classes" meant "pending", every barren document would be
+        re-examined on every sweep at model cost -- which is why the projection
+        records that a source was examined separately from any class rows it
+        produced.
+
+        **Text only, and media is *excluded* rather than examined.** The corpus
+        holds media under the same `source_id` namespace, and discovery reads a
+        document's text -- there is nothing for it to read in a video. Filtered
+        the same way `unextracted` filters, so the two sweeps agree about what a
+        document is.
+
+        The cost is silence, and it is worth naming because nothing else says
+        it: a media source never appears here, never gets a pass, and never
+        appears in the examined set either -- so a reader asking "why was this
+        never grouped" gets no answer from either list. It is not "examined and
+        found nothing", which is what its absence from this list would
+        otherwise imply. Nothing is built for that today; if it becomes a
+        question people actually ask, the answer is a reason on the listing
+        rather than a wider filter here.
+
+        Order is the listing's, matching `unextracted` above and for the same
+        reason.
+        """
+        listings = await self._corpus_readers(project_id).list_sources()
+        return tuple(
+            listing.record.source_id
+            for listing in listings
+            if listing.record.kind == "text"
+            and listing.extracted
+            and listing.record.source_id not in examined
+        )
+
+    async def reindex(self, project_id: UUID) -> int:
+        """Put every stored document back through chunk indexing. No model call.
+
+        **Why this exists at all:** `index` is called from exactly one place,
+        the store-a-document path, and nothing backfills. A corpus written
+        before chunk indexing shipped has no `DocumentChunked` for the replay
+        to fold, so its chunk store comes up empty -- and an empty chunk store
+        is not an error anywhere: retrieval simply returns nothing and the
+        entity panel says "No mentions of this entity were found", which reads
+        exactly like the truthful answer for an entity nobody wrote about.
+        That is the wrong-answer-indistinguishable-from-a-right-one failure
+        this feature's design names by name, so it needs a remedy an operator
+        can reach rather than a note telling them to re-store every document.
+
+        **Why a plain loop and not a queue.** `index` makes no model call
+        (`RedstringKnowledge.index` passes no embeddings, and says so), so
+        there is no per-token cost to defer and nothing worth making durable;
+        the queue and progress channel that extraction needs would be
+        machinery bought for a pass whose only cost is chunking bytes already
+        in memory. The cost that is real: this is synchronous, so a very large
+        corpus holds its request open. Accepted -- it is a repair an operator
+        runs deliberately, not a control on a page.
+
+        Returns how many documents were indexed rather than how many chunks
+        were written: `index` is idempotent through the adapter's event store
+        (an unchanged document is skipped there), so a chunk count would read
+        as 0 on a healthy second run and look like a failure.
+
+        Dropped documents are excluded, for `unextracted`'s reason: a drop is
+        a judgement that the document should not inform the project, and its
+        passages would be quoted back to a reader if they were indexed.
+
+        Media sources fall out for free rather than needing their own filter:
+        `read_document` answers `None` for one -- it promises text and a media
+        source has none -- so the loop below skips them exactly the way it
+        skips a document dropped or removed since the listing was taken.
+        """
+        knowledge = await self._open_knowledge(project_id)
+        reader = self._corpus_readers(project_id)
+        indexed = 0
+        for listing in await reader.list_sources():
+            stored = await reader.read_document(listing.record.source_id)
+            if stored is None:
+                # Dropped, removed, or media -- `read_document` answers None
+                # for all three. Not an error: the listing is a read model
+                # and this is a repair.
+                continue
+            record = stored.record
+            await knowledge.index(
+                SourceRef(
+                    source_id=record.source_id,
+                    text=stored.text,
+                    note=record.note,
+                    uri=record.uri,
+                    title=record.title,
+                    published_at=record.published_at,
+                )
+            )
+            indexed += 1
+        return indexed

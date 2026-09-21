@@ -1,12 +1,12 @@
 """Ontology discovery service orchestration tests."""
 
-from research_team.application.knowledge.ontology_discovery import (
+from research_team.knowledge.application.ontology_discovery import (
     MAX_DISCOVERY_CHARS,
     DocumentChunk,
     OntologyDiscoveryService,
 )
-from research_team.application.research.corpus_read import StoredDocument
-from research_team.domain.research.corpus import TextRecord
+from research_team.research.application.corpus_read import StoredDocument
+from research_team.research.domain.corpus import TextRecord
 
 SONGS = (
     "There are six difficulties available in the game: EASY, NORMAL, HARD, "

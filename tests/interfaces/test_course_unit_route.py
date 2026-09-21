@@ -25,13 +25,16 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application import SummaryProjects, WorkerRoster
-from research_team.application.curriculum import CurriculumService
 from research_team.composition import build_application
-from research_team.domain import SessionPurpose
+from research_team.curriculum.application import CurriculumService
 from research_team.interfaces.web import create_app
 from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.extraction import ExtractionActivity
+from research_team.session.application.workers import (
+    SummaryProjects,
+    WorkerRoster,
+)
+from research_team.session.domain import SessionPurpose
 
 pytestmark = pytest.mark.asyncio
 
