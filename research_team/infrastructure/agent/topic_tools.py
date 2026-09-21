@@ -1,6 +1,6 @@
-"""Topics, as five tools the agent can call.
+"""Topics, as six tools the agent can call.
 
-Four read-or-record and one that creates. None is gated, and the asymmetry is
+Five read-or-record and one that creates. None is gated, and the asymmetry is
 deliberate: `autonomy.py` argues that an approval which fires on something
 nobody would refuse makes every other approval mean less, and recording what you
 learned about a question this project already tracks is not a decision anyone
@@ -25,6 +25,7 @@ from research_team.research.application.topics import (
     OPEN_TOPIC_TOOL,
     RECORD_FINDING_TOOL,
     RECORD_GAP_TOOL,
+    RESTATE_QUESTION_TOOL,
     TopicError,
     TopicPort,
     TopicSummary,
@@ -209,7 +210,7 @@ def topic_inventory_artifact(kind: str, summaries: list[TopicSummary]) -> Invent
 
 
 def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ...]:
-    """The five topic tools, bound to one project.
+    """The six topic tools, bound to one project.
 
     Bound at construction rather than taking a project argument, for the reason
     the knowledge tools are: a project id the model can supply is a project id
@@ -266,6 +267,37 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
             ],
         )
         return f"Tracking {topic_id}: {question}", artifact.as_artifact()
+
+    @tool(RESTATE_QUESTION_TOOL, response_format="content_and_artifact")
+    async def restate_question(
+        topic_id: str, question: str, rationale: str = ""
+    ) -> tuple[str, dict[str, Any]]:
+        """Restate or clarify the question tracked by a topic.
+
+        Use when new findings, sources, or refinement analysis show that the
+        question should be sharpened, narrowed, or reframed.
+        """
+        if not question.strip():
+            text_out = "A restated topic needs a question. Nothing was changed."
+            return text_out, Acknowledgement(
+                action=RESTATE_QUESTION_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
+        parsed = _parse_id(topic_id)
+        if parsed is None:
+            text_out = f"{topic_id!r} is not a topic id. Use `list_topics` to see them."
+            return text_out, Acknowledgement(
+                action=RESTATE_QUESTION_TOOL, subject=topic_id, detail=text_out, ok=False
+            ).as_artifact()
+        try:
+            await topics.restate_question(parsed, question, rationale)
+        except TopicError as error:
+            text_out = str(error)
+            return text_out, Acknowledgement(
+                action=RESTATE_QUESTION_TOOL, subject=str(parsed), detail=text_out, ok=False
+            ).as_artifact()
+        return f"Restated question for {parsed}: {question}", Acknowledgement(
+            action=RESTATE_QUESTION_TOOL, subject=str(parsed)
+        ).as_artifact()
 
     @tool(RECORD_FINDING_TOOL, response_format="content_and_artifact")
     async def record_finding(
@@ -355,7 +387,14 @@ def build_topic_tools(topics: TopicPort, project_id: UUID) -> tuple[BaseTool, ..
             action=LINK_SOURCE_TOOL, subject=str(parsed)
         ).as_artifact()
 
-    return (list_topics, open_topic, record_finding, record_gap, link_source)
+    return (
+        list_topics,
+        open_topic,
+        restate_question,
+        record_finding,
+        record_gap,
+        link_source,
+    )
 
 
 def _parse_id(raw: str) -> UUID | None:

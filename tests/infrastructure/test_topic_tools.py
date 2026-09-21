@@ -33,6 +33,7 @@ class FakeTopics:
         self.findings: list[tuple[UUID, str, list[str]]] = []
         self.gaps: list[tuple[UUID, str, list[str]]] = []
         self.links: list[tuple[UUID, str]] = []
+        self.restated: list[tuple[UUID, str, str]] = []
         self.known: set[UUID] = set()
 
     async def list_topics(self, project_id):
@@ -48,6 +49,11 @@ class FakeTopics:
         topic_id = uuid4()
         self.known.add(topic_id)
         return topic_id
+
+    async def restate_question(self, topic_id, question, rationale=""):
+        if topic_id not in self.known:
+            raise TopicError(f"no topic {topic_id} in this project. Use `list_topics`.")
+        self.restated.append((topic_id, question, rationale))
 
     async def record_finding(self, topic_id, summary, source_ids):
         if topic_id not in self.known:
@@ -237,6 +243,36 @@ async def test_linking_a_source_attaches_it():
     assert port.links == [(topic_id, "s1")]
 
 
+async def test_restate_question_updates_the_question():
+    port = FakeTopics()
+    tools = tools_for(port)
+    topic_id = await port.open_topic(uuid4(), "what is x?", "initial inquiry")
+
+    answer = await tools["restate_question"].ainvoke(
+        {
+            "topic_id": str(topic_id),
+            "question": "what is x in distributed systems?",
+            "rationale": "narrow scope",
+        }
+    )
+
+    assert "what is x in distributed systems?" in answer
+    assert port.restated == [(topic_id, "what is x in distributed systems?", "narrow scope")]
+
+
+async def test_restate_question_without_a_question_is_refused():
+    port = FakeTopics()
+    tools = tools_for(port)
+    topic_id = await port.open_topic(uuid4(), "what is x?", "initial inquiry")
+
+    answer = await tools["restate_question"].ainvoke(
+        {"topic_id": str(topic_id), "question": "   ", "rationale": "blank"}
+    )
+
+    assert "needs a question" in answer
+    assert port.restated == []
+
+
 # ---------------- bad input ----------------
 
 
@@ -251,10 +287,14 @@ def _args_for(tool_name: str, topic_id: str) -> dict:
         return {"topic_id": topic_id, "summary": "x", "source_ids": []}
     if tool_name == "record_gap":
         return {"topic_id": topic_id, "looking_for": "x", "tried": ["y"]}
+    if tool_name == "restate_question":
+        return {"topic_id": topic_id, "question": "new question?", "rationale": "r"}
     return {"topic_id": topic_id, "source_id": "s1"}
 
 
-@pytest.mark.parametrize("tool_name", ["record_finding", "record_gap", "link_source"])
+@pytest.mark.parametrize(
+    "tool_name", ["record_finding", "record_gap", "link_source", "restate_question"]
+)
 async def test_something_that_is_not_an_id_is_answered_rather_than_raised(tool_name):
     """A model will sometimes hand back a question where an id belongs."""
     tools = tools_for(FakeTopics())
@@ -265,7 +305,9 @@ async def test_something_that_is_not_an_id_is_answered_rather_than_raised(tool_n
     assert "list_topics" in answer
 
 
-@pytest.mark.parametrize("tool_name", ["record_finding", "record_gap", "link_source"])
+@pytest.mark.parametrize(
+    "tool_name", ["record_finding", "record_gap", "link_source", "restate_question"]
+)
 async def test_an_unknown_topic_names_the_remedy(tool_name):
     tools = tools_for(FakeTopics())
 
@@ -337,6 +379,52 @@ async def test_two_findings_recorded_at_once_both_land(tmp_path):
 
         state = (await topics.load(topic_id)).state
         assert state.findings == 2
+    finally:
+        await snapshot_store.close()
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_restate_and_finding_at_once_both_land(tmp_path):
+    """Restatement and finding concurrent writes both retry and succeed."""
+    import asyncio
+
+    from eventsource.adapters.sqlite import SQLiteEventStore
+    from eventsource.adapters.sqlite.snapshots import SQLiteSnapshotStore
+
+    from research_team.infrastructure.agent.topic_tools import RepositoryTopics
+    from research_team.infrastructure.persistence import build_topic_repository
+    from research_team.research.domain.topic import OpenTopic
+
+    db_path = str(tmp_path / "sessions.db")
+    store = SQLiteEventStore(db_path)
+    snapshot_store = SQLiteSnapshotStore(db_path)
+    try:
+        topics = build_topic_repository(store, snapshot_store=snapshot_store)
+        project_id = uuid4()
+        port = RepositoryTopics(topics, None, project_id)
+
+        topic = topics.create_new(uuid4())
+        topic.execute(
+            OpenTopic(
+                topic_id=topic.aggregate_id,
+                project_id=project_id,
+                question="Initial question?",
+                rationale="initial rationale",
+            )
+        )
+        await topics.save(topic)
+        topic_id = topic.aggregate_id
+
+        await asyncio.gather(
+            port.restate_question(topic_id, "Sharper question?", "clearer scope"),
+            port.record_finding(topic_id, "found evidence", ["source-1"]),
+        )
+
+        state = (await topics.load(topic_id)).state
+        assert state.question == "Sharper question?"
+        assert state.previous_questions == ["Initial question?"]
+        assert state.findings == 1
     finally:
         await snapshot_store.close()
         await store.close()
