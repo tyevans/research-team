@@ -123,12 +123,32 @@ class CourseAuthoringFailed(DomainEvent):
     timeout wrote seven courses that exist, and a single run-level failure
     would hide them. The loop that appends this carries on to the next target
     for the same reason.
+
+    `session_id` is recorded when available (B178) so resumption can identify
+    the session containing partial work rather than discarding it.
     """
 
     aggregate_type: str = COURSE_AUTHORING_RUN_AGGREGATE_TYPE
     project_id: UUID
     target: str
     detail: str
+    session_id: UUID | None = None
+
+
+@register_event
+class CourseAuthoringCheckpointEvaluated(DomainEvent):
+    """One checkpoint evaluated during an authoring run (B154).
+
+    Recorded for both passes and failures so that telemetry has a denominator
+    and can measure checkpoint pass/fire rates.
+    """
+
+    aggregate_type: str = COURSE_AUTHORING_RUN_AGGREGATE_TYPE
+    project_id: UUID
+    phase: str
+    target: str
+    passed: bool
+    detail: str = ""
 
 
 @register_event
@@ -165,6 +185,16 @@ class RecordAuthoringFailure:
     run_id: UUID
     target: str
     detail: str
+    session_id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class RecordCheckpointEvaluation:
+    run_id: UUID
+    phase: str
+    target: str
+    passed: bool
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -178,6 +208,7 @@ CourseAuthoringRunCommand = (
     StartCourseAuthoringRun
     | RecordAuthoredCourse
     | RecordAuthoringFailure
+    | RecordCheckpointEvaluation
     | SettleCourseAuthoringRun
 )
 
@@ -200,7 +231,8 @@ class CourseAuthoringRunState(BaseModel):
     status: Literal["new", "running", "done", "failed", "cancelled"] = "new"
     targets: list[str] = Field(default_factory=list)
     authored: list[tuple[str, UUID]] = Field(default_factory=list)
-    failures: list[tuple[str, str]] = Field(default_factory=list)
+    failures: list[tuple[str, str, UUID | None]] = Field(default_factory=list)
+    checkpoints: list[tuple[str, str, bool, str]] = Field(default_factory=list)
 
     @property
     def is_running(self) -> bool:
@@ -256,16 +288,37 @@ def decide(
 
         case RecordAuthoringFailure(), CourseAuthoringRunState(status="new"):
             raise CommandRejectedError("authoring run not started")
-        case RecordAuthoringFailure(target=target, detail=detail), _ if state.is_running:
+        case RecordAuthoringFailure(
+            target=target, detail=detail, session_id=session_id
+        ), _ if state.is_running:
             return [
                 CourseAuthoringFailed(
                     aggregate_id=state.run_id,
                     project_id=state.project_id,
                     target=target,
                     detail=detail,
+                    session_id=session_id,
                 )
             ]
         case RecordAuthoringFailure(), _:
+            raise CommandRejectedError(f"authoring run already {state.status}")
+
+        case RecordCheckpointEvaluation(), CourseAuthoringRunState(status="new"):
+            raise CommandRejectedError("authoring run not started")
+        case RecordCheckpointEvaluation(
+            phase=phase, target=target, passed=passed, detail=detail
+        ), _ if state.is_running:
+            return [
+                CourseAuthoringCheckpointEvaluated(
+                    aggregate_id=state.run_id,
+                    project_id=state.project_id,
+                    phase=phase,
+                    target=target,
+                    passed=passed,
+                    detail=detail,
+                )
+            ]
+        case RecordCheckpointEvaluation(), _:
             raise CommandRejectedError(f"authoring run already {state.status}")
 
         case SettleCourseAuthoringRun(), CourseAuthoringRunState(status="new"):
@@ -305,8 +358,17 @@ def evolve(state: CourseAuthoringRunState, event: DomainEvent) -> CourseAuthorin
                 update={"authored": [*state.authored, (target, session_id)]}
             )
 
-        case CourseAuthoringFailed(target=target, detail=detail):
-            return state.model_copy(update={"failures": [*state.failures, (target, detail)]})
+        case CourseAuthoringFailed(target=target, detail=detail, session_id=session_id):
+            return state.model_copy(
+                update={"failures": [*state.failures, (target, detail, session_id)]}
+            )
+
+        case CourseAuthoringCheckpointEvaluated(
+            phase=phase, target=target, passed=passed, detail=detail
+        ):
+            return state.model_copy(
+                update={"checkpoints": [*state.checkpoints, (phase, target, passed, detail)]}
+            )
 
         case CourseAuthoringRunSettled(status=status):
             return state.model_copy(update={"status": status})

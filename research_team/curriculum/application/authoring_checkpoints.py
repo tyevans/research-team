@@ -34,8 +34,14 @@ one assertion that ties the pair together.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
+
+from research_team.curriculum.application.frontmatter import extract_title
+from research_team.curriculum.domain.learning_area import LearningArea
+from research_team.platform.components import parse_document
 
 #: The directory every generated course lives under.
 #:
@@ -162,6 +168,21 @@ _BULLET = re.compile(r"^\s*[-*]\s+\S", re.MULTILINE)
 _COMPONENT = re.compile(rf"^{re.escape(COMPONENT_FENCE)}", re.MULTILINE)
 
 
+@dataclass(frozen=True)
+class CheckpointEvaluation:
+    """The outcome of evaluating one authoring checkpoint (B154).
+
+    Carries the phase, target slug, whether it passed, and failure reason if not.
+    Provides the denominator so telemetry distinguishes a check that never ran
+    from one that always passed.
+    """
+
+    phase: str
+    target: str
+    passed: bool
+    reason: str = ""
+
+
 class CheckpointFailed(Exception):
     """A phase did not leave behind what the next phase needs.
 
@@ -170,10 +191,35 @@ class CheckpointFailed(Exception):
     stage, and a string that has to be scraped is a string that drifts.
     """
 
-    def __init__(self, phase: str, reason: str) -> None:
+    def __init__(
+        self,
+        phase: str,
+        reason: str,
+        *,
+        session_id: UUID | None = None,
+        checkpoints: tuple[CheckpointEvaluation, ...] = (),
+    ) -> None:
         super().__init__(f"{phase}: {reason}")
         self.phase = phase
         self.reason = reason
+        self.session_id: UUID | None = session_id
+        self.checkpoints: tuple[CheckpointEvaluation, ...] = checkpoints
+
+
+def evaluate_checkpoint(
+    phase: str,
+    target: str,
+    check: Callable[[Mapping[str, Any]], None],
+    files: Mapping[str, Any],
+) -> CheckpointEvaluation:
+    """Evaluate a checkpoint function, capturing pass/fail without raising."""
+    try:
+        check(files)
+        return CheckpointEvaluation(phase=phase, target=target, passed=True, reason="")
+    except CheckpointFailed as err:
+        return CheckpointEvaluation(
+            phase=phase, target=target, passed=False, reason=err.reason
+        )
 
 
 def area_dir(area_slug: str) -> str:
@@ -212,6 +258,12 @@ def _content(files: Mapping[str, Any], path: str) -> str:
 def unit_text(files: Mapping[str, Any], area_slug: str) -> str:
     """The unit file's content, or empty when it was never written."""
     return _content(files, unit_path(area_slug))
+
+
+def unit_title(files: Mapping[str, Any], area_slug: str) -> str | None:
+    """The title of the unit file, from frontmatter or the leading # heading (B139)."""
+    text = unit_text(files, area_slug)
+    return extract_title(text) if text else None
 
 
 def stage_one_text(files: Mapping[str, Any], area_slug: str) -> str:
@@ -310,7 +362,72 @@ def check_stage_two(files: Mapping[str, Any], area_slug: str) -> None:
         )
 
 
-def check_lessons(files: Mapping[str, Any], area_slug: str, lesson_count: int) -> None:
+def check_component_integrity(
+    files: Mapping[str, Any],
+    area_slug: str,
+    lesson_count: int,
+    *,
+    area: LearningArea | None = None,
+) -> None:
+    """Verify that interactive components in lessons and unit have unique IDs
+    and valid entity references.
+
+    Guards against B128:
+    - Component IDs must be unique within and across lessons for the area.
+    - Syntactically malformed YAML bodies in components are caught.
+    - Resolved components (`definition`, `graph`, `timeline`, `explorer`, `compare`)
+      must reference entity IDs that actually belong to the LearningArea, preventing
+      hallucinated IDs that render 'unavailable' forever.
+    """
+    seen_ids: dict[str, str] = {}
+    valid_entity_ids = {m.entity_id for m in area.members} if area is not None else None
+
+    # Inspect unit.md (if present) and all lessons
+    paths: list[str] = []
+    unit_p = unit_path(area_slug)
+    if unit_p in files:
+        paths.append(unit_p)
+    paths.extend(lesson_paths(area_slug, lesson_count))
+
+    for path in paths:
+        text = _content(files, path)
+        if not text:
+            continue
+        doc = parse_document(text, path=path)
+        for comp in doc.components:
+            # Check for unparseable YAML
+            if any("could not parse the YAML body" in err.message for err in comp.errors):
+                raise CheckpointFailed(
+                    "lessons",
+                    f"component {comp.id!r} in {path} has unparseable YAML",
+                )
+
+            if comp.id:
+                if comp.id in seen_ids:
+                    raise CheckpointFailed(
+                        "lessons",
+                        f"duplicate component id {comp.id!r} in {path} "
+                        f"(already used in {seen_ids[comp.id]})",
+                    )
+                seen_ids[comp.id] = path
+
+            if valid_entity_ids is not None:
+                eid = comp.data.get("entity_id") if isinstance(comp.data, Mapping) else None
+                if eid and isinstance(eid, str) and eid not in valid_entity_ids:
+                    raise CheckpointFailed(
+                        "lessons",
+                        f"component {comp.id!r} in {path} references unknown entity_id "
+                        f"{eid!r} not in area {area_slug}",
+                    )
+
+
+def check_lessons(
+    files: Mapping[str, Any],
+    area_slug: str,
+    lesson_count: int,
+    *,
+    area: LearningArea | None = None,
+) -> None:
     """Phase 3 wrote every lesson, and every lesson names an assessment.
 
     `builds_toward` is checked for presence, not for resolution against a real
@@ -319,6 +436,9 @@ def check_lessons(files: Mapping[str, Any], area_slug: str, lesson_count: int) -
     passes anything -- so the honest check is that the field is there and the
     prose critic reads the rest. This is weaker than the spec's wording and the
     weakness is deliberate.
+
+    Also asserts component integrity (B128): unique component IDs, parseable YAML,
+    and valid entity references against `area` if provided.
     """
     for path in lesson_paths(area_slug, lesson_count):
         text = _content(files, path)
@@ -328,6 +448,7 @@ def check_lessons(files: Mapping[str, Any], area_slug: str, lesson_count: int) -
             raise CheckpointFailed(
                 "lessons", f"{path} names no assessment in {BUILDS_TOWARD_FIELD}"
             )
+    check_component_integrity(files, area_slug, lesson_count, area=area)
 
 
 def component_counts(

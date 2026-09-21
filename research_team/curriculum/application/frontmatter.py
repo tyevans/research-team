@@ -12,6 +12,7 @@ wanted the prose still gets the prose from a malformed file, which is the
 behaviour the docstring below was measured into.
 """
 
+import re
 from typing import Any
 
 import yaml
@@ -63,3 +64,23 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any] | None, str]:
     if not isinstance(loaded, dict):
         return None, body
     return loaded, body
+
+
+_H1_HEADING = re.compile(r"^\s*#\s+(.+)$", re.MULTILINE)
+
+
+def extract_title(text: str) -> str | None:
+    """Extract a title from YAML frontmatter (`title` key) or the leading markdown `# Heading`.
+
+    Returns None if neither contains a non-empty title string (B139).
+    """
+    meta, body = parse_frontmatter(text)
+    if meta and isinstance(meta.get("title"), str) and meta["title"].strip():
+        return meta["title"].strip()
+    target_text = body if meta is not None else text
+    match = _H1_HEADING.search(target_text)
+    if match:
+        title = match.group(1).strip()
+        if title:
+            return title
+    return None

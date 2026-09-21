@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from research_team.curriculum.application import CurriculumService
+from research_team.curriculum.application.curriculum import graph_fingerprint
 from research_team.knowledge.application.graph_read import (
     Graph,
     GraphEntity,
@@ -162,3 +163,56 @@ async def test_an_empty_graph_yields_no_areas_rather_than_failing():
     assert curriculum.projection.areas == ()
     assert curriculum.projection.entity_count == 0
     assert curriculum.path.area_slugs == ()
+
+
+@pytest.mark.asyncio
+async def test_modified_graph_with_same_count_is_projected_again():
+    """B127: Modifying graph without changing counts invalidates cache via fingerprint."""
+    entities, relationships = two_cliques()
+    reader = StubGraphReader(entities, relationships)
+    co = StubCoMentions()
+    service = CurriculumService()
+    project = uuid4()
+    await service.build(project, reader, co)
+    assert co.calls == 1
+
+    # Replace one entity with a different entity_id, keeping counts identical
+    modified_entities = [entity("x9") if e.entity_id == "a1" else e for e in entities]
+    modified_relationships = [
+        rel("x9", r.target_id) if r.source_id == "a1" else r for r in relationships
+    ]
+    modified_reader = StubGraphReader(modified_entities, modified_relationships)
+    await service.build(project, modified_reader, co)
+
+    assert co.calls == 2, (
+        "cache must be invalidated when graph content changes even if counts match"
+    )
+
+
+@pytest.mark.asyncio
+async def test_force_refresh_bypasses_cache():
+    """force_refresh=True reprojects even when graph has not changed."""
+    reader = StubGraphReader(*two_cliques())
+    co = StubCoMentions()
+    service = CurriculumService()
+    project = uuid4()
+
+    await service.build(project, reader, co)
+    assert co.calls == 1
+
+    await service.build(project, reader, co, force_refresh=True)
+    assert co.calls == 2
+
+
+def test_graph_fingerprint_changes_on_entity_or_relationship_mutation():
+    entities, relationships = two_cliques()
+    g1 = Graph(entities=tuple(entities), relationships=tuple(relationships), truncated=False)
+    fp1 = graph_fingerprint(g1)
+    assert fp1 == graph_fingerprint(g1)
+
+    modified_entities = [entity("x9") if e.entity_id == "a1" else e for e in entities]
+    g2 = Graph(
+        entities=tuple(modified_entities), relationships=tuple(relationships), truncated=False
+    )
+    fp2 = graph_fingerprint(g2)
+    assert fp1 != fp2

@@ -40,6 +40,7 @@ from research_team.curriculum.application.authoring_checkpoints import (
     EVIDENCE_HEADING,
     PERFORMANCE_TASK_MARKER,
     UNDERSTANDINGS_HEADING,
+    CheckpointEvaluation,
     CheckpointFailed,
     check_assessment,
     check_lessons,
@@ -97,6 +98,9 @@ class AuthoredCourse:
     and a second account of them assembled here would be the one a UI used and
     the one that went stale. What this carries is the session id, which is the
     only thing a caller cannot derive.
+
+    `checkpoints` carries the evaluations of the four authoring checkpoints (B154),
+    providing the denominator so telemetry can measure pass and retry rates.
     """
 
     area_slug: str
@@ -104,6 +108,7 @@ class AuthoredCourse:
     session_id: UUID
     run_id: UUID
     replies: tuple[str, ...]
+    checkpoints: tuple[CheckpointEvaluation, ...] = ()
 
 
 def _anchor_lines(area: LearningArea) -> str:
@@ -641,6 +646,7 @@ class CourseAuthor:
             project_id, SessionPurpose.COURSE_AUTHORING
         )
         replies: list[str] = []
+        evaluations: list[CheckpointEvaluation] = []
         try:
             await self._session.attach_project(project_id)
 
@@ -649,6 +655,9 @@ class CourseAuthor:
                     session_id,
                     desired_results_prompt(area, subject),
                     lambda files: check_stage_one(files, area.slug),
+                    evaluations=evaluations,
+                    phase_name="stage_one",
+                    target=area.slug,
                 )
             )
 
@@ -663,6 +672,9 @@ class CourseAuthor:
                     session_id,
                     evidence_prompt(area, stage_one),
                     lambda files: check_stage_two(files, area.slug),
+                    evaluations=evaluations,
+                    phase_name="stage_two",
+                    target=area.slug,
                 )
             )
 
@@ -670,7 +682,10 @@ class CourseAuthor:
                 await self._phase(
                     session_id,
                     learning_plan_prompt(area, stage_one, lesson_count),
-                    lambda files: check_lessons(files, area.slug, lesson_count),
+                    lambda files: check_lessons(files, area.slug, lesson_count, area=area),
+                    evaluations=evaluations,
+                    phase_name="lessons",
+                    target=area.slug,
                 )
             )
             # Read before phase 4 runs, because phase 4's checkpoint has no
@@ -687,6 +702,9 @@ class CourseAuthor:
                     lambda files: check_assessment(
                         files, area.slug, lesson_count, before=before
                     ),
+                    evaluations=evaluations,
+                    phase_name="assessment",
+                    target=area.slug,
                 )
             )
         finally:
@@ -698,6 +716,7 @@ class CourseAuthor:
             session_id=session_id,
             run_id=run_id,
             replies=tuple(replies),
+            checkpoints=tuple(evaluations),
         )
 
     async def _phase(
@@ -705,6 +724,9 @@ class CourseAuthor:
         session_id: UUID,
         prompt: str,
         check: Callable[[dict[str, Any]], None],
+        evaluations: list[CheckpointEvaluation] | None = None,
+        phase_name: str = "",
+        target: str = "",
     ) -> str:
         """One phase: run the turn, check the files, and on a refusal try once
         more from where it stopped rather than losing the area.
@@ -740,11 +762,40 @@ class CourseAuthor:
         outcome = await self._turns.run(session_id, prompt)
         try:
             check(await self._files(session_id))
+            if evaluations is not None:
+                evaluations.append(
+                    CheckpointEvaluation(phase=phase_name, target=target, passed=True)
+                )
         except CheckpointFailed as first:
+            first.session_id = session_id
+            if evaluations is not None:
+                evaluations.append(
+                    CheckpointEvaluation(
+                        phase=first.phase or phase_name,
+                        target=target,
+                        passed=False,
+                        reason=first.reason,
+                    )
+                )
             retry = await self._turns.run(session_id, _retry_prompt(prompt, first))
             try:
                 check(await self._files(session_id))
+                if evaluations is not None:
+                    evaluations.append(
+                        CheckpointEvaluation(phase=phase_name, target=target, passed=True)
+                    )
             except CheckpointFailed as second:
+                second.session_id = session_id
+                if evaluations is not None:
+                    evaluations.append(
+                        CheckpointEvaluation(
+                            phase=second.phase or phase_name,
+                            target=target,
+                            passed=False,
+                            reason=second.reason,
+                        )
+                    )
+                    second.checkpoints = tuple(evaluations)
                 raise second from first
             # The retry's reply, not the first turn's: it is the turn that
             # produced the files every later phase reads.
