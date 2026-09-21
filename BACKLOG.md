@@ -588,9 +588,9 @@ not one: an empty table taking the recreate, and the same model against a table
 with one row taking the raise. Flagged by the task that introduced the branch
 (`docs/reports/adopt-0140-task2.md`) rather than found later.
 
-### B110. `ConversationRegistry` carries the falsy-collaborator hazard `DialogueRegistry` closed
+### B110. `ConversationRegistry` carries the falsy-collaborator hazard `DialogueRegistry` closed -- CLOSED 2026-09-21
 
-`research_team/application/ask.py`. `DialogueRegistry` was given a
+Closed by unifying `ConversationRegistry` and `DialogueRegistry` over `ExpiringLruCache`, which implements `__bool__ -> True` universally.
 `__bool__ -> True` on the socratic-dialogue work for a reason that applies
 verbatim here: both classes define `__len__`, so an **empty** instance is
 falsy, and any call site defaulting one with `registry or SomeDefault()`

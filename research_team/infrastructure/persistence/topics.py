@@ -19,33 +19,24 @@ question, which is the same argument that put `/sessions` in a table. The fold
 is written down; the judgement over it is not.
 """
 
-import asyncio
 import json
 from uuid import UUID, uuid5
 
 import aiosqlite
 from eventsource import (
     DeclarativeProjection,
-    InMemoryEventBus,
     ReadModel,
-    SQLCheckpointRepository,
-    SQLDLQRepository,
-    create_async_engine,
     handles,
 )
-from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
-from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
-from eventsource.ports.dlq import DLQEntry
 from eventsource.ports.readmodels import Query, ReadModelRepository
 from eventsource.ports.readmodels.query import Filter
 from pydantic import Field, field_validator
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.infrastructure.persistence.read_models import (
-    LOCAL_RETRY_POLICY,
     apply_schema,
 )
+from research_team.infrastructure.persistence.store_base import BaseProjectionRunner
 from research_team.research.application.topic_attention import (
     CorpusFacts,
     TopicAttention,
@@ -567,7 +558,7 @@ def _high_water(facts: CorpusFacts) -> str | None:
     return max(facts.stored_at.values(), default=None)
 
 
-class TopicRunner:
+class TopicRunner(BaseProjectionRunner[TopicStore]):
     """Keeps the topic tables following the log, and answers the queue from them.
 
     A third runner, for the reason `CorpusRunner` gives at length for being the
@@ -583,86 +574,23 @@ class TopicRunner:
     see `TopicProjection` for the mechanical half of that reasoning.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._topics: TopicStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "topic"
+    _store_class = TopicStore
+    _projection_class = TopicProjection
 
     @property
-    def projection_name(self) -> str:
-        """The subscription's name, which is also its checkpoint and DLQ key."""
-        return TopicProjection.__name__
-
-    async def start(self) -> None:
-        """Open the tables and start following the log.
-
-        Touches the event store first for the reason the other two runners do:
-        it creates `projection_checkpoints` on first connection rather than at
-        construction, so reaching for checkpoints before anything has used the
-        store finds no table at all.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._topics = await TopicStore.open(
-            self._db_path, self._checkpoints, self._dlq, self._tracer, LOCAL_RETRY_POLICY
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            self._topics.projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the topic projection failed to start: {failures}")
+    def _topics(self) -> TopicStore | None:
+        return self._store_instance
 
     @property
     def queue(self) -> TopicQueue:
-        if self._topics is None:
-            raise RuntimeError("the topic projection has not been started")
-        return TopicQueue(self._topics)
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        """Events these projections could not process.
-
-        A non-empty list means the queue is judging topics against a state the
-        log has moved past -- which reads downstream as work silently not
-        offered, rather than as an error anybody sees.
-        """
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
+        return TopicQueue(self.store)
 
     async def get(self, topic_id: UUID) -> TopicRow | None:
-        if self._topics is None:
-            raise RuntimeError("the topic projection has not been started")
-        return await self._topics.get(topic_id)
+        return await self.store.get(topic_id)
 
     async def list(self, project_id: UUID) -> list[TopicRow]:
-        if self._topics is None:
-            raise RuntimeError("the topic projection has not been started")
-        return await self._topics.list(project_id)
+        return await self.store.list(project_id)
 
     async def corpus_facts(self, project_id: UUID) -> CorpusFacts:
         """The corpus snapshot `attention_for` needs, delegated to the table.
@@ -673,60 +601,4 @@ class TopicRunner:
         the corpus projection -- two paths to the same `CorpusFacts` are two
         chances for them to disagree about what "live" means.
         """
-        if self._topics is None:
-            raise RuntimeError("the topic projection has not been started")
-        return await self._topics.corpus_facts(project_id)
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until both projections have seen everything appended so far.
-
-        Load-bearing rather than a test affordance: an autonomous round records
-        a look and then asks for the next topic, and the gap between the append
-        and the row is exactly where it would be handed the topic it just
-        finished.
-        """
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(f"the topic projection did not reach {target} within {timeout}s")
-
-    async def rebuild(self) -> None:
-        """Throw both tables away and derive them again from the log.
-
-        Safe because neither holds original information: every field comes from
-        an event. Both go together, for the reason this class carries both --
-        a queue built from a fresh topic table and a stale corpus snapshot is
-        wrong in a way nothing would report.
-        """
-        if self._manager is None or self._topics is None:
-            raise RuntimeError("the topic projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._topics.truncate()
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        self._manager = None
-        self._subscription = None
-        await self._topics.close()
-        self._topics = None
-        await self.start()
-        await self.caught_up()
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-        if self._topics is not None:
-            await self._topics.close()
-            self._topics = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+        return await self.store.corpus_facts(project_id)

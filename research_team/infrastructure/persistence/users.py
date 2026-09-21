@@ -20,31 +20,23 @@ decide anything on `email` here that it would not decide on a claim; the
 matters.
 """
 
-import asyncio
 from uuid import UUID
 
 import aiosqlite
 from eventsource import (
     DeclarativeProjection,
-    InMemoryEventBus,
     ReadModel,
-    SQLCheckpointRepository,
-    SQLDLQRepository,
-    create_async_engine,
     handles,
 )
-from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
-from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
-from eventsource.ports.dlq import DLQEntry
 from eventsource.ports.readmodels import Query, ReadModelRepository
 from eventsource.ports.readmodels.query import Filter
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.infrastructure.persistence.read_models import (
     LOCAL_RETRY_POLICY,
     apply_schema,
 )
+from research_team.infrastructure.persistence.store_base import BaseProjectionRunner
 from research_team.tenancy.domain.user import UserProfileChanged, UserSignedIn, stream_id_for
 
 
@@ -271,7 +263,7 @@ class UserProjection(DeclarativeProjection):
         await self._store.observe_profile_change(event)
 
 
-class UserRunner:
+class UserRunner(BaseProjectionRunner[UserStore]):
     """Keeps the `users` table following the log, and answers from it.
 
     A runner of the same shape as every other projection here, and built for
@@ -285,54 +277,13 @@ class UserRunner:
     asserts the *row*, never that the request succeeded.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ) -> None:
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._users: UserStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
+    _label = "user"
+    _store_class = UserStore
+    _projection_class = UserProjection
 
     @property
-    def projection_name(self) -> str:
-        return UserProjection.__name__
-
-    async def start(self) -> None:
-        """Open the table and start following the log.
-
-        The same shape as `EntityDefinitionRunner.start`, including touching
-        the event store first so `projection_checkpoints` exists before
-        anything reads it.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._users = await UserStore.open(self._db_path, self._tracer)
-        projection = UserProjection(self._users, self._checkpoints, self._dlq, self._tracer)
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the user projection failed to start: {failures}")
+    def _users(self) -> UserStore | None:
+        return self._store_instance
 
     async def get(self, subject: str) -> UserRow | None:
         """This subject's mirrored row, or None if nobody by that subject has
@@ -343,73 +294,7 @@ class UserRunner:
         opens another, and a caller holding the old one would go on calling a
         closed connection, silently, after a repair.
         """
-        if self._users is None:
-            raise RuntimeError("the user projection has not been started")
-        return await self._users.get(subject)
+        return await self.store.get(subject)
 
     async def list(self) -> list[UserRow]:
-        if self._users is None:
-            raise RuntimeError("the user projection has not been started")
-        return await self._users.list()
-
-    # The return annotation is quoted, and it has to be: this class defines a
-    # method named `list` above, which shadows the builtin inside the class
-    # body, so an unquoted `list[DLQEntry]` here subscripts that method and
-    # raises `TypeError: 'function' object is not subscriptable` at import
-    # time. Quoting defers the lookup to a scope where `list` is the builtin
-    # again. Renaming the method was the alternative and was rejected: `list`
-    # is what every other store and runner in this package calls it, and one
-    # inconsistently named for a scoping accident is worse than one comment.
-    async def failures(self, limit: int = 100) -> "list[DLQEntry]":
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    async def rebuild(self) -> None:
-        """Truncate and replay.
-
-        Truncating is safe here, unlike `EntityDefinitionRunner.rebuild`:
-        every column in `users` is derived from an event on this log. Nothing
-        writes into this table except the projection -- there is no `put` --
-        so a replay restores it exactly.
-        """
-        if self._manager is None:
-            raise RuntimeError("the user projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        await self._users.truncate()
-        self._manager = None
-        self._subscription = None
-        await self._users.close()
-        self._users = None
-        await self.start()
-        await self.caught_up()
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(f"the user projection did not reach {target} within {timeout}s")
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-        if self._users is not None:
-            await self._users.close()
-            self._users = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+        return await self.store.list()

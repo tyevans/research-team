@@ -221,6 +221,11 @@ class BaseProjectionRunner[TStore]:
             raise RuntimeError(f"the {self._label} projection has not been started")
         return self._store_instance
 
+    @property
+    def store(self) -> TStore:
+        """The open store, or a refusal naming what was not done."""
+        return self._started()
+
     async def _open_store(
         self,
         db_path: str,
@@ -243,6 +248,8 @@ class BaseProjectionRunner[TStore]:
                 kwargs["dlq_repo"] = dlq
             if "tracer" in params:
                 kwargs["tracer"] = tracer
+            if "retry_policy" in params:
+                kwargs["retry_policy"] = LOCAL_RETRY_POLICY
             return await self._store_class.open(db_path, **kwargs)
         raise NotImplementedError(
             f"{self.__class__.__name__} must define _store_class or override _open_store"
@@ -260,7 +267,20 @@ class BaseProjectionRunner[TStore]:
             return store.projection
         cls = self._resolve_projection_class()
         if cls is not None:
-            return cls(store, checkpoint_repo=checkpoints, dlq_repo=dlq, tracer=tracer)
+            sig = inspect.signature(cls.__init__)
+            params = sig.parameters
+            kwargs: dict[str, Any] = {}
+            if "checkpoint_repo" in params:
+                kwargs["checkpoint_repo"] = checkpoints
+            elif "checkpoints" in params:
+                kwargs["checkpoints"] = checkpoints
+            if "dlq_repo" in params:
+                kwargs["dlq_repo"] = dlq
+            elif "dlq" in params:
+                kwargs["dlq"] = dlq
+            if "tracer" in params:
+                kwargs["tracer"] = tracer
+            return cls(store, **kwargs)
         raise NotImplementedError(
             f"{self.__class__.__name__} must define _projection_class "
             "or override _create_projection"

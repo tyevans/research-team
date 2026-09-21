@@ -23,7 +23,6 @@ uses the same name for a project id, dozens of times, confined to
 spelled `project_id`, which is what keeps the seam readable.
 """
 
-import asyncio
 from datetime import UTC, datetime
 from uuid import UUID, uuid5
 
@@ -32,26 +31,18 @@ from eventsource import (
     DeclarativeProjection,
     DomainEvent,
     ExpectedVersion,
-    InMemoryEventBus,
     ReadModel,
-    SQLCheckpointRepository,
-    SQLDLQRepository,
     StreamId,
-    create_async_engine,
     handles,
 )
-from eventsource.adapters.sqlite import SQLiteEventStore
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
-from eventsource.application.subscriptions import SubscriptionConfig, SubscriptionManager
-from eventsource.ports.dlq import DLQEntry
 from eventsource.ports.readmodels import Query, ReadModelRepository
 from eventsource.ports.readmodels.query import Filter
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from research_team.infrastructure.persistence.read_models import (
-    LOCAL_RETRY_POLICY,
     apply_schema,
 )
+from research_team.infrastructure.persistence.store_base import BaseProjectionRunner
 from research_team.tenancy.domain.tenant import (
     LOCAL_SUBJECT,
     LOCAL_TENANT,
@@ -464,7 +455,7 @@ class TenantStore:
         await self._connection.close()
 
 
-class TenantRunner:
+class TenantRunner(BaseProjectionRunner[TenantStore]):
     """Keeps the four tenancy tables following the log.
 
     A runner of its own, beside the other projections over the same store, for
@@ -474,63 +465,17 @@ class TenantRunner:
     authorization down with it, and the reverse matters more.
     """
 
-    def __init__(
-        self,
-        store: SQLiteEventStore,
-        db_path: str,
-        bus: InMemoryEventBus,
-        tracer=None,
-    ):
-        self._store = store
-        self._db_path = db_path
-        self._bus = bus
-        self._tracer = tracer
-        self._tenants: TenantStore | None = None
-        self._manager: SubscriptionManager | None = None
-        self._subscription = None
-        self._checkpoints: SQLCheckpointRepository | None = None
-        self._dlq: SQLDLQRepository | None = None
-        self._engine: AsyncEngine | None = None
-
-    @property
-    def projection_name(self) -> str:
-        """The subscription's name, which is also its checkpoint and DLQ key."""
-        return TenantProjection.__name__
+    _label = "tenant"
+    _store_class = TenantStore
+    _projection_class = TenantProjection
 
     @property
     def tenants(self) -> TenantStore:
-        if self._tenants is None:
-            raise RuntimeError("the tenant projection has not been started")
-        return self._tenants
+        return self.store
 
-    async def start(self) -> None:
-        """Open the tables and start following the log.
-
-        Touches the event store first for the reason the other runners do: it
-        creates `projection_checkpoints` on first connection rather than at
-        construction, so reaching for checkpoints before anything has used the
-        store finds no table at all.
-        """
-        if self._manager is not None:
-            return
-        await self._store.current_position()
-        engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
-        self._engine = engine
-        self._checkpoints = SQLCheckpointRepository(engine)
-        self._dlq = SQLDLQRepository(engine)
-        self._tenants = await TenantStore.open(
-            self._db_path, self._checkpoints, self._dlq, self._tracer, LOCAL_RETRY_POLICY
-        )
-        self._manager = SubscriptionManager(
-            self._store, self._bus, self._checkpoints, dlq_repo=self._dlq, tracer=self._tracer
-        )
-        self._subscription = await self._manager.subscribe(
-            self._tenants.projection, SubscriptionConfig(start_from="checkpoint")
-        )
-        results = await self._manager.start()
-        failures = {name: err for name, err in results.items() if err is not None}
-        if failures:
-            raise RuntimeError(f"the tenant projection failed to start: {failures}")
+    @property
+    def _tenants(self) -> TenantStore | None:
+        return self._store_instance
 
     async def seed_local_tenant(self) -> bool:
         """Give `LOCAL_TENANT` a row and `LOCAL_SUBJECT` an `owner` membership.
@@ -628,70 +573,3 @@ class TenantRunner:
     async def project_grant_role(self, project_id: UUID | str, subject: str) -> str | None:
         """`GrantReader`, delegated to the store. See `membership_role`."""
         return await self.tenants.project_grant_role(project_id, subject)
-
-    async def failures(self, limit: int = 100) -> list[DLQEntry]:
-        """Events this projection could not process.
-
-        A non-empty list means somebody's access is stale in a direction nobody
-        is told about -- a removal that did not land reads exactly like a person
-        who still has the role.
-        """
-        if self._dlq is None:
-            return []
-        return await self._dlq.get_failed_events(
-            projection_name=self.projection_name, limit=limit
-        )
-
-    async def caught_up(self, timeout: float = 10.0) -> None:
-        """Block until the projection has seen everything appended so far.
-
-        Load-bearing rather than a test affordance: a route that grants a role
-        and then answers a request has to have the row by the time the next
-        check reads it, and the gap between the append and the row is exactly
-        where a fresh grant looks like no grant.
-        """
-        if self._manager is None:
-            return
-        target = await self._store.current_position()
-        if target is None:
-            return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            reached = self._subscription.last_processed_position
-            if reached is not None and not reached < target:
-                return
-            await asyncio.sleep(0.01)
-        raise TimeoutError(f"the tenant projection did not reach {target} within {timeout}s")
-
-    async def rebuild(self) -> None:
-        """Throw the four tables away and derive them again from the log.
-
-        Safe because none of them holds original information: every field comes
-        from an event. All four go together because they share a checkpoint --
-        see `TenantProjection`.
-        """
-        if self._manager is None or self._tenants is None:
-            raise RuntimeError("the tenant projection has not been started")
-        await self._manager.stop()
-        for entry in await self.failures(limit=1000):
-            await self._dlq.mark_resolved(entry.id, resolved_by="rebuild")
-        await self._tenants.truncate()
-        await self._checkpoints.reset_checkpoint(self.projection_name)
-        self._manager = None
-        self._subscription = None
-        await self._tenants.close()
-        self._tenants = None
-        await self.start()
-        await self.caught_up()
-
-    async def stop(self) -> None:
-        if self._manager is not None:
-            await self._manager.stop()
-            self._manager = None
-            self._subscription = None
-        if self._tenants is not None:
-            await self._tenants.close()
-            self._tenants = None
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
