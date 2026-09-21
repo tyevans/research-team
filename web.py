@@ -4,9 +4,8 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 
-from research_team.application.curriculum import CurriculumService
-from research_team.application.grants import GrantRegistry
 from research_team.composition import build_application
+from research_team.curriculum.application import CurriculumService
 from research_team.infrastructure import config
 from research_team.infrastructure.identity import OidcClient
 from research_team.interfaces.web import (
@@ -20,6 +19,7 @@ from research_team.interfaces.web.authoring import AuthoringActivity
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
 from research_team.interfaces.web.seeding import SeedingActivity
+from research_team.tenancy.application import GrantRegistry
 
 
 def main() -> None:
