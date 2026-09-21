@@ -381,6 +381,12 @@ def evolve(state: ProjectState, event: DomainEvent) -> ProjectState:
 class Project(DeciderAggregate[ProjectState, ProjectCommand]):
     """The imperative shell. Holds no rules -- it delegates all three.
 
+    Architecturally, while `Session` is the aggregate of turns and file
+    mutations, `Project` is the aggregate of cross-session lineage pointers
+    (`tip_session_id`, `tip_at_event`), exclusive holding leases
+    (`active_session_id`), and lifecycle states (`created`, `archived`,
+    `deleted`).
+
     Everything the library needs from an aggregate (replay, snapshots, version
     checks, repository integration) is inherited; everything this project
     decides lives in the functions above. Mirrors `Session`'s shape
