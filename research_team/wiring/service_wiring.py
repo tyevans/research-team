@@ -11,35 +11,73 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import httpx
 from eventsource import EventPublisher
 from eventsource.adapters.sqlite import SQLiteEventStore, SQLiteSnapshotStore
 from eventsource.application.aggregates.repository import AggregateRepository
+from eventsource.observability import Tracer
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from research_team.application import ExtractionChannel
+from research_team.application import (
+    AutonomyPolicy,
+    DispatchesInFlight,
+    ExtractionChannel,
+    ProjectGraphs,
+    ResearchRunDriver,
+    ResearchSupervisor,
+    SessionService,
+    SummaryProjects,
+    TopicRoundRunner,
+    TurnActivityBuffer,
+    TurnSupervisor,
+    WorkerRoster,
+)
 from research_team.application.ask import AskExecutor, AskService, ConversationRegistry
+from research_team.application.autonomy import FETCH_TOOL
 from research_team.application.blobs import BlobStorePort
+from research_team.application.context import ContextStrategy
 from research_team.application.corpus_editing import CorpusEditor
 from research_team.application.corpus_read import CorpusReadPort
+from research_team.application.course_authoring import CourseAuthor
 from research_team.application.document_extraction import DocumentExtractor
+from research_team.application.grants import GrantRegistry
 from research_team.application.knowledge import ExtractionNote, KnowledgePort
+from research_team.application.knowledge_attachment import KnowledgeAttachment
+from research_team.application.media_acquisition import (
+    MediaAcceptReconciler,
+    MediaAcceptWorker,
+)
 from research_team.application.perception import MediaPerceiver, PerceptionPort
+from research_team.application.ports import TurnExecutor
 from research_team.application.socratic import (
     DialogueReadModel,
     DialogueRegistry,
     SocraticDialogueService,
     SocraticExecutor,
 )
+from research_team.application.topic_dispatch import TopicDispatcher
+from research_team.application.topic_read import TopicReadPort
+from research_team.application.topic_seeding import TopicSeeder
+from research_team.application.topics import TOPICS_PROMPT
 from research_team.domain.ask_conversation import AskConversation
 from research_team.domain.corpus import Corpus
 from research_team.domain.learner import LearnerProgress
+from research_team.domain.media_proposals import MediaProposals
+from research_team.domain.research_run import Budget, ResearchRun
 from research_team.domain.socratic_dialogue import SocraticDialogue
+from research_team.domain.topic import Topic
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.ask_agent import DeepAgentAskExecutor
+from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
+from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT
+from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
 from research_team.infrastructure.agent.socratic_agent import DeepAgentSocraticExecutor
 from research_team.infrastructure.knowledge.redstring_adapter import RedstringKnowledge
 from research_team.infrastructure.persistence import (
+    EventStoreSessionRepository,
+    SessionSummaryRunner,
+    TopicRunner,
     build_ask_conversation_repository,
     build_corpus_repository,
     build_learner_progress_repository,
@@ -47,15 +85,24 @@ from research_team.infrastructure.persistence import (
 from research_team.infrastructure.persistence.event_store import (
     build_socratic_dialogue_repository,
 )
+from research_team.infrastructure.persistence.read_models import (
+    MediaProposalRunner,
+)
 
 __all__ = [
     "ContentPipeline",
+    "MediaAcquisitionWiring",
+    "SessionWiring",
+    "SupervisorWiring",
     "build_ask_service",
     "build_content_pipeline",
     "build_corpus_editor",
     "build_document_extractor",
+    "build_media_acquisition",
     "build_media_perceiver",
+    "build_session_service",
     "build_socratic_service",
+    "build_supervisor_roster",
 ]
 
 
@@ -301,4 +348,173 @@ def build_content_pipeline(
         editor=editor,
         media_perceiver=media_perceiver,
         corpus_repository=resolved_corpus_repo,
+    )
+
+
+@dataclass(frozen=True)
+class SessionWiring:
+    """Session service and turn supervisor."""
+
+    service: SessionService
+    turns: TurnSupervisor
+
+
+def build_session_service(
+    *,
+    repository: EventStoreSessionRepository,
+    executor: TurnExecutor,
+    summaries: SessionSummaryRunner,
+    system_prompt: str,
+    prompt_suffix: str = "",
+    context: ContextStrategy | None = None,
+    tracer: Tracer | None = None,
+    attachment: KnowledgeAttachment,
+    graphs: ProjectGraphs | None = None,
+    activity: TurnActivityBuffer | None = None,
+    progress: AggregateRepository[LearnerProgress] | None = None,
+) -> SessionWiring:
+    """Construct SessionService and TurnSupervisor with full tool prompt support."""
+    resolved_progress = (
+        progress
+        if progress is not None
+        else build_learner_progress_repository(
+            repository.store,
+            repository.publisher,
+            snapshot_store=repository.snapshot_store,
+        )
+    )
+    service = SessionService(
+        repository,
+        executor,
+        summaries,
+        repository.projects,
+        default_system_prompt=system_prompt + prompt_suffix,
+        context=context,
+        tracer=tracer,
+        knowledge_prompt=(
+            KNOWLEDGE_PROMPT + CORPUS_PROMPT + FETCH_CORPUS_PROMPT + TOPICS_PROMPT
+        ),
+        attachment=attachment,
+        progress=resolved_progress,
+        graphs=graphs,
+    )
+    turns = TurnSupervisor(service, activity=activity)
+    return SessionWiring(service=service, turns=turns)
+
+
+@dataclass(frozen=True)
+class MediaAcquisitionWiring:
+    """Worker, reconciler, and HTTP client for media acquisition."""
+
+    worker: MediaAcceptWorker
+    reconciler: MediaAcceptReconciler
+    client: httpx.AsyncClient
+
+
+def build_media_acquisition(
+    *,
+    media_proposals: MediaProposalRunner,
+    media_proposal_repository: AggregateRepository[MediaProposals],
+    editor: CorpusEditor,
+    media_perceiver: MediaPerceiver,
+    media_http_client: httpx.AsyncClient | None = None,
+) -> MediaAcquisitionWiring:
+    """Construct media download worker, accept reconciler, and HTTP client."""
+    client = (
+        media_http_client
+        if media_http_client is not None
+        else httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+    )
+    worker = MediaAcceptWorker(
+        reads=media_proposals,
+        proposals=media_proposal_repository,
+        editor=editor,
+        perceiver=media_perceiver,
+        client=client,
+    )
+    reconciler = MediaAcceptReconciler(
+        reads=media_proposals,
+        worker=worker,
+    )
+    return MediaAcquisitionWiring(worker=worker, reconciler=reconciler, client=client)
+
+
+@dataclass(frozen=True)
+class SupervisorWiring:
+    """Supervisors, dispatchers, and worker roster for autonomous execution."""
+
+    research: ResearchSupervisor
+    topic_seeder: TopicSeeder
+    course_author: CourseAuthor
+    dispatcher: TopicDispatcher
+    workers: WorkerRoster
+
+
+def build_supervisor_roster(
+    *,
+    service: SessionService,
+    turns: TurnSupervisor,
+    runs: AggregateRepository[ResearchRun],
+    topics: TopicRunner,
+    topic_repository: AggregateRepository[Topic],
+    topic_reader: Callable[[UUID], TopicReadPort],
+    policy: AutonomyPolicy,
+    grants: GrantRegistry,
+    summaries: SessionSummaryRunner,
+    extractions: ExtractionChannel | None = None,
+    dispatches: DispatchesInFlight | None = None,
+    worker_roster_cls: type[WorkerRoster] | Callable[..., WorkerRoster] = WorkerRoster,
+) -> SupervisorWiring:
+    """Construct autonomous run driver, supervisors, dispatchers, and worker roster."""
+
+    async def start_run(
+        run_id: UUID,
+        run_project_id: UUID,
+        session_id: UUID,
+        budget: Budget | None,
+        fetch_hosts: list[str],
+        fetch_budget: int,
+        cancelled,
+    ):
+        """One autonomous run: a driver, bound to one session's turns."""
+        return await ResearchRunDriver(
+            runs,
+            topic_repository,
+            topics.queue,
+            run_round=TopicRoundRunner(
+                topic_repository,
+                lambda prompt: turns.run(session_id, prompt),
+            ),
+            settle=topics.caught_up,
+            grants=grants,
+        ).run(
+            run_project_id,
+            session_id,
+            budget=budget,
+            fetch_hosts=fetch_hosts,
+            fetch_budget=fetch_budget,
+            run_id=run_id,
+            cancelled=cancelled,
+            autonomy_snapshot=policy.levels(),
+            read_only=policy.level_for(FETCH_TOOL) != "auto",
+        )
+
+    research_supervisor = ResearchSupervisor(start_run, runs)
+    topic_seeder = TopicSeeder(service, turns)
+    course_author = CourseAuthor(service, turns)
+    dispatcher = TopicDispatcher(service, turns, topic_reader)
+    worker_roster = worker_roster_cls(
+        service,
+        turns=turns,
+        runs=research_supervisor,
+        extractions=extractions,
+        dispatches=dispatches,
+        summaries=SummaryProjects(summaries),
+    )
+    return SupervisorWiring(
+        research=research_supervisor,
+        topic_seeder=topic_seeder,
+        course_author=course_author,
+        dispatcher=dispatcher,
+        workers=worker_roster,
     )

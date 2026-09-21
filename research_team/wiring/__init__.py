@@ -38,12 +38,18 @@ from research_team.wiring.runners import (
 )
 from research_team.wiring.service_wiring import (
     ContentPipeline,
+    MediaAcquisitionWiring,
+    SessionWiring,
+    SupervisorWiring,
     build_ask_service,
     build_content_pipeline,
     build_corpus_editor,
     build_document_extractor,
+    build_media_acquisition,
     build_media_perceiver,
+    build_session_service,
     build_socratic_service,
+    build_supervisor_roster,
 )
 
 __all__ = [
@@ -53,6 +59,9 @@ __all__ = [
     "CatalogServices",
     "ContentPipeline",
     "LazyAsyncResource",
+    "MediaAcquisitionWiring",
+    "SessionWiring",
+    "SupervisorWiring",
     "_CatalogFeatureRunner",
     "_CourseRunner",
     "_LazyArtStore",
@@ -74,8 +83,11 @@ __all__ = [
     "build_corpus_editor",
     "build_curation_tools",
     "build_document_extractor",
+    "build_media_acquisition",
     "build_media_perceiver",
+    "build_session_service",
     "build_socratic_service",
     "build_stores",
+    "build_supervisor_roster",
     "build_tools",
 ]
