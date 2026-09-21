@@ -315,3 +315,17 @@ def test_bounded_contexts_do_not_import_other_bounded_context_outer_layers(
                         "Cross-context interactions must go through "
                         "application or domain contracts."
                     )
+
+
+def test_knowledge_bc_does_not_depend_on_research_bc() -> None:
+    """Knowledge bounded context must not depend on Research bounded context."""
+    knowledge_dir = PACKAGE / "knowledge"
+    knowledge_modules = sorted(p for p in knowledge_dir.rglob("*.py") if p.is_file())
+    assert knowledge_modules, "Expected knowledge modules to exist"
+    for module in knowledge_modules:
+        for imported in _imported_paths(module):
+            if imported.startswith("research_team.research"):
+                pytest.fail(
+                    f"{module.relative_to(PACKAGE)} imports from research bounded context: "
+                    f"{imported}. Knowledge must not depend on Research."
+                )

@@ -58,7 +58,7 @@ from research_team.knowledge.domain.ontology import (
     EvidenceSpan,
     RejectedMember,
 )
-from research_team.research.application.corpus_read import CorpusReadPort
+from research_team.platform.shared.ports import CorpusReadPort
 
 DiscoveryStage = Literal[
     "reading",

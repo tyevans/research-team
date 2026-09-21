@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     # Imported for typing only: `summaries` imports nothing from here, and
     # keeping it that way is what stops the ports module from depending on a
     # use case that depends on it.
+    from research_team.research.application.corpus_read import (
+        CorpusReadPort as CorpusReadPort,
+    )
     from research_team.session.application.summaries import SessionSummary
 
 # ActivityReporter is defined below after ActivityNote
@@ -416,3 +419,12 @@ class TurnExecutor(Protocol):
         disagree with what the caller counted as sent.
         """
         ...
+
+
+def __getattr__(name: str) -> Any:
+    if name == "CorpusReadPort":
+        from research_team.research.application.corpus_read import CorpusReadPort
+
+        globals()["CorpusReadPort"] = CorpusReadPort
+        return CorpusReadPort
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

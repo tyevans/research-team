@@ -51,7 +51,7 @@ from research_team.knowledge.application.graph_read import (
 )
 from research_team.knowledge.application.usages import Usage, UsageReadPort
 from research_team.platform.shared.locators import resolve
-from research_team.research.application.corpus_read import CorpusReadPort
+from research_team.platform.shared.ports import CorpusReadPort
 
 #: How many passages are put in front of the model. Small on purpose: these
 #: are the top-ranked usages, and a definition assembled from thirty passages
