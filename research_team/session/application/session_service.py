@@ -9,11 +9,8 @@ session": that is a property of whoever is driving -- one terminal has exactly
 one, and a web server has one per request -- so it belongs to the caller.
 """
 
-import asyncio
-import difflib
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -35,7 +32,6 @@ from research_team.knowledge.application.knowledge_attachment import (
 )
 from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.platform.shared.context import ContextStrategy, FullHistory
-from research_team.platform.shared.retry import with_retry
 from research_team.session.application.ports import (
     ActivityRemark,
     ActivityReporter,
@@ -45,6 +41,12 @@ from research_team.session.application.ports import (
     TurnAccountingError,
     TurnExecutor,
 )
+from research_team.session.application.session_inspection import (
+    SessionStats,
+    compute_session_stats,
+    diff_file_maps,
+    filter_session_messages,
+)
 from research_team.session.application.summaries import SessionSummary
 from research_team.session.application.turn_runner import (
     _FILE_EVENT_TYPES,
@@ -52,15 +54,16 @@ from research_team.session.application.turn_runner import (
     FILE_EVENT_TYPES,
     INHERITED_EVENT_FIELDS,
     TurnOutcome,
-    _TurnConflict,
+    append_turn_failure,
     project_context,
+    record_turn_failure,
+    refuse_unrebasable,
+    save_turn_with_retry,
 )
 from research_team.session.domain import (
-    AutonomyChanged,
     ChangeAutonomy,
     CompactConversation,
     CompleteTurn,
-    FailTurn,
     RecordAssistantMessage,
     RecordForkSource,
     RecordToolResult,
@@ -152,24 +155,6 @@ Says what is missing rather than "there is no network", which stopped being
 true when `fetch` became unconditional. The distinction matters to the model:
 without search it cannot *find* a page, but it can still read one a person
 pastes into the conversation, and a model told it is offline will not try."""
-
-
-@dataclass(frozen=True)
-class SessionStats:
-    """High-level derived state and metrics for one session."""
-
-    session_id: UUID
-    project_id: UUID | None
-    status: str
-    purpose: SessionPurpose
-    turn_index: int
-    failed_turns: int
-    total_messages: int
-    compacted_through: int
-    file_count: int
-    file_paths: tuple[str, ...]
-    forked_from: UUID | None
-    forked_at: int | None
 
 
 class SessionService:
@@ -461,21 +446,7 @@ class SessionService:
     async def session_stats(self, session_id: UUID) -> SessionStats:
         """High-level summary metrics for a session."""
         session = await self.load(session_id)
-        state = session.state
-        return SessionStats(
-            session_id=session_id,
-            project_id=state.project_id,
-            status=state.status,
-            purpose=state.purpose,
-            turn_index=state.turn_index,
-            failed_turns=state.failed_turns,
-            total_messages=len(state.messages),
-            compacted_through=state.compacted_through,
-            file_count=len(state.files),
-            file_paths=tuple(sorted(state.files.keys())),
-            forked_from=state.forked_from,
-            forked_at=state.forked_at,
-        )
+        return compute_session_stats(session, session_id)
 
     async def find_messages(
         self,
@@ -487,19 +458,7 @@ class SessionService:
     ) -> list[dict[str, Any]]:
         """Search and filter messages recorded in a session."""
         session = await self.load(session_id)
-        messages = session.state.messages
-        results: list[dict[str, Any]] = []
-        for msg in messages:
-            if role is not None and msg.get("type") != role:
-                continue
-            if query is not None:
-                text = str(msg.get("data", {}).get("content", "")).lower()
-                if query.lower() not in text:
-                    continue
-            results.append(msg)
-            if limit is not None and len(results) >= limit:
-                break
-        return results
+        return filter_session_messages(session, role=role, query=query, limit=limit)
 
     async def diff_session_files(
         self, session_id: UUID, other_session_id: UUID
@@ -511,44 +470,7 @@ class SessionService:
         """
         s1 = await self.load(session_id)
         s2 = await self.load(other_session_id)
-        files1 = s1.state.files
-        files2 = s2.state.files
-        keys1 = set(files1.keys())
-        keys2 = set(files2.keys())
-
-        added = sorted(keys2 - keys1)
-        removed = sorted(keys1 - keys2)
-        common = sorted(keys1 & keys2)
-
-        modified: dict[str, dict[str, Any]] = {}
-        unchanged: list[str] = []
-
-        for path in common:
-            c1 = str(files1[path].get("content", ""))
-            c2 = str(files2[path].get("content", ""))
-            if c1 == c2:
-                unchanged.append(path)
-            else:
-                lines1 = c1.splitlines(keepends=True)
-                lines2 = c2.splitlines(keepends=True)
-                diff = list(difflib.unified_diff(lines1, lines2))
-                add_count = sum(
-                    1 for line in diff if line.startswith("+") and not line.startswith("+++")
-                )
-                del_count = sum(
-                    1 for line in diff if line.startswith("-") and not line.startswith("---")
-                )
-                modified[path] = {
-                    "added_lines": add_count,
-                    "removed_lines": del_count,
-                }
-
-        return {
-            "added": added,
-            "removed": removed,
-            "modified": modified,
-            "unchanged": unchanged,
-        }
+        return diff_file_maps(s1.state.files, s2.state.files)
 
     # ---------------- lifecycle ----------------
 
@@ -904,123 +826,18 @@ class SessionService:
         )
 
     async def _save_turn(self, session_id: UUID, aggregate: Session) -> Session:
-        """Append the turn's events, re-appending them if the save loses.
-
-        A turn holds a version for as long as the model runs, which can be
-        minutes, so anything else appending to the session -- an autonomy
-        switch flipped from the UI is the one that did it in production --
-        makes the save fail and throws the whole turn away. That is the worst
-        possible thing to discard: it has already been paid for.
-
-        **Only the append repeats.** `with_retry`'s contract is that `attempt`
-        reloads and re-*decides*, which is right for a short write and wrong
-        here: re-deciding means re-running the model, so a retry would bill a
-        second turn and could repeat every tool call the first one made --
-        writing a file twice to avoid a lock error is not a trade worth making.
-        So the retry re-applies the events the turn already produced onto a
-        freshly loaded aggregate instead. `with_retry` is still what counts and
-        bounds the attempts; the deviation is in what `attempt` does, and it is
-        safe for the same reason a rebase is: none of the turn's events decide
-        anything against the state the interloper changed. `AutonomyChanged`
-        moves a policy the *executor* consulted while the turn ran, and the
-        turn's own events are records of what already happened.
-
-        The bound is `with_retry`'s. What it costs is that a session under
-        genuinely continuous write pressure loses the turn with the lock error
-        it would have raised anyway -- but that is a stream nobody could take a
-        turn on, and an unbounded retry there is a hang instead of an error.
-        """
-        events = list(aggregate.uncommitted_events)
-        base_version = aggregate.version - len(events)
-        pending: Session | None = aggregate
-        lost: OptimisticLockError | None = None
-
-        async def attempt() -> Session:
-            # The first attempt saves the aggregate the turn ran on; every
-            # later one rebuilds it, because an aggregate that lost a save
-            # still holds the version it lost at and would lose again.
-            nonlocal pending, lost
-            target = pending
-            pending = None
-            if target is None:
-                await self._refuse_unrebasable(session_id, base_version, lost)
-                target = await self._repository.load(session_id)
-                for event in events:
-                    target.apply_event(
-                        event.model_copy(
-                            update={"aggregate_version": target.get_next_version()}
-                        ),
-                        is_new=True,
-                    )
-            try:
-                await self._repository.save(target)
-            except OptimisticLockError as error:
-                lost = error
-                raise
-            return target
-
-        try:
-            return await with_retry(attempt, what=f"the turn on session {session_id}")
-        except _TurnConflict as conflict:
-            # The lock error itself, unwrapped: a caller mapping it to a 409
-            # should not have to learn that something tried to rebase first.
-            raise conflict.cause from None
+        return await save_turn_with_retry(self._repository, session_id, aggregate)
 
     async def _refuse_unrebasable(
         self, session_id: UUID, base_version: int, lost: OptimisticLockError | None
     ) -> None:
-        """Give up rather than rebase over a write the turn contradicts.
-
-        The danger in retrying a turn is that a lock error means two different
-        things. An autonomy switch flipped mid-turn is bookkeeping that
-        happened *beside* the turn, and re-appending over it loses nothing. A
-        second turn on the same session is the opposite: both turns read the
-        same conversation and answered it independently, so appending both
-        interleaves two replies to one message -- the all-or-nothing breakage
-        the compare-and-swap exists to prevent, laundered into a success.
-        `test_two_turns_at_once_on_one_session_conflict_rather_than_interleave`
-        is what fails if this check goes.
-
-        So the allowance is a named list of one, rather than "anything that is
-        not a turn". The cost is that a new benign concurrent writer will make
-        turns fail until someone adds it here -- which is the direction to be
-        wrong in: a spurious 409 is visible and recoverable, a silently
-        interleaved conversation is neither.
-        """
-        landed = (await self.history(session_id))[base_version:]
-        if all(isinstance(event, AutonomyChanged) for event in landed):
-            return
-        assert lost is not None, "only reached after a save has lost its version"
-        raise _TurnConflict(lost)
+        return await refuse_unrebasable(self._repository, session_id, base_version, lost)
 
     async def _record_failure(self, session_id: UUID, error: BaseException) -> None:
-        """Append a TurnFailed marker. Never masks the original error.
-
-        Shielded, because the most common reason to be here is cancellation --
-        and a cancelled coroutine's next await would be cancelled too, which
-        would lose the very marker that records the attempt.
-        """
-        writing = asyncio.ensure_future(self._append_failure(session_id, error))
-        try:
-            await asyncio.shield(writing)
-        except asyncio.CancelledError:
-            # We are being cancelled; the write is not. Wait for it anyway, so
-            # the marker is on disk before the cancellation carries on -- a
-            # fire-and-forget write can be lost if the process is shutting down.
-            await writing
-            raise
+        await record_turn_failure(self._repository, session_id, error)
 
     async def _append_failure(self, session_id: UUID, error: BaseException) -> None:
-        try:
-            clean = await self._repository.load(session_id)
-            # Whether this was a deliberate stop is an asyncio fact, which the
-            # aggregate has no business knowing -- so it is decided here.
-            clean.execute(
-                FailTurn.from_error(error, cancelled=isinstance(error, asyncio.CancelledError))
-            )
-            await self._repository.save(clean)
-        except Exception:
-            logger.exception("could not record TurnFailed for %s", session_id)
+        await append_turn_failure(self._repository, session_id, error)
 
     # ---------------- time travel ----------------
 
