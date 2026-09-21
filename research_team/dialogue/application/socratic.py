@@ -56,6 +56,7 @@ from research_team.dialogue.domain.socratic import (
     StartSocraticDialogue,
 )
 from research_team.platform.shared.ports import ActivityNote, ActivityReporter
+from research_team.platform.shared.registry_cache import ExpiringLruCache
 
 Role = Literal["user", "assistant"]
 
@@ -208,93 +209,51 @@ class DialogueRegistry:
         self._now = now
         self._limit = limit
         self._idle_seconds = idle_seconds
-        self._held: OrderedDict[UUID, LiveDialogue] = OrderedDict()
+        self._cache: ExpiringLruCache[UUID, LiveDialogue] = ExpiringLruCache(
+            now=now,
+            limit=limit,
+            idle_seconds=idle_seconds,
+            get_used_at=lambda d: d.used_at,
+            get_project_id=lambda d: d.project_id,
+        )
+        self._held: OrderedDict[UUID, LiveDialogue] = self._cache._held
 
     def __len__(self) -> int:
-        return len(self._held)
+        return len(self._cache)
 
     def __bool__(self) -> bool:
         """Always true. A registry exists or it does not; it is never absent
         for being empty.
-
-        Without this, `__len__` makes a fresh registry falsy, and every
-        `registry or DialogueRegistry(...)` default -- the obvious way to write
-        an optional collaborator -- silently substitutes a private one. That is
-        not hypothetical: it is what the first draft of
-        `test_socratic_resumption.py`'s `build` did, and it made the eviction
-        test pass against a `get` copy-pasted from `ConversationRegistry`.
-        `ConversationRegistry` carries the same hazard and has not been
-        changed; this is the surface where a swapped-out registry is a
-        correctness bug rather than a lost chat.
         """
         return True
 
     def __contains__(self, dialogue_id: UUID) -> bool:
-        return dialogue_id in self._held
+        return dialogue_id in self._cache
 
     def contains(self, dialogue_id: UUID, project_id: UUID | None = None) -> bool:
         """Check whether a dialogue is currently active in memory and unexpired."""
-        held = self._held.get(dialogue_id)
-        if held is None:
-            return False
-        if project_id is not None and held.project_id != project_id:
-            return False
-        return (self._now() - held.used_at) <= self._idle_seconds
+        return self._cache.contains(dialogue_id, project_id)
 
     def get(self, dialogue_id: UUID, project_id: UUID) -> LiveDialogue | None:
-        now = self._now()
-        held = self._held.get(dialogue_id)
-        # A mismatched project is a miss rather than a hit on someone else's
-        # dialogue. Unlike the ask's, this is not the only line of defence --
-        # `_resume` checks the stored row's `project_id` too -- but a cached
-        # entry never reaches that check, so dropping this clause would let a
-        # cross-project turn through for exactly as long as the cache holds.
-        if (
-            held is None
-            or held.project_id != project_id
-            or now - held.used_at > self._idle_seconds
-        ):
-            self._held.pop(dialogue_id, None)
-            return None
-        self._held.move_to_end(dialogue_id)
-        return held
+        return self._cache.get(dialogue_id, project_id)
 
     def put(self, dialogue: LiveDialogue) -> None:
-        self._held[dialogue.dialogue_id] = dialogue
-        self._held.move_to_end(dialogue.dialogue_id)
-        # Least-recently-used, for `ConversationRegistry`'s reason: a bound
-        # that trimmed the newest would evict the dialogue someone is in.
-        while len(self._held) > self._limit:
-            self._held.popitem(last=False)
+        self._cache.put(dialogue.dialogue_id, dialogue)
 
     def drop(self, dialogue_id: UUID) -> None:
-        self._held.pop(dialogue_id, None)
+        self._cache.drop(dialogue_id)
 
     def clear(self) -> None:
         """Evict all cached dialogues."""
-        self._held.clear()
+        self._cache.clear()
 
     def evict_idle(self, now: float | None = None) -> int:
         """Explicitly prune all dialogues that exceeded idle_seconds."""
-        current_time = self._now() if now is None else now
-        expired = [
-            d_id
-            for d_id, d in self._held.items()
-            if current_time - d.used_at > self._idle_seconds
-        ]
-        for d_id in expired:
-            self._held.pop(d_id, None)
-        return len(expired)
+        return self._cache.evict_idle(now)
 
     def active_ids(self, project_id: UUID | None = None) -> list[UUID]:
         """List active, non-expired dialogue IDs currently held in cache."""
-        now = self._now()
-        return [
-            d_id
-            for d_id, d in self._held.items()
-            if (project_id is None or d.project_id == project_id)
-            and (now - d.used_at <= self._idle_seconds)
-        ]
+        return self._cache.active_keys(project_id)
 
 
 class SocraticExecutor(Protocol):

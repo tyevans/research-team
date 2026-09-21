@@ -35,6 +35,16 @@ from research_team.dialogue.application.ask_components import (
 from research_team.dialogue.application.ask_components import (
     validate_components as validate_ask_components,
 )
+from research_team.dialogue.application.component_projections import (
+    extract_component_ids_from_doc,
+    extract_component_types_from_doc,
+    extract_components_from_doc,
+    extract_prose_from_doc,
+    has_components_in_doc,
+    has_gradeable_components_in_doc,
+    parse_and_project,
+    validate_components_in_doc,
+)
 from research_team.dialogue.application.socratic import (
     DialogueConcluded,
     DialogueInFlight,
@@ -111,15 +121,23 @@ __all__ = [
     "extract_ask_components",
     "extract_ask_prose",
     "extract_component_ids",
+    "extract_component_ids_from_doc",
     "extract_component_types",
+    "extract_component_types_from_doc",
+    "extract_components_from_doc",
+    "extract_prose_from_doc",
     "extract_socratic_component_ids",
     "extract_socratic_component_types",
     "extract_socratic_components",
     "extract_socratic_prose",
     "has_ask_components",
     "has_ask_gradeable_components",
+    "has_components_in_doc",
+    "has_gradeable_components_in_doc",
     "has_socratic_components",
     "has_socratic_gradeable_components",
+    "parse_and_project",
     "validate_ask_components",
+    "validate_components_in_doc",
     "validate_socratic_components",
 ]

@@ -14,7 +14,17 @@ length and the argument only gets stronger here.
 
 from typing import Any
 
-from research_team.platform.components import View, parse_document, project
+from research_team.dialogue.application.component_projections import (
+    extract_component_ids_from_doc,
+    extract_component_types_from_doc,
+    extract_components_from_doc,
+    extract_prose_from_doc,
+    has_components_in_doc,
+    has_gradeable_components_in_doc,
+    parse_and_project,
+    validate_components_in_doc,
+)
+from research_team.platform.components import View
 
 SOCRATIC_COMPONENT_TYPES: tuple[str, ...] = ("mcq", "cloze")
 """What a socratic dialogue may author.
@@ -61,61 +71,47 @@ def dialogue_document(text: str, view: View = "learner") -> dict[str, Any]:
 
     `path=""` because a dialogue has no file -- `Document.path` is a label used
     in error messages and derived ids, so an empty one is stable and honest
-    rather than a fabricated filename a reader could try to open. Identical to
-    `answer_document` in body, and deliberately not shared with it: the two
-    surfaces will not keep the same default forever, and a shared helper is
-    where that divergence becomes a change to both.
+    rather than a fabricated filename a reader could try to open.
     """
-    return project(parse_document(text, path=""), view=view)
+    return parse_and_project(text, view=view)
 
 
 def extract_components(text: str, view: View = "learner") -> list[dict[str, Any]]:
     """Extract all parsed and projected component blocks from a dialogue prompt."""
-    doc = dialogue_document(text, view=view)
-    return [b for b in doc["blocks"] if b.get("kind") == "component"]
+    return extract_components_from_doc(dialogue_document(text, view=view))
 
 
 def extract_prose(text: str) -> str:
     """Extract markdown text without component blocks."""
-    doc = dialogue_document(text)
-    paragraphs = [
-        b["text"] for b in doc["blocks"] if b.get("kind") == "markdown" and b.get("text")
-    ]
-    return "\n\n".join(paragraphs)
+    return extract_prose_from_doc(dialogue_document(text))
 
 
 def has_components(text: str) -> bool:
     """Check if the prompt contains any components."""
-    doc = dialogue_document(text)
-    return any(b.get("kind") == "component" for b in doc["blocks"])
+    return has_components_in_doc(dialogue_document(text))
 
 
 def has_gradeable_components(text: str) -> bool:
     """Check if the prompt contains any gradeable components."""
-    components = extract_components(text)
-    return any(c.get("gradeable", False) for c in components)
+    return has_gradeable_components_in_doc(dialogue_document(text))
 
 
 def extract_component_ids(text: str) -> list[str]:
     """Return all component IDs present in the prompt."""
-    return [c["id"] for c in extract_components(text) if "id" in c]
+    return extract_component_ids_from_doc(dialogue_document(text))
 
 
 def extract_component_types(text: str) -> list[str]:
     """Return all component types present in the prompt."""
-    return [c["type"] for c in extract_components(text) if "type" in c]
+    return extract_component_types_from_doc(dialogue_document(text))
 
 
 def validate_components(
     text: str, allowed_types: tuple[str, ...] = SOCRATIC_COMPONENT_TYPES
 ) -> list[str]:
     """Return a list of errors if any component has errors or is not an allowed type."""
-    errors: list[str] = []
-    components = extract_components(text)
-    for c in components:
-        comp_type = c.get("type", "")
-        if comp_type not in allowed_types:
-            errors.append(f"component type '{comp_type}' is not allowed in Socratic dialogue")
-        for err in c.get("errors", []):
-            errors.append(f"component {c.get('id', '')}: {err.get('message', 'error')}")
-    return errors
+    return validate_components_in_doc(
+        dialogue_document(text),
+        allowed_types=allowed_types,
+        context_name="Socratic dialogue",
+    )
