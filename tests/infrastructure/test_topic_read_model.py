@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.topic_attention import attention_for
+from research_team.application.research.topic_attention import attention_for
 from research_team.domain.research.corpus import DropSourceDocument, StoreSourceDocument
 from research_team.domain.research.topic import (
     AddSubQuestion,

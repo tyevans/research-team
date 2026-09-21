@@ -13,12 +13,12 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from research_team.application import TurnSupervisor
-from research_team.application.topic_seeding import (
+from research_team.application.research.topic_seeding import (
     SEEDING_PROMPT,
     TopicSeeder,
     seeding_prompt,
 )
-from research_team.application.topics import SELF_CONTAINED_QUESTION
+from research_team.application.research.topics import SELF_CONTAINED_QUESTION
 from research_team.domain import CreateProject
 
 

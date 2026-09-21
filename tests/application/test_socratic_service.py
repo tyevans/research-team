@@ -18,7 +18,7 @@ from eventsource import StreamId, collect
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.socratic import (
+from research_team.application.dialogue.socratic import (
     DialogueConcluded,
     DialogueInFlight,
     DialogueRegistry,

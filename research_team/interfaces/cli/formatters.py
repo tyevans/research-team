@@ -11,7 +11,7 @@ from research_team.application import (
     SummaryHealth,
     TurnOutcome,
 )
-from research_team.application.ports import ActivityDelta, ActivityNote, ActivityRemark
+from research_team.application.shared.ports import ActivityDelta, ActivityNote, ActivityRemark
 from research_team.domain import (
     ConversationCompacted,
     FileDeleted,

@@ -1,4 +1,7 @@
-from research_team.application.ask_components import ASK_COMPONENT_TYPES, answer_document
+from research_team.application.dialogue.ask_components import (
+    ASK_COMPONENT_TYPES,
+    answer_document,
+)
 
 
 def test_an_answer_with_no_components_is_one_markdown_block():

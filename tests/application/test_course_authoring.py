@@ -14,12 +14,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.authoring_checkpoints import (
+from research_team.application.curriculum.authoring_checkpoints import (
     PERFORMANCE_TASK_MARKER,
     CheckpointFailed,
     lesson_paths,
 )
-from research_team.application.course_authoring import (
+from research_team.application.curriculum.course_authoring import (
     AREAS_DIR,
     COMPONENT_GUIDE,
     PROMPT_ANCHORS,

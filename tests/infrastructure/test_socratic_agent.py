@@ -18,12 +18,12 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 
-from research_team.application.socratic import (
+from research_team.application.dialogue.socratic import (
     DialogueMessage,
     SocraticFraming,
     SocraticPrompt,
 )
-from research_team.application.socratic_components import SOCRATIC_COMPONENT_TYPES
+from research_team.application.dialogue.socratic_components import SOCRATIC_COMPONENT_TYPES
 from research_team.infrastructure.agent import socratic_agent
 from research_team.infrastructure.agent.ask_agent import READ_ONLY_FILE_TOOLS
 from research_team.infrastructure.agent.socratic_agent import (

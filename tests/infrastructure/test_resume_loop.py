@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from langchain_core.messages import AIMessage
 
 from research_team.application import ApprovalDecision, AutonomyPolicy
-from research_team.application.ports import ActivityMessage
+from research_team.application.shared.ports import ActivityMessage
 from research_team.domain import Session, SessionPurpose, StartSession, ToolCallDecided
 from research_team.infrastructure.agent.deep_agent import DeepAgentTurnExecutor
 from research_team.infrastructure.agent.search import build_search_tool

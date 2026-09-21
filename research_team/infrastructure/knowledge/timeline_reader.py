@@ -22,7 +22,7 @@ from uuid import UUID
 from eventsource.domain.tenant_context import tenant_scope
 from redstring import Bounds, TemporalQuery
 
-from research_team.application.timeline_read import (
+from research_team.application.knowledge.timeline_read import (
     MAX_TIMELINE_BANDS,
     Timeline,
     TimelineBand,

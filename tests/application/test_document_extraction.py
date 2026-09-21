@@ -14,9 +14,16 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.corpus_read import SourceListing, StoredDocument
-from research_team.application.document_extraction import DocumentExtractor, UnknownDocument
-from research_team.application.knowledge import ExtractionNote, IngestReport, SourceRef
+from research_team.application.knowledge import (
+    ExtractionNote,
+    IngestReport,
+    SourceRef,
+)
+from research_team.application.research.corpus_read import SourceListing, StoredDocument
+from research_team.application.research.document_extraction import (
+    DocumentExtractor,
+    UnknownDocument,
+)
 from research_team.domain import TextRecord
 from research_team.domain.research.corpus import MediaRecord
 

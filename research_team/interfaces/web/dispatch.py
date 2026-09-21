@@ -46,8 +46,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from research_team.application.topic_dispatch import DispatchRun
-from research_team.application.workers import DispatchSnapshot
+from research_team.application.research.topic_dispatch import DispatchRun
+from research_team.application.session.workers import DispatchSnapshot
 
 DISPATCH = "Dispatch"
 """The frame type on the live feed, PascalCase like `Seeding` beside it.

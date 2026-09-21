@@ -25,13 +25,16 @@ from research_team.application import (
     AutonomyPolicy,
     TurnResult,
 )
-from research_team.application.effective import ExtractionSettings, ResearchSettings
-from research_team.application.grants import GrantRegistry
-from research_team.application.knowledge_attachment import _compose
-from research_team.application.ports import (
+from research_team.application.knowledge.knowledge_attachment import _compose
+from research_team.application.settings.effective import (
+    ExtractionSettings,
+    ResearchSettings,
+)
+from research_team.application.shared.ports import (
     ActivityDelta,
     ActivityMessage,
 )
+from research_team.application.tenancy.grants import GrantRegistry
 from research_team.domain import RecordToolDecision, Session
 from research_team.infrastructure import config
 from research_team.infrastructure.agent.approval import interrupt_config

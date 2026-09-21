@@ -24,7 +24,7 @@ import pytest
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.corpus_editing import CorpusEditor
+from research_team.application.research.corpus_editing import CorpusEditor
 from research_team.domain.research.corpus import Corpus, MediaRecord
 from research_team.infrastructure.agent.fetch_media import build_fetch_media_tool
 from research_team.infrastructure.persistence.blob_store import FilesystemBlobStore

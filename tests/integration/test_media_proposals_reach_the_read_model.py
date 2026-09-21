@@ -37,13 +37,17 @@ from uuid import uuid4
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
-from research_team.application.media_curation import (
+from research_team.application.research.media_curation import (
     MediaCurationService,
     SearchResult,
 )
-from research_team.application.topic_attention import TopicAttention
-from research_team.application.topic_read import SubQuestionView, TopicDetail, TopicView
-from research_team.application.topics import TopicSummary
+from research_team.application.research.topic_attention import TopicAttention
+from research_team.application.research.topic_read import (
+    SubQuestionView,
+    TopicDetail,
+    TopicView,
+)
+from research_team.application.research.topics import TopicSummary
 from research_team.composition import build_application
 
 pytestmark = pytest.mark.asyncio

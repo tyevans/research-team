@@ -28,7 +28,7 @@ from readeverything import (
     TimeSpan,
 )
 
-from research_team.application.perception import LOCATOR_KINDS
+from research_team.application.research.perception import LOCATOR_KINDS
 from research_team.infrastructure.perception import (
     ReadEverythingPerception,
     build_perception_adapter,

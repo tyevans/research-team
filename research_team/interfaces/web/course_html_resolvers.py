@@ -16,9 +16,9 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from research_team.application.components import ComponentBlock
-from research_team.application.entity_definitions import Citation
-from research_team.application.graph_export import ExportGraph
-from research_team.application.timeline_read import TimelineBand, TimelineInterval
+from research_team.application.knowledge.entity_definitions import Citation
+from research_team.application.knowledge.graph_export import ExportGraph
+from research_team.application.knowledge.timeline_read import TimelineBand, TimelineInterval
 from research_team.interfaces.web.course_html_figures import (
     MAX_FIGURE_BANDS,
     figure_graph,

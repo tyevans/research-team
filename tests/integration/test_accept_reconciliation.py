@@ -36,7 +36,7 @@ import httpx
 import pytest
 
 from research_team import composition
-from research_team.application.perception import (
+from research_team.application.research.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,

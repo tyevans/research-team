@@ -19,14 +19,22 @@ from eventsource import CommandRejectedError
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.corpus_editing import (
+from research_team.application.knowledge import (
+    MAX_DOCUMENT_CHARS,
+    KnowledgeError,
+    SourceRef,
+)
+from research_team.application.research.corpus_editing import (
     CorpusEditor,
     DocumentExists,
     NotDropped,
 )
-from research_team.application.corpus_read import MediaHandle, SourceListing, StoredDocument
-from research_team.application.document_extraction import UnknownDocument
-from research_team.application.knowledge import MAX_DOCUMENT_CHARS, KnowledgeError, SourceRef
+from research_team.application.research.corpus_read import (
+    MediaHandle,
+    SourceListing,
+    StoredDocument,
+)
+from research_team.application.research.document_extraction import UnknownDocument
 from research_team.domain.research.corpus import (
     Corpus,
     MediaRecord,

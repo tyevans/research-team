@@ -11,12 +11,12 @@ rather than either producer.
 import json
 from uuid import uuid4
 
-from research_team.application.corpus_read import StoredDocument
-from research_team.application.entity_definitions import (
+from research_team.application.knowledge.entity_definitions import (
     Citation,
     ServedCitation,
     serve_citations,
 )
+from research_team.application.research.corpus_read import StoredDocument
 from research_team.domain.research.corpus import TextRecord
 
 

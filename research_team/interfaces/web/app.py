@@ -31,39 +31,41 @@ from research_team.application import (
     TurnSupervisor,
     WorkerRoster,
 )
-from research_team.application.area_projection import GraphTooLarge
-from research_team.application.ask import AskService
-from research_team.application.blobs import BlobStorePort
-from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.course_authoring import CourseAuthor
-from research_team.application.course_catalog import (
+from research_team.application.curriculum import CurriculumService
+from research_team.application.curriculum.area_projection import GraphTooLarge
+from research_team.application.curriculum.course_authoring import CourseAuthor
+from research_team.application.curriculum.course_catalog import (
     ArtGeneratorPort,
     BlurbTextPort,
     CatalogService,
     OutlineTextPort,
 )
-from research_team.application.course_realization import CourseService
-from research_team.application.curriculum import CurriculumService
-from research_team.application.document_extraction import DocumentExtractor
-from research_team.application.graph_read import GraphReadPort
-from research_team.application.media_acquisition import MAX_UPLOAD_BYTES as MAX_UPLOAD_BYTES
-from research_team.application.media_acquisition import MediaAcceptWorker
-from research_team.application.media_curation import (
+from research_team.application.curriculum.course_realization import CourseService
+from research_team.application.dialogue.ask import AskService
+from research_team.application.dialogue.socratic import SocraticDialogueService
+from research_team.application.knowledge.graph_read import GraphReadPort
+from research_team.application.knowledge.project_graphs import ProjectGraphs
+from research_team.application.knowledge.timeline_read import TimelineReadPort
+from research_team.application.research.corpus_editing import CorpusEditor
+from research_team.application.research.document_extraction import DocumentExtractor
+from research_team.application.research.media_acquisition import (
+    MAX_UPLOAD_BYTES as MAX_UPLOAD_BYTES,
+)
+from research_team.application.research.media_acquisition import MediaAcceptWorker
+from research_team.application.research.media_curation import (
     MediaCurationTextPort,
     MediaSearchPort,
 )
-from research_team.application.perception import (
+from research_team.application.research.perception import (
     MediaPerceiver,
     PerceptionPort,
 )
-from research_team.application.project_graphs import ProjectGraphs
-from research_team.application.project_summaries import ProjectSummaries
-from research_team.application.socratic import SocraticDialogueService
-from research_team.application.timeline_read import TimelineReadPort
-from research_team.application.topic_dispatch import (
+from research_team.application.research.topic_dispatch import (
     TopicDispatcher,
 )
-from research_team.application.topic_seeding import TopicSeeder
+from research_team.application.research.topic_seeding import TopicSeeder
+from research_team.application.shared.blobs import BlobStorePort
+from research_team.application.tenancy.project_summaries import ProjectSummaries
 from research_team.domain.curriculum.course import Course
 from research_team.domain.research.media_proposals import MediaProposals
 from research_team.domain.research.topic import Topic

@@ -1,6 +1,6 @@
 """The artifact vocabulary the console renders from."""
 
-from research_team.application.tool_artifacts import (
+from research_team.application.session.tool_artifacts import (
     ARTIFACT_VERSION,
     SHAPES,
     EntityList,
@@ -67,7 +67,7 @@ def test_an_unlinked_entity_is_zero_not_absent() -> None:
 def test_the_registry_names_every_shape_class() -> None:
     """Derived by introspection rather than hand-listed, so an eighth shape
     fails here instead of rendering as a permanent fallback nobody notices."""
-    import research_team.application.tool_artifacts as module
+    import research_team.application.session.tool_artifacts as module
 
     declared = {
         value.SHAPE

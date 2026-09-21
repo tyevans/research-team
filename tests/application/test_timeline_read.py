@@ -19,7 +19,7 @@ from redstring import (
     UncertaintyMarker,
 )
 
-from research_team.application.timeline_read import TimelineInterval
+from research_team.application.knowledge.timeline_read import TimelineInterval
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
 
 TENANT_ID = uuid4()

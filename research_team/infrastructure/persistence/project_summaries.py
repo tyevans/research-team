@@ -21,7 +21,7 @@ from uuid import UUID
 
 import aiosqlite
 
-from research_team.application.project_summaries import ProjectSummary
+from research_team.application.tenancy.project_summaries import ProjectSummary
 
 # The four tables, named once. They are string literals rather than
 # `CorpusDocumentRow.table_name()` calls on purpose: importing four read-model

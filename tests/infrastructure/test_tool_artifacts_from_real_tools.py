@@ -9,7 +9,7 @@ artifact.
 
 import pytest
 
-from research_team.application.tool_artifacts import SHAPES
+from research_team.application.session.tool_artifacts import SHAPES
 
 PRODUCED_BY_TOOLS = {
     "hit_list",

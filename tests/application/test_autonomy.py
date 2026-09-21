@@ -18,7 +18,7 @@ from research_team.application import (
     UNMERGE_TOOL,
     AutonomyPolicy,
 )
-from research_team.application.autonomy import FETCH_MEDIA_TOOL, TOOL_FLOORS
+from research_team.application.session.autonomy import FETCH_MEDIA_TOOL, TOOL_FLOORS
 
 LEVELS = ("auto", "ask", "deny")
 

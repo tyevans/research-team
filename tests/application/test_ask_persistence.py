@@ -14,13 +14,13 @@ from eventsource import StreamId, collect
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.testing import InMemoryTestHarness
 
-from research_team.application.ask import (
+from research_team.application.dialogue.ask import (
     AskAnswer,
     AskService,
     Citation,
     ConversationRegistry,
 )
-from research_team.application.ports import ActivityReporter
+from research_team.application.shared.ports import ActivityReporter
 from research_team.domain.dialogue.ask import (
     AskConversation,
     AskConversationStarted,

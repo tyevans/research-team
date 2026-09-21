@@ -42,8 +42,8 @@ from httpx import ASGITransport, AsyncClient
 from langchain_openai import ChatOpenAI
 from redstring import Entity, ExtractionMethod, Provenance, Relationship
 
-from research_team.application.course_catalog import CatalogService
 from research_team.application.curriculum import CurriculumService
+from research_team.application.curriculum.course_catalog import CatalogService
 from research_team.composition import build_application
 from research_team.infrastructure.knowledge.seeded_art import SeededArtProvider
 from research_team.infrastructure.knowledge.type_plurality_grouper import TypePluralityGrouper

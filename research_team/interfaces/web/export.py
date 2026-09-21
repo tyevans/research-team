@@ -30,13 +30,13 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from research_team.application.curriculum import Curriculum
-from research_team.application.graph_export import (
+from research_team.application.knowledge.graph_export import (
     MAX_EXPORT_NODES,
     build_export,
     to_graphml,
     to_json,
 )
-from research_team.application.graph_read import (
+from research_team.application.knowledge.graph_read import (
     MAX_GRAPH_NODES,
     MAX_NEIGHBORHOOD_DEPTH,
     GraphReadPort,

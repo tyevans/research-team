@@ -33,39 +33,45 @@ from research_team.application import (
     TurnSupervisor,
     WorkerRoster,
 )
-from research_team.application.ask import AskExecutor, AskService, ConversationRegistry
-from research_team.application.autonomy import FETCH_TOOL
-from research_team.application.blobs import BlobStorePort
-from research_team.application.context import ContextStrategy
-from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.corpus_read import CorpusReadPort
-from research_team.application.course_authoring import CourseAuthor
-from research_team.application.document_extraction import DocumentExtractor
-from research_team.application.entity_definitions import DefinitionService
-from research_team.application.grants import GrantRegistry
-from research_team.application.knowledge import ExtractionNote, KnowledgePort
-from research_team.application.knowledge_attachment import KnowledgeAttachment
-from research_team.application.media_acquisition import (
-    MediaAcceptReconciler,
-    MediaAcceptWorker,
+from research_team.application.curriculum.course_authoring import CourseAuthor
+from research_team.application.dialogue.ask import (
+    AskExecutor,
+    AskService,
+    ConversationRegistry,
 )
-from research_team.application.ontology_discovery import (
-    DISCOVERY_CHUNK_OVERLAP_CHARS,
-    MAX_DISCOVERY_CHUNK_CHARS,
-    OntologyDiscoveryService,
-)
-from research_team.application.perception import MediaPerceiver, PerceptionPort
-from research_team.application.ports import TurnExecutor
-from research_team.application.socratic import (
+from research_team.application.dialogue.socratic import (
     DialogueReadModel,
     DialogueRegistry,
     SocraticDialogueService,
     SocraticExecutor,
 )
-from research_team.application.topic_dispatch import TopicDispatcher
-from research_team.application.topic_read import TopicReadPort
-from research_team.application.topic_seeding import TopicSeeder
-from research_team.application.topics import TOPICS_PROMPT
+from research_team.application.knowledge import ExtractionNote, KnowledgePort
+from research_team.application.knowledge.entity_definitions import DefinitionService
+from research_team.application.knowledge.knowledge_attachment import (
+    KnowledgeAttachment,
+)
+from research_team.application.knowledge.ontology_discovery import (
+    DISCOVERY_CHUNK_OVERLAP_CHARS,
+    MAX_DISCOVERY_CHUNK_CHARS,
+    OntologyDiscoveryService,
+)
+from research_team.application.research.corpus_editing import CorpusEditor
+from research_team.application.research.corpus_read import CorpusReadPort
+from research_team.application.research.document_extraction import DocumentExtractor
+from research_team.application.research.media_acquisition import (
+    MediaAcceptReconciler,
+    MediaAcceptWorker,
+)
+from research_team.application.research.perception import MediaPerceiver, PerceptionPort
+from research_team.application.research.topic_dispatch import TopicDispatcher
+from research_team.application.research.topic_read import TopicReadPort
+from research_team.application.research.topic_seeding import TopicSeeder
+from research_team.application.research.topics import TOPICS_PROMPT
+from research_team.application.session.autonomy import FETCH_TOOL
+from research_team.application.shared.blobs import BlobStorePort
+from research_team.application.shared.context import ContextStrategy
+from research_team.application.shared.ports import TurnExecutor
+from research_team.application.tenancy.grants import GrantRegistry
 from research_team.domain.curriculum.learner import LearnerProgress
 from research_team.domain.dialogue.ask import AskConversation
 from research_team.domain.dialogue.socratic import SocraticDialogue

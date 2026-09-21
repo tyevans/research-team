@@ -12,17 +12,17 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.entity_definitions import (
+from research_team.application.knowledge.entity_definitions import (
     Citation,
     Definition,
     DefinitionService,
 )
-from research_team.application.graph_read import (
+from research_team.application.knowledge.graph_read import (
     GraphEntity,
     GraphRelationship,
     Neighborhood,
 )
-from research_team.application.usages import Usage
+from research_team.application.knowledge.usages import Usage
 
 ACME = UUID("11111111-1111-1111-1111-111111111111")
 BARE = UUID("22222222-2222-2222-2222-222222222222")

@@ -13,7 +13,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from research_team.application.corpus_spans import Span, chunk, quote
+from research_team.application.research.corpus_spans import Span, chunk, quote
 
 # Deliberately nasty: astral-plane characters, combining marks, CRLF, runs of
 # whitespace, and the punctuation the sentence heuristic keys on. Chunking

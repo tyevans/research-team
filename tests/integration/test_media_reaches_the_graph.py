@@ -39,7 +39,7 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from research_team.application.perception import (
+from research_team.application.research.perception import (
     LocatorSpan,
     Perceived,
     PerceptionCapabilities,

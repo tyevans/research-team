@@ -19,8 +19,8 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from research_team.application.document_extraction import DocumentExtractor
 from research_team.application.knowledge import IngestReport, SourceRef
+from research_team.application.research.document_extraction import DocumentExtractor
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.read_models import CorpusDocumentRow
 from research_team.interfaces.web.app import create_app

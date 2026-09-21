@@ -40,14 +40,21 @@ from research_team.application import (
     TurnActivityBuffer,
     WorkerRoster,
 )
-from research_team.application.ask import AskService, ConversationRegistry
-from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.document_extraction import DocumentExtractor
-from research_team.application.grants import GrantRegistry
-from research_team.application.knowledge import KnowledgeError, SourceRef, source_id_for_url
-from research_team.application.perception import MediaPerceiver, PerceptionPort
-from research_team.application.socratic import DialogueRegistry, SocraticDialogueService
-from research_team.application.topics import TOPICS_PROMPT
+from research_team.application.dialogue.ask import AskService, ConversationRegistry
+from research_team.application.dialogue.socratic import (
+    DialogueRegistry,
+    SocraticDialogueService,
+)
+from research_team.application.knowledge import (
+    KnowledgeError,
+    SourceRef,
+    source_id_for_url,
+)
+from research_team.application.research.corpus_editing import CorpusEditor
+from research_team.application.research.document_extraction import DocumentExtractor
+from research_team.application.research.perception import MediaPerceiver, PerceptionPort
+from research_team.application.research.topics import TOPICS_PROMPT
+from research_team.application.tenancy.grants import GrantRegistry
 from research_team.domain import Session, SessionPurpose
 from research_team.domain.research.media_proposals import MediaProposals
 from research_team.infrastructure import config

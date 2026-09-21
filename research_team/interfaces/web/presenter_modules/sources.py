@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from research_team.application.corpus_read import SourceListing, StoredDocument
-from research_team.application.corpus_spans import Span
+from research_team.application.research.corpus_read import SourceListing, StoredDocument
+from research_team.application.research.corpus_spans import Span
 from research_team.domain import SourceRecord
 
 

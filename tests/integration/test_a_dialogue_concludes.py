@@ -185,7 +185,7 @@ async def test_a_reply_to_a_concluded_dialogue_is_refused_before_the_model_is_ca
     That is the assertion doing work: it distinguishes "refused" from "answered
     a third time".
     """
-    from research_team.application.socratic import UnknownDialogue
+    from research_team.application.dialogue.socratic import UnknownDialogue
 
     application = await _application(tmp_path, [FRAMING, CONCLUDING])
     try:

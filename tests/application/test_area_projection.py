@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from research_team.application.area_projection import (
+from research_team.application.curriculum.area_projection import (
     CO_MENTION_BUDGET,
     MAX_CLUSTERED_ENTITIES,
     MAX_PASSAGE_ENTITIES,
@@ -24,7 +24,11 @@ from research_team.application.area_projection import (
     project_areas,
     slugify,
 )
-from research_team.application.graph_read import Graph, GraphEntity, GraphRelationship
+from research_team.application.knowledge.graph_read import (
+    Graph,
+    GraphEntity,
+    GraphRelationship,
+)
 
 
 def entity(eid: str, name: str | None = None, etype: str = "concept") -> GraphEntity:

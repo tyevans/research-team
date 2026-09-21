@@ -10,8 +10,8 @@ from uuid import uuid4
 
 import pytest
 
-from research_team.application.research_run import RunReport
-from research_team.application.research_supervisor import (
+from research_team.application.research.research_run import RunReport
+from research_team.application.research.research_supervisor import (
     ResearchSupervisor,
     RunAlreadyActive,
 )

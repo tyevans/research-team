@@ -21,27 +21,30 @@ from research_team.application import (
     TurnSupervisor,
     WorkerRoster,
 )
-from research_team.application.ask import AskService
-from research_team.application.authorization import Authorizer
-from research_team.application.blobs import BlobStorePort
-from research_team.application.corpus_editing import CorpusEditor
-from research_team.application.course_authoring import CourseAuthor
-from research_team.application.course_catalog import CatalogService
-from research_team.application.course_realization import CourseService
-from research_team.application.document_extraction import DocumentExtractor
-from research_team.application.entity_definitions import DefinitionService
-from research_team.application.grants import GrantRegistry
-from research_team.application.media_acquisition import (
+from research_team.application.curriculum.course_authoring import CourseAuthor
+from research_team.application.curriculum.course_catalog import CatalogService
+from research_team.application.curriculum.course_realization import CourseService
+from research_team.application.dialogue.ask import AskService
+from research_team.application.dialogue.socratic import SocraticDialogueService
+from research_team.application.knowledge.entity_definitions import DefinitionService
+from research_team.application.knowledge.ontology_discovery import OntologyDiscoveryService
+from research_team.application.research.corpus_editing import CorpusEditor
+from research_team.application.research.document_extraction import DocumentExtractor
+from research_team.application.research.media_acquisition import (
     MediaAcceptReconciler,
     MediaAcceptWorker,
 )
-from research_team.application.media_curation import MediaCurationTextPort, MediaSearchPort
-from research_team.application.ontology_discovery import OntologyDiscoveryService
-from research_team.application.perception import MediaPerceiver, PerceptionPort
-from research_team.application.socratic import SocraticDialogueService
-from research_team.application.topic_dispatch import TopicDispatcher
-from research_team.application.topic_read import TopicReadPort
-from research_team.application.topic_seeding import TopicSeeder
+from research_team.application.research.media_curation import (
+    MediaCurationTextPort,
+    MediaSearchPort,
+)
+from research_team.application.research.perception import MediaPerceiver, PerceptionPort
+from research_team.application.research.topic_dispatch import TopicDispatcher
+from research_team.application.research.topic_read import TopicReadPort
+from research_team.application.research.topic_seeding import TopicSeeder
+from research_team.application.shared.blobs import BlobStorePort
+from research_team.application.tenancy.authorization import Authorizer
+from research_team.application.tenancy.grants import GrantRegistry
 from research_team.domain.curriculum.authoring_run import CourseAuthoringRun
 from research_team.domain.curriculum.course import Course
 from research_team.domain.research.media_proposals import MediaProposals

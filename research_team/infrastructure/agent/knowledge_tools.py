@@ -26,7 +26,11 @@ from research_team.application.knowledge import (
     SourceRef,
     source_id_for_url,
 )
-from research_team.application.tool_artifacts import Acknowledgement, EntityList, EntityRef
+from research_team.application.session.tool_artifacts import (
+    Acknowledgement,
+    EntityList,
+    EntityRef,
+)
 from research_team.infrastructure.agent.recall import PageMemo
 
 

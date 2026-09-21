@@ -56,7 +56,7 @@ from research_team.application.knowledge import (
     SearchOutcome,
     SourceRef,
 )
-from research_team.application.retry import with_retry
+from research_team.application.shared.retry import with_retry
 from research_team.domain import Corpus, EntityJudgements, StoreSourceDocument
 from research_team.infrastructure.config import DEFAULT_CONSOLIDATION_BATCH
 from research_team.infrastructure.knowledge.co_mentions import CoMentionIndex

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from research_team.application import SessionService, TurnSupervisor
 from research_team.application.curriculum import CurriculumService
 from research_team.application.knowledge import KnowledgeError
-from research_team.application.project_summaries import ProjectSummaries
+from research_team.application.tenancy.project_summaries import ProjectSummaries
 from research_team.domain import CreateProject, SessionPurpose
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.presenters import (

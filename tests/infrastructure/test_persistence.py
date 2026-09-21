@@ -7,8 +7,8 @@ from eventsource.ports.positions import ExpectedVersion
 from langchain_core.messages import AIMessage
 from redstring import DocumentExtracted, document_stream
 
-from research_team.application.session_service import NO_SEARCH_CLAUSE, project_context
-from research_team.application.topics import TOPICS_PROMPT
+from research_team.application.research.topics import TOPICS_PROMPT
+from research_team.application.session.session_service import NO_SEARCH_CLAUSE, project_context
 from research_team.domain import SessionPurpose, StartSession, StoreSourceDocument
 from research_team.domain.curriculum.learner import LearnerChecklistRecorded
 from research_team.domain.research.topic import OpenTopic

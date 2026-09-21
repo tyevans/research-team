@@ -22,8 +22,8 @@ from research_team.application import (
     ApprovalRequest,
     AutonomyPolicy,
 )
-from research_team.application.autonomy import FETCH_TOOL
-from research_team.application.grants import FetchGrant, GrantRegistry
+from research_team.application.session.autonomy import FETCH_TOOL
+from research_team.application.tenancy.grants import FetchGrant, GrantRegistry
 from research_team.domain import (
     AutonomyChanged,
     ToolCallDecided,

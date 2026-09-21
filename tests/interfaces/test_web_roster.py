@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from research_team.application import SummaryProjects, WorkerRoster
 from research_team.application.knowledge import ExtractionNote
-from research_team.application.ports import ActivityMessage
+from research_team.application.shared.ports import ActivityMessage
 from research_team.composition import build_application as _build_application
 from research_team.interfaces.web import TurnActivity, create_app
 from research_team.interfaces.web.extraction import ExtractionActivity

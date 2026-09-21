@@ -14,7 +14,7 @@ from eventsource.domain.tenant_context import tenant_scope
 from redstring import TemporalRelation, infer_relations
 from redstring.extraction.date_nodes import is_date_node
 
-from research_team.application.graph_read import (
+from research_team.application.knowledge.graph_read import (
     MAX_GRAPH_NODES,
     MAX_INFERRED_EDGES,
     MAX_NEIGHBORHOOD_DEPTH,

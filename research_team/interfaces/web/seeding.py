@@ -36,7 +36,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from research_team.application import RunAlreadyActive
-from research_team.application.topic_seeding import SeedingRun
+from research_team.application.research.topic_seeding import SeedingRun
 
 SEEDING = "Seeding"
 """The frame type on the live feed, PascalCase like `EXTRACTION` beside it.

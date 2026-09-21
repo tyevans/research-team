@@ -6,7 +6,7 @@ from uuid import uuid4
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 
-from research_team.application.ports import ActivityDelta, ActivityMessage
+from research_team.application.shared.ports import ActivityDelta, ActivityMessage
 from research_team.domain import SessionPurpose, StartSession
 from research_team.infrastructure.agent.deep_agent import (
     DeepAgentTurnExecutor,

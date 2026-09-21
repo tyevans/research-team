@@ -11,7 +11,7 @@ Every assertion here is on what the executor was *handed* and on which stream
 the events landed on. "The call returned" is compatible with a service that
 silently began a second dialogue, which is precisely the failure.
 
-**Every name from `research_team.application.socratic` is imported inside the
+**Every name from `research_team.application.dialogue.socratic` is imported inside the
 function that uses it, and that is a leftover from when it did not exist.**
 Task 1 wrote this file against a module Task 3 would create, and a module-level
 import of a missing module is a *collection* error -- which interrupts the
@@ -63,7 +63,7 @@ class RecordingExecutor:
         self.calls: list[dict] = []
 
     async def frame(self, *, project_id, topic):
-        from research_team.application.socratic import SocraticFraming
+        from research_team.application.dialogue.socratic import SocraticFraming
 
         self.calls.append({"kind": "frame", "topic": topic})
         return SocraticFraming(
@@ -75,7 +75,7 @@ class RecordingExecutor:
     async def respond(
         self, *, project_id, history, goal, stopping_condition, reply, on_activity
     ):
-        from research_team.application.socratic import SocraticPrompt
+        from research_team.application.dialogue.socratic import SocraticPrompt
 
         self.calls.append(
             {
@@ -133,7 +133,7 @@ def transcripts() -> AggregateRepository[SocraticDialogue]:
 
 
 def build(executor, transcripts, read_model, registry=None):
-    from research_team.application.socratic import (
+    from research_team.application.dialogue.socratic import (
         DialogueRegistry,
         SocraticDialogueService,
     )
@@ -209,7 +209,7 @@ async def test_an_evicted_dialogue_resumes_on_the_same_stream(transcripts):
 
     Each of those looks like working software until an hour has passed.
     """
-    from research_team.application.socratic import DialogueRegistry
+    from research_team.application.dialogue.socratic import DialogueRegistry
 
     executor = RecordingExecutor(["Why do you think that?", "And what follows from it?"])
     read_model = StubReadModel()
@@ -334,7 +334,7 @@ async def test_a_dialogue_that_was_never_stored_is_refused_rather_than_invented(
     thought they knew -- and would write to a stream nobody asked for. Red
     against a service that falls back to `begin`.
     """
-    from research_team.application.socratic import UnknownDialogue
+    from research_team.application.dialogue.socratic import UnknownDialogue
 
     executor = RecordingExecutor([])
     service = build(executor, transcripts, StubReadModel())
@@ -357,7 +357,7 @@ async def test_a_dialogue_is_not_resumable_from_another_project(transcripts):
     string and a mismatch is ordinary, where a dialogue id is a server-minted
     UUID and a mismatch is either a bug or a probe.
     """
-    from research_team.application.socratic import UnknownDialogue
+    from research_team.application.dialogue.socratic import UnknownDialogue
 
     executor = RecordingExecutor(["Why?"])
     read_model = StubReadModel()
@@ -390,7 +390,7 @@ class EmptyFramingExecutor(RecordingExecutor):
     """
 
     async def frame(self, *, project_id, topic):
-        from research_team.application.socratic import SocraticFraming
+        from research_team.application.dialogue.socratic import SocraticFraming
 
         self.calls.append({"kind": "frame", "topic": topic})
         return SocraticFraming(
@@ -415,7 +415,7 @@ async def test_both_paths_build_the_same_history_when_there_is_no_opening_prompt
     prompt) rather than for a representative dialogue: with a non-empty prompt
     the paths agree and this test would pass against the defect.
     """
-    from research_team.application.socratic import DialogueRegistry
+    from research_team.application.dialogue.socratic import DialogueRegistry
 
     live_executor = EmptyFramingExecutor(["Why?"])
     live = build(live_executor, transcripts, StubReadModel())

@@ -41,15 +41,15 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.tools import BaseTool
 
 from research_team.application.components import component_reference
-from research_team.application.corpus_read import REFERENCE_SYNTAX_PROMPT
-from research_team.application.ports import ActivityReporter
-from research_team.application.socratic import (
+from research_team.application.dialogue.socratic import (
     DialogueMessage,
     SocraticFraming,
     SocraticObservation,
     SocraticPrompt,
 )
-from research_team.application.socratic_components import SOCRATIC_COMPONENT_TYPES
+from research_team.application.dialogue.socratic_components import SOCRATIC_COMPONENT_TYPES
+from research_team.application.research.corpus_read import REFERENCE_SYNTAX_PROMPT
+from research_team.application.shared.ports import ActivityReporter
 from research_team.infrastructure.agent.ask_agent import (
     READ_ONLY_FILE_TOOLS,
     citations,

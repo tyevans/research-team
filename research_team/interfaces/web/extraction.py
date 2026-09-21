@@ -25,7 +25,7 @@ from typing import Any
 from uuid import UUID
 
 from research_team.application.knowledge import ExtractionNote, ExtractionReporter
-from research_team.application.workers import ExtractionSnapshot
+from research_team.application.session.workers import ExtractionSnapshot
 
 EXTRACTION = "Extraction"
 """The frame type on the live feed.

@@ -8,7 +8,7 @@ argument this mirrors from `normalize_url`.
 
 from uuid import uuid4
 
-from research_team.application.grants import FetchGrant, GrantRegistry
+from research_team.application.tenancy.grants import FetchGrant, GrantRegistry
 
 
 def _grant(hosts: frozenset[str] | None = None, budget: int = 3) -> FetchGrant:

@@ -18,12 +18,12 @@ from uuid import UUID, uuid4
 import pytest
 from eventsource import CommandRejectedError
 
-from research_team.application.research_run import (
+from research_team.application.research.research_run import (
     ResearchRunDriver,
     RoundOutcome,
     RunReport,
 )
-from research_team.application.topic_attention import Finding, TopicAttention
+from research_team.application.research.topic_attention import Finding, TopicAttention
 from research_team.domain.research.run import (
     BeginRound,
     Budget,

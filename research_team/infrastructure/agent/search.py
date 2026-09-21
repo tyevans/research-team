@@ -18,8 +18,13 @@ import httpx
 from langchain_core.tools import BaseTool, tool
 
 from research_team.application import SEARCH_TOOL
-from research_team.application.media_curation import SearchResult
-from research_team.application.tool_artifacts import Acknowledgement, Hit, HitList, SourceHits
+from research_team.application.research.media_curation import SearchResult
+from research_team.application.session.tool_artifacts import (
+    Acknowledgement,
+    Hit,
+    HitList,
+    SourceHits,
+)
 from research_team.infrastructure.agent.recall import Recall, Recalled, describe_age, query_key
 
 TIMEOUT = httpx.Timeout(10.0)

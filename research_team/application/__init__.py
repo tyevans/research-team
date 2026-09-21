@@ -4,19 +4,6 @@ Depends on the domain and on its own port declarations -- never on a concrete
 store, model provider, or user interface.
 """
 
-from research_team.application.autonomy import (
-    GATED_TOOLS,
-    SEARCH_TOOL,
-    AutonomyPolicy,
-    Level,
-)
-from research_team.application.context import (
-    Compaction,
-    ContextStrategy,
-    ElideToolResults,
-    FullHistory,
-    PreparedContext,
-)
 from research_team.application.knowledge import (
     GRAPH_SEARCH_TOOL,
     REMEMBER_TOOL,
@@ -31,14 +18,72 @@ from research_team.application.knowledge import (
     MergeRecord,
     SourceRef,
 )
-from research_team.application.knowledge_attachment import (
+from research_team.application.knowledge.knowledge_attachment import (
     CloseGraph,
     KnowledgeAttachment,
     OpenGraph,
     TurnExecutorTools,
 )
-from research_team.application.live_feed import LiveFeed
-from research_team.application.ports import (
+from research_team.application.knowledge.project_graphs import ProjectGraphs
+from research_team.application.research.research_round import (
+    ROUND_INSTRUCTIONS,
+    TopicRoundRunner,
+    round_prompt,
+)
+from research_team.application.research.research_run import (
+    ResearchRunDriver,
+    RoundOutcome,
+    RunReport,
+)
+from research_team.application.research.research_supervisor import (
+    ActiveRun,
+    ResearchSupervisor,
+    RunAlreadyActive,
+)
+from research_team.application.session.autonomy import (
+    GATED_TOOLS,
+    SEARCH_TOOL,
+    AutonomyPolicy,
+    Level,
+)
+from research_team.application.session.session_service import (
+    DEFAULT_SYSTEM_PROMPT,
+    SessionService,
+    TurnOutcome,
+)
+from research_team.application.session.summaries import (
+    ForkNode,
+    SessionSummary,
+    build_fork_tree,
+    summarize_sessions,
+)
+from research_team.application.session.turn_supervisor import (
+    Cancellation,
+    RunningTurn,
+    TurnAlreadyRunning,
+    TurnCancelled,
+    TurnSupervisor,
+)
+from research_team.application.session.workers import (
+    DispatchesInFlight,
+    DispatchSnapshot,
+    ExtractionChannel,
+    ExtractionsInFlight,
+    ExtractionSnapshot,
+    Roster,
+    SummaryProjects,
+    Worker,
+    WorkerRoster,
+)
+from research_team.application.shared.context import (
+    Compaction,
+    ContextStrategy,
+    ElideToolResults,
+    FullHistory,
+    PreparedContext,
+)
+from research_team.application.shared.live_feed import LiveFeed
+from research_team.application.shared.ports import (
     ActivityReporter,
     ApprovalDecision,
     ApprovalPort,
@@ -55,52 +100,7 @@ from research_team.application.ports import (
     TurnExecutor,
     TurnResult,
 )
-from research_team.application.project_graphs import ProjectGraphs
-from research_team.application.project_sessions import ProjectSessions
-from research_team.application.research_round import (
-    ROUND_INSTRUCTIONS,
-    TopicRoundRunner,
-    round_prompt,
-)
-from research_team.application.research_run import (
-    ResearchRunDriver,
-    RoundOutcome,
-    RunReport,
-)
-from research_team.application.research_supervisor import (
-    ActiveRun,
-    ResearchSupervisor,
-    RunAlreadyActive,
-)
-from research_team.application.session_service import (
-    DEFAULT_SYSTEM_PROMPT,
-    SessionService,
-    TurnOutcome,
-)
-from research_team.application.summaries import (
-    ForkNode,
-    SessionSummary,
-    build_fork_tree,
-    summarize_sessions,
-)
-from research_team.application.turn_supervisor import (
-    Cancellation,
-    RunningTurn,
-    TurnAlreadyRunning,
-    TurnCancelled,
-    TurnSupervisor,
-)
-from research_team.application.workers import (
-    DispatchesInFlight,
-    DispatchSnapshot,
-    ExtractionChannel,
-    ExtractionsInFlight,
-    ExtractionSnapshot,
-    Roster,
-    SummaryProjects,
-    Worker,
-    WorkerRoster,
-)
+from research_team.application.tenancy.project_sessions import ProjectSessions
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",

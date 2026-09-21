@@ -12,8 +12,8 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
-from research_team.application.ask import AskService
-from research_team.application.socratic import SocraticDialogueService
+from research_team.application.dialogue.ask import AskService
+from research_team.application.dialogue.socratic import SocraticDialogueService
 from research_team.infrastructure.persistence.read_models import (
     AskConversationRunner,
     SocraticDialogueRunner,

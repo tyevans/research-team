@@ -7,12 +7,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from research_team.application.grants import GrantRegistry
-from research_team.application.research_run import (
+from research_team.application.research.research_run import (
     ResearchRunDriver,
     RoundOutcome,
 )
-from research_team.application.topic_attention import Finding, TopicAttention
+from research_team.application.research.topic_attention import Finding, TopicAttention
+from research_team.application.tenancy.grants import GrantRegistry
 from research_team.domain.research.run import ResearchRun
 
 

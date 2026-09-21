@@ -26,7 +26,7 @@ import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
-from research_team.application.media_curation import (
+from research_team.application.research.media_curation import (
     MediaCurationTextPort,
     MediaSearchPort,
     SearchResult,
