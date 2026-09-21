@@ -1,5 +1,7 @@
 """Wiring components and lifecycle helpers for the composition root."""
 
+from research_team.wiring.application import Application
+from research_team.wiring.application_state import ApplicationState
 from research_team.wiring.builders import (
     BuiltStores,
     BuiltTools,
@@ -63,6 +65,8 @@ from research_team.wiring.service_wiring import (
 
 __all__ = [
     "_PARTIAL_BUILD_RESOURCES",
+    "Application",
+    "ApplicationState",
     "BuiltStores",
     "BuiltTools",
     "CatalogServices",
