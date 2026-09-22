@@ -15,17 +15,19 @@ from research_team.settings.application.effective import (
     SettingsRevision,
     VisionSettings,
 )
-from research_team.settings.application.settings import (
+from research_team.settings.application.model_profiles import (
     ModelProfileService,
     ModelProfileStorePort,
-    ProviderProbePort,
-    Resolved,
     ResolvedRole,
     RoleSelection,
+    StoredProfile,
+)
+from research_team.settings.application.settings import (
+    ProviderProbePort,
+    Resolved,
     SecretBoxPort,
     SettingsResolver,
     SettingsStorePort,
-    StoredProfile,
 )
 
 __all__ = [
