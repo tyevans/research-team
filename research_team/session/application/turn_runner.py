@@ -3,12 +3,24 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from eventsource import OptimisticLockError
+from eventsource.observability import Tracer, create_tracer
+from eventsource.observability.attributes import (
+    ATTR_AGGREGATE_ID,
+    ATTR_AGGREGATE_TYPE,
+)
 
+from research_team.platform.shared.context import ContextStrategy, FullHistory
 from research_team.platform.shared.retry import with_retry
-from research_team.session.application.ports import SessionRepository
+from research_team.session.application.ports import (
+    ActivityRemark,
+    ActivityReporter,
+    SessionRepository,
+    TurnAccountingError,
+    TurnExecutor,
+)
 from research_team.session.domain import (
     FILE_EVENT_TYPES as FILE_EVENT_TYPES,
 )
@@ -17,8 +29,16 @@ from research_team.session.domain import (
 )
 from research_team.session.domain import (
     AutonomyChanged,
+    CompactConversation,
+    CompleteTurn,
     FailTurn,
+    RecordAssistantMessage,
+    RecordForkSource,
+    RecordToolResult,
+    SendUserMessage,
     Session,
+    SessionPurpose,
+    SessionStarted,
 )
 from research_team.tenancy.application.project_sessions import (
     project_context as project_context,
@@ -35,8 +55,10 @@ __all__ = [
     "_FILE_EVENT_TYPES",
     "_INHERITED_EVENT_FIELDS",
     "TurnOutcome",
+    "TurnRunner",
     "_TurnConflict",
     "append_turn_failure",
+    "fork_session",
     "project_context",
     "record_turn_failure",
     "refuse_unrebasable",
@@ -207,3 +229,137 @@ async def record_turn_failure(
         # fire-and-forget write can be lost if the process is shutting down.
         await writing
         raise
+
+
+class TurnRunner:
+    """Orchestrates one turn on a session with optimistic locking and tracing."""
+
+    def __init__(
+        self,
+        repository: SessionRepository,
+        executor: TurnExecutor,
+        *,
+        default_system_prompt: str = "",
+        context: ContextStrategy | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
+        self._repository = repository
+        self._executor = executor
+        self._default_system_prompt = default_system_prompt
+        self._context = context if context is not None else FullHistory()
+        self._tracer = tracer if tracer is not None else create_tracer(__name__, False)
+
+    async def run_turn(
+        self,
+        session_id: UUID,
+        user_input: str,
+        on_activity: ActivityReporter | None = None,
+    ) -> TurnOutcome:
+        """One user turn. All events append atomically at the end, or not at all."""
+        with self._tracer.span(
+            "research_team.turn",
+            {ATTR_AGGREGATE_ID: str(session_id), ATTR_AGGREGATE_TYPE: "Session"},
+        ):
+            return await self._run_turn(session_id, user_input, on_activity)
+
+    async def _run_turn(
+        self,
+        session_id: UUID,
+        user_input: str,
+        on_activity: ActivityReporter | None = None,
+    ) -> TurnOutcome:
+        aggregate = await self._repository.load(session_id)
+        aggregate.execute(
+            SendUserMessage(message=self._executor.encode_user_message(user_input))
+        )
+
+        prepared = await self._context.prepare(aggregate.state)
+        if prepared.compaction is not None:
+            aggregate.execute(
+                CompactConversation(
+                    summary=prepared.compaction.summary,
+                    through_index=prepared.compaction.through_index,
+                    strategy=self._context.name,
+                    tokens_before=prepared.compaction.tokens_before,
+                    tokens_after=prepared.compaction.tokens_after,
+                )
+            )
+        if on_activity is not None:
+            for note in prepared.notes:
+                on_activity(ActivityRemark(text=note))
+
+        try:
+            result = await self._executor.execute(
+                aggregate,
+                messages=prepared.messages,
+                system_prompt=aggregate.state.system_prompt or self._default_system_prompt,
+                on_activity=on_activity,
+            )
+        except TurnAccountingError:
+            raise
+        except BaseException as error:
+            await self._record_failure(session_id, error)
+            raise
+
+        for message in result.messages:
+            if message.kind == "tool":
+                aggregate.execute(
+                    RecordToolResult(message=message.payload, is_error=message.is_error)
+                )
+            else:
+                aggregate.execute(RecordAssistantMessage(message=message.payload))
+
+        aggregate.execute(CompleteTurn())
+        appended = len(aggregate.uncommitted_events)
+        saved = await self._save_turn(session_id, aggregate)
+        return TurnOutcome(
+            reply=result.reply_text,
+            turn_index=saved.state.turn_index,
+            from_index=saved.version - appended + 1,
+            to_index=saved.version,
+        )
+
+    async def _save_turn(self, session_id: UUID, aggregate: Session) -> Session:
+        return await save_turn_with_retry(self._repository, session_id, aggregate)
+
+    async def _refuse_unrebasable(
+        self, session_id: UUID, base_version: int, lost: OptimisticLockError | None
+    ) -> None:
+        return await refuse_unrebasable(self._repository, session_id, base_version, lost)
+
+    async def _record_failure(self, session_id: UUID, error: BaseException) -> None:
+        await record_turn_failure(self._repository, session_id, error)
+
+    async def _append_failure(self, session_id: UUID, error: BaseException) -> None:
+        await append_turn_failure(self._repository, session_id, error)
+
+
+async def fork_session(
+    repository: SessionRepository,
+    session_id: UUID,
+    at: int,
+    *,
+    purpose: SessionPurpose | None = None,
+) -> UUID:
+    """Replay the first `at` events onto a fresh stream. Nothing is destroyed.
+
+    If `purpose` is specified, the forked session is retargeted to that
+    purpose (e.g. converting a RESEARCH_ROUND session to CHAT for an
+    interactive human console session, resolving B101).
+    """
+    events = await repository.events_for(session_id)
+    if not 1 <= at <= len(events):
+        raise ValueError(f"cannot fork at {at}: session has {len(events)} events")
+
+    new_id = uuid4()
+    forked = repository.create(new_id)
+    for event in events[:at]:
+        payload = event.model_dump(exclude=set(INHERITED_EVENT_FIELDS))
+        if isinstance(event, SessionStarted) and purpose is not None:
+            payload["purpose"] = purpose
+        forked.create_event(type(event), **payload)
+    forked.execute(
+        RecordForkSource(source_session_id=session_id, at_event=at, purpose=purpose)
+    )
+    await repository.save(forked)
+    return new_id
