@@ -7,37 +7,30 @@ progress tracking, and dialogue framing.
 
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any
 from uuid import UUID
 
 from eventsource import CommandRejectedError
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 
 from research_team.curriculum.application.grading import GradingError, grade
 from research_team.dialogue.application.socratic import (
     DialogueConcluded,
     DialogueInFlight,
-    SocraticDialogueOpened,
-    SocraticDialogueService,
-    SocraticPrompt,
     UnknownDialogue,
 )
 from research_team.dialogue.application.socratic_components import dialogue_document
-from research_team.infrastructure.persistence.read_models import (
-    SocraticDialogueRow,
-    SocraticDialogueRunner,
-)
 from research_team.interfaces.web.presenters import dialogue_progress_view, item_view
-from research_team.platform.components import parse_document
-from research_team.platform.shared.ports import (
-    ActivityDelta,
-    ActivityMessage,
-    ActivityRemark,
+from research_team.interfaces.web.socratic_views import (
+    Attempt,
+    SocraticAttempt,
+    SocraticDeps,
+    SocraticReply,
+    SocraticStart,
+    _dialogue_view,
+    _socratic_frame,
 )
+from research_team.platform.components import parse_document
 
 __all__ = [
     "Attempt",
@@ -49,270 +42,6 @@ __all__ = [
     "_socratic_frame",
     "socratic_router",
 ]
-
-
-class Attempt(BaseModel):
-    """One learner's answer to one component, addressed in the body.
-
-    The component is named in the body rather than in the path because a file
-    path contains slashes, and a route of `/files/{path}/components/{id}` would
-    make every caller double-encode one to reach the other. Nothing else about
-    the shape depends on that.
-
-    `at` grades against the file as it stood at that event rather than at HEAD.
-    Without it, an author revising a question would silently re-mark attempts
-    made against the version the learner actually read.
-    """
-
-    path: str
-    component_id: str
-    response: Any = None
-    at: int | None = None
-
-
-class SocraticStart(BaseModel):
-    """A topic to build a dialogue around.
-
-    No id: unlike an ask's `chat_id`, the dialogue's id is minted by the server
-    and returned, because it is an aggregate id, a row key and a URL segment --
-    the identical hazard as letting a browser or a model pick one.
-    """
-
-    # Constrained because an empty topic is not merely useless: it reaches the
-    # model as the whole framing instruction, and a framing that comes back
-    # unusable surfaces as a 502 -- blaming the provider for a request that was
-    # bad here. 422 from pydantic says the true thing at the true cost (one
-    # round trip, no model call). `test_an_empty_topic_is_refused_before_the_model`
-    # fails on the constraint being dropped.
-    topic: str = Field(min_length=1)
-
-
-class SocraticReply(BaseModel):
-    """What the reader said in answer to the outstanding question.
-
-    Named `reply` and not `question`, matching the domain: on this surface the
-    system asks and the reader answers, which is the inverse of the ask.
-    """
-
-    reply: str
-
-
-class SocraticAttempt(BaseModel):
-    """One reader's answer to a component the dialogue asked.
-
-    Addressed by `(position, component_id)`, matching `AskAttempt`: a dialogue
-    turn has no file path, and the turn is what the server re-parses to recover
-    the key. No `at` -- a `SocraticTurnRecorded` is never rewritten, so there is
-    no second version to grade against.
-    """
-
-    position: int
-    component_id: str
-    response: Any = None
-
-
-@dataclass(frozen=True)
-class SocraticDeps:
-    """What the socratic routes need from `create_app`'s closure."""
-
-    require_project: Callable[[UUID], Awaitable[None]] | None = None
-    service: Any | None = None
-    socratic: SocraticDialogueService | None = None
-    dialogues: SocraticDialogueRunner | None = None
-    turns: Any | None = None
-    # Aliases for flexibility across callers
-    socratic_dialogues: SocraticDialogueRunner | None = None
-    socratic_service: SocraticDialogueService | None = None
-
-    def __post_init__(self) -> None:
-        if self.dialogues is None and self.socratic_dialogues is not None:
-            object.__setattr__(self, "dialogues", self.socratic_dialogues)
-        if self.socratic is None and self.socratic_service is not None:
-            object.__setattr__(self, "socratic", self.socratic_service)
-
-
-def _socratic_frame(note: object) -> str | None:
-    """One SSE `data:` line per note, or `None` for a note with nothing to draw.
-
-    Deliberately its own function rather than a branch inside `_ask_frame`:
-    the last frame of a dialogue turn is typed `prompt` and not `answer`,
-    because it is a question. A page that reused the ask's handler would
-    draw the dialogue's question in the reader's own column -- and it would
-    render, which is why this is a separate function with its own test
-    (`test_the_last_frame_is_typed_prompt_and_not_answer`, red against a
-    copy-paste of `_ask_frame`).
-    """
-    if isinstance(note, SocraticDialogueOpened):
-        body: dict[str, Any] = {
-            "type": "dialogue",
-            "dialogue_id": str(note.dialogue_id),
-            "topic": note.topic,
-            "goal": note.goal,
-            "stopping_condition": note.stopping_condition,
-            # The question being answered, not the one about to be asked.
-            # On a resumed dialogue this is not the opening one, which is
-            # why the field is not called `opening_prompt`.
-            #
-            # Projected rather than raw, and this one is the leak that
-            # nearly survived: `pending_prompt` is the NEWEST turn's prompt
-            # (see `read_models.py`, where it is written from exactly
-            # that), so on a resumed dialogue it is the component-bearing
-            # question the reader is looking at -- key and all. Fixing the
-            # `prompt` frame alone would have left this shipping the answer
-            # to every question a reader had already been asked, the moment
-            # they came back to it.
-            "pending_blocks": dialogue_document(note.pending_prompt)["blocks"],
-        }
-    elif isinstance(note, ActivityDelta):
-        # **The dialogue's own prose never goes over this stream, and that
-        # is the whole of this branch.** `to_activity_delta` carries the
-        # main agent's text exactly as the model produced it, so when the
-        # model writes an `mcq` the fence streams with `correct: true` in
-        # it -- ahead of the `prompt` frame two branches down, which is at
-        # pains to withhold precisely that. Measured on 2026-08-17 by
-        # `test_no_frame_of_a_streamed_turn_carries_the_answer_key`, which
-        # is red with this `return None` removed.
-        #
-        # Suppressed rather than filtered or buffered. Filtering the fenced
-        # region out of a delta means recognising a fence that has not
-        # finished arriving -- a half-written ```` ```component: ```` is
-        # indistinguishable from prose until its closing line, so the
-        # filter's failure mode is shipping the key it exists to hold back.
-        # Buffering until a fence closes has the same recogniser inside it
-        # and defers every delta behind an unclosed one. Suppression has no
-        # recogniser at all, and on this surface a projection is only real
-        # if there is nothing beside it.
-        #
-        # The frame itself survives with an EMPTY `text`, and that is not
-        # tidiness. The console plan for this surface
-        # (`docs/superpowers/plans/2026-08-17-socratic-dialogue-console.md`,
-        # read rather than assumed) already rules that the transcript's
-        # question text comes only from `blocks` and that "deltas drive
-        # nothing but a composing indicator" -- so the page folds over
-        # delta frames for liveness and ignores their text. Dropping the
-        # frame outright would take that liveness signal away with the
-        # leak; emptying it takes only the leak.
-        #
-        # The cost, stated plainly: a reader watching a dialogue compose
-        # gets a "composing" indicator and then the finished question, with
-        # no token-by-token prose. That is what the plan already assumed.
-        # It becomes a real cost the day a console wants the prose itself,
-        # and the answer then is a projected delta channel, not the raw
-        # one.
-        body = {"type": "delta", "message_id": note.message_id, "text": ""}
-    elif isinstance(note, ActivityMessage):
-        if note.kind == "assistant":
-            # The same leak by the other route: `to_activity_message`
-            # builds `payload` from `message_to_dict` (`messages.py:54`),
-            # so an assistant message carries the model's whole answer --
-            # fence and key -- in one frame. The same test measures this
-            # one; it caught both halves on the first red run.
-            #
-            # Tool and error messages still stream: they are what a reader
-            # watching a slow turn actually sees, and they carry retrieved
-            # source rather than the dialogue's own authored components.
-            return None
-        body = {
-            "type": "message",
-            "message_id": note.message_id,
-            "kind": note.kind,
-            "payload": note.payload,
-            "is_error": note.is_error,
-        }
-    elif isinstance(note, SocraticPrompt):
-        body = {
-            "type": "prompt",
-            # **No raw `text` beside `blocks`, and its absence is the
-            # point.** This frame carried `"text": note.prompt` until
-            # `test_the_answer_key_never_reaches_the_reader` measured what
-            # went over the wire: the projection below withholds
-            # `options[].correct`, and the raw copy one key to its left
-            # shipped the whole fenced block with `correct: true` in it. A
-            # page rendering `blocks` looked correct the entire time; the
-            # defect was only ever visible in the bytes.
-            #
-            # The cost is that a client wanting the prose has to walk
-            # `blocks` for its `kind: "markdown"` entries rather than
-            # reading one string. That is the right cost: on this surface a
-            # projection is only real if there is nothing beside it, and a
-            # convenience field that re-adds the source is a hole no
-            # projection can close.
-            #
-            # Parsed here rather than in the browser, for the reasons
-            # `components.py` opens with -- the second binds hardest:
-            # withholding is only real if the projection happens before the
-            # bytes leave, and this surface is the one where being told the
-            # answer defeats the method rather than merely leaking.
-            "blocks": dialogue_document(note.prompt)["blocks"],
-            "position": note.position,
-            "citations": [{"kind": kind, "id": cited} for kind, cited in note.citations],
-            "concluded": note.concluded,
-        }
-    elif isinstance(note, ActivityRemark):
-        # Carried, not flattened. The brief's version emitted an empty
-        # `payload` here, which draws an empty assistant bubble on the page
-        # and loses the one thing the remark is: its text. A remark has no
-        # `message_id` by design (see `ActivityRemark`), so it travels as a
-        # message with an empty one and `kind: "remark"` -- Plan 3 can
-        # style it apart from a model utterance without a sixth frame type
-        # its DTOs would have to learn.
-        body = {
-            "type": "message",
-            "message_id": "",
-            "kind": "remark",
-            "payload": {"text": note.text},
-            "is_error": False,
-        }
-    else:
-        # Anything added later, and deliberately nothing rather than an
-        # empty bubble: a frame the page cannot render is worse than no
-        # frame, because it occupies a row in the transcript. The caller
-        # skips a `None`. Whoever adds a note type adds a branch here, and
-        # the cost of forgetting is a note that is silently invisible --
-        # which is the trade taken over a visible blank.
-        return None
-    return f"data: {json.dumps(body)}\n\n"
-
-
-def _dialogue_view(row: SocraticDialogueRow) -> dict[str, Any]:
-    """One dialogue, without its turns -- what a history list needs.
-
-    `row` is annotated, unlike `_conversation_view`'s beside it: a renamed
-    column then fails the type checker rather than the request. Nothing
-    else here reads a row, so the looser sibling is left alone.
-
-    Carries `goal` and `stoppingCondition` in the *list* view and not only
-    in the detail one, deliberately. A reader picking a dialogue back up
-    needs to know what it was aiming at, and the topic alone does not say:
-    two dialogues about the Nicene settlement can be trying to do entirely
-    different things. It is two strings per row on a page that is a cheap
-    index, which is the same trade `firstQuestion` makes on the ask list.
-    """
-    return {
-        "dialogueId": str(row.id),
-        "projectId": str(row.project_id),
-        "topic": row.topic,
-        "goal": row.goal,
-        "stoppingCondition": row.stopping_condition,
-        # Both projected, never raw. `pendingPrompt` used to be
-        # `row.pending_prompt`, which `read_models.py` writes from the
-        # newest turn's prompt -- so an index page listing a reader's
-        # dialogues handed back the answer key to every live question, on a
-        # route nobody thought of as a rendering surface.
-        # `test_the_answer_key_never_reaches_the_reader` measures the bytes
-        # of all three surfaces rather than trusting any of them.
-        "openingBlocks": dialogue_document(row.opening_prompt)["blocks"],
-        # The question the reader is looking at now, which belongs to no
-        # turn -- see `SocraticTurnRecorded`. A view that omitted it would
-        # render a transcript ending on the reader's own words with
-        # nothing asking them anything.
-        "pendingBlocks": dialogue_document(row.pending_prompt)["blocks"],
-        "openedAt": row.opened_at.isoformat(),
-        "status": row.status,
-        "concludedReason": row.concluded_reason,
-        "turnCount": row.turn_count,
-        "observations": row.observations,
-    }
 
 
 def socratic_router(deps: SocraticDeps) -> APIRouter:
