@@ -9,17 +9,26 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from research_team.platform.components.component_spec import (
+    ComponentType,
+    Note,
+    Spec,
+    flag,
+    integer_between,
+    listing,
+    one_of,
+    string_list,
+    string_subset,
+    text,
+)
 
 # Constants aligned with graph_read.MAX_NEIGHBORHOOD_DEPTH and
 # timeline_read.MAX_TIMELINE_BANDS.
 # Defined here so platform components do not form a circular import dependency on knowledge BC.
 MAX_NEIGHBORHOOD_DEPTH = 2
 MAX_TIMELINE_BANDS = 1_000
-
-if TYPE_CHECKING:
-    from research_team.platform.components.components import ComponentType, Note
-
 
 CLOZE_BLANK = re.compile(r"\{\{(.+?)\}\}", re.DOTALL)
 """`{{answer}}` or `{{answer::hint}}`, borrowed from Anki and Obsidian because
@@ -78,8 +87,6 @@ def _mcq_strip(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cloze_text_has_a_blank(value: Any, path: str) -> list[Note]:
-    from research_team.platform.components.components import Note, text
-
     notes = text(value, path)
     if notes:
         return notes
@@ -95,8 +102,6 @@ def _duplicates(entries: Sequence[tuple[str, Any]], noun: str, keyed: str) -> li
     presumably the row the author meant, and a note on it would read as an
     instruction to change the wrong line.
     """
-    from research_team.platform.components.components import Note
-
     seen: set[str] = set()
     notes: list[Note] = []
     for path, value in entries:
@@ -195,8 +200,6 @@ def _explorer_over(data: dict[str, Any]) -> list[Note]:
     Runs only on a body that already validated, so `over` is present and is
     text (`ComponentType.warn`'s guarantee).
     """
-    from research_team.platform.components.components import Note
-
     over = data.get("over")
     if over in EXPLORER_BACKING_READS:
         return []
@@ -241,8 +244,6 @@ def _entity_ids_where_names_go(data: dict[str, Any]) -> list[Note]:
     strings gets a warning it cannot act on. That is a line of noise in a tool
     result, against a defect that otherwise reaches a reader's screen.
     """
-    from research_team.platform.components.components import Note
-
     notes: list[Note] = []
     entity = data.get("entity")
     if entity is not None and _looks_like_id(entity):
@@ -290,18 +291,6 @@ def _all_of(*hooks: BodyHook) -> BodyHook:
 
 
 def build_registry() -> dict[str, ComponentType]:
-    from research_team.platform.components.components import (
-        ComponentType,
-        Spec,
-        flag,
-        integer_between,
-        listing,
-        one_of,
-        string_list,
-        string_subset,
-        text,
-    )
-
     return {
         "flashcards": ComponentType(
             name="flashcards",
