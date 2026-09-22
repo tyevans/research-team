@@ -17,10 +17,6 @@ from uuid import UUID, uuid4
 from eventsource import DomainEvent, OptimisticLockError
 from eventsource.application.aggregates.repository import AggregateRepository
 from eventsource.observability import Tracer, create_tracer
-from eventsource.observability.attributes import (
-    ATTR_AGGREGATE_ID,
-    ATTR_AGGREGATE_TYPE,
-)
 
 from research_team.curriculum.application.learner_progress import (
     LearnerProgressService,
@@ -33,12 +29,10 @@ from research_team.knowledge.application.knowledge_attachment import (
 from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.platform.shared.context import ContextStrategy, FullHistory
 from research_team.session.application.ports import (
-    ActivityRemark,
     ActivityReporter,
     SessionRepository,
     SessionSummaries,
     SummaryHealth,
-    TurnAccountingError,
     TurnExecutor,
 )
 from research_team.session.application.session_inspection import (
@@ -54,23 +48,14 @@ from research_team.session.application.turn_runner import (
     FILE_EVENT_TYPES,
     INHERITED_EVENT_FIELDS,
     TurnOutcome,
-    append_turn_failure,
+    TurnRunner,
+    fork_session,
     project_context,
-    record_turn_failure,
-    refuse_unrebasable,
-    save_turn_with_retry,
 )
 from research_team.session.domain import (
     ChangeAutonomy,
-    CompactConversation,
-    CompleteTurn,
-    RecordAssistantMessage,
-    RecordForkSource,
-    RecordToolResult,
-    SendUserMessage,
     Session,
     SessionPurpose,
-    SessionStarted,
     WriteFile,
 )
 from research_team.tenancy.application.project_sessions import (
@@ -101,9 +86,11 @@ __all__ = [
     "SessionService",
     "SessionStats",
     "TurnOutcome",
+    "TurnRunner",
     "catch_up_project_tip",
     "delete_project_aggregate",
     "ensure_session_project_attached",
+    "fork_session",
     "fork_session_files",
     "project_context",
     "release_session_project",
@@ -215,6 +202,13 @@ class SessionService:
             executor=executor,
             attachment=attachment,
             graphs=graphs,
+        )
+        self._turn_runner = TurnRunner(
+            repository=repository,
+            executor=executor,
+            default_system_prompt=default_system_prompt,
+            context=self._context,
+            tracer=self._tracer,
         )
 
     @property
@@ -730,29 +724,8 @@ class SessionService:
         user_input: str,
         on_activity: ActivityReporter | None = None,
     ) -> TurnOutcome:
-        """One user turn. All events append atomically at the end, or not at all.
-
-        The prompt comes from the session's own `SessionStarted` event, so a
-        session resumed in a differently-configured process still runs under
-        the prompt it was started with.
-
-        Reports the span of events the turn produced. A caller showing the log
-        would otherwise have to diff it against a snapshot taken beforehand to
-        answer "which of these did my turn write?" -- a question the aggregate
-        can answer exactly, because an aggregate's version *is* its event count.
-
-        Traced as one span. `eventsource` traces its own loads and appends, but
-        those are leaves: without a parent naming the turn, a trace shows a
-        pile of database calls with nothing to say which turn they served or
-        how much of the wall clock was the model rather than the store. The
-        span covers a failed turn too -- ending only on success would report
-        every failure as a span that never closed.
-        """
-        with self._tracer.span(
-            "research_team.turn",
-            {ATTR_AGGREGATE_ID: str(session_id), ATTR_AGGREGATE_TYPE: "Session"},
-        ):
-            return await self._run_turn(session_id, user_input, on_activity)
+        """One user turn. All events append atomically at the end, or not at all."""
+        return await self._turn_runner.run_turn(session_id, user_input, on_activity)
 
     async def _run_turn(
         self,
@@ -760,84 +733,21 @@ class SessionService:
         user_input: str,
         on_activity: ActivityReporter | None = None,
     ) -> TurnOutcome:
-        aggregate = await self._repository.load(session_id)
-        aggregate.execute(
-            SendUserMessage(message=self._executor.encode_user_message(user_input))
-        )
-
-        # What the model sees is decided here, before the turn, and any
-        # decision that needs remembering becomes an event of its own -- so a
-        # replay of this log reproduces this context, not merely this outcome.
-        prepared = await self._context.prepare(aggregate.state)
-        if prepared.compaction is not None:
-            aggregate.execute(
-                CompactConversation(
-                    summary=prepared.compaction.summary,
-                    through_index=prepared.compaction.through_index,
-                    strategy=self._context.name,
-                    tokens_before=prepared.compaction.tokens_before,
-                    tokens_after=prepared.compaction.tokens_after,
-                )
-            )
-        if on_activity is not None:
-            for note in prepared.notes:
-                on_activity(ActivityRemark(text=note))
-
-        try:
-            result = await self._executor.execute(
-                aggregate,
-                messages=prepared.messages,
-                system_prompt=aggregate.state.system_prompt or self._default_system_prompt,
-                on_activity=on_activity,
-            )
-        except TurnAccountingError:
-            # Not an ordinary failure: our accounting of what the agent added
-            # has drifted, so even a marker would be a claim we cannot stand
-            # behind. Leave the log untouched and let it surface.
-            raise
-        except BaseException as error:
-            # The aggregate above is discarded with all of the failed turn's
-            # events, so the turn stays all-or-nothing. What gets appended is a
-            # single marker on a freshly loaded aggregate -- the log records
-            # that an attempt happened without a half-applied turn.
-            await self._record_failure(session_id, error)
-            raise
-
-        for message in result.messages:
-            if message.kind == "tool":
-                aggregate.execute(
-                    RecordToolResult(message=message.payload, is_error=message.is_error)
-                )
-            else:
-                aggregate.execute(RecordAssistantMessage(message=message.payload))
-
-        aggregate.execute(CompleteTurn())
-        appended = len(aggregate.uncommitted_events)
-        saved = await self._save_turn(session_id, aggregate)
-        return TurnOutcome(
-            reply=result.reply_text,
-            turn_index=saved.state.turn_index,
-            # Read off the saved aggregate, not off the one the turn built: a
-            # retry renumbers the turn's events onto whatever version the
-            # winner left, so the indices computed before the save can be
-            # wrong by however much landed underneath it.
-            from_index=saved.version - appended + 1,
-            to_index=saved.version,
-        )
+        return await self._turn_runner._run_turn(session_id, user_input, on_activity)
 
     async def _save_turn(self, session_id: UUID, aggregate: Session) -> Session:
-        return await save_turn_with_retry(self._repository, session_id, aggregate)
+        return await self._turn_runner._save_turn(session_id, aggregate)
 
     async def _refuse_unrebasable(
         self, session_id: UUID, base_version: int, lost: OptimisticLockError | None
     ) -> None:
-        return await refuse_unrebasable(self._repository, session_id, base_version, lost)
+        return await self._turn_runner._refuse_unrebasable(session_id, base_version, lost)
 
     async def _record_failure(self, session_id: UUID, error: BaseException) -> None:
-        await record_turn_failure(self._repository, session_id, error)
+        await self._turn_runner._record_failure(session_id, error)
 
     async def _append_failure(self, session_id: UUID, error: BaseException) -> None:
-        await append_turn_failure(self._repository, session_id, error)
+        await self._turn_runner._append_failure(session_id, error)
 
     # ---------------- time travel ----------------
 
@@ -848,25 +758,5 @@ class SessionService:
         *,
         purpose: SessionPurpose | None = None,
     ) -> UUID:
-        """Replay the first `at` events onto a fresh stream. Nothing is destroyed.
-
-        If `purpose` is specified, the forked session is retargeted to that
-        purpose (e.g. converting a RESEARCH_ROUND session to CHAT for an
-        interactive human console session, resolving B101).
-        """
-        events = await self.history(session_id)
-        if not 1 <= at <= len(events):
-            raise ValueError(f"cannot fork at {at}: session has {len(events)} events")
-
-        new_id = uuid4()
-        forked = self._repository.create(new_id)
-        for event in events[:at]:
-            payload = event.model_dump(exclude=set(INHERITED_EVENT_FIELDS))
-            if isinstance(event, SessionStarted) and purpose is not None:
-                payload["purpose"] = purpose
-            forked.create_event(type(event), **payload)
-        forked.execute(
-            RecordForkSource(source_session_id=session_id, at_event=at, purpose=purpose)
-        )
-        await self._repository.save(forked)
-        return new_id
+        """Replay the first `at` events onto a fresh stream. Nothing is destroyed."""
+        return await fork_session(self._repository, session_id, at, purpose=purpose)
