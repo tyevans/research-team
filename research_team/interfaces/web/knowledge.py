@@ -3,22 +3,18 @@
 Its own module and its own router, following `topics.py`, `sources.py`,
 `catalog.py`, and `dialogues.py`: `create_app` is thousands of lines of
 closures and modularizing these routes extracts ~500 lines from `app.py`.
+Sub-surfaces for media proposals and ontology discovery are extracted to
+`media_proposals.py` and `ontology.py`.
 """
 
 import asyncio
-import json
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
-from urllib.parse import urlsplit
 from uuid import UUID
 
-from eventsource import AggregateRepository, CommandRejectedError
+from eventsource import AggregateRepository
 from fastapi import APIRouter, FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 from research_team.infrastructure.knowledge.graph_reader import ProjectGraphReader
 from research_team.infrastructure.knowledge.timeline_reader import ProjectTimelineReader
@@ -26,9 +22,47 @@ from research_team.infrastructure.knowledge.usage_reader import UsageReader
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.read_models import (
-    MediaProposalRow,
     MediaProposalRunner,
     OntologyRunner,
+)
+from research_team.interfaces.web.media_proposals import (
+    IgnoreMediaProposalBody as IgnoreMediaProposalBody,
+)
+from research_team.interfaces.web.media_proposals import (
+    MediaProposalDeps as MediaProposalDeps,
+)
+from research_team.interfaces.web.media_proposals import (
+    RejectMediaProposalBody as RejectMediaProposalBody,
+)
+from research_team.interfaces.web.media_proposals import (
+    _host_of as _host_of,
+)
+from research_team.interfaces.web.media_proposals import (
+    _media_proposal_groups as _media_proposal_groups,
+)
+from research_team.interfaces.web.media_proposals import (
+    _media_proposal_view as _media_proposal_view,
+)
+from research_team.interfaces.web.media_proposals import (
+    media_proposals_router as media_proposals_router,
+)
+from research_team.interfaces.web.media_proposals import (
+    mount_media_proposals_routes as mount_media_proposals_routes,
+)
+from research_team.interfaces.web.ontology import (
+    OntologyDeps as OntologyDeps,
+)
+from research_team.interfaces.web.ontology import (
+    OntologyDiscoverers as OntologyDiscoverers,
+)
+from research_team.interfaces.web.ontology import (
+    OntologyTriggerBody as OntologyTriggerBody,
+)
+from research_team.interfaces.web.ontology import (
+    mount_ontology_routes as mount_ontology_routes,
+)
+from research_team.interfaces.web.ontology import (
+    ontology_router as ontology_router,
 )
 from research_team.interfaces.web.presenters import (
     definition_view,
@@ -48,7 +82,6 @@ from research_team.knowledge.application.graph_read import (
     MAX_USAGES,
     GraphReadPort,
 )
-from research_team.knowledge.application.ontology_discovery import OntologyDiscoveryService
 from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.knowledge.application.timeline_read import (
     MAX_TIMELINE_BANDS,
@@ -57,30 +90,7 @@ from research_team.knowledge.application.timeline_read import (
 )
 from research_team.platform.shared.blobs import BlobStorePort
 from research_team.research.application.media_acquisition import MediaAcceptWorker
-from research_team.research.domain.media_proposals import (
-    AcceptMediaProposal,
-    IgnoreMediaAsset,
-    IgnoreMediaHost,
-    MediaProposals,
-    RejectMediaProposal,
-    UnignoreMediaAsset,
-    UnignoreMediaHost,
-)
-
-logger = logging.getLogger(__name__)
-
-OntologyDiscoverers = Callable[[UUID], OntologyDiscoveryService]
-"""One project's `OntologyDiscoveryService`, built on demand.
-
-A callable for `TopicReaders`' reason -- the project is bound at construction,
-so no caller can run a pass against a project it was not handed.
-
-Synchronous and never `None`, unlike `DefinitionReaders` below, and the
-difference is what each needs. A definition is assembled from a project's graph
-store and chunk store, so building one is asynchronous and can fail when
-chunking is off. Discovery needs the document text and a model; neither can be
-absent, so there is no `None` for a route to render as 503.
-"""
+from research_team.research.domain.media_proposals import MediaProposals
 
 DefinitionReaders = Callable[[UUID], Awaitable["DefinitionService | None"]]
 """One project's `DefinitionService`, built on demand, or `None` when this
@@ -95,58 +105,6 @@ answer every project out of whichever one it was built for, and because the
 cache port takes no project argument (deliberately; see
 `application/entity_definitions.py`) it would write those answers into that
 project's rows too."""
-
-
-def _media_proposal_view(row: MediaProposalRow) -> dict[str, Any]:
-    return {
-        "proposal_id": row.proposal_id,
-        "need_id": row.need_id,
-        "topic_id": row.topic_id,
-        "page_url": row.page_url,
-        "asset_url": row.asset_url,
-        "thumbnail_url": row.thumbnail_url or None,
-        "kind": row.kind,
-        "title": row.title,
-        "reason": row.reason,
-        "query": row.query,
-        "status": row.status,
-        "note": row.note or None,
-        "source_id": row.source_id,
-        "error": row.error,
-    }
-
-
-def _media_proposal_groups(rows: list[MediaProposalRow]) -> list[dict[str, Any]]:
-    """Rows grouped by need, each group labelled with `need_description`.
-
-    A `dict` keyed by `need_id` rather than a `groupby` over a sorted
-    list: `for_project`'s rows already arrive in one project's insertion
-    order, and a `dict`'s insertion-order iteration preserves that --
-    "the order proposals were found in" -- without a sort that would
-    reorder them by an id nobody chose for display.
-    """
-    groups: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        group = groups.setdefault(
-            row.need_id,
-            {
-                "need_id": row.need_id,
-                "need_description": row.need_description,
-                "proposals": [],
-            },
-        )
-        group["proposals"].append(_media_proposal_view(row))
-    return list(groups.values())
-
-
-def _host_of(url: str) -> str:
-    """Duplicated from `domain/media_proposals.py`'s own `_host_of`
-    rather than imported: that function is private to the aggregate
-    module, for the same reason `application/media_curation.py` gives its
-    own copy -- this must agree with `decide`'s key derivation or an
-    asset ignored here by host could still be proposed there.
-    """
-    return (urlsplit(url).hostname or "").lower()
 
 
 def _instant(name: str, raw: str | None) -> datetime | None:
@@ -178,18 +136,6 @@ def _timeline_interval(from_: str | None, to: str | None) -> TimelineInterval | 
     if from_ is None and to is None:
         return None
     return TimelineInterval(start=_instant("from", from_), end=_instant("to", to))
-
-
-class RejectMediaProposalBody(BaseModel):
-    note: str = ""
-
-
-class IgnoreMediaProposalBody(BaseModel):
-    grain: Literal["asset", "host"]
-
-
-class OntologyTriggerBody(BaseModel):
-    strict: bool = True
 
 
 @dataclass(frozen=True)
@@ -224,8 +170,29 @@ def knowledge_router(deps: KnowledgeDeps) -> APIRouter:
     """
     router = APIRouter()
 
-    media_accept_tasks: set[asyncio.Task] = (
-        deps.media_accept_tasks if deps.media_accept_tasks is not None else set()
+    # Mount extracted sub-routers
+    router.include_router(
+        media_proposals_router(
+            MediaProposalDeps(
+                require_project=deps.require_project,
+                media_proposals=deps.media_proposals,
+                media_proposal_repository=deps.media_proposal_repository,
+                media_accept_worker=deps.media_accept_worker,
+                media_accept_tasks=deps.media_accept_tasks,
+            )
+        )
+    )
+    router.include_router(
+        ontology_router(
+            OntologyDeps(
+                require_project=deps.require_project,
+                ontology=deps.ontology,
+                ontology_discoverers=deps.ontology_discoverers,
+                corpus=deps.corpus,
+                blob_store=deps.blob_store,
+                reader_of=deps.reader_of,
+            )
+        )
     )
 
     async def _check_project(project_id: UUID) -> None:
@@ -313,184 +280,6 @@ def knowledge_router(deps: KnowledgeDeps) -> APIRouter:
             raise HTTPException(status_code=503, detail="no graph read model is configured")
         store = await deps.graphs.open(project_id)
         return ProjectTimelineReader(project_id=project_id, store=store)
-
-    @router.get("/api/projects/{project_id}/media-proposals")
-    async def list_media_proposals(project_id: UUID):
-        """Every proposal in the project, grouped by the need that produced it.
-
-        Empty rather than 503 when `media_proposals` was not wired: a build
-        with no proposal read model has no proposals to show, which is a
-        legitimate state for a project that has never run the chain, matching
-        `get_dispatch`'s reasoning for its own optional dependency above.
-        """
-        await _check_project(project_id)
-        if deps.media_proposals is None:
-            return []
-        return _media_proposal_groups(await deps.media_proposals.for_project(project_id))
-
-    @router.post("/api/projects/{project_id}/media-proposals/{proposal_id}/accept")
-    async def accept_media_proposal(project_id: UUID, proposal_id: str):
-        """Record the decision, then hand the download off to `MediaAcceptWorker`.
-
-        Still 202, and still answered before anything is fetched: the append
-        below is the only part this request waits on. `MediaAcceptWorker.run`
-        is scheduled with `asyncio.create_task` rather than awaited, because it
-        downloads and perceives -- an hour of audio is minutes of transcription
-        -- and a route that waited on that would be a route that times out.
-        `media_accept_tasks` is what keeps the scheduled task alive; see its
-        comment above `create_app`'s body for why a bare `create_task` is not
-        enough on its own.
-
-        No queue, unlike `ExtractionQueue`/`DispatchQueue`: those serialize
-        because running two of a kind at once means racing writes to a shared
-        resource (one extraction pass per project) or asking twice for the same
-        research. An accept has neither problem -- each proposal downloads and
-        stores into its own corpus row, `source_id=proposal_id`, so two accepts
-        for two different proposals racing costs nothing a queue would have
-        saved. `MediaAcceptWorker`'s own docstring is what makes even the
-        crash-and-retry case safe without one.
-
-        A logged exception, not a crashed task, is where a bug in the worker
-        that is *not* one of its four named refusals ends up: nothing awaits
-        this task, so nothing else would ever see it raise.
-        """
-        await _check_project(project_id)
-        if deps.media_proposal_repository is None:
-            raise HTTPException(status_code=503, detail="media proposals are not configured")
-        aggregate = await deps.media_proposal_repository.load_or_create(project_id)
-        try:
-            aggregate.execute(
-                AcceptMediaProposal(project_id=str(project_id), proposal_id=proposal_id)
-            )
-        except CommandRejectedError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        await deps.media_proposal_repository.save(aggregate)
-
-        if deps.media_accept_worker is not None:
-
-            async def _run_accept_worker() -> None:
-                try:
-                    await deps.media_accept_worker.run(proposal_id)
-                except Exception:
-                    logger.exception(
-                        "media accept worker failed for proposal %s in project %s",
-                        proposal_id,
-                        project_id,
-                    )
-
-            task = asyncio.create_task(_run_accept_worker())
-            media_accept_tasks.add(task)
-            task.add_done_callback(media_accept_tasks.discard)
-
-        return JSONResponse(
-            status_code=202, content={"proposal_id": proposal_id, "status": "accepted"}
-        )
-
-    @router.post("/api/projects/{project_id}/media-proposals/{proposal_id}/reject")
-    async def reject_media_proposal(
-        project_id: UUID, proposal_id: str, body: RejectMediaProposalBody | None = None
-    ):
-        """Close the record without touching `ignored_assets`/`ignored_hosts`
-        -- see the module docstring's "Rejecting is not blacklisting". The
-        note is optional because most rejections are obvious, matching
-        `MediaProposalRejected`'s own reasoning.
-        """
-        await _check_project(project_id)
-        if deps.media_proposal_repository is None:
-            raise HTTPException(status_code=503, detail="media proposals are not configured")
-        aggregate = await deps.media_proposal_repository.load_or_create(project_id)
-        try:
-            aggregate.execute(
-                RejectMediaProposal(
-                    project_id=str(project_id),
-                    proposal_id=proposal_id,
-                    note=(body.note if body is not None else ""),
-                )
-            )
-        except CommandRejectedError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        await deps.media_proposal_repository.save(aggregate)
-        return {"proposal_id": proposal_id, "status": "rejected"}
-
-    @router.post("/api/projects/{project_id}/media-proposals/{proposal_id}/ignore")
-    async def ignore_media_proposal(
-        project_id: UUID, proposal_id: str, body: IgnoreMediaProposalBody
-    ):
-        """Ignore the asset or host behind one proposal, keyed off the
-        proposal's own recorded `asset_url` -- not a second identifier the
-        caller has to already know, unlike `DELETE .../ignored/{grain}/{key}`
-        below, which exists precisely for the case where they do (the ignore
-        lists, with no proposal attached).
-
-        404 for an unknown `proposal_id`: `decide`'s `IgnoreMediaAsset` and
-        `IgnoreMediaHost` cases carry no unknown-id guard of their own (the
-        module's transition table only guards commands that name a proposal
-        directly), so this route checks existence itself before deriving a
-        key from a record that is not there -- a `CommandRejectedError`
-        never gets the chance to fire, so there is nothing to map to 409.
-        """
-        await _check_project(project_id)
-        if deps.media_proposal_repository is None:
-            raise HTTPException(status_code=503, detail="media proposals are not configured")
-        aggregate = await deps.media_proposal_repository.load_or_create(project_id)
-        record = aggregate.state.proposals.get(proposal_id)
-        if record is None:
-            raise HTTPException(
-                status_code=404, detail=f"no proposal {proposal_id!r} in project {project_id}"
-            )
-        command = (
-            IgnoreMediaAsset(project_id=str(project_id), asset_key=record.asset_url)
-            if body.grain == "asset"
-            else IgnoreMediaHost(project_id=str(project_id), host=_host_of(record.asset_url))
-        )
-        try:
-            aggregate.execute(command)
-        except CommandRejectedError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        await deps.media_proposal_repository.save(aggregate)
-        return {"proposal_id": proposal_id, "grain": body.grain}
-
-    @router.delete("/api/projects/{project_id}/ignored/{grain}/{key:path}")
-    async def unignore_media(project_id: UUID, grain: Literal["asset", "host"], key: str):
-        """Reverse an ignore at either grain, by the same key `GET .../ignored`
-        reports -- see the module docstring's "both are reversible".
-
-        `{key:path}` rather than the default converter: an asset key is a
-        whole URL (`normalize_url`'s output), which contains `/`, and the
-        default converter stops at the first one -- `example.com/pic.jpg`
-        would 404 as an unmatched route rather than reach this handler. A
-        host key never contains `/`, but the same converter serves both
-        grains rather than branching the route in two.
-        """
-        await _check_project(project_id)
-        if deps.media_proposal_repository is None:
-            raise HTTPException(status_code=503, detail="media proposals are not configured")
-        aggregate = await deps.media_proposal_repository.load_or_create(project_id)
-        command = (
-            UnignoreMediaAsset(project_id=str(project_id), asset_key=key)
-            if grain == "asset"
-            else UnignoreMediaHost(project_id=str(project_id), host=key)
-        )
-        try:
-            aggregate.execute(command)
-        except CommandRejectedError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        await deps.media_proposal_repository.save(aggregate)
-        return {"grain": grain, "key": key}
-
-    @router.get("/api/projects/{project_id}/ignored")
-    async def get_ignored(project_id: UUID):
-        """Both ignore lists at once -- the pane that shows one shows both.
-
-        Empty rather than 503 when unwired, matching `list_media_proposals`.
-        """
-        await _check_project(project_id)
-        if deps.media_proposals is None:
-            return {"assets": [], "hosts": []}
-        return {
-            "assets": sorted(await deps.media_proposals.ignored_assets(project_id)),
-            "hosts": sorted(await deps.media_proposals.ignored_hosts(project_id)),
-        }
 
     @router.get("/api/projects/{project_id}/graph")
     async def read_graph(project_id: UUID, limit: int = MAX_GRAPH_NODES):
@@ -647,129 +436,10 @@ def knowledge_router(deps: KnowledgeDeps) -> APIRouter:
             served = await serve_citations(_reader(project_id), definition.citations)
         return definition_view(definition, served)
 
-    @router.post("/api/projects/{project_id}/sources/{source_id}/ontology")
-    async def discover_ontology(
-        project_id: UUID,
-        source_id: str,
-        strict: bool = True,
-        body: OntologyTriggerBody | None = None,
-    ):
-        """Read one document for the classes it states. 200, because it has run.
-
-        **Synchronous, unlike extraction, and for `read_graph_definition`'s
-        reason.** `ExtractionQueue` exists because extraction is long-running
-        and a request that loses a queued extraction loses an intention the
-        caller cannot easily re-express. A discovery pass is one model call over
-        one document, produces the same answer from the same inputs, and a
-        failed request costs the caller a second click -- so the whole retry
-        story is "click again".
-
-        It also *could not* reuse that queue as it stands. `ExtractionQueue`
-        deduplicates on `(project_id, source_id)` and reads
-        `report.entity_count` off whatever it awaited, so queuing a pass for a
-        document already queued for extraction would be silently dropped and
-        answered `queued: false` -- which the client reads as "this is going to
-        happen", when what is going to happen is the extraction, not the pass.
-        Making it fit means changing a component another lane owns.
-
-        **`strict=false` reads the document under the weaker rule** that
-        `verify_classes` documents: a class whose quoted sentence is not in the
-        text survives if all its members are, cited to the first member's
-        occurrence and flagged `evidenceQuoted: false` on the way back out.
-        Default true, because a reader who has not asked for it must not be
-        handed classes the document may never have grouped.
-
-        A query parameter and not a body field, on a POST, which is the odd
-        choice here. The body is `{}` and stays that way: this route already
-        carries its subject in the path, and a caller reading the URL sees the
-        whole request -- which matters more than usual for a lever whose two
-        settings answer different questions about the same document.
-
-        **`found: null` rather than 404 when the pass declines.** The three
-        declines -- an unreadable reply, a document over
-        `MAX_DISCOVERY_CHARS`, and a source that is not there -- are told apart
-        above by the 404 and below by nothing, deliberately: see
-        `OntologyDiscoveryService.discover`. `found: 0` is a different answer
-        again, and the important one to keep distinct: it means the document was
-        read and states no classes.
-        """
-        await _check_project(project_id)
-        if deps.ontology_discoverers is None:
-            raise HTTPException(status_code=503, detail="no ontology service is configured")
-        if await _reader(project_id).read_document(source_id) is None:
-            raise HTTPException(
-                status_code=404, detail=f"no source {source_id!r} in project {project_id}"
-            )
-        actual_strict = (
-            body.strict if body is not None and "strict" in body.model_fields_set else strict
-        )
-        found = await deps.ontology_discoverers(project_id).discover(
-            source_id, strict=actual_strict
-        )
-        return {"sourceId": source_id, "found": found}
-
-    @router.get("/api/projects/{project_id}/ontology")
-    async def read_ontology(project_id: UUID):
-        """Every class discovered in this project, with what it was derived from.
-
-        **503 when the runner is unwired, not an empty 200.** An empty list is
-        the correct answer for a project nobody has run a pass on, so a
-        misconfigured build answering the same thing would be indistinguishable
-        from a working one with nothing to show -- which is the whole failure
-        this feature is arranged against, arriving at the last layer.
-
-        Every field a reader needs to judge a class travels with it. `evidence`
-        is offsets into the source document, not a quotation: the view opens the
-        document there, and quoted text proves only that the model wrote a
-        sentence, where opening the document proves the sentence is in it.
-        `declaredCount` beside `memberCount` is the checksum, and
-        `rejectedMembers` is what explains a gap between them -- a class short
-        one member with no explanation cannot be judged, because an invented
-        member and a document genuinely missing one look identical.
-        """
-        await _check_project(project_id)
-        if deps.ontology is None:
-            raise HTTPException(status_code=503, detail="no ontology service is configured")
-        classes = []
-        for row in await deps.ontology.classes_for(project_id):
-            members = await deps.ontology.members_for(row.id)
-            classes.append(
-                {
-                    "id": str(row.id),
-                    "name": row.name,
-                    "kind": row.kind,
-                    "declaredCount": row.declared_count,
-                    "memberCount": row.member_count,
-                    "parentClassId": str(row.parent_class_id) if row.parent_class_id else None,
-                    "evidence": {
-                        "sourceId": row.source_id,
-                        "start": row.evidence_start,
-                        "end": row.evidence_end,
-                    },
-                    "rejectedMembers": json.loads(row.rejected_members),
-                    # Travels beside `evidence` rather than being inferred from
-                    # it, because nothing about the offsets says which they are
-                    # -- a member fallback and a located sentence are both a
-                    # pair of integers into the same document.
-                    "evidenceQuoted": row.evidence_quoted,
-                    "stale": row.stale,
-                    "members": [
-                        {"name": member.member_name, "ordinal": member.ordinal}
-                        for member in members
-                    ],
-                }
-            )
-        return {"classes": classes}
-
     @router.get("/api/projects/{project_id}/timeline")
     async def read_timeline(
         project_id: UUID,
         entity_type: str | None = None,
-        # `from` is a Python keyword, so the parameter is named `from_` and
-        # aliased back. FastAPI's `Query` alias is the only way to spell a
-        # reserved word in a signature; renaming the *wire* parameter to
-        # something legal was rejected because the spec names `from`/`to` and a
-        # query string is a contract with anyone holding a bookmark.
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = None,
         limit: int = MAX_TIMELINE_BANDS,
@@ -809,3 +479,24 @@ def knowledge_router(deps: KnowledgeDeps) -> APIRouter:
 def mount_knowledge_routes(app: FastAPI, deps: KnowledgeDeps) -> None:
     """Mount the knowledge router on the given FastAPI app."""
     app.include_router(knowledge_router(deps))
+
+
+__all__ = [
+    "DefinitionReaders",
+    "IgnoreMediaProposalBody",
+    "KnowledgeDeps",
+    "MediaProposalDeps",
+    "OntologyDeps",
+    "OntologyDiscoverers",
+    "OntologyTriggerBody",
+    "RejectMediaProposalBody",
+    "_host_of",
+    "_media_proposal_groups",
+    "_media_proposal_view",
+    "knowledge_router",
+    "media_proposals_router",
+    "mount_knowledge_routes",
+    "mount_media_proposals_routes",
+    "mount_ontology_routes",
+    "ontology_router",
+]
