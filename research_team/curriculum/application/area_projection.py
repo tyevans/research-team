@@ -33,12 +33,30 @@ makes an area's slug safe to use as a directory name.
 
 from __future__ import annotations
 
-import heapq
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Protocol
 
+from research_team.curriculum.application.area_clustering import (
+    MAX_AREA_FRACTION,
+    MIN_AREA_SIZE,
+    _absorb_small,
+    _greedy_modularity,
+    _split_oversized,
+)
+from research_team.curriculum.application.area_graph import (
+    CO_MENTION_BUDGET,
+    EMBEDDING_NEIGHBOURS,
+    EMBEDDING_WEIGHT,
+    MAX_PASSAGE_ENTITIES,
+    MIN_NEIGHBOUR_STANDOUT,
+    RELATION_WEIGHT,
+    STANDOUT_SPAN,
+    _adjacency,
+    _co_mention_edges,
+    _semantic_edges,
+)
 from research_team.curriculum.domain.learning_area import (
     AreaMember,
     AreaProjection,
@@ -47,34 +65,8 @@ from research_team.curriculum.domain.learning_area import (
 from research_team.knowledge.application.graph_read import (
     Graph,
     GraphEntity,
-    GraphRelationship,
 )
 from research_team.knowledge.application.name_shape import clause_shaped
-
-#: Weight of one extracted relationship. The unit the other weights are
-#: expressed against, so it is 1.0 by definition rather than by tuning: a
-#: model read a document and asserted a connection, which is the strongest
-#: evidence this system ever has that two things belong together.
-RELATION_WEIGHT = 1.0
-
-#: The most weight one passage may contribute in total, spread across every
-#: pair of entities it mentions. Well below `RELATION_WEIGHT` because a
-#: co-mention is genuinely weaker evidence than an assertion -- two entities
-#: named in one paragraph are often merely adjacent -- and because the
-#: aggregate is what carries the signal. A hundred passages agreeing outweigh
-#: one relationship; one passage never does.
-CO_MENTION_BUDGET = 0.5
-
-#: Passages naming more entities than this contribute nothing.
-#:
-#: Not a performance guard -- a 40-entity passage is 780 pairs, which is
-#: nothing. It is a *relevance* guard. A passage listing forty entities is a
-#: table of contents, an index, or a glossary, and the "these belong together"
-#: inference it licenses is false: everything in the project appears in it. The
-#: normalisation in `_co_mention_edges` already stops such a passage dominating
-#: by volume, but it cannot stop it wiring the whole graph into one blob at low
-#: weight, which is exactly what a curriculum must not be.
-MAX_PASSAGE_ENTITIES = 25
 
 #: How many entities this pass will cluster. Greedy modularity is superlinear,
 #: and a refusal a person can see beats a projection that quietly consumes the
@@ -87,101 +79,6 @@ MAX_PASSAGE_ENTITIES = 25
 #: graph, measured rather than guessed -- see
 #: `test_projection_clusters_a_dense_graph_at_the_cap_promptly`.
 MAX_CLUSTERED_ENTITIES = 5_000
-
-#: Above this fraction of the graph, a community is split once more.
-#:
-#: Modularity is content to return one community holding most of the graph,
-#: and such a community is not an area -- it is the projection having failed
-#: while returning a value. One re-run on the induced subgraph catches the
-#: "two subjects got glued" case. It is bounded to a single recursion on
-#: purpose: a genuinely homogeneous cluster splits into arbitrary halves
-#: forever, and an arbitrary half is worse than an honest large area.
-MAX_AREA_FRACTION = 0.4
-
-#: Areas smaller than this are not shipped as areas. Their members are
-#: absorbed into whichever surviving area holds their strongest neighbour, and
-#: dropped only if they have no edge into any of them. Three is the smallest
-#: set a person would call a topic; shipping forty two-member areas buries the
-#: eight real ones, which is the failure this constant exists against.
-MIN_AREA_SIZE = 3
-
-#: Weight of one semantic edge at the similarity floor, rising to this value
-#: at a perfect match. Below `RELATION_WEIGHT` and above one passage's whole
-#: budget, which is the ordering the evidence deserves: a model read a document
-#: and asserted a relationship; a passage put two names near each other; an
-#: embedding says two entities *look* like the same subject and no document
-#: ever said so. Strong enough to join two clusters nothing co-mentions, never
-#: strong enough to overrule an assertion.
-EMBEDDING_WEIGHT = 0.6
-
-#: How many semantic neighbours each entity may contribute.
-#:
-#: Small on purpose, and it is the guard that matters most here. Similarity is
-#: dense -- every entity has a nearest neighbour, and in a graph of 500
-#: entities an unbounded pass is 125,000 edges, every one of them non-zero.
-#: That does not refine a clustering, it dissolves it: modularity over a
-#: near-complete graph has no communities to find. Keeping only each entity's
-#: closest few leaves the graph sparse, which is the condition the whole
-#: method depends on.
-EMBEDDING_NEIGHBOURS = 5
-
-#: How far above an entity's *own* neighbour distribution a pair has to stand
-#: before it is drawn, in standard deviations.
-#:
-#: **This replaced an absolute cosine floor (`MIN_EMBEDDING_SCORE = 0.83`) on
-#: 2026-08-29, and the reason is a measurement rather than a preference.** The
-#: floor's docstring claimed it was set "where two entity cards have to
-#: genuinely be about the same subject". Against `qwen3-embedding-0.6b` over
-#: real `card_text` cards it was not: 20 entities across four disjoint domains
-#: (computing, marine biology, monetary policy, baroque music), all 190 pairs
-#: scored on redstring's `(1 + cosine) / 2` scale --
-#:
-#:     unrelated (cross-domain, n=150)  median 0.6783  p95 0.7543  max 0.7808
-#:     related   (within-domain, n=40)  median 0.8274  p95 0.9294  max 0.9550
-#:
-#: -- so 0.83 sat at the *median of genuinely related pairs*, not near the
-#: unrelated band. It discarded 21 of 40 true pairs, including five entities'
-#: own correct nearest neighbour (London -> Ada Lovelace at 0.8039, Harpsichord
-#: -> Brandenburg Concertos at 0.8157, Counterpoint at 0.8205, Leipzig at
-#: 0.8237, Ada Lovelace -> Charles Babbage at 0.8276). Precision 1.00, recall
-#: 0.475.
-#:
-#: The worse half is what an absolute floor does to a *single-domain* corpus,
-#: which is what a real project graph is. Every one of those four domains is
-#: five entities and ten possible pairs, and 0.83 kept:
-#:
-#:     baroque music     1/10        marine biology  5/10
-#:     computing         3/10        monetary policy 10/10  (a complete graph)
-#:
-#: The floor is not measuring structure, it is measuring how high in the scale
-#: that corpus's vocabulary happens to sit -- and on the finance corpus it
-#: admitted every pair, which is precisely the k-nearest-neighbour-invents-
-#: structure failure it was written to prevent. A relative cut at z=1.0 kept
-#: 3, 4, 3 and 4 across the same four, and on the multi-domain corpus scored
-#: precision 0.974 at recall 0.925 against 0.83's 1.000 at 0.475 -- it
-#: dominates the absolute floor over the whole trade-off frontier (absolute
-#: 0.80 gets 1.000/0.675; relative z=1.25 gets 1.000/0.800).
-#:
-#: **And an absolute cosine is a per-model constant wearing a universal one's
-#: clothes.** The embedding model is a setting (`embedding_model` in
-#: `domain/settings.py`, `AGENT_EMBEDDING_MODEL`), so a user pointing at a
-#: different provider silently changes what 0.83 means -- every model has its
-#: own band, and nothing here would have said so. A z-score is computed from
-#: whatever the configured model returns for *this project's* entities, so it
-#: survives a model swap; a cosine does not.
-#:
-#: 1.0 rather than 1.25 or 0.75: 1.25 buys the last 2.6% of precision for 12.5%
-#: of recall, and 0.75 admits a cross-domain pair per 9 drawn. Neither is a
-#: cliff, which is the point -- the instrument is not fragile at its setting
-#: the way 0.83 was, where every live pair sat within 0.07 of the constant.
-MIN_NEIGHBOUR_STANDOUT = 1.0
-
-#: The standout above `MIN_NEIGHBOUR_STANDOUT` at which a semantic edge earns
-#: `EMBEDDING_WEIGHT` in full. Pairs above it are clipped rather than scaled
-#: further: the top of a z distribution is set by how tight the *rest* of the
-#: row is, so an entity with one near-duplicate and eighteen strangers can
-#: reach z=4 without that pair being any better evidence than one at z=2.
-STANDOUT_SPAN = 1.0
 
 
 class CoMentionPort(Protocol):
@@ -256,267 +153,6 @@ def slugify(name: str, *, fallback: str) -> str:
     folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     cleaned = re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
     return cleaned[:60] or fallback
-
-
-def _co_mention_edges(
-    passages: Iterable[frozenset[str]],
-    known: frozenset[str],
-) -> tuple[dict[tuple[str, str], float], int]:
-    """Weighted pair contributions from co-mention, and how many passages counted.
-
-    Each passage contributes `CO_MENTION_BUDGET` **in total**, divided among
-    its pairs. That normalisation is the whole design and it is worth being
-    explicit about what it prevents: without it a passage naming twenty
-    entities contributes 190 unit edges against a project that may hold only a
-    few hundred relationships in total, and the projection becomes a picture of
-    which passage was longest rather than of what the project is about. With
-    it, a passage is one voice however much of it there is.
-    """
-    edges: dict[tuple[str, str], float] = {}
-    counted = 0
-    for passage in passages:
-        members = sorted(passage & known)
-        if len(members) < 2 or len(members) > MAX_PASSAGE_ENTITIES:
-            continue
-        counted += 1
-        pairs = len(members) * (len(members) - 1) // 2
-        share = CO_MENTION_BUDGET / pairs
-        for i, left in enumerate(members):
-            for right in members[i + 1 :]:
-                edges[(left, right)] = edges.get((left, right), 0.0) + share
-    return edges, counted
-
-
-def _semantic_edges(
-    pairs: Iterable[tuple[str, str, float]],
-    known: frozenset[str],
-) -> dict[tuple[str, str], float]:
-    """Weighted pair contributions from embedding similarity.
-
-    The port's third element is a *standout* -- how many standard deviations
-    the pair sits above that entity's own similarity row -- not a cosine, and
-    it is rescaled from `[MIN_NEIGHBOUR_STANDOUT, +STANDOUT_SPAN]` onto
-    `[0, EMBEDDING_WEIGHT]` rather than used as a multiplier directly. The
-    rescale is the same idea the absolute floor's version had and is not
-    cosmetic: an edge admitted by a hair has to contribute by a hair, or the
-    threshold becomes the only decision the channel makes.
-
-    Clipped at the top, which the cosine version did not need. A z has no
-    ceiling, and `EMBEDDING_WEIGHT * z` would let one entity with a
-    near-duplicate and a tight row outweigh an asserted relationship.
-
-    Pairs below the cut are dropped here as well as in the adapter. The
-    adapter has the store and computes the standout; this is a pure function
-    and is where the constant's meaning is testable.
-    """
-    edges: dict[tuple[str, str], float] = {}
-    for left, right, standout in pairs:
-        if left == right or left not in known or right not in known:
-            continue
-        if standout < MIN_NEIGHBOUR_STANDOUT:
-            continue
-        key = (left, right) if left < right else (right, left)
-        weight = EMBEDDING_WEIGHT * min(
-            1.0, (standout - MIN_NEIGHBOUR_STANDOUT) / STANDOUT_SPAN
-        )
-        # `max`, not `+`: an adapter yielding a pair twice (both directions,
-        # or once per endpoint's neighbour list) must not make that pair twice
-        # as attractive as one reported once. Idempotent by construction is
-        # worth more here than trusting the port's contract, because the
-        # failure is a silently better-connected pair rather than an error.
-        edges[key] = max(edges.get(key, 0.0), weight)
-    return edges
-
-
-def _adjacency(
-    entities: Sequence[GraphEntity],
-    relationships: Sequence[GraphRelationship],
-    passages: Iterable[frozenset[str]],
-    semantic: Iterable[tuple[str, str, float]] = (),
-) -> tuple[dict[str, dict[str, float]], int, int, int]:
-    """The undirected weighted graph the merge runs over.
-
-    Self-loops are dropped rather than kept at any weight. redstring can
-    record a relationship whose ends resolve to one entity after
-    consolidation, and such an edge adds to a node's degree without ever
-    connecting it to anything -- which inflates `a_c` in the modularity term
-    and makes a hub *harder* to merge, silently, in proportion to how many
-    times it was deduplicated. Nothing about that is a claim anyone made.
-    """
-    known = frozenset(e.entity_id for e in entities)
-    adjacency: dict[str, dict[str, float]] = {e.entity_id: {} for e in entities}
-
-    asserted = 0
-    for rel in relationships:
-        left, right = rel.source_id, rel.target_id
-        if left == right or left not in known or right not in known:
-            continue
-        asserted += 1
-        adjacency[left][right] = adjacency[left].get(right, 0.0) + RELATION_WEIGHT
-        adjacency[right][left] = adjacency[right].get(left, 0.0) + RELATION_WEIGHT
-
-    co_edges, counted = _co_mention_edges(passages, known)
-    for (left, right), weight in co_edges.items():
-        adjacency[left][right] = adjacency[left].get(right, 0.0) + weight
-        adjacency[right][left] = adjacency[right].get(left, 0.0) + weight
-
-    semantic_edges = _semantic_edges(semantic, known)
-    for (left, right), weight in semantic_edges.items():
-        adjacency[left][right] = adjacency[left].get(right, 0.0) + weight
-        adjacency[right][left] = adjacency[right].get(left, 0.0) + weight
-
-    return adjacency, asserted, counted, len(semantic_edges)
-
-
-def _greedy_modularity(adjacency: Mapping[str, Mapping[str, float]]) -> list[frozenset[str]]:
-    """Clauset-Newman-Moore, with every tie broken on entity ids.
-
-    Chosen over label propagation because label propagation's answer depends
-    on visit order and pinning the order pins the result to an arbitrary
-    choice -- one that changes the moment an entity is added. Here the answer
-    is a function of the graph alone, which is what lets a slug derived from it
-    be used as a directory name and what makes a regression test mean anything.
-
-    The heap holds candidate merges and is *lazy*: an entry whose communities
-    have since merged into something else is discarded on pop rather than
-    removed on merge. Eager removal needs an index from community to heap
-    position and a sift on every touch, for a structure that is rebuilt
-    constantly; the lazy form does strictly less work and cannot go stale in a
-    way that changes the answer, because a stale entry is recognised by
-    identity of the live community set before it is used.
-    """
-    total = sum(sum(row.values()) for row in adjacency.values()) / 2.0
-    if total <= 0:
-        return [frozenset({node}) for node in sorted(adjacency)]
-
-    # `degree` and `between` are kept per *community*, not per node, and are
-    # updated on merge. Recomputing them from members each round is the same
-    # arithmetic done O(n) times more often.
-    members: dict[str, frozenset[str]] = {node: frozenset({node}) for node in adjacency}
-    degree: dict[str, float] = {node: sum(row.values()) for node, row in adjacency.items()}
-    between: dict[str, dict[str, float]] = {
-        node: dict(sorted(row.items())) for node, row in adjacency.items()
-    }
-
-    def delta(left: str, right: str) -> float:
-        weight = between[left].get(right, 0.0)
-        return weight / total - (degree[left] * degree[right]) / (2.0 * total * total)
-
-    heap: list[tuple[float, str, str]] = []
-    for left, row in between.items():
-        for right in row:
-            if left < right:
-                heapq.heappush(heap, (-delta(left, right), left, right))
-
-    while heap:
-        negated, left, right = heapq.heappop(heap)
-        # Stale: one end has been merged away, or the pair's score has moved
-        # since it was pushed. Either way the live score is what decides.
-        if left not in members or right not in members:
-            continue
-        if right not in between[left]:
-            continue
-        current = delta(left, right)
-        if abs(current + negated) > 1e-12:
-            heapq.heappush(heap, (-current, left, right))
-            continue
-        if current <= 0:
-            break
-
-        # The survivor is the lower key, so the community key stays the lowest
-        # member id and the tie-break above stays a property of the graph.
-        keep, drop = (left, right) if left < right else (right, left)
-        members[keep] = members[keep] | members[drop]
-        degree[keep] += degree[drop]
-
-        for other, weight in between[drop].items():
-            if other == keep:
-                continue
-            between[keep][other] = between[keep].get(other, 0.0) + weight
-            between[other][keep] = between[other].get(keep, 0.0) + weight
-            del between[other][drop]
-        between[keep].pop(drop, None)
-        del between[drop]
-        del members[drop]
-        del degree[drop]
-
-        for other in sorted(between[keep]):
-            pair = (keep, other) if keep < other else (other, keep)
-            heapq.heappush(heap, (-delta(*pair), *pair))
-
-    return [members[key] for key in sorted(members)]
-
-
-def _split_oversized(
-    communities: Sequence[frozenset[str]],
-    adjacency: Mapping[str, Mapping[str, float]],
-    total_nodes: int,
-) -> list[frozenset[str]]:
-    """One re-run over any community holding too much of the graph.
-
-    Bounded to a single recursion. See `MAX_AREA_FRACTION` for why unbounded
-    recursion is the wrong answer: it terminates on arbitrary halves of a
-    genuinely homogeneous cluster, and an arbitrary half presented as a
-    learning area is a lie a reader has no way to detect.
-    """
-    ceiling = max(MIN_AREA_SIZE, int(total_nodes * MAX_AREA_FRACTION))
-    out: list[frozenset[str]] = []
-    for community in communities:
-        if len(community) <= ceiling:
-            out.append(community)
-            continue
-        induced = {
-            node: {n: w for n, w in adjacency[node].items() if n in community}
-            for node in sorted(community)
-        }
-        parts = _greedy_modularity(induced)
-        # A split that returns the input unchanged means modularity has nothing
-        # left to say about this subgraph. Keeping the whole is then the honest
-        # outcome; halving it here would be this function inventing a boundary
-        # the graph does not have.
-        out.extend(parts if len(parts) > 1 else [community])
-    return out
-
-
-def _absorb_small(
-    communities: Sequence[frozenset[str]],
-    adjacency: Mapping[str, Mapping[str, float]],
-) -> list[frozenset[str]]:
-    """Fold undersized communities into their members' strongest neighbours.
-
-    A member with no edge into any surviving community is dropped from the
-    projection entirely rather than parked in an "other" area. An area named
-    "other" is the one a reader learns to ignore, and it grows: everything the
-    algorithm could not place accumulates there and the map stops being
-    falsifiable, which is the one job §8 of the design gives it.
-    """
-    survivors = [c for c in communities if len(c) >= MIN_AREA_SIZE]
-    if not survivors:
-        return []
-    home: dict[str, int] = {}
-    for index, community in enumerate(survivors):
-        for node in community:
-            home[node] = index
-
-    additions: dict[int, set[str]] = {}
-    for community in communities:
-        if len(community) >= MIN_AREA_SIZE:
-            continue
-        for node in sorted(community):
-            best_index: int | None = None
-            best_weight = 0.0
-            for neighbour, weight in sorted(adjacency[node].items()):
-                index = home.get(neighbour)
-                if index is None or weight <= best_weight:
-                    continue
-                best_index, best_weight = index, weight
-            if best_index is not None:
-                additions.setdefault(best_index, set()).add(node)
-
-    return [
-        community | frozenset(additions.get(index, set()))
-        for index, community in enumerate(survivors)
-    ]
 
 
 #: How far down the centrality ranking `_naming_anchor` will look for a member
@@ -696,3 +332,31 @@ def project_areas(
         used_embeddings=semantic_count > 0,
         truncated=graph.truncated,
     )
+
+
+__all__ = [
+    "CO_MENTION_BUDGET",
+    "EMBEDDING_NEIGHBOURS",
+    "EMBEDDING_WEIGHT",
+    "MAX_ANCHOR_SCAN",
+    "MAX_AREA_FRACTION",
+    "MAX_CLUSTERED_ENTITIES",
+    "MAX_PASSAGE_ENTITIES",
+    "MIN_AREA_SIZE",
+    "MIN_NEIGHBOUR_STANDOUT",
+    "RELATION_WEIGHT",
+    "STANDOUT_SPAN",
+    "CoMentionPort",
+    "GraphTooLarge",
+    "SemanticPort",
+    "_absorb_small",
+    "_adjacency",
+    "_co_mention_edges",
+    "_greedy_modularity",
+    "_naming_anchor",
+    "_semantic_edges",
+    "_split_oversized",
+    "_to_area",
+    "project_areas",
+    "slugify",
+]
