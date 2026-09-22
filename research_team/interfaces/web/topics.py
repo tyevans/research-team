@@ -17,14 +17,19 @@ from pydantic import BaseModel, Field, field_validator
 
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.presenters import (
-    dispatch_view,
-    roster_view,
     seeding_view,
     topic_detail_view,
     topic_documents_view,
     topic_view,
 )
 from research_team.interfaces.web.seeding import RunAlreadyActive, SeedingActivity
+from research_team.interfaces.web.topic_dispatch import (
+    MAX_BULK_DISPATCH,
+    BulkDispatch,
+    DispatchDeps,
+    NewDispatch,
+    dispatch_router,
+)
 from research_team.research.application.media_curation import (
     CurationUnavailable,
     MediaCurationService,
@@ -32,13 +37,12 @@ from research_team.research.application.media_curation import (
     MediaSearchPort,
 )
 from research_team.research.application.topic_dispatch import (
-    DISPATCH_ACTIONS,
     TopicDispatcher,
     topic_directory,
 )
 from research_team.research.application.topic_read import TopicReadPort
 from research_team.research.application.topic_seeding import TopicSeeder
-from research_team.research.application.topics import MAX_OPEN_TOPICS, TopicService
+from research_team.research.application.topics import TopicService
 from research_team.research.domain.media_proposals import MediaProposals
 from research_team.research.domain.topic import (
     AddSubQuestion,
@@ -133,65 +137,6 @@ class NewSeed(BaseModel):
 
     subject: str = Field(min_length=1)
     max_topics: int = 8
-
-
-class NewDispatch(BaseModel):
-    """What an agent dispatched at one topic is being asked to do.
-
-    Plain `str` rather than a `Literal`, so a bad value comes back from the
-    route naming the actions that exist -- the same reasoning `AutonomyChoice`
-    gives for its two fields. FastAPI's 422 for a `Literal` mismatch is
-    machine-readable and names none of them, and `lesson` is exactly the value
-    a caller will reasonably try: it is designed, in
-    `docs/design/topic-dispatch.md`, and not built.
-
-    Defaults to `understanding` rather than being required, which is now a
-    weaker justification than it was: with three actions the default is a
-    choice among them rather than the only one on offer. Kept because changing
-    it would break every existing caller that omits the field, and because
-    `understanding` is the one action that neither fetches nor proposes an
-    edit -- the safest thing to do by omission.
-    """
-
-    action: str = "understanding"
-
-
-MAX_BULK_DISPATCH = MAX_OPEN_TOPICS
-"""Most topics one bulk dispatch may name.
-
-Tied to `MAX_OPEN_TOPICS` rather than chosen independently, and that is the
-whole argument: fifty is the most live topics a project can hold, so "every
-topic the filter is showing me" always fits. A smaller cap would refuse the
-one request this route exists to serve -- the `All 50` case -- and a larger
-one would be a number that could never be reached.
-
-It is a cap on the *request*, not on the queue. Fifty one-turn dispatches is a
-long afternoon of model time, and the thing that makes that acceptable is not
-this number: it is that the queue renders all fifty, drains one at a time, and
-`Stop` drops the lot. That surface is the budget control; this is only a
-refusal of a request nobody meant to make.
-"""
-
-
-class BulkDispatch(BaseModel):
-    """One action, across a list of topics the client chose.
-
-    **`topic_ids` is required and there is no "all".** The server does not get
-    to decide the scope, and the reason is not caution -- it is that "all" has
-    no server-side definition that stays true. The queue the person is looking
-    at is filtered in the browser (`All 12`, `Needs you 3`), so a route that
-    took "all" would have to re-derive that filter from a client that owns it,
-    and the two definitions would drift the first time a tab was added. Sending
-    the ids makes the count on screen and the count enqueued the same number by
-    construction.
-
-    `action` is a plain `str` for `NewDispatch`'s reason and has no default:
-    the per-topic route backs a single button whose meaning is obvious, and
-    this one backs several.
-    """
-
-    action: str
-    topic_ids: list[UUID] = Field(min_length=1, max_length=MAX_BULK_DISPATCH)
 
 
 @dataclass(frozen=True)
@@ -432,60 +377,7 @@ def topic_router(deps: TopicDeps) -> APIRouter:
             await deps.service.project_state(project_id),
         )
 
-    @router.post("/api/projects/{project_id}/topics/{topic_id}/dispatch")
-    async def dispatch_topic(
-        project_id: UUID, topic_id: UUID, body: NewDispatch | None = None
-    ):
-        """Send an agent at one topic. 202, because it has not run when this answers.
-
-        Registered ahead of `/topics/{topic_id}` for the reason `seed_topics`
-        gives: FastAPI matches in declaration order.
-
-        **202 with `queued`, never 409.** This is the one place this API
-        deliberately differs from `seed_topics`, and `dispatch.py`'s module
-        docstring carries the argument: that one backs a control that appears
-        once on a page, where refusing a second press is correct. This one
-        backs a control on every topic row, where refusing would be the answer
-        to nearly every second press.
-
-        The topic is resolved here rather than left to the queue so a bad id
-        comes back as a 404 the caller can see. Enqueued and failed
-        asynchronously, it would surface as a failure chip on a row that does
-        not exist -- which is to say, nowhere.
-
-        503 rather than 404 when unwired, matching every other optional
-        dependency here: this build is missing configuration, not the project.
-        """
-        if deps.dispatcher is None or deps.dispatch is None:
-            raise HTTPException(status_code=503, detail="topic dispatch is not configured")
-        await _check_project(project_id)
-
-        action = (body or NewDispatch()).action
-        if action not in DISPATCH_ACTIONS:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"no dispatch action {action!r}; this build offers "
-                    f"{', '.join(sorted(DISPATCH_ACTIONS))}"
-                ),
-            )
-
-        detail = await _topic_reader(project_id).read_topic(topic_id)
-        if detail is None:
-            raise HTTPException(
-                status_code=404, detail=f"no such topic in project {project_id}"
-            )
-
-        frame = deps.dispatch.start(
-            project_id,
-            topic_id,
-            action,
-            lambda dispatch_id: deps.dispatcher.dispatch(
-                project_id, topic_id, action, dispatch_id=dispatch_id
-            ),
-            question=detail.view.summary.question,
-        )
-        return JSONResponse(status_code=202, content=dispatch_view(frame))
+    router.include_router(dispatch_router(deps))
 
     @router.post("/api/projects/{project_id}/topics/{topic_id}/media-proposals")
     async def run_media_curation(project_id: UUID, topic_id: UUID):
@@ -602,149 +494,6 @@ def topic_router(deps: TopicDeps) -> APIRouter:
             )
         return topic_detail_view(detail)
 
-    @router.get("/api/projects/{project_id}/dispatch")
-    async def get_dispatch(project_id: UUID):
-        """What is running, what is waiting, and how each topic's last one went.
-
-        The catch-up read these frames cannot do without: they carry no feed
-        position, so `Last-Event-ID` cannot replay them and a reconnecting tab
-        would otherwise be unable to tell "still running" from "finished
-        before I got here".
-
-        Three empty answers rather than a 503 when unwired, matching
-        `get_seed`: a build with no dispatch queue has nothing running, which
-        is a state and not an error. The POST above is where a client learns
-        the feature is absent.
-        """
-        await _check_project(project_id)
-        if deps.dispatch is None:
-            return {"running": None, "queued": [], "finished": []}
-        return {
-            "running": dispatch_view(deps.dispatch.current(project_id)),
-            "queued": [dispatch_view(frame) for frame in deps.dispatch.queued(project_id)],
-            "finished": [dispatch_view(frame) for frame in deps.dispatch.finished(project_id)],
-        }
-
-    @router.post("/api/projects/{project_id}/dispatch/cancel")
-    async def cancel_dispatch(project_id: UUID):
-        """Stop what is running and drop everything waiting, for this project.
-
-        Per project rather than per dispatch, matching `ResearchSupervisor`'s
-        own cancel. Answers how many went so the caller can say "stopped 3"
-        rather than guessing from a queue it re-reads a moment later.
-        """
-        await _check_project(project_id)
-        if deps.dispatch is None:
-            raise HTTPException(status_code=503, detail="topic dispatch is not configured")
-        return {"cancelled": deps.dispatch.cancel(project_id)}
-
-    @router.post("/api/projects/{project_id}/dispatch/bulk")
-    async def dispatch_topics(project_id: UUID, body: BulkDispatch):
-        """Enqueue one action across the topics the client named. 202, like the one.
-
-        Registered after `/dispatch/cancel` and before nothing that could
-        shadow it -- `/dispatch/{...}` does not exist, so declaration order
-        carries no risk here, unlike the `/topics/{topic_id}` family above.
-
-        **The scope comes from the client and there is no "all".** A route that
-        took "all" would have to define it against a queue the browser is
-        filtering, and the two definitions would drift; see `BulkDispatch`.
-        The safety property this buys is that the count on screen (`Needs you
-        3`) and the number of turns started are the same number by
-        construction, rather than by two pieces of code agreeing.
-
-        **One `DispatchQueue.start` per topic, and deliberately not a second
-        queue.** The existing queue is already FIFO, already one-in-flight per
-        project, already cancellable in one press, and already renders
-        `1 running, 11 queued`. A bulk queue beside it would be a second
-        drain competing for the one thing `Project.decide` refuses to share.
-        So this route is a loop, and the progress surface for it already
-        exists.
-
-        Unknown topic ids are reported rather than refused. The list a browser
-        sends is what it was showing a moment ago, and a topic deleted in that
-        moment would otherwise cost the other forty-nine their dispatch -- an
-        outcome much worse than the mistake. They come back in `unknown` so a
-        client can say so instead of silently starting fewer than it asked
-        for.
-
-        The list length is capped by `BulkDispatch` rather than here, so an
-        over-long request is refused by FastAPI's own 422 before any topic is
-        resolved -- no half-enqueued queue to unwind.
-        """
-        if deps.dispatcher is None or deps.dispatch is None:
-            raise HTTPException(status_code=503, detail="topic dispatch is not configured")
-        await _check_project(project_id)
-
-        if body.action not in DISPATCH_ACTIONS:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"no dispatch action {body.action!r}; this build offers "
-                    f"{', '.join(sorted(DISPATCH_ACTIONS))}"
-                ),
-            )
-
-        reader = _topic_reader(project_id)
-        queued: list[dict[str, Any]] = []
-        unknown: list[str] = []
-        # Sequential rather than gathered: `read_topic` hits the same read
-        # model each time and the list is capped at fifty, so concurrency buys
-        # nothing measurable and costs the deterministic enqueue order the
-        # queue's positions are numbered from. A person who pressed this on a
-        # sorted list expects the first row to run first.
-        for topic_id in body.topic_ids:
-            detail = await reader.read_topic(topic_id)
-            if detail is None:
-                unknown.append(str(topic_id))
-                continue
-            queued.append(
-                deps.dispatch.start(
-                    project_id,
-                    topic_id,
-                    body.action,
-                    # `topic_id=topic_id` binds the loop variable per
-                    # iteration. Without it every closure would close over the
-                    # last one and all fifty dispatches would run the same
-                    # topic -- the classic late-binding defect, and one no
-                    # type checker here would catch.
-                    lambda dispatch_id, topic_id=topic_id: deps.dispatcher.dispatch(
-                        project_id, topic_id, body.action, dispatch_id=dispatch_id
-                    ),
-                    question=detail.view.summary.question,
-                )
-            )
-        return JSONResponse(
-            status_code=202,
-            content={
-                "queued": [dispatch_view(frame) for frame in queued],
-                "unknown": unknown,
-            },
-        )
-
-    @router.get("/api/workers")
-    async def get_all_workers():
-        """Everything in flight anywhere, in one request.
-
-        For a reader who is not looking at a project: the console's agent
-        widget sits on every page and its collapsed state is a count across all
-        of them, which a per-project route cannot answer without one request
-        per project on every page load. There used to be such a route
-        (`GET /api/projects/{project_id}/workers`); it was deleted unused.
-
-        Only projects with something running are returned, and the empty list
-        is the ordinary answer. That is not a shortcut for the client's benefit
-        -- it is what makes this cheap, because `everywhere` folds only the
-        projects its supervisors named rather than every project that exists.
-
-        404 when no roster is wired: a 200 with an empty list would tell a
-        browser that nothing is running, which is a different claim from
-        "this build cannot tell you".
-        """
-        if deps.workers is None:
-            raise HTTPException(status_code=404, detail="the worker roster is not enabled")
-        return [roster_view(roster) for roster in await deps.workers.everywhere()]
-
     return router
 
 
@@ -754,3 +503,22 @@ topics_router = topic_router
 def mount_topic_routes(app: FastAPI, deps: TopicDeps) -> None:
     """Mount the topic router on the given FastAPI app."""
     app.include_router(topic_router(deps))
+
+
+__all__ = [
+    "MAX_BULK_DISPATCH",
+    "BulkDispatch",
+    "DispatchDeps",
+    "NewDispatch",
+    "NewSeed",
+    "NewSubQuestion",
+    "QuestionRestatement",
+    "StatusChange",
+    "SubQuestionAnswer",
+    "TopicDeps",
+    "TopicReaders",
+    "dispatch_router",
+    "mount_topic_routes",
+    "topic_router",
+    "topics_router",
+]
