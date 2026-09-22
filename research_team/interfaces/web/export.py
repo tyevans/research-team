@@ -18,39 +18,27 @@ would be two implementations free to disagree about whether an unwired graph
 store is a missing project.
 """
 
-import io
-import re
-import zipfile
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from __future__ import annotations
+
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from research_team.curriculum.application import Curriculum
-
-#: Where the authoring turns write, and how a run's targets map onto a
-#: workspace. Moved to `authored_files.py` when the console's read route
-#: needed the same four questions -- see that module for why the directory
-#: constants have exactly one reader on the server side.
-from research_team.interfaces.web.authored_files import (
-    area_prefix,
-    course_links,
-    files_under,
-    is_path_file,
-    path_file,
-    split_area,
+from research_team.interfaces.web.authored_files import course_links
+from research_team.interfaces.web.export_course import (
+    _UNSAFE,
+    _course_page,
+    _course_readme,
+    _course_zip,
+    _never_started,
+    _run_of,
+    _safe,
+    _status_sentence,
+    _status_suffix,
+    _wrote,
 )
-from research_team.interfaces.web.authoring import AuthoringActivity
-from research_team.interfaces.web.course_html import (
-    CourseArea,
-    CourseReads,
-    build_course_book,
-    read_course_file,
-    render_course_html,
-)
+from research_team.interfaces.web.export_deps import ExportDeps
 from research_team.interfaces.web.graph_html import render_html
 from research_team.knowledge.application.graph_export import (
     MAX_EXPORT_NODES,
@@ -68,36 +56,6 @@ from research_team.knowledge.application.graph_read import (
     MAX_NEIGHBORHOOD_DEPTH,
     GraphReadPort,
 )
-
-
-@dataclass(frozen=True)
-class ExportDeps:
-    """What the export routes need from `create_app`'s closure.
-
-    A record rather than a long parameter list, so adding a fourth thing does
-    not re-order anybody's call. Everything here is already built in
-    `create_app`; nothing is constructed in this module.
-    """
-
-    #: `service.load` and `service.project_state`, narrowed to the two calls
-    #: this module makes. Typed as `Any` because `SessionService` lives behind
-    #: an application-layer import `app.py` already has and re-declaring its
-    #: shape here would be a second protocol for one collaborator.
-    service: Any
-    require_project: Callable[[UUID], Awaitable[Any]]
-    graph_reader: Callable[[UUID], Awaitable[GraphReadPort]]
-    curriculum_of: Callable[[UUID], Awaitable[Curriculum]]
-    authoring: AuthoringActivity | None
-
-    #: The three further reads `format=html` needs, and only it. All three
-    #: default to `None` so every existing construction of this record --
-    #: including the fixtures in `tests/interfaces/` -- keeps working and
-    #: exports a course whose resolved widgets render named absences. That is
-    #: the honest degradation: a build with no corpus genuinely cannot quote a
-    #: passage, and a zip export never could either.
-    corpus_reader: Callable[[UUID], Any] | None = None
-    definitions: Callable[[UUID], Awaitable[Any]] | None = None
-    timeline_reader: Callable[[UUID], Awaitable[Any]] | None = None
 
 
 def export_router(deps: ExportDeps) -> APIRouter:
@@ -168,59 +126,7 @@ def export_router(deps: ExportDeps) -> APIRouter:
         if format == "html":
             return await _course_page(deps, request, project_id, name, run, links, area)
 
-        buffer = io.BytesIO()
-        written = 0
-        # `ZIP_DEFLATED`: the payload is markdown, which compresses to roughly
-        # a fifth. The archive is going in an email.
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for target, session_id in links:
-                session = await deps.service.load(UUID(session_id))
-                # A run's targets are area slugs plus, last, the path's own
-                # slug, and nothing on the frame says which is which -- so the
-                # workspace is asked rather than the slug parsed. See
-                # `is_path_file`.
-                prefix = (
-                    path_file(target) if is_path_file(session, target) else area_prefix(target)
-                )
-                for path, content in files_under(session, prefix):
-                    # Rooted under the project's name so an archive unzipped
-                    # beside another does not merge into it. `/course` is
-                    # dropped from the stored path: it is a workspace
-                    # convention, and a reader opening the zip wants
-                    # `areas/roman-law/unit.md`, not a directory that only
-                    # means something inside this system.
-                    inside = path.removeprefix("/course/")
-                    archive.writestr(f"{_safe(name)}/{inside}", content)
-                    written += 1
-            archive.writestr(
-                f"{_safe(name)}/README.md", _course_readme(name, project_id, run, area)
-            )
-
-        if written == 0:
-            # Distinguished from the 409 above: the run is known and it wrote
-            # nothing this archive could carry. A zip holding only a README
-            # reads as a feature that ran and produced an empty course.
-            # The status is named, because "wrote nothing" reads as a defect
-            # for a `done` run and as an explanation for an interrupted one --
-            # and the reader cannot tell which without being told.
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"the last authoring run ({run.get('status')}) wrote no course "
-                    f"files to export"
-                ),
-            )
-
-        stem = _safe(name) if area is None else f"{_safe(name)}-{_safe(area)}"
-        return Response(
-            content=buffer.getvalue(),
-            media_type="application/zip",
-            headers={
-                "content-disposition": (
-                    f'attachment; filename="{stem}-course{_status_suffix(run)}.zip"'
-                )
-            },
-        )
+        return await _course_zip(deps, project_id, name, run, links, area)
 
     # ---- B. the graph ------------------------------------------------------
 
@@ -347,100 +253,6 @@ def export_router(deps: ExportDeps) -> APIRouter:
     return router
 
 
-async def _course_page(
-    deps: ExportDeps,
-    request: Request,
-    project_id: UUID,
-    name: str,
-    run: dict,
-    links: list[tuple[str, str]],
-    area: str | None,
-) -> Response:
-    """The whole course as one HTML file.
-
-    Gathers the same workspace files the zip does -- through the same
-    `course_links`/`is_path_file` pair, so the two formats can never
-    disagree about which session holds which area -- and then hands them to
-    `course_html`, which does the live reads and the rendering.
-
-    `str(request.base_url).rstrip("/")` is what every link in the file points
-    at. It is the address this request arrived on, which is the only origin
-    this process actually knows: a server behind a proxy sees the proxy's
-    forwarded host or its own bind address, and neither is guessable from
-    configuration. The page says what it is rather than pretending, and
-    `localhost` in an exported file is a limitation the header states.
-    """
-    overview = None
-    areas: list[CourseArea] = []
-    for target, session_id in links:
-        session = await deps.service.load(UUID(session_id))
-        files = session.state.files
-        if is_path_file(session, target):
-            entry = files.get(path_file(target)) or {}
-            overview = read_course_file(path_file(target), entry.get("content", ""))
-            continue
-        # The unit/lesson split is `split_area`'s, shared with the console's
-        # read route -- see `authored_files.UNIT_FILE` for why one reader of
-        # that filename beats two.
-        raw_unit, raw_lessons = split_area(session, target)
-        unit = None if raw_unit is None else read_course_file(*raw_unit)
-        lessons = [read_course_file(path, content) for path, content in raw_lessons]
-        # An area whose session held no file under its prefix is skipped
-        # rather than added empty. An empty `<section>` with a heading and
-        # nothing under it reads as an area whose lessons were deleted; and
-        # if *every* area is like that, the 409 below is the honest answer
-        # rather than a page of headings.
-        if unit is not None or lessons:
-            areas.append(
-                CourseArea(
-                    slug=target,
-                    title=unit.title if unit else target,
-                    unit=unit,
-                    lessons=tuple(lessons),
-                )
-            )
-
-    if overview is None and not areas:
-        raise HTTPException(
-            status_code=409,
-            detail="the last authoring run wrote no course files to export",
-        )
-
-    book = await build_course_book(
-        name=name,
-        project_id=project_id,
-        origin=str(request.base_url).rstrip("/"),
-        run=run,
-        overview=overview,
-        areas=areas,
-        status_sentence=_status_sentence(run),
-        never_started=tuple(_never_started(run)),
-        reads=CourseReads(
-            graph_reader=deps.graph_reader,
-            corpus_reader=deps.corpus_reader,
-            definitions=deps.definitions,
-            timeline_reader=deps.timeline_reader,
-        ),
-    )
-    stem = _safe(name) if area is None else f"{_safe(name)}-{_safe(area)}"
-    return Response(
-        content=render_course_html(book),
-        media_type="text/html; charset=utf-8",
-        # `attachment`, for the reason the graph export gives: served inline
-        # it renders in the console's own tab as a page that looks like part
-        # of the app and is not, and the whole point is a file that can be
-        # attached to a mail.
-        # The same status suffix the zip carries, for a stronger version of
-        # the same reason: a page has nothing to unzip, so a reader who was
-        # forwarded it sees the filename and then the page, and nothing else.
-        headers={
-            "content-disposition": (
-                f'attachment; filename="{stem}-course{_status_suffix(run)}.html"'
-            )
-        },
-    )
-
-
 async def _area_cut(
     deps: ExportDeps, project_id: UUID, reader: GraphReadPort, area: str
 ) -> tuple[tuple, tuple, str, bool]:
@@ -470,205 +282,18 @@ async def _area_cut(
     return entities, relationships, found.display_name(), len(entities) < len(members)
 
 
-async def _run_of(project_id: UUID, authoring: AuthoringActivity | None) -> dict:
-    """The most recent settled authoring run, or a 409 saying why there is none.
-
-    **Only two refusals now, and the one that went away is the interesting
-    one.** The build having no authoring wired is a 503; a run *in flight* is a
-    409, because it is moving and a snapshot of it would be a different archive
-    a second later. Everything else exports.
-
-    **A settled run is exported whatever it settled as** -- `done`, `failed`,
-    `cancelled` or `interrupted`. Their courses are real files, their session
-    ids are durable since #242, and the run's status is a fact about the run
-    rather than a verdict on the work. `cancelled` is a person who *knows* the
-    run is partial and stopped it deliberately, and refusing them their own
-    courses would be patronising; `interrupted` is the case durability was
-    built for, and refusing it would mean the feature recovered the mapping and
-    then declined to use it.
-
-    What the route docstring forbids is a partial archive that *looks*
-    complete, and the answer to that is saying so rather than withholding:
-    every archive carries a README stating the status, what completed, what
-    failed and what was never started, and every non-`done` export names its
-    status in the filename. See `_course_readme` and `_status_suffix`.
-
-    Nothing here branches on the status vocabulary, deliberately. A fifth
-    settled status added later exports like the other four and is described
-    accurately by a README built from `targets`/`completed`/`failures` rather
-    than from a table of known names.
-    """
-    if authoring is None:
-        raise HTTPException(status_code=503, detail="course authoring is not configured")
-    if authoring.active(project_id) is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="an authoring run is in flight; wait for it to finish and export then",
-        )
-    run = await authoring.last(project_id)
-    if run is None:
-        # No longer "the mapping was lost on restart" -- since #242 the mapping
-        # is a table, and its silence means what silence usually means. A
-        # message still blaming a restart would send somebody looking for a
-        # server problem behind a project nobody has authored yet.
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "no authoring run has ever been recorded for this project. "
-                "Write the courses first, then export them."
-            ),
-        )
-    return run
-
-
-def _status_suffix(run: dict) -> str:
-    """`-interrupted`, `-cancelled`, `-failed`, or nothing for a completed run.
-
-    **In the filename, because that is the only place the status is visible
-    before anything is opened.** A README says it too, and a README is one
-    unzip and one click away -- by which point the archive has already been
-    saved, forwarded, or dropped into a folder next to two complete ones. The
-    download bar, the mail attachment and the directory listing all show the
-    name, and this is the version of "it says so" that reaches somebody who
-    never opens it.
-
-    What it costs: a filename is the one part a person can rename, so it is not
-    sufficient on its own. That is why it is *both*, not either.
-
-    Empty for `done` rather than `-done`: an ordinary export should not carry a
-    qualifier, or the qualifiers stop reading as warnings.
-    """
-    status = str(run.get("status") or "")
-    return "" if status in ("", "done") else f"-{_safe(status)}"
-
-
-def _wrote(run: dict) -> str:
-    """What the run's targets were, for a 404 that tells the caller what to ask
-    for instead. `'nothing'` rather than an empty string: a message ending in
-    "it wrote " reads as a bug in the message."""
-    return ", ".join(target for target, _ in course_links(run)) or "nothing"
-
-
-#: What each settled status means, in a sentence somebody who has never read
-#: this code can act on. A lookup rather than prose built by branching, so the
-#: README builder itself stays status-blind -- an unknown status falls back to
-#: the generic line below instead of rendering a paragraph that is wrong.
-_STATUS_SENTENCE = {
-    "done": "This run finished. Every target below that is not listed as failed was written.",
-    "failed": (
-        "This run failed: every target it attempted broke. Anything under `areas/` "
-        "is what survived, and the failures are listed below."
-    ),
-    "cancelled": (
-        "**This run was cancelled part-way through.** Somebody stopped it deliberately, "
-        "so the targets under *Never started* were abandoned rather than attempted. "
-        "What is here is complete in itself; the course as a whole is not."
-    ),
-    "interrupted": (
-        "**This run was interrupted -- the server stopped while it was still writing.** "
-        "The targets under *Never started* were never reached. What is here was fully "
-        "written before the interruption and is safe to read; the course as a whole is "
-        "not finished."
-    ),
-}
-
-
-def _status_sentence(run: dict) -> str:
-    """One plain sentence about how a run settled.
-
-    Extracted from `_course_readme` when the HTML export landed, rather than
-    copied into it. The two formats state the same fact to the same reader,
-    and a second lookup table would let them drift -- an archive calling a run
-    partial while the page beside it called it finished is worse than either
-    saying nothing.
-
-    The fallback is deliberately not a status name repeated back: a status
-    this build has never heard of is exactly the case where a reader should be
-    told to check the lists rather than trust the word.
-    """
-    status = str(run.get("status") or "unknown")
-    return _STATUS_SENTENCE.get(
-        status,
-        f"This run settled as `{status}`. Compare the lists below against "
-        f"what you expected before relying on this archive as complete.",
-    )
-
-
-def _never_started(run: dict) -> list[str]:
-    """Targets the run neither wrote nor failed at.
-
-    Computed from the three lists rather than from the status, so a cancelled
-    run, an interrupted one and any status added later all describe themselves
-    correctly. Empty for an ordinary completed run, which is what keeps the
-    section out of the archives that do not need it.
-    """
-    accounted = {target for target, _ in course_links(run)}
-    accounted |= {failure["target"] for failure in (run.get("failures") or [])}
-    return [target for target in (run.get("targets") or []) if target not in accounted]
-
-
-def _course_readme(name: str, project_id: UUID, run: dict, area: str | None) -> str:
-    """What this archive is, written into it.
-
-    A zip of markdown with no provenance is one somebody deletes rather than
-    asks about six months from now. It names the failures too: a run that
-    wrote seven of eight areas is reported `done`, and an archive that carried
-    seven courses and said nothing would hide the eighth.
-
-    **Since the route began exporting unsettled-looking runs, this file is
-    load-bearing rather than courteous.** A `cancelled` or `interrupted` run
-    produces an archive that is genuinely partial, and the whole argument for
-    handing it over rather than refusing it is that it says so -- here, and in
-    the filename. If this section is ever dropped, the route goes back to
-    producing the "silently partial" archive its own docstring forbids.
-    """
-    status = str(run.get("status") or "unknown")
-    lines = [
-        f"# {name} — course export",
-        "",
-        f"Exported {datetime.now(UTC).isoformat(timespec='seconds')}"
-        f" from project `{project_id}`.",
-        f"Authoring run `{run.get('run_id')}` ({run.get('kind')}), status `{status}`.",
-        "",
-        _status_sentence(run),
-        "",
-        "Understanding by Design units under `areas/`, one directory per learning",
-        "area, each with a `unit.md` and its lessons. The path overview, if this",
-        "run wrote one, is under `paths/`.",
-        "",
-    ]
-    if area is not None:
-        lines += [f"This archive holds **one area only**: `{area}`.", ""]
-    completed = [target for target, _ in course_links(run)]
-    if completed:
-        # Listed rather than counted. "7 of 9 written" tells a reader the
-        # archive is short and not which two to go and write.
-        lines += ["## Written", ""]
-        lines += [f"- `{target}`" for target in completed]
-        lines += [""]
-    never = _never_started(run)
-    if never:
-        lines += ["## Never started", ""]
-        lines += [f"- `{target}`" for target in never]
-        lines += [""]
-    failures = run.get("failures") or []
-    if failures:
-        lines += ["## Not written", ""]
-        lines += [f"- `{f['target']}`: {f['detail']}" for f in failures]
-        lines += [""]
-    return "\n".join(lines)
-
-
-#: Anything that is not a plain filename character. Applied to project names
-#: and area titles before they reach a `Content-Disposition` header or a path
-#: inside a zip -- both of which are places a model-written or user-written
-#: string with a quote, a slash or a newline in it does something other than
-#: name a file.
-_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def _safe(value: str) -> str:
-    cleaned = _UNSAFE.sub("-", value).strip("-.")
-    # A name that was entirely punctuation, or entirely non-ASCII, reduces to
-    # nothing -- and `filename=""` is a header a browser saves as `download`.
-    return cleaned[:80] or "export"
+__all__ = [
+    "_UNSAFE",
+    "ExportDeps",
+    "_area_cut",
+    "_course_page",
+    "_course_readme",
+    "_course_zip",
+    "_never_started",
+    "_run_of",
+    "_safe",
+    "_status_sentence",
+    "_status_suffix",
+    "_wrote",
+    "export_router",
+]
