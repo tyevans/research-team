@@ -7,16 +7,19 @@ from typing import Any
 from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
-from redstring import EmbeddingProvider
-from redstring.llm.adapters.langchain import NO_THINKING
-from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
-from research_team.infrastructure import config
+from research_team.infrastructure.agent.activity_stream import (
+    MAIN_AGENT_NODE,
+    _first_arg,
+    _report,
+    describe_activity,
+    to_activity_delta,
+    to_activity_message,
+)
 from research_team.infrastructure.agent.approval import interrupt_config
 from research_team.infrastructure.agent.backend import EventSourcedBackend
 from research_team.infrastructure.agent.messages import (
@@ -26,10 +29,13 @@ from research_team.infrastructure.agent.messages import (
     to_payload_messages,
     to_recorded,
 )
+from research_team.infrastructure.agent.model_providers import (
+    build_embedding_provider,
+    build_extraction_model,
+    build_model,
+)
 from research_team.knowledge.application.knowledge_attachment import _compose
 from research_team.platform.shared.ports import (
-    ActivityDelta,
-    ActivityMessage,
     ActivityReporter,
     ApprovalDecision,
     ApprovalPort,
@@ -42,13 +48,26 @@ from research_team.session.domain import (
     RecordToolDecision,
     Session,
 )
-from research_team.settings.application.effective import (
-    ExtractionSettings,
-    ResearchSettings,
-)
 from research_team.tenancy.application.grants import GrantRegistry
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "MAIN_AGENT_NODE",
+    "DeepAgentTurnExecutor",
+    "MiddlewareProvider",
+    "ModelProvider",
+    "SubagentProvider",
+    "ToolProvider",
+    "_first_arg",
+    "_report",
+    "build_embedding_provider",
+    "build_extraction_model",
+    "build_model",
+    "describe_activity",
+    "to_activity_delta",
+    "to_activity_message",
+]
 
 #: Middleware for one turn, resolved when that turn's agent is built.
 #:
@@ -99,220 +118,6 @@ have used it.
 Defaults to nothing, so an executor wired without one builds precisely the
 agent it built before this existed.
 """
-
-
-def build_model(settings: ResearchSettings | None = None) -> BaseChatModel:
-    """The OpenAI-compatible endpoint the agent talks to.
-
-    `settings` is one project's resolved answer, from
-    `application/effective.ResearchSettings`. `None` is the process answer --
-    the environment, then the built-in default, through `config` exactly as
-    this function always did -- which is what a CLI run, the REPL and every
-    test that never names a project still get.
-
-    The parameter is the whole of what makes the settings page's `Models`
-    group reach a turn. Without it this function answers for the *process*,
-    is called once in `_build_application`, and bakes its answer into an
-    executor that outlives every project: a model saved against a project
-    resolved correctly through the API and was read by nothing. See
-    `EffectiveSettings.research`.
-    """
-    if settings is not None:
-        return ChatOpenAI(
-            model=settings.model,
-            base_url=settings.base_url,
-            api_key=settings.api_key,
-            temperature=0,
-        )
-    return ChatOpenAI(
-        model=config.model_name(),
-        base_url=config.base_url(),
-        api_key=config.api_key(),
-        temperature=0,
-    )
-
-
-def build_extraction_model(settings: ExtractionSettings | None = None) -> BaseChatModel:
-    """The same endpoint as `build_model`, told not to think before answering.
-
-    A second `ChatOpenAI` rather than `build_model().bind(extra_body=...)`,
-    for two reasons. `extra_body` is a constructor field, and `bind` returns a
-    `RunnableBinding`, not the `BaseChatModel` that `LangChainLlmProvider`
-    is typed against. And the agent and the extractor genuinely want different
-    request bodies, so two objects says what is true: this one is not the
-    agent's model with a decoration, it is the extractor's model.
-
-    redstring 0.4.0 made thinking-off the default for extraction, but only
-    inside `LangChainLlmProvider.openai_compatible`. This project builds its
-    own chat model and uses `__init__`, so that default never reached it --
-    which is the bug this exists to close. `NO_THINKING` is imported rather
-    than spelled out so a rename or a change of shape upstream breaks the
-    build instead of quietly leaving extraction thinking again.
-
-    See `config.extraction_thinking` for the measurement, the env override and
-    the backends this field is rejected by.
-
-    `settings` is one project's resolved answer, from
-    `application/effective.EffectiveSettings`. `None` is the process answer --
-    the environment, then the built-in default -- read through `config` exactly
-    as this function always did, which is what a CLI run and every test that
-    never names a project still get. The two branches read the same eight
-    values in the same order; they differ only in how many layers were
-    consulted to produce them.
-    """
-    if settings is not None:
-        return ChatOpenAI(
-            model=settings.model,
-            base_url=settings.base_url,
-            api_key=settings.api_key,
-            temperature=0,
-            extra_body=None if settings.thinking else dict(NO_THINKING),
-        )
-    return ChatOpenAI(
-        # `extraction_model()`, not `model_name()`. The two are the same string
-        # on a default install and stop being so the moment anyone sets
-        # `AGENT_EXTRACTION_MODEL` -- which is the point: this client already
-        # differed from the agent's in everything but the name it sent.
-        model=config.extraction_model(),
-        base_url=config.base_url(),
-        api_key=config.api_key(),
-        temperature=0,
-        extra_body=None if config.extraction_thinking() else dict(NO_THINKING),
-    )
-
-
-def build_embedding_provider() -> EmbeddingProvider:
-    """The embedding endpoint, wrapped in redstring's port.
-
-    A third client rather than a third use of `build_model`, for the reason
-    `build_extraction_model` is a second one: this is a different model at a
-    possibly different address answering a different API, and the only thing
-    it shares with the chat client is that both speak OpenAI's protocol.
-
-    `dimensions` is passed to `OpenAIEmbeddings` **and** declared to
-    `LangChainEmbeddingProvider`, which looks redundant and is not. The first
-    asks the server for that width -- OpenAI's `text-embedding-3-*` honour it
-    and truncate, most local servers ignore it and return their native width.
-    The second is what redstring checks the `VectorStore` against before
-    embedding anything. Declaring only the second would let a server quietly
-    return 1024 components into a store built for 768, which fails at the
-    first write with `DimensionMismatchError` -- a poison event, so the ingest
-    that triggered it is unrecoverable rather than retryable.
-
-    Nothing here contacts the server. A wrong model name, a wrong width or an
-    endpoint that serves no embeddings all surface on the first `embed`, which
-    is during an ingest. `config.embedding_model` refuses an unset name here
-    instead, which is the one failure that can be moved earlier.
-    """
-    return LangChainEmbeddingProvider(
-        OpenAIEmbeddings(
-            model=config.embedding_model(),
-            base_url=config.embedding_base_url(),
-            api_key=config.embedding_api_key(),
-            dimensions=config.embedding_dimension(),
-            check_embedding_ctx_length=False,
-        ),
-        model=config.embedding_model(),
-        dimension=config.embedding_dimension(),
-    )
-
-
-def describe_activity(message: BaseMessage) -> str | None:
-    """A one-line progress note for a message, or None if it is not worth showing."""
-    tool_calls = getattr(message, "tool_calls", None)
-    if tool_calls:
-        return "· " + ", ".join(
-            f"{call['name']}({_first_arg(call.get('args', {}))})" for call in tool_calls
-        )
-    if isinstance(message, ToolMessage):
-        first_line = str(message.content).strip().splitlines()
-        return f"  ↳ {first_line[0][:70]}" if first_line else None
-    return None
-
-
-def to_activity_message(message: BaseMessage) -> ActivityMessage | None:
-    """A whole message as a provisional note, or None if it cannot be keyed.
-
-    Built from `to_recorded` rather than from a second reading of the message,
-    so what streams and what is eventually recorded cannot disagree about kind
-    or payload -- that divergence is the failure mode this channel most needs
-    to avoid.
-
-    A message with no id is dropped rather than given a synthetic one: the id
-    is what the browser accumulates deltas against, and a guessed one would
-    splice two messages into one bubble.
-    """
-    message_id = getattr(message, "id", None)
-    if not message_id:
-        return None
-    recorded = to_recorded(message)
-    return ActivityMessage(
-        message_id=str(message_id),
-        kind=recorded.kind,
-        payload=recorded.payload,
-        is_error=recorded.is_error,
-    )
-
-
-MAIN_AGENT_NODE = "model"
-"""The graph node the top-level agent's model call runs under.
-
-Subagents stream on the same channel. Without this discriminator a subagent's
-internal reasoning would render as the main agent's answer to the user.
-"""
-
-
-def to_activity_delta(chunk: Any) -> ActivityDelta | None:
-    """A prose delta from a `messages`-mode chunk, or None if it is not one.
-
-    Returns None for tool calls, for subagent chunks, and for anything without
-    text -- this channel carries only what a person is waiting to read.
-
-    The type test is `AIMessage`, which covers `AIMessageChunk` because it
-    subclasses it. Testing for the chunk type alone would report nothing at
-    all from a non-streaming model, which delivers one whole message here.
-    """
-    try:
-        message, metadata = chunk
-    except (TypeError, ValueError):
-        return None
-    if metadata.get("langgraph_node") != MAIN_AGENT_NODE:
-        return None
-    if not isinstance(message, AIMessage):
-        return None
-    if getattr(message, "tool_calls", None):
-        return None
-    message_id = getattr(message, "id", None)
-    if not message_id:
-        return None
-    text = message.text if isinstance(getattr(message, "text", None), str) else message.content
-    if not isinstance(text, str) or not text:
-        return None
-    return ActivityDelta(message_id=str(message_id), text=text)
-
-
-def _report(
-    on_activity: ActivityReporter | None, note: ActivityMessage | ActivityDelta
-) -> None:
-    """Deliver one note to the reporter, never letting it fail the turn.
-
-    A minute of model work is not worth discarding because a browser feed
-    raised -- this is a side channel to a human watching, not a dependency
-    the turn's outcome should ever hinge on.
-    """
-    if on_activity is None:
-        return
-    try:
-        on_activity(note)
-    except Exception:
-        logger.exception("activity reporter raised; continuing the turn")
-
-
-def _first_arg(args: dict[str, object]) -> str:
-    for key in ("file_path", "path", "pattern", "command"):
-        if key in args:
-            return str(args[key])
-    return ""
 
 
 class DeepAgentTurnExecutor:
