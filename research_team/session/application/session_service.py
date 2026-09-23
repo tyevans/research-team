@@ -36,10 +36,8 @@ from research_team.session.application.ports import (
     TurnExecutor,
 )
 from research_team.session.application.session_inspection import (
+    SessionQueries,
     SessionStats,
-    compute_session_stats,
-    diff_file_maps,
-    filter_session_messages,
 )
 from research_team.session.application.summaries import SessionSummary
 from research_team.session.application.turn_runner import (
@@ -83,6 +81,7 @@ __all__ = [
     "_FILE_EVENT_TYPES",
     "_INHERITED_EVENT_FIELDS",
     "ProjectSessions",
+    "SessionQueries",
     "SessionService",
     "SessionStats",
     "TurnOutcome",
@@ -168,32 +167,17 @@ class SessionService:
         self._executor = executor
         self._summaries = summaries
         self._projects = projects
-        # None for a build that wired no progress repository. Recording is then
-        # a no-op and reading answers "nothing recorded", which is exactly what
-        # this surface did before the aggregate existed -- so an older caller
-        # keeps working rather than failing on an attribute it never passed.
         if isinstance(progress, LearnerProgressService):
             self._learner_progress = progress
         else:
             self._learner_progress = LearnerProgressService(progress)
-        # `create_tracer` returns a no-op when OpenTelemetry is not installed,
-        # which is the normal case here -- so spans cost a couple of attribute
-        # lookups and are thrown away, and nothing has to be conditional.
         self._tracer = tracer if tracer is not None else create_tracer(__name__, False)
         self._default_system_prompt = default_system_prompt
         self._context = context if context is not None else FullHistory()
-        # Appended only for sessions started in a project: a session with no
-        # project gets no knowledge tools, so telling it about `remember` and
-        # `graph_search` would describe tools it does not have.
         self._knowledge_prompt = knowledge_prompt
-        # None when the composition root wired no knowledge subsystem at all
-        # -- `attach_project`/`detach_project` are then no-ops, the same
-        # posture `search` has without an instance configured.
         self._attachment = attachment
-        # None on the same posture: a build with no graph subsystem has
-        # nothing for `delete_project` to evict, so eviction is a no-op
-        # rather than an attribute error on a caller that never wired one.
         self._graphs = graphs
+        self._queries = SessionQueries(repository=repository, summaries=summaries)
         self._project_sessions = ProjectSessions(
             repository=repository,
             projects=projects,
@@ -223,10 +207,7 @@ class SessionService:
 
     @property
     def tools(self) -> tuple[Any, ...]:
-        """The tools available to the session executor.
-
-        Exposed so callers and tests do not reach into private attributes (BACKLOG B8).
-        """
+        """The tools available to the session executor."""
         return self._executor.tools
 
     @property
@@ -240,25 +221,13 @@ class SessionService:
 
     @property
     def projects(self) -> AggregateRepository[Project]:
-        """The `Project` aggregate repository, for callers that need it directly.
-
-        `/project new` has to `create_new` and `save` a `Project` -- neither
-        of which is a session use case -- so it is exposed here rather than
-        left for a caller to reach past this service into its own repository
-        attribute (BACKLOG B8: a second private hop was the trigger for
-        fixing the pattern instead of repeating it).
-        """
+        """The `Project` aggregate repository, for callers that need it directly."""
         return self._projects
 
     # ---------------- learner progress ----------------
 
     async def learner_progress(self, session_id: UUID) -> LearnerProgressState:
-        """What this learner has done with this course's components.
-
-        An empty state for a session nobody has answered anything in, which is
-        the ordinary case rather than an error -- so this never raises for a
-        stream that does not exist yet.
-        """
+        """What this learner has done with this course's components."""
         return await self._learner_progress.get_progress(session_id)
 
     async def record_attempt(
@@ -274,15 +243,7 @@ class SessionService:
         score: float = 0.0,
         at: int | None = None,
     ) -> LearnerProgressState:
-        """Record that an item was answered, and how it was marked.
-
-        Retried on a lost compare-and-swap for the same reason the corpus is:
-        a learner submitting two answers at once is rarer than a model doing
-        it, but the window is the same one, and the whole operation re-runs so
-        the second attempt folds onto what the winner wrote -- which matters
-        here, because whether an answer *completes* an item depends on whether
-        an earlier one already did.
-        """
+        """Record that an item was answered, and how it was marked."""
         return await self._learner_progress.record_attempt(
             session_id,
             path=path,
@@ -306,141 +267,56 @@ class SessionService:
             checked=checked,
         )
 
+    # ---------------- projects ----------------
+
     async def list_projects(self) -> list[tuple[UUID, str]]:
         """Every project's id and name, for `/project`'s listing."""
         return await self._project_sessions.list_projects()
 
     async def project_state(self, project_id: UUID) -> ProjectState:
-        """One project's folded state: who holds it, and where its tip is.
-
-        A read for front ends. "Held by another session" is the single fact
-        that decides what a user can do with a project next, and a UI that
-        cannot see it can only offer an action and let it fail.
-        """
+        """One project's folded state: who holds it, and where its tip is."""
         return await self._project_sessions.project_state(project_id)
 
     async def project_files(self, project_id: UUID) -> dict[str, dict[str, Any]]:
-        """The project's filesystem, from whichever stream currently carries it.
-
-        A project's files are never the project's own: they fold out of one
-        session's stream, and which session that is changes as sessions join
-        and release. Two cases, and the order matters. A session holding the
-        project has work in it that the tip does not yet know about -- the tip
-        only advances on release -- so the holder is the newer answer and is
-        asked first.
-
-        With nobody holding it, the tip *session* is the truth and the tip
-        *offset* is not. `at_event` is where that session was when it was
-        released, and releasing neither closes the session nor stops it
-        accepting turns, so anything written afterwards sits past the offset
-        on the very stream this is folding. Reading to the offset is what
-        made a project answer with an empty file list while four artifacts
-        were sitting in the stream it was pointing at. The offset earns its
-        keep only once something else has forked from it, and by then the tip
-        names that fork rather than this session.
-
-        A project that has never been joined has no stream at all and answers
-        with nothing, which is different from a project whose files are empty
-        only in that nothing here needs to tell them apart.
-
-        Resolved once, here, because every surface that shows a project's files
-        needs the same answer -- and two of them computing it separately is two
-        answers that will eventually disagree about which session was newer.
-
-        They did. `presenters.topic_documents_view` grew a second resolution
-        that sent `tip_at_event` as the scrub point beside the list this
-        builds, so one response listed a file written after a release and then
-        handed the reader routes a point at which it does not exist. Settled
-        on 2026-08-27 in favour of this one, and the criterion was
-        `_catch_up_tip` rather than an argument: that method exists to drag a
-        stale tip up to `len(history)`, which is HEAD, so an offset below HEAD
-        is never a statement about what the project has. Measured against a
-        `local_copy` of `~/.research-team/sessions.db` -- every live project
-        there had `tip_at_event` exactly equal to its tip session's stream
-        length, so the real data could not separate the two, and the
-        divergence had to be reproduced synthetically. See that function's
-        docstring for the paths.
-        """
+        """The project's filesystem, from whichever stream currently carries it."""
         return await self._project_sessions.project_files(project_id)
 
     async def delete_project(self, project_id: UUID) -> None:
-        """Retire a project: no more joins, and gone from every listing.
-
-        A tombstone, not an erasure -- see `ProjectDeleted`. What this does
-        *not* touch is deliberate: the sessions that were in the project keep
-        their streams, their files and their readable history, because those
-        live on the session's own stream and were never the project's to
-        delete. The knowledge graph's data is left in place too; dropping a
-        tenant's contents is a destructive, unreplayable act, and nothing
-        here asks for it.
-
-        Rejects a project still held by a session. Releasing is the caller's
-        move to make, because releasing advances the tip -- a write to the
-        holder's session -- and deletion doing that silently would hide a
-        real change behind an unrelated verb.
-
-        Evicts the project's graph store from `graphs` after the tombstone
-        commits, not before: a rejected `DeleteProject` (still held) must
-        leave a live project's cached store exactly as it was, and evicting
-        first would have to be undone on every rejection path this or a
-        future one grows.
-        """
+        """Retire a project: no more joins, and gone from every listing."""
         await self._project_sessions.delete_project(project_id)
 
     async def close(self) -> None:
         await self._repository.close()
 
-    # ---------------- reads ----------------
+    # ---------------- reads & queries ----------------
 
     async def load(self, session_id: UUID) -> Session:
         """One session's aggregate, folded from its events."""
-        return await self._repository.load(session_id)
+        return await self._queries.load(session_id)
 
     async def history(self, session_id: UUID) -> list[DomainEvent]:
         """Every event on one session's stream, in order."""
-        return await self._repository.events_for(session_id)
+        return await self._queries.history(session_id)
 
     async def state_at(self, session_id: UUID, at: int) -> Session:
-        """The session as it stood after its first `at` events.
-
-        A pure fold of a prefix -- nothing is written, nothing is forked. This
-        is what makes scrubbing a timeline cheap: the log is the state, so any
-        point in it can be reconstituted just by stopping the fold early.
-        """
-        events = await self.history(session_id)
-        if not 1 <= at <= len(events):
-            raise ValueError(f"cannot fold at {at}: session has {len(events)} events")
-        aggregate = self._repository.create(session_id)
-        aggregate.load_from_history(events[:at])
-        return aggregate
+        """The session as it stood after its first `at` events."""
+        return await self._queries.state_at(session_id, at)
 
     async def list_sessions(self) -> list[SessionSummary]:
-        """Every session in the store, newest first.
-
-        Read straight out of the projection's table. What this used to do --
-        fold every event in the database, per request -- is still the
-        definition of a summary, and still lives in `summarize_sessions`; it is
-        just applied once per event now instead of once per page view.
-        """
-        return await self._summaries.list()
+        """Every session in the store, newest first."""
+        return await self._queries.list_sessions()
 
     async def summaries_health(self) -> SummaryHealth:
-        """Whether `list_sessions` can currently be trusted.
-
-        Exposed as a use case rather than left to the composition root because
-        every front end that shows the list has the same question about it,
-        and the answer decides whether to show a warning next to it.
-        """
-        return await self._summaries.health()
+        """Whether `list_sessions` can currently be trusted."""
+        return await self._queries.summaries_health()
 
     async def rebuild_summaries(self) -> None:
         """Derive the session list from the log again. Safe at any time."""
-        await self._summaries.rebuild()
+        await self._queries.rebuild_summaries()
 
     async def session_stats(self, session_id: UUID) -> SessionStats:
         """High-level summary metrics for a session."""
-        session = await self.load(session_id)
-        return compute_session_stats(session, session_id)
+        return await self._queries.session_stats(session_id)
 
     async def find_messages(
         self,
@@ -451,31 +327,18 @@ class SessionService:
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Search and filter messages recorded in a session."""
-        session = await self.load(session_id)
-        return filter_session_messages(session, role=role, query=query, limit=limit)
+        return await self._queries.find_messages(
+            session_id, role=role, query=query, limit=limit
+        )
 
     async def diff_session_files(
         self, session_id: UUID, other_session_id: UUID
     ) -> dict[str, Any]:
-        """Diff files between two sessions.
+        """Diff files between two sessions."""
+        return await self._queries.diff_session_files(session_id, other_session_id)
 
-        Returns added, removed, modified, and unchanged file paths along with
-        line change metrics for modified files.
-        """
-        s1 = await self.load(session_id)
-        s2 = await self.load(other_session_id)
-        return diff_file_maps(s1.state.files, s2.state.files)
+    # ---------------- lifecycle & project binding ----------------
 
-    # ---------------- lifecycle ----------------
-
-    # `create_session` was here, and is deleted rather than given a
-    # `project_id` parameter. A session now belongs to a project always, and
-    # the way to make that true is for there to be no method that can produce
-    # one without: a parameterised `create_session` would sit beside
-    # `start_in_project` doing the same job less completely -- minting a
-    # session that names a project without the project having agreed to it, so
-    # no `JoinProject`, no holder, no inherited filesystem. Callers that
-    # wanted "a session, quickly" want `start_in_project` and a project.
     async def start_in_project(
         self,
         project_id: UUID,
@@ -483,36 +346,7 @@ class SessionService:
         *,
         session_id: UUID | None = None,
     ) -> UUID:
-        """Begin a session that shares the project's filesystem.
-
-        `purpose` is required and undefaulted so that every caller states what
-        it is starting. Six call sites do, and the type checker is what stops a
-        seventh from quietly inheriting whichever default looked harmless --
-        see `SessionPurpose` for why the harmless-looking one is `CHAT` and why
-        that is the bug rather than the fallback.
-
-        Joining is decided by the `Project` aggregate, which rejects a second
-        concurrent session by name. That rejection propagates: a caller
-        finding out the project is busy is the point, and swallowing it here
-        would let two sessions diverge silently.
-
-        Inheritance reuses forking rather than copying. The project stores a
-        pointer -- whose stream, and how far in -- so a new session forks
-        from exactly that point and its filesystem still folds out of one
-        stream. Only files come across; the conversation does not, because a
-        project shares a workspace and not a chat history.
-
-        The new session is created (or forked) before the project is saved as
-        held by it: a project marked held by a session that was never
-        created is a project nothing can take back.
-
-        The tip is caught up *before* joining, and that ordering is the whole
-        of it: `JoinProject` stamps `inherited_at` from the tip, and the fork
-        copies to the same point, so a catch-up that ran afterwards would
-        leave both of them naming a point that is not where anything was
-        copied from. See `_catch_up_tip` for what is being caught up and why
-        there is anything to catch.
-        """
+        """Begin a session that shares the project's filesystem."""
         return await self._project_sessions.start_in_project(
             project_id,
             purpose,
@@ -520,36 +354,7 @@ class SessionService:
         )
 
     async def _catch_up_tip(self, project: Any) -> None:
-        """Move the tip to the end of the stream it already names.
-
-        Releasing a project records `at_event=session.version` -- where that
-        session was at that instant -- and then lets the session carry on.
-        Everything it writes afterwards lands past the recorded point, on a
-        stream the project is still pointing at, and detaches: the next
-        session forks from the old offset and inherits a prefix of a
-        filesystem rather than the filesystem.
-
-        That is not hypothetical. It is what happened to project "Tollers" in
-        the owner's database: an auto-research run started a session, stopped,
-        released the project in its `after` hook, and the person kept working
-        in the session the run had left them in. Four `/course` artifacts
-        written afterwards were unreachable from the project the moment they
-        were written, and the session that came next forked three events short
-        of the first of them.
-
-        Called on load rather than on write. Advancing the tip after every
-        turn would be a second aggregate saved on the hot path of every turn
-        in every project, for a pointer only two callers read; catching it up
-        where those callers read it costs one append at a join and nothing at
-        all when there is nothing to catch. The trade is that the tip is
-        briefly behind, which no reader can observe -- `project_files` folds
-        the whole stream for exactly this reason.
-
-        A no-op unless the tip names a session, nobody holds the project, and
-        that session has grown. `execute` refuses everything else anyway; this
-        checks first so a join does not append a `ProjectTipAdvanced` saying
-        nothing changed.
-        """
+        """Move the tip to the end of the stream it already names."""
         await self._project_sessions.catch_up_tip(project)
 
     async def _fork_files_from(
@@ -562,17 +367,7 @@ class SessionService:
         purpose: SessionPurpose,
         project_name: str = "",
     ) -> None:
-        """Start `session_id`, carrying only the source's file history in.
-
-        Follows the same replay `fork()` uses -- copying each historical
-        event's own fields onto the fresh stream with `create_event`, since
-        these are already-decided facts being replayed rather than new
-        decisions -- but filtered to `_FILE_EVENT_TYPES`. `SessionStarted` is
-        not copied from the source: it is this session's own genuine start,
-        produced through `execute` like any other, carrying *this* session's
-        project_id. Lineage is recorded the same way `fork()` records it, so
-        `forked_from` still answers "whose filesystem is this".
-        """
+        """Start `session_id`, carrying only the source's file history in."""
         await self._project_sessions.fork_files_from(
             session_id,
             source_session_id=source_session_id,
@@ -583,56 +378,19 @@ class SessionService:
         )
 
     async def release_project(self, session_id: UUID) -> None:
-        """Hand the project's filesystem tip back, if this session holds it.
-
-        A no-op whenever there is nothing to release: a session with no
-        `project_id`, or one whose project is no longer (or never was)
-        actively held by it. That second case is ordinary, not exceptional --
-        a REPL switching away from a session, or resuming an old session
-        that named a project long since handed to someone else, both reach
-        it -- so this stays quiet rather than raising `AdvanceTip`'s
-        "you do not hold this" rejection. That is what lets every
-        session-switch path call this unconditionally, and keeps the
-        rejection from ever escaping a caller's exit/cleanup path.
-        """
+        """Hand the project's filesystem tip back, if this session holds it."""
         await self._project_sessions.release_project(session_id)
 
     async def record_autonomy_change(
         self, session_id: UUID, tool_name: str, level: str
     ) -> None:
-        """Note in the log that a tool's autonomy level was changed.
-
-        The policy object itself is what the executor consults, and it is
-        mutated by whoever owns it -- but a level that changed mid-session and
-        left no trace makes the surrounding decisions unreadable afterwards.
-        Recording it is a use case, so the adapters do not have to reach past
-        the service for a repository to write through.
-        """
+        """Note in the log that a tool's autonomy level was changed."""
         await self.record_autonomy_changes(session_id, {tool_name: level})
 
     async def record_autonomy_changes(
         self, session_id: UUID, levels: Mapping[str, str]
     ) -> None:
-        """Note several tools' autonomy levels in one append.
-
-        Still one `AutonomyChanged` per tool -- the log says what a person
-        decided, and "relax everything" is a decision about each tool it moved.
-        What collapses is the *append*, not the events.
-
-        The distinction is not tidiness. "Allow all" moves several tools at
-        once, and recording them one at a time was one load-and-save per tool
-        against the session's own stream, issued as fast as the loop could
-        manage. A turn is holding a version of that stream for as long as the
-        model runs, so each of those appends was a chance for the turn to lose
-        its compare-and-swap; the turn now retries, but a burst of `n` appends
-        is `n` chances rather than one, and the retry is bounded. Removing the
-        burst is the half of the fix that stops the contention rather than
-        surviving it.
-
-        An empty map appends nothing. `AutonomyPolicy.relax_all` returns what
-        actually moved, and nothing moves when everything is already relaxed --
-        a save there would be a write recording no decision.
-        """
+        """Note several tools' autonomy levels in one append."""
         if not levels:
             return
         aggregate = await self._repository.load(session_id)
@@ -641,32 +399,14 @@ class SessionService:
         await self._repository.save(aggregate)
 
     async def write_file(self, session_id: UUID, path: str, content: str) -> None:
-        """Put one file on a session's filesystem, outside any turn.
-
-        The agent's own `write_file` goes through the executor's tools and lands
-        on the aggregate a turn is holding. This is for the caller that has no
-        turn: a stage runner writing the `check-findings` report between turns,
-        which must be in the store before the gate is posed rather than
-        whenever the next turn happens to commit.
-
-        Deliberately narrow. This is not a general filesystem API for the
-        application layer -- a caller writing course content this way would be
-        producing it with no model, no prompt and no record of a turn behind
-        it, and a file whose provenance is nothing is worse than no file.
-        """
+        """Put one file on a session's filesystem, outside any turn."""
         aggregate = await self._repository.load(session_id)
         aggregate.execute(WriteFile(path=path, file_data={"content": content}))
         await self._repository.save(aggregate)
 
     @property
     def current_knowledge(self) -> object | None:
-        """Whichever project's graph is attached right now, or None.
-
-        A read, not a use case -- callers that need to act on the graph go
-        through the `KnowledgePort` behind the executor's tools, not through
-        here. This exists for callers that only need to know *whether* one is
-        attached (a front end showing state, a test asserting on it).
-        """
+        """Whichever project's graph is attached right now, or None."""
         return self._project_sessions.current_knowledge
 
     @property
@@ -675,45 +415,15 @@ class SessionService:
         return self._project_sessions.attached_project_id
 
     async def ensure_project_attached(self, session_id: UUID) -> bool:
-        """Make `session_id`'s own project the attached one. Returns whether it is.
-
-        A session's recorded `SessionStarted` prompt describes
-        `remember`/`graph_search`/`unmerge` whenever it belongs to a project,
-        so the executor has to have those tools every time that session takes
-        a turn -- not only on the one request that happened to join. The REPL
-        gets this from `switch_session`, which detaches and re-attaches on
-        every switch; a front end with no single "current session" has no
-        such moment, and needs to ask per turn instead.
-
-        Attaching is skipped when the right graph is already attached, so the
-        common case costs a comparison rather than reopening a graph. Returns
-        False for a session in no project, and for a project whose graph would
-        not open -- the caller decides whether that is worth reporting, since
-        a turn without knowledge tools is degraded but not broken.
-        """
+        """Make `session_id`'s own project the attached one. Returns whether it is."""
         return await self._project_sessions.ensure_project_attached(session_id)
 
     async def attach_project(self, project_id: UUID) -> None:
-        """Open `project_id`'s knowledge graph and give the executor its tools.
-
-        A no-op when the composition root wired no knowledge subsystem --
-        the same posture `search` has without an instance configured. A
-        caller that wants to know whether attaching actually happened has
-        `current_knowledge` for that; this does not raise on "there is
-        nothing to attach to".
-
-        Delegates to `KnowledgeAttachment` for the atomicity guarantee: if
-        opening the graph fails, nothing here is left half-attached.
-        """
+        """Open `project_id`'s knowledge graph and give the executor its tools."""
         await self._project_sessions.attach_project(project_id)
 
     async def detach_project(self) -> None:
-        """Close whatever knowledge graph is attached and restore the plain tools.
-
-        Safe to call whether or not anything is attached, and whether or not
-        a knowledge subsystem was wired at all -- so every caller leaving a
-        project can call this unconditionally.
-        """
+        """Close whatever knowledge graph is attached and restore the plain tools."""
         await self._project_sessions.detach_project()
 
     # ---------------- turns ----------------
