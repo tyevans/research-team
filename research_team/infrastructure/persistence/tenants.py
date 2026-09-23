@@ -23,17 +23,14 @@ uses the same name for a project id, dozens of times, confined to
 spelled `project_id`, which is what keeps the seam readable.
 """
 
-from datetime import UTC, datetime
-from uuid import UUID, uuid5
+from datetime import datetime
+from uuid import UUID
 
 import aiosqlite
 from eventsource import (
-    DeclarativeProjection,
     DomainEvent,
     ExpectedVersion,
-    ReadModel,
     StreamId,
-    handles,
 )
 from eventsource.adapters.sqlite.readmodels import SQLiteReadModelRepository
 from eventsource.ports.readmodels import Query, ReadModelRepository
@@ -43,287 +40,32 @@ from research_team.infrastructure.persistence.read_models import (
     apply_schema,
 )
 from research_team.infrastructure.persistence.store_base import BaseProjectionRunner
+from research_team.infrastructure.persistence.tenant_models import (
+    TENANT_ROW_MODELS,
+    InvitationRow,
+    MembershipRow,
+    ProjectGrantRow,
+    TenantRow,
+)
+from research_team.infrastructure.persistence.tenant_projection import TenantProjection
 from research_team.tenancy.domain.tenant import (
     LOCAL_SUBJECT,
     LOCAL_TENANT,
-    TENANT_NAMESPACE,
-    InvitationAccepted,
-    InvitationCreated,
-    InvitationRevoked,
     MemberAdded,
-    MemberRemoved,
-    MemberRoleChanged,
-    OwnershipTransferred,
-    ProjectGrantAdded,
-    ProjectGrantRevoked,
     TenantCreated,
-    TenantKind,
     tenant_aggregate_id,
 )
 
-
-class TenantRow(ReadModel):
-    """One organisation.
-
-    `id` is a UUID because `ReadModel` requires one; `tenant_id` is the Zitadel
-    org id and is what everything else keys on. Both, rather than only the
-    string, so a row is findable either way without a scan.
-    """
-
-    __table_name__ = "tenants"
-
-    tenant_id: str
-    name: str
-    kind: TenantKind = "shared"
-    """Display only -- the onboarding copy needs it and no permission check
-    reads it. See `domain/tenant.TenantKind`."""
-    created_by: str = ""
-
-    @staticmethod
-    def row_id(tenant_id: str) -> UUID:
-        return uuid5(TENANT_NAMESPACE, f"tenant:{tenant_id}")
-
-
-class MembershipRow(ReadModel):
-    """A subject's standing in one organisation.
-
-    The grant tuple `(subject, role, "tenant", tenant_id)`, with the object type
-    implicit in the table. Written this way so a tuple-backed checker could
-    ingest these rows without a data migration -- see
-    `application/authorization.py`'s module docstring.
-    """
-
-    __table_name__ = "tenant_memberships"
-
-    tenant_id: str
-    subject: str
-    role: str
-    granted_at: datetime | None = None
-    granted_by: str = ""
-
-    @staticmethod
-    def row_id(tenant_id: str, subject: str) -> UUID:
-        """Derived from the pair, so a second grant to the same person replaces
-        the first rather than accumulating.
-
-        A random id would leave two rows, and `membership_role` would then
-        answer with whichever the repository happened to return first -- a
-        demotion that silently did not take.
-        """
-        return uuid5(TENANT_NAMESPACE, f"member:{tenant_id}:{subject}")
-
-
-class ProjectGrantRow(ReadModel):
-    """A subject's standing on one project, independent of their tenant role.
-
-    The per-project share: this is what makes a tenant member a `viewer` on one
-    project and an `editor` on another, and the only way a `guest` reaches a
-    project at all.
-
-    `project_id` is a project, `tenant_id` is an organisation. This is the one
-    row in the tree that holds both, and the two names mean what they say --
-    which is exactly the collision `domain/tenant.py` warns about, made safe
-    here by never abbreviating either.
-    """
-
-    __table_name__ = "project_grants"
-
-    project_id: UUID
-    tenant_id: str
-    subject: str
-    role: str
-    granted_at: datetime | None = None
-    granted_by: str = ""
-
-    @staticmethod
-    def row_id(project_id: UUID | str, subject: str) -> UUID:
-        return uuid5(TENANT_NAMESPACE, f"grant:{project_id}:{subject}")
-
-
-class InvitationRow(ReadModel):
-    """An open, accepted or revoked invitation to a tenant.
-
-    Keyed by email because the invitee may have no account yet. `accepted_at`
-    and `revoked_at` are nullable rather than a status string: both are facts
-    with a time, and a status column would answer "when" with nothing.
-    """
-
-    __table_name__ = "tenant_invitations"
-
-    tenant_id: str
-    email: str
-    role: str
-    token: str
-    invited_by: str = ""
-    expires_at: datetime | None = None
-    accepted_at: datetime | None = None
-    accepted_by: str = ""
-    revoked_at: datetime | None = None
-
-
-TENANT_ROW_MODELS: tuple[type[ReadModel], ...] = (
-    TenantRow,
-    MembershipRow,
-    ProjectGrantRow,
-    InvitationRow,
-)
-
-
-class TenantProjection(DeclarativeProjection):
-    """Applies the tenant events to the four tables.
-
-    One projection over four tables rather than four projections, for
-    `TopicProjection`'s mechanical reason: a subscription advances only on
-    events its projection handles, so four subscriptions over one stream would
-    leave three of them at positions that mean nothing, and anything waiting for
-    all four to catch up would wait forever. One subscription has one position,
-    which is a question with an answer.
-
-    Every handler loads, mutates and writes back, so replaying from a checkpoint
-    slightly behind re-derives the same values rather than accumulating them --
-    the idempotence `SessionSummaryProjection` relies on.
-    """
-
-    def __init__(
-        self,
-        tenants: ReadModelRepository[TenantRow],
-        memberships: ReadModelRepository[MembershipRow],
-        grants: ReadModelRepository[ProjectGrantRow],
-        invitations: ReadModelRepository[InvitationRow],
-        checkpoint_repo=None,
-        dlq_repo=None,
-        tracer=None,
-        retry_policy=None,
-    ) -> None:
-        self._tenants = tenants
-        self._memberships = memberships
-        self._grants = grants
-        self._invitations = invitations
-        super().__init__(
-            checkpoint_repo=checkpoint_repo,
-            dlq_repo=dlq_repo,
-            retry_policy=retry_policy,
-            tracer=tracer,
-        )
-
-    @handles(TenantCreated)
-    async def _on_tenant_created(self, event: TenantCreated) -> None:
-        await self._tenants.save(
-            TenantRow(
-                id=TenantRow.row_id(event.tenant_id),
-                tenant_id=event.tenant_id,
-                name=event.name,
-                kind=event.kind,
-                created_by=event.created_by,
-            )
-        )
-
-    @handles(MemberAdded)
-    async def _on_member_added(self, event: MemberAdded) -> None:
-        await self._save_membership(
-            event.tenant_id, event.subject, event.role, event.granted_by, event.occurred_at
-        )
-
-    @handles(MemberRoleChanged)
-    async def _on_role_changed(self, event: MemberRoleChanged) -> None:
-        await self._save_membership(
-            event.tenant_id, event.subject, event.role, event.changed_by, event.occurred_at
-        )
-
-    @handles(MemberRemoved)
-    async def _on_member_removed(self, event: MemberRemoved) -> None:
-        # Deleted, not flagged. The row's absence is what makes "remove member"
-        # true: the checker asks for a role in the resource's tenant and gets
-        # nothing, whatever the holder's cookie still says.
-        await self._memberships.delete(MembershipRow.row_id(event.tenant_id, event.subject))
-
-    @handles(OwnershipTransferred)
-    async def _on_transfer(self, event: OwnershipTransferred) -> None:
-        # Two rows from one event. The old owner becomes an `admin` rather than
-        # losing the tenant: transferring is handing over the last word, not
-        # ejecting the person who built the organisation, and a transfer that
-        # locked the previous owner out would have no undo.
-        await self._save_membership(
-            event.tenant_id, event.to_subject, "owner", event.from_subject, event.occurred_at
-        )
-        await self._save_membership(
-            event.tenant_id, event.from_subject, "admin", event.to_subject, event.occurred_at
-        )
-
-    @handles(ProjectGrantAdded)
-    async def _on_grant_added(self, event: ProjectGrantAdded) -> None:
-        await self._grants.save(
-            ProjectGrantRow(
-                id=ProjectGrantRow.row_id(event.project_id, event.subject),
-                project_id=event.project_id,
-                tenant_id=event.tenant_id,
-                subject=event.subject,
-                role=event.role,
-                granted_at=event.occurred_at,
-                granted_by=event.granted_by,
-            )
-        )
-
-    @handles(ProjectGrantRevoked)
-    async def _on_grant_revoked(self, event: ProjectGrantRevoked) -> None:
-        await self._grants.delete(ProjectGrantRow.row_id(event.project_id, event.subject))
-
-    @handles(InvitationCreated)
-    async def _on_invited(self, event: InvitationCreated) -> None:
-        await self._invitations.save(
-            InvitationRow(
-                id=event.event_id,
-                tenant_id=event.tenant_id,
-                email=event.email.strip().lower(),
-                role=event.role,
-                token=event.token,
-                invited_by=event.invited_by,
-                expires_at=event.expires_at,
-            )
-        )
-
-    @handles(InvitationAccepted)
-    async def _on_accepted(self, event: InvitationAccepted) -> None:
-        row = await self._invitations.get(event.invitation_id)
-        if row is None:
-            # An acceptance whose invitation this build cannot find. Ignored
-            # rather than raised: a projection that refuses one event stops
-            # following the log for every other tenant too, and the membership
-            # this acceptance also produced is carried by its own `MemberAdded`.
-            return
-        row.accepted_at = event.occurred_at
-        row.accepted_by = event.subject
-        await self._invitations.save(row)
-
-    @handles(InvitationRevoked)
-    async def _on_revoked(self, event: InvitationRevoked) -> None:
-        row = await self._invitations.get(event.invitation_id)
-        if row is None:
-            return
-        row.revoked_at = event.occurred_at
-        await self._invitations.save(row)
-
-    async def _save_membership(
-        self,
-        organisation_id: str,
-        subject: str,
-        role: str,
-        granted_by: str,
-        at: datetime | None,
-    ) -> None:
-        # `organisation_id` rather than `tenant_id`, so the assignment below
-        # cannot be written `tenant_id=tenant_id` -- the one spelling that hides
-        # which of the two concepts is being passed. See `domain/tenant.py`.
-        await self._memberships.save(
-            MembershipRow(
-                id=MembershipRow.row_id(organisation_id, subject),
-                tenant_id=organisation_id,
-                subject=subject,
-                role=role,
-                granted_at=at or datetime.now(UTC),
-                granted_by=granted_by,
-            )
-        )
+__all__ = [
+    "TENANT_ROW_MODELS",
+    "InvitationRow",
+    "MembershipRow",
+    "ProjectGrantRow",
+    "TenantProjection",
+    "TenantRow",
+    "TenantRunner",
+    "TenantStore",
+]
 
 
 class TenantStore:
