@@ -52,12 +52,12 @@ from research_team.infrastructure.agent.ask_agent import (
     citations,
     readable,
 )
+from research_team.infrastructure.agent.backend import ReadOnlyProjectBackend
 from research_team.infrastructure.agent.deep_agent import (
     to_activity_delta,
     to_activity_message,
 )
 from research_team.infrastructure.agent.messages import last_text
-from research_team.infrastructure.agent.read_only_backend import ReadOnlyProjectBackend
 from research_team.platform.components import component_reference
 from research_team.platform.shared.ports import ActivityReporter
 from research_team.research.application.corpus_read import REFERENCE_SYNTAX_PROMPT

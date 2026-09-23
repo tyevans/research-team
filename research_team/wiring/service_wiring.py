@@ -17,11 +17,13 @@ from langchain_core.language_models import BaseChatModel
 from research_team.curriculum.application.course_authoring import CourseAuthor
 from research_team.curriculum.domain.learner import LearnerProgress
 from research_team.infrastructure import config
+from research_team.infrastructure.agent.chat_adapters import (
+    ChatModelDefinitionText,
+    ChatModelOntologyText,
+)
 from research_team.infrastructure.agent.corpus_tools import CORPUS_PROMPT
-from research_team.infrastructure.agent.definition_model import ChatModelDefinitionText
 from research_team.infrastructure.agent.fetch import FETCH_CORPUS_PROMPT
 from research_team.infrastructure.agent.knowledge_tools import KNOWLEDGE_PROMPT
-from research_team.infrastructure.agent.ontology_model import ChatModelOntologyText
 from research_team.infrastructure.knowledge.catalog_recorder import (
     EventStoreCatalogFeatureRecorder,
 )

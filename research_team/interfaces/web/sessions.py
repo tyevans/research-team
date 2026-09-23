@@ -13,12 +13,12 @@ from eventsource import CommandRejectedError
 from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel
 
+from research_team.interfaces.web.deps import SessionDeps
 from research_team.interfaces.web.presenters import (
     event_rows,
     file_history,
     session_view,
 )
-from research_team.interfaces.web.session_deps import SessionDeps
 from research_team.interfaces.web.session_progress_routes import (
     ChecklistState,
     session_progress_router,

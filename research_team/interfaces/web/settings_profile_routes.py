@@ -5,7 +5,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from research_team.interfaces.web.settings_deps import SettingsDeps
+from research_team.interfaces.web.deps import SettingsDeps
 from research_team.settings.application import (
     ModelProfileService,
     ResolvedRole,

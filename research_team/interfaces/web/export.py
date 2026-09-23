@@ -26,6 +26,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from research_team.interfaces.web.authored_files import course_links
+from research_team.interfaces.web.deps import ExportDeps
 from research_team.interfaces.web.export_course import (
     _UNSAFE,
     _course_page,
@@ -38,7 +39,6 @@ from research_team.interfaces.web.export_course import (
     _status_suffix,
     _wrote,
 )
-from research_team.interfaces.web.export_deps import ExportDeps
 from research_team.interfaces.web.graph_html import render_html
 from research_team.knowledge.application.graph_export import (
     MAX_EXPORT_NODES,

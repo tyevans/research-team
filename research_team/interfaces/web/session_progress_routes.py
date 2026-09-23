@@ -9,9 +9,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from research_team.curriculum.application.grading import GradingError, grade
+from research_team.interfaces.web.deps import SessionDeps
 from research_team.interfaces.web.dialogues import Attempt
 from research_team.interfaces.web.presenters import item_view, progress_view
-from research_team.interfaces.web.session_deps import SessionDeps
 from research_team.platform.components import View, parse_document, project
 
 __all__ = [
