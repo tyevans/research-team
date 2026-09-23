@@ -1,4 +1,4 @@
-"""Inspection, statistics, and diffing for sessions."""
+"""Inspection, statistics, queries, and diffing for sessions."""
 
 import difflib
 from collections.abc import Mapping
@@ -6,9 +6,18 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from eventsource import DomainEvent
+
+from research_team.session.application.ports import (
+    SessionRepository,
+    SessionSummaries,
+    SummaryHealth,
+)
+from research_team.session.application.summaries import SessionSummary
 from research_team.session.domain import Session, SessionPurpose
 
 __all__ = [
+    "SessionQueries",
     "SessionStats",
     "compute_session_stats",
     "diff_file_maps",
@@ -122,3 +131,81 @@ def diff_file_maps(
         "modified": modified,
         "unchanged": unchanged,
     }
+
+
+class SessionQueries:
+    """Read-side queries, timeline scrub folds, and inspection over sessions."""
+
+    def __init__(
+        self,
+        repository: SessionRepository,
+        summaries: SessionSummaries,
+    ) -> None:
+        self._repository = repository
+        self._summaries = summaries
+
+    async def load(self, session_id: UUID) -> Session:
+        """One session's aggregate, folded from its events."""
+        return await self._repository.load(session_id)
+
+    async def history(self, session_id: UUID) -> list[DomainEvent]:
+        """Every event on one session's stream, in order."""
+        return await self._repository.events_for(session_id)
+
+    async def state_at(self, session_id: UUID, at: int) -> Session:
+        """The session as it stood after its first `at` events.
+
+        A pure fold of a prefix -- nothing is written, nothing is forked. This
+        is what makes scrubbing a timeline cheap: the log is the state, so any
+        point in it can be reconstituted just by stopping the fold early.
+        """
+        events = await self.history(session_id)
+        if not 1 <= at <= len(events):
+            raise ValueError(f"cannot fold at {at}: session has {len(events)} events")
+        aggregate = self._repository.create(session_id)
+        aggregate.load_from_history(events[:at])
+        return aggregate
+
+    async def list_sessions(self) -> list[SessionSummary]:
+        """Every session in the store, newest first.
+
+        Read straight out of the projection's table.
+        """
+        return await self._summaries.list()
+
+    async def summaries_health(self) -> SummaryHealth:
+        """Whether `list_sessions` can currently be trusted."""
+        return await self._summaries.health()
+
+    async def rebuild_summaries(self) -> None:
+        """Derive the session list from the log again. Safe at any time."""
+        await self._summaries.rebuild()
+
+    async def session_stats(self, session_id: UUID) -> SessionStats:
+        """High-level summary metrics for a session."""
+        session = await self.load(session_id)
+        return compute_session_stats(session, session_id)
+
+    async def find_messages(
+        self,
+        session_id: UUID,
+        *,
+        role: str | None = None,
+        query: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search and filter messages recorded in a session."""
+        session = await self.load(session_id)
+        return filter_session_messages(session, role=role, query=query, limit=limit)
+
+    async def diff_session_files(
+        self, session_id: UUID, other_session_id: UUID
+    ) -> dict[str, Any]:
+        """Diff files between two sessions.
+
+        Returns added, removed, modified, and unchanged file paths along with
+        line change metrics for modified files.
+        """
+        s1 = await self.load(session_id)
+        s2 = await self.load(other_session_id)
+        return diff_file_maps(s1.state.files, s2.state.files)
