@@ -11,8 +11,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from research_team.interfaces.web.approvals import UnknownApproval
+from research_team.interfaces.web.deps import SessionDeps
 from research_team.interfaces.web.presenters import autonomy_view
-from research_team.interfaces.web.session_deps import SessionDeps
 from research_team.platform.shared.ports import ApprovalDecision
 from research_team.session.application.autonomy import AutonomyPolicy
 from research_team.session.application.turn_supervisor import (

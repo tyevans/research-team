@@ -12,6 +12,14 @@ from research_team.infrastructure.persistence.art_read_models import (
     CandidateArtRow,
     CandidateArtStore,
 )
+from research_team.infrastructure.persistence.ask_read_models import (
+    ASK_NAMESPACE,
+    AskConversationProjection,
+    AskConversationRow,
+    AskConversationRunner,
+    AskConversationStore,
+    AskTurnRow,
+)
 from research_team.infrastructure.persistence.authoring_read_models import (
     AuthoringRunProjection,
     AuthoringRunRow,
@@ -40,20 +48,6 @@ from research_team.infrastructure.persistence.course_read_models import (
     CourseProjection,
     CourseRow,
     CourseStore,
-)
-from research_team.infrastructure.persistence.dialogue_read_models import (
-    ASK_NAMESPACE,
-    SOCRATIC_NAMESPACE,
-    AskConversationProjection,
-    AskConversationRow,
-    AskConversationRunner,
-    AskConversationStore,
-    AskTurnRow,
-    SocraticDialogueProjection,
-    SocraticDialogueRow,
-    SocraticDialogueRunner,
-    SocraticDialogueStore,
-    SocraticTurnRow,
 )
 from research_team.infrastructure.persistence.media_read_models import (
     MEDIA_PROPOSAL_NAMESPACE,
@@ -85,6 +79,14 @@ from research_team.infrastructure.persistence.session_read_models import (
     SessionSummaryRunner,
     SessionSummaryStore,
     to_summary,
+)
+from research_team.infrastructure.persistence.socratic_read_models import (
+    SOCRATIC_NAMESPACE,
+    SocraticDialogueProjection,
+    SocraticDialogueRow,
+    SocraticDialogueRunner,
+    SocraticDialogueStore,
+    SocraticTurnRow,
 )
 from research_team.infrastructure.persistence.store_base import (
     CATALOG_NAMESPACE,

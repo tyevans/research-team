@@ -30,7 +30,7 @@ from research_team.interfaces.web.course_html import (
     read_course_file,
     render_course_html,
 )
-from research_team.interfaces.web.export_deps import ExportDeps
+from research_team.interfaces.web.deps import ExportDeps
 
 #: Anything that is not a plain filename character. Applied to project names
 #: and area titles before they reach a `Content-Disposition` header or a path

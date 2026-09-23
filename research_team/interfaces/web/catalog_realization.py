@@ -14,7 +14,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from research_team.curriculum.application.course_catalog import Catalog
-from research_team.curriculum.application.frontmatter import parse_frontmatter
 from research_team.curriculum.domain.course import (
     AbandonCourse,
     RealizeCourse,
@@ -30,6 +29,7 @@ from research_team.interfaces.web.curriculum import (
     _author_one_target,
     _authoring_holder,
 )
+from research_team.platform.shared.frontmatter import parse_frontmatter
 
 if TYPE_CHECKING:
     from research_team.interfaces.web.catalog import CatalogDeps

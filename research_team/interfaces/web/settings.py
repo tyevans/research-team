@@ -26,7 +26,7 @@ rule each route remembers -- see `application/settings.py`.
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from research_team.interfaces.web.settings_deps import SettingsDeps
+from research_team.interfaces.web.deps import SettingsDeps
 from research_team.interfaces.web.settings_profile_routes import (
     register_profile_and_provider_routes,
 )

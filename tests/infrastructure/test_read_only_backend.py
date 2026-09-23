@@ -7,7 +7,7 @@ later as absence rather than as an error.
 
 import pytest
 
-from research_team.infrastructure.agent.read_only_backend import (
+from research_team.infrastructure.agent.backend import (
     ReadOnlyFilesystem,
     ReadOnlyProjectBackend,
 )

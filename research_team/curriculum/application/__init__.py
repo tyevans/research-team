@@ -43,10 +43,6 @@ from research_team.curriculum.application.curriculum import (
     CurriculumService,
     graph_fingerprint,
 )
-from research_team.curriculum.application.frontmatter import (
-    extract_title,
-    parse_frontmatter,
-)
 from research_team.curriculum.application.grading import (
     GradingError,
     Verdict,
@@ -60,6 +56,10 @@ from research_team.curriculum.application.learner_progress import (
 from research_team.curriculum.application.learning_paths import (
     full_path,
     path_to,
+)
+from research_team.platform.shared.frontmatter import (
+    extract_title,
+    parse_frontmatter,
 )
 
 __all__ = [

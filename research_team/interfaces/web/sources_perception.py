@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from research_team.interfaces.web.source_deps import SourceDeps
+from research_team.interfaces.web.deps import SourceDeps
 from research_team.knowledge.application import ExtractionNote
 from research_team.research.application.document_extraction import UnknownDocument
 from research_team.research.application.perception import (

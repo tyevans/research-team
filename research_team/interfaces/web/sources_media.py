@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
+from research_team.interfaces.web.deps import SourceDeps
 from research_team.interfaces.web.media_streaming import (
     _MAGIC_NUMBERS,
     UPLOAD_CHUNK_BYTES,
@@ -20,7 +21,6 @@ from research_team.interfaces.web.media_streaming import (
     _UploadTooLarge,
 )
 from research_team.interfaces.web.presenters import source_view
-from research_team.interfaces.web.source_deps import SourceDeps
 from research_team.interfaces.web.sources_perception import sources_perception_router
 from research_team.research.application.corpus_editing import CorpusEditor
 
