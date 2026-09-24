@@ -1,163 +1,28 @@
-"""Deciding what the model is shown.
+"""Compatibility facade for context strategy types.
 
-A session's message list only grows, and every turn re-sends it. Left alone
-that ends a long session at the context window. The interesting question is
-*where* to intervene, and event sourcing answers it: not inside the agent.
-
-Measured against this codebase, a middleware that rewrites the running message
-list -- langchain's `SummarizationMiddleware` does, via
-`RemoveMessage(REMOVE_ALL_MESSAGES)` -- silently breaks how a turn is recorded.
-We identify what a turn produced by slicing the agent's returned list at the
-length we sent; rewritten history makes that slice meaningless, and the turn
-lands in the log missing its assistant messages and tool results. The log
-becomes a confident lie, which is worse than a crash.
-
-So the intervention happens at the *fold*. The log always holds every message;
-a strategy decides which of them, and in what form, are handed to the model for
-the next turn. Turn accounting is untouched, because we still know exactly what
-we sent. Time travel is untouched, because nothing is removed.
-
-(Middleware that only rewraps the outbound request -- langchain's
-`ContextEditingMiddleware` hooks `wrap_model_call` and leaves state alone -- is
-safe by the same reasoning, and is what `elide` is modelled on.)
+Canonical definitions have moved to `research_team.session.application.context`
+to keep `platform` strictly decoupled from session domain aggregates.
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
-from research_team.session.domain import SessionState
-
-
-@dataclass(frozen=True)
-class Compaction:
-    """A summary a strategy wants recorded, standing in for a run of messages."""
-
-    summary: str
-    through_index: int
-    """1-based index of the last message the summary stands in for."""
-    tokens_before: int = 0
-    """What the conversation cost when this was decided, if the strategy counts."""
-    tokens_after: int = 0
+__all__ = [  # noqa: F822
+    "DEFAULT_CLEAR_OVER_CHARS",
+    "DEFAULT_KEEP_RESULTS",
+    "Compaction",
+    "ContextStrategy",
+    "ElideToolResults",
+    "FullHistory",
+    "PreparedContext",
+]
 
 
-@dataclass(frozen=True)
-class PreparedContext:
-    """What to send the model this turn, and anything to record first."""
+def __getattr__(name: str) -> Any:
+    if name in __all__:
+        import importlib
 
-    messages: list[dict[str, Any]]
-    compaction: Compaction | None = None
-    """Recorded as an event before the turn, so replay reproduces this view."""
-    notes: tuple[str, ...] = field(default_factory=tuple)
-    """Human-readable account of what was left out, for the REPL and the UI."""
-
-
-class ContextStrategy(Protocol):
-    """Chooses what the model sees, given everything the session remembers."""
-
-    name: str
-
-    async def prepare(self, state: SessionState) -> PreparedContext: ...
-
-
-# ---------------------------------------------------------------- full
-
-
-class FullHistory:
-    """Send everything. The default, and the right answer until it isn't.
-
-    Cheapest and most faithful: the model sees exactly what happened. It is
-    also the only strategy that cannot lose a detail the agent needed, which is
-    why it stays the default rather than being retired.
-    """
-
-    name = "full"
-
-    async def prepare(self, state: SessionState) -> PreparedContext:
-        return PreparedContext(messages=list(state.messages))
-
-
-# ---------------------------------------------------------------- elide
-
-
-DEFAULT_KEEP_RESULTS = 6
-DEFAULT_CLEAR_OVER_CHARS = 2000
-
-
-class ElideToolResults:
-    """Replace older tool results with a placeholder, keeping recent ones whole.
-
-    Tool results dominate a coding session's context: a file read costs
-    thousands of characters and is then replayed on every later turn forever.
-    They are also the safest thing to drop *here specifically*, because the
-    workspace is a virtual filesystem the agent still has -- if it needs the
-    contents again it can read the file again, and that read is itself an
-    auditable event.
-
-    Pure, deterministic, and needs no model call, so it costs nothing and never
-    surprises you. It cannot help with a conversation that is long in prose
-    rather than in tool output; reach for `compact` then.
-    """
-
-    name = "elide"
-
-    def __init__(
-        self,
-        *,
-        keep_results: int = DEFAULT_KEEP_RESULTS,
-        clear_over_chars: int = DEFAULT_CLEAR_OVER_CHARS,
-    ) -> None:
-        self._keep = keep_results
-        self._clear_over = clear_over_chars
-
-    async def prepare(self, state: SessionState) -> PreparedContext:
-        messages = list(state.messages)
-        tool_positions = [
-            index for index, message in enumerate(messages) if message.get("type") == "tool"
-        ]
-        stale = set(tool_positions[: max(0, len(tool_positions) - self._keep)])
-        if not stale:
-            return PreparedContext(messages=messages)
-
-        elided = 0
-        prepared: list[dict[str, Any]] = []
-        for index, message in enumerate(messages):
-            if index in stale:
-                shortened = _placeholder(message, self._clear_over)
-                # A short result is left alone: clearing it saves nothing and
-                # a note claiming otherwise would be false.
-                elided += shortened is not message
-                message = shortened
-            prepared.append(message)
-
-        if not elided:
-            return PreparedContext(messages=prepared)
-        return PreparedContext(
-            messages=prepared,
-            notes=(
-                f"cleared {elided} older tool result(s); the tools can be run again if needed",
-            ),
-        )
-
-
-def _placeholder(message: dict[str, Any], clear_over: int) -> dict[str, Any]:
-    """Replace one tool result with something unmistakably incomplete.
-
-    Deliberately not a truncation. A cut-off head reads as a whole result, so
-    the model trusts it -- and a half-read file or a half-finished command
-    output is exactly how an agent concludes that something succeeded when it
-    did not. The marker has to be impossible to mistake for the answer.
-
-    The tool *call* is untouched, so the model can still see what it asked and
-    ask again. This mirrors Anthropic's `clear_tool_uses`, which clears results
-    and keeps inputs for the same reason.
-    """
-    data = dict(message.get("data", {}))
-    content = str(data.get("content", ""))
-    if len(content) <= clear_over:
-        return message
-    data["content"] = (
-        f"[{len(content)} characters of output from an earlier turn were "
-        "cleared to save context. This is NOT the result -- run the tool again "
-        "if you need it.]"
-    )
-    return {**message, "data": data}
+        mod = importlib.import_module("research_team.session.application.context")
+        val = getattr(mod, name)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

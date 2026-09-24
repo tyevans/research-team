@@ -3,7 +3,9 @@
 Extracts joining, file inheritance, tip catch-up, and attachment.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from eventsource.application.aggregates.repository import AggregateRepository
@@ -12,8 +14,10 @@ from research_team.knowledge.application.knowledge_attachment import (
     KnowledgeAttachment,
 )
 from research_team.knowledge.application.project_graphs import ProjectGraphs
-from research_team.platform.shared.ports import SessionRepository, TurnExecutor
 from research_team.session.domain import SessionPurpose
+
+if TYPE_CHECKING:
+    from research_team.session.application.ports import SessionRepository, TurnExecutor
 from research_team.tenancy.application.project_binding import (
     catch_up_project_tip as catch_up_project_tip,
 )

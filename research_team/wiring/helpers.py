@@ -12,7 +12,7 @@ from research_team.infrastructure.agent.delegation import (
     DEFAULT_SUBAGENTS,
     DELEGATION_PROMPT,
 )
-from research_team.platform.shared.context import (
+from research_team.session.application.context import (
     ContextStrategy,
     ElideToolResults,
     FullHistory,

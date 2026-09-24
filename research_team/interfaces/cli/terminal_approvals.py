@@ -7,7 +7,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from research_team.platform.shared.ports import (
+from research_team.session.application.ports import (
     ApprovalDecision,
     ApprovalRequest,
 )

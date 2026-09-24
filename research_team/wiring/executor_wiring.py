@@ -29,8 +29,8 @@ from research_team.knowledge.application import (
     source_id_for_url,
 )
 from research_team.platform.shared.blobs import BlobStorePort
-from research_team.platform.shared.ports import ApprovalPort
 from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.ports import ApprovalPort
 from research_team.session.domain import Session, SessionPurpose
 from research_team.settings.application.effective import EffectiveSettings
 from research_team.tenancy.application.grants import GrantRegistry

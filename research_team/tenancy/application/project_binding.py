@@ -5,8 +5,10 @@ project, inheriting its filesystem via stream forking, catching up tip
 pointers, releasing project claims, and attaching project knowledge graphs.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from eventsource.application.aggregates.repository import AggregateRepository
@@ -14,7 +16,9 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from research_team.knowledge.application.knowledge_attachment import (
     KnowledgeAttachment,
 )
-from research_team.platform.shared.ports import SessionRepository
+
+if TYPE_CHECKING:
+    from research_team.session.application.ports import SessionRepository
 from research_team.session.domain import (
     FILE_EVENT_TYPES,
     INHERITED_EVENT_FIELDS,

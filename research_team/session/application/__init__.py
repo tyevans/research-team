@@ -36,7 +36,6 @@ from research_team.session.application.tool_artifacts import (
 from research_team.session.application.turn_runner import (
     FILE_EVENT_TYPES,
     INHERITED_EVENT_FIELDS,
-    project_context,
 )
 from research_team.session.application.turn_supervisor import (
     CANCEL_SETTLE_TIMEOUT,
@@ -101,5 +100,4 @@ __all__ = [
     "WorkerKind",
     "WorkerRoster",
     "parse_artifact",
-    "project_context",
 ]

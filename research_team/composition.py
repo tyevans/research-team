@@ -64,16 +64,16 @@ from research_team.infrastructure.persistence.event_store import (
 )
 from research_team.infrastructure.telemetry import build_tracer
 from research_team.platform.shared.live_feed import LiveFeed
-from research_team.platform.shared.ports import (
-    ApprovalPort,
-    TurnActivityBuffer,
-)
 from research_team.research.application.corpus_editing import CorpusEditor
 from research_team.research.application.document_extraction import DocumentExtractor
 from research_team.research.application.perception import MediaPerceiver, PerceptionPort
 from research_team.research.application.topics import TOPICS_PROMPT
 from research_team.research.domain.media_proposals import MediaProposals
 from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.ports import (
+    ApprovalPort,
+    TurnActivityBuffer,
+)
 from research_team.session.application.session_service import (
     DEFAULT_SYSTEM_PROMPT,
     SessionService,
