@@ -219,6 +219,11 @@ class SessionService:
         return self._learner_progress
 
     @property
+    def project_sessions(self) -> ProjectSessions:
+        """The `ProjectSessions` application service."""
+        return self._project_sessions
+
+    @property
     def projects(self) -> AggregateRepository[Project]:
         """The `Project` aggregate repository, for callers that need it directly."""
         return self._projects

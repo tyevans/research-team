@@ -41,7 +41,15 @@ def session_progress_router(
 ) -> APIRouter:
     """The learner progress, grading, and checklist routes, ready for `app.include_router`."""
     router = APIRouter()
-    service = deps.service
+    progress_service = (
+        deps.progress
+        if deps.progress is not None
+        else (
+            deps.service.learner_progress_service
+            if hasattr(deps.service, "learner_progress_service")
+            else deps.service
+        )
+    )
 
     @router.get("/api/sessions/{session_id}/files/parsed")
     async def get_file_parsed(
@@ -85,7 +93,7 @@ def session_progress_router(
         # was shown is never one the log has no record of. The digest is of the
         # body as it stood, which is what lets a later reader see that an item
         # was rewritten under someone mid-course.
-        progress = await service.record_attempt(
+        progress = await progress_service.record_attempt(
             session_id,
             path=body.path,
             component_id=body.component_id,
@@ -109,7 +117,10 @@ def session_progress_router(
         course before its first learner, not a 404.
         """
         await load(session_id)
-        state = await service.learner_progress(session_id)
+        if hasattr(progress_service, "get_progress"):
+            state = await progress_service.get_progress(session_id)
+        else:
+            state = await progress_service.learner_progress(session_id)
         return progress_view(state, path=path)
 
     @router.post("/api/sessions/{session_id}/progress/checklist")
@@ -149,7 +160,7 @@ def session_progress_router(
                     status_code=400,
                     detail=f"there is no item {index}; this checklist has {len(items)}",
                 )
-        progress = await service.record_checklist(
+        progress = await progress_service.record_checklist(
             session_id,
             path=body.path,
             component_id=body.component_id,

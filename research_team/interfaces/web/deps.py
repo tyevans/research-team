@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from research_team.curriculum.application import Curriculum
+from research_team.curriculum.application.learner_progress import LearnerProgressService
 from research_team.infrastructure.persistence import CorpusRunner
 from research_team.infrastructure.persistence.corpus_reader import ProjectCorpusReader
 from research_team.infrastructure.persistence.read_models import OntologyRunner
@@ -64,6 +65,7 @@ class SessionDeps:
     activity: TurnActivity | None = None
     policy: AutonomyPolicy | None = None
     load: Callable[[UUID], Awaitable[Any]] | None = None
+    progress: LearnerProgressService | None = None
 
 
 @dataclass(frozen=True)

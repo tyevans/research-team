@@ -326,6 +326,8 @@ def main() -> None:
             # longer route, with `/auth/login` answering 503 on an instance
             # whose issuer is configured and working.
             auth=auth,
+            projects=application.projects,
+            learner_progress=application.learner_progress,
         ),
         host=config.web_host(),
         port=config.web_port(),

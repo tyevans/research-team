@@ -19,6 +19,7 @@ from research_team.curriculum.application.course_catalog import (
     OutlineTextPort,
 )
 from research_team.curriculum.application.course_realization import CourseService
+from research_team.curriculum.application.learner_progress import LearnerProgressService
 from research_team.curriculum.domain.course import Course
 from research_team.dialogue.application.ask import AskService
 from research_team.dialogue.application.socratic import SocraticDialogueService
@@ -153,6 +154,7 @@ from research_team.session.application.autonomy import AutonomyPolicy
 from research_team.session.application.session_service import SessionService
 from research_team.session.application.turn_supervisor import TurnSupervisor
 from research_team.session.application.workers import WorkerRoster
+from research_team.tenancy.application.project_sessions import ProjectSessions
 from research_team.tenancy.application.project_summaries import ProjectSummaries
 
 from .interactions import (
@@ -293,6 +295,8 @@ def create_app(
     settings: SettingsDeps | None = None,
     project_summaries: ProjectSummaries | None = None,
     auth: AuthConfig | None = None,
+    projects: ProjectSessions | None = None,
+    learner_progress: LearnerProgressService | None = None,
 ) -> FastAPI:
     """Build the app around an already-wired service. Composition stays outside.
 
@@ -331,6 +335,25 @@ def create_app(
         ),
     )
 
+    resolved_projects = (
+        projects
+        if projects is not None
+        else (
+            service.project_sessions
+            if service is not None and hasattr(service, "project_sessions")
+            else None
+        )
+    )
+    resolved_progress = (
+        learner_progress
+        if learner_progress is not None
+        else (
+            service.learner_progress_service
+            if service is not None and hasattr(service, "learner_progress_service")
+            else None
+        )
+    )
+
     readers = WebReaders(
         service=service,
         corpus=corpus,
@@ -338,6 +361,7 @@ def create_app(
         graphs=graphs,
         ontology=ontology,
         curriculum=curriculum,
+        projects=resolved_projects,
     )
 
     @app.get("/api/sessions")
@@ -346,6 +370,7 @@ def create_app(
 
     projects_router = project_router(
         ProjectDeps(
+            projects=resolved_projects,
             service=service,
             turns=turns,
             curriculum=curriculum,
@@ -479,6 +504,7 @@ def create_app(
             activity=activity,
             policy=policy,
             load=readers.load,
+            progress=resolved_progress,
         )
     )
     app.include_router(sessions_router)

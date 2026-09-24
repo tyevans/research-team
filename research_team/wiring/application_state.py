@@ -12,6 +12,7 @@ from eventsource.application.aggregates.repository import AggregateRepository
 from research_team.curriculum.application.course_authoring import CourseAuthor
 from research_team.curriculum.application.course_catalog import CatalogService
 from research_team.curriculum.application.course_realization import CourseService
+from research_team.curriculum.application.learner_progress import LearnerProgressService
 from research_team.curriculum.domain.authoring_run import CourseAuthoringRun
 from research_team.curriculum.domain.course import Course
 from research_team.dialogue.application.ask import AskService
@@ -73,6 +74,7 @@ from research_team.session.application.turn_supervisor import TurnSupervisor
 from research_team.session.application.workers import WorkerRoster
 from research_team.tenancy.application.authorization import Authorizer
 from research_team.tenancy.application.grants import GrantRegistry
+from research_team.tenancy.application.project_sessions import ProjectSessions
 from research_team.wiring.resources import (
     _LazyArtStore,
     _LazyBlurbCache,
@@ -666,3 +668,15 @@ class ApplicationState:
     them would hang for the full test timeout rather than fail with anything
     naming the cause. Same one-element-list shape and the same reason
     (`frozen=True`, and `create_task` holds only a weak reference)."""
+
+    @property
+    def projects(self) -> ProjectSessions:
+        """The `ProjectSessions` application service for project-level tenancy operations."""
+        return self.service.project_sessions
+
+    @property
+    def learner_progress(self) -> LearnerProgressService:
+        """The `LearnerProgressService` application service for curriculum progress
+        tracking.
+        """
+        return self.service.learner_progress_service

@@ -346,3 +346,17 @@ def test_platform_shared_does_not_depend_on_domain_bounded_contexts() -> None:
                         f"context '{parts[1]}': {imported}. "
                         "Platform must remain domain-agnostic."
                     )
+
+
+def test_application_state_exposes_first_class_bounded_context_services() -> None:
+    """ApplicationState must expose properties for projects and learner progress."""
+    from research_team.wiring.application_state import ApplicationState
+
+    assert hasattr(ApplicationState, "projects"), (
+        "ApplicationState must expose 'projects' property for tenancy operations"
+    )
+    assert hasattr(ApplicationState, "learner_progress"), (
+        "ApplicationState must expose 'learner_progress' property for curriculum operations"
+    )
+    assert isinstance(ApplicationState.projects, property)
+    assert isinstance(ApplicationState.learner_progress, property)
