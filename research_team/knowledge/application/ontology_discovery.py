@@ -21,8 +21,8 @@ from research_team.knowledge.application.ontology_verification import (
     parse_ontology,
     verify_classes,
 )
+from research_team.knowledge.application.ports import CorpusReadPort
 from research_team.knowledge.domain.ontology import DiscoveredClass
-from research_team.platform.shared.ports import CorpusReadPort
 
 DiscoveryStage = Literal[
     "reading",

@@ -9,9 +9,9 @@ from research_team.platform.shared.ports import (
     ActivityDelta,
     ActivityNote,
     ActivityRemark,
-    SummaryHealth,
 )
 from research_team.research.application.research_run import RunReport
+from research_team.session.application.ports import SummaryHealth
 from research_team.session.application.session_service import TurnOutcome
 from research_team.session.application.summaries import SessionSummary
 from research_team.session.domain import (

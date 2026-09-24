@@ -15,7 +15,7 @@ from langchain_core.messages import (
     messages_from_dict,
 )
 
-from research_team.platform.shared.ports import (
+from research_team.session.application.ports import (
     RecordedMessage,
     TurnAccountingError,
 )

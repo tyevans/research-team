@@ -12,8 +12,8 @@ from eventsource.observability.attributes import (
     ATTR_AGGREGATE_TYPE,
 )
 
-from research_team.platform.shared.context import ContextStrategy, FullHistory
 from research_team.platform.shared.retry import with_retry
+from research_team.session.application.context import ContextStrategy, FullHistory
 from research_team.session.application.ports import (
     ActivityRemark,
     ActivityReporter,
@@ -40,9 +40,6 @@ from research_team.session.domain import (
     SessionPurpose,
     SessionStarted,
 )
-from research_team.tenancy.application.project_sessions import (
-    project_context as project_context,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +56,6 @@ __all__ = [
     "_TurnConflict",
     "append_turn_failure",
     "fork_session",
-    "project_context",
     "record_turn_failure",
     "refuse_unrebasable",
     "save_turn_with_retry",

@@ -27,7 +27,7 @@ from research_team.knowledge.application.knowledge_attachment import (
     KnowledgeAttachment,
 )
 from research_team.knowledge.application.project_graphs import ProjectGraphs
-from research_team.platform.shared.context import ContextStrategy, FullHistory
+from research_team.session.application.context import ContextStrategy, FullHistory
 from research_team.session.application.ports import (
     ActivityReporter,
     SessionRepository,
@@ -48,7 +48,6 @@ from research_team.session.application.turn_runner import (
     TurnOutcome,
     TurnRunner,
     fork_session,
-    project_context,
 )
 from research_team.session.domain import (
     ChangeAutonomy,
@@ -73,7 +72,7 @@ from research_team.tenancy.domain import (
     ProjectState,
 )
 
-__all__ = [
+__all__ = [  # noqa: F822
     "DEFAULT_SYSTEM_PROMPT",
     "FILE_EVENT_TYPES",
     "INHERITED_EVENT_FIELDS",
@@ -470,3 +469,12 @@ class SessionService:
     ) -> UUID:
         """Replay the first `at` events onto a fresh stream. Nothing is destroyed."""
         return await fork_session(self._repository, session_id, at, purpose=purpose)
+
+
+def __getattr__(name: str) -> Any:
+    if name == "project_context":
+        from research_team.tenancy.application.project_binding import project_context
+
+        globals()["project_context"] = project_context
+        return project_context
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

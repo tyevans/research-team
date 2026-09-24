@@ -329,3 +329,20 @@ def test_knowledge_bc_does_not_depend_on_research_bc() -> None:
                     f"{module.relative_to(PACKAGE)} imports from research bounded context: "
                     f"{imported}. Knowledge must not depend on Research."
                 )
+
+
+def test_platform_shared_does_not_depend_on_domain_bounded_contexts() -> None:
+    """Platform shared foundation must not depend on any domain bounded context."""
+    platform_dir = PACKAGE / "platform"
+    platform_modules = sorted(p for p in platform_dir.rglob("*.py") if p.is_file())
+    assert platform_modules, "Expected platform modules to exist"
+    for module in platform_modules:
+        for imported in _imported_paths(module):
+            if imported.startswith("research_team."):
+                parts = imported.split(".")
+                if len(parts) >= 2 and parts[1] in BOUNDED_CONTEXTS:
+                    pytest.fail(
+                        f"{module.relative_to(PACKAGE)} imports from domain bounded "
+                        f"context '{parts[1]}': {imported}. "
+                        "Platform must remain domain-agnostic."
+                    )

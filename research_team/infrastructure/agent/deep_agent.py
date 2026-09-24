@@ -35,7 +35,8 @@ from research_team.infrastructure.agent.model_providers import (
     build_model,
 )
 from research_team.knowledge.application.knowledge_attachment import _compose
-from research_team.platform.shared.ports import (
+from research_team.session.application.autonomy import AutonomyPolicy
+from research_team.session.application.ports import (
     ActivityReporter,
     ApprovalDecision,
     ApprovalPort,
@@ -43,7 +44,6 @@ from research_team.platform.shared.ports import (
     ApprovalRequest,
     TurnResult,
 )
-from research_team.session.application.autonomy import AutonomyPolicy
 from research_team.session.domain import (
     RecordToolDecision,
     Session,

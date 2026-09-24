@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
-from research_team.platform.shared.ports import (
+from research_team.session.application.ports import (
     ApprovalDecision,
     ApprovalRefused,
     ApprovalRequest,

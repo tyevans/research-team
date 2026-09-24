@@ -60,8 +60,6 @@ from research_team.knowledge.application.ontology_discovery import (
 )
 from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.platform.shared.blobs import BlobStorePort
-from research_team.platform.shared.context import ContextStrategy
-from research_team.platform.shared.ports import TurnActivityBuffer, TurnExecutor
 from research_team.research.application.research_round import TopicRoundRunner
 from research_team.research.application.research_run import ResearchRunDriver
 from research_team.research.application.research_supervisor import ResearchSupervisor
@@ -72,6 +70,8 @@ from research_team.research.application.topics import TOPICS_PROMPT
 from research_team.research.domain.run import Budget, ResearchRun
 from research_team.research.domain.topic import Topic
 from research_team.session.application.autonomy import FETCH_TOOL, AutonomyPolicy
+from research_team.session.application.context import ContextStrategy
+from research_team.session.application.ports import TurnActivityBuffer, TurnExecutor
 from research_team.session.application.session_service import SessionService
 from research_team.session.application.turn_supervisor import TurnSupervisor
 from research_team.session.application.workers import (
