@@ -19,6 +19,7 @@ from research_team.knowledge.application.project_graphs import ProjectGraphs
 from research_team.knowledge.application.timeline_read import TimelineReadPort
 from research_team.platform.shared.blobs import BlobStorePort
 from research_team.session.application.session_service import SessionService
+from research_team.tenancy.application.project_sessions import ProjectSessions
 
 
 class WebReaders:
@@ -32,6 +33,7 @@ class WebReaders:
         graphs: ProjectGraphs | None = None,
         ontology: OntologyRunner | None = None,
         curriculum: CurriculumService | None = None,
+        projects: ProjectSessions | None = None,
     ) -> None:
         self._service = service
         self._corpus = corpus
@@ -39,6 +41,15 @@ class WebReaders:
         self._graphs = graphs
         self._ontology = ontology
         self._curriculum_service = curriculum
+        self._projects = (
+            projects
+            if projects is not None
+            else (
+                service.project_sessions
+                if service is not None and hasattr(service, "project_sessions")
+                else None
+            )
+        )
 
     async def load(self, session_id: UUID):
         if self._service is None:
@@ -49,9 +60,10 @@ class WebReaders:
             raise HTTPException(status_code=404, detail=f"no session {session_id}") from error
 
     async def require_project(self, project_id: UUID) -> None:
-        if self._service is None:
+        target = self._projects if self._projects is not None else self._service
+        if target is None:
             raise HTTPException(status_code=404, detail=f"no project {project_id}")
-        await require_project(self._service, project_id)
+        await require_project(target, project_id)
 
     def reader(self, project_id: UUID) -> ProjectCorpusReader:
         """This project's corpus, through the same port the agent's tools use.

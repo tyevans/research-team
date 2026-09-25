@@ -8,9 +8,12 @@ of lines of closures and modularizing these routes extracts project-scoped endpo
 from `app.py`.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID, uuid4
 
 from eventsource import CommandRejectedError
@@ -28,6 +31,7 @@ from research_team.knowledge.application import KnowledgeError
 from research_team.session.application.session_service import SessionService
 from research_team.session.application.turn_supervisor import TurnSupervisor
 from research_team.session.domain import SessionPurpose
+from research_team.tenancy.application.project_sessions import ProjectSessions
 from research_team.tenancy.application.project_summaries import ProjectSummaries
 from research_team.tenancy.domain import CreateProject
 
@@ -54,7 +58,9 @@ and the per-project vector store. Composition owns all four.
 """
 
 
-async def require_project(service: SessionService, project_id: UUID) -> None:
+async def require_project(
+    service: ProjectSessions | SessionService | Any, project_id: UUID
+) -> None:
     """404 unless `project_id` names a project that exists and is not deleted.
 
     Checked before touching the corpus so that "no such project" and "that
@@ -104,7 +110,8 @@ class ProjectDeps:
     `TopicDeps`, `KnowledgeDeps`, and `CatalogDeps`.
     """
 
-    service: SessionService
+    projects: ProjectSessions | None = None
+    service: SessionService | None = None
     turns: TurnSupervisor | None = None
     curriculum: CurriculumService | None = None
     extraction: ExtractionActivity | None = None
@@ -118,7 +125,15 @@ def project_router(deps: ProjectDeps) -> APIRouter:
     `app.include_router`.
     """
     router = APIRouter()
-    service = deps.service
+    project_service = (
+        deps.projects
+        if deps.projects is not None
+        else (
+            deps.service.project_sessions
+            if deps.service is not None and hasattr(deps.service, "project_sessions")
+            else deps.service
+        )
+    )
     turns = deps.turns
     curriculum = deps.curriculum
     extraction = deps.extraction
@@ -128,8 +143,10 @@ def project_router(deps: ProjectDeps) -> APIRouter:
     async def _require_project(project_id: UUID) -> None:
         if deps.require_project is not None:
             await deps.require_project(project_id)
+        elif project_service is not None:
+            await require_project(project_service, project_id)
         else:
-            await require_project(service, project_id)
+            raise HTTPException(status_code=404, detail=f"no project {project_id}")
 
     @router.get("/api/projects")
     async def list_projects():
@@ -149,11 +166,13 @@ def project_router(deps: ProjectDeps) -> APIRouter:
         collaborator, and this one is the index. A console that cannot count
         a project's sources should still list the project.
         """
-        projects = await service.list_projects()
+        if project_service is None:
+            return []
+        projects = await project_service.list_projects()
         summaries = await project_summaries.all() if project_summaries else {}
         rows = []
         for project_id, name in projects:
-            state = await service.project_state(project_id)
+            state = await project_service.project_state(project_id)
             rows.append(
                 project_view(
                     project_id,
@@ -176,16 +195,16 @@ def project_router(deps: ProjectDeps) -> APIRouter:
         that convention is enforced here, the one place both front ends
         share through `SessionService`.
         """
-        existing = await service.list_projects()
+        existing = await project_service.list_projects()
         collision = next((pid for pid, name in existing if name == body.name), None)
         if collision is not None:
             raise HTTPException(
                 status_code=409,
                 detail=f"project {body.name!r} already exists ({collision})",
             )
-        aggregate = service.projects.create_new(uuid4())
+        aggregate = project_service.projects.create_new(uuid4())
         aggregate.execute(CreateProject(project_id=aggregate.aggregate_id, name=body.name))
-        await service.projects.save(aggregate)
+        await project_service.projects.save(aggregate)
         return project_view(aggregate.aggregate_id, body.name)
 
     @router.delete("/api/projects/{project_id}")
@@ -210,7 +229,7 @@ def project_router(deps: ProjectDeps) -> APIRouter:
         # present -- to refuse it -- is the inconsistency this change exists to
         # remove.
         await _require_project(project_id)
-        state = await service.project_state(project_id)
+        state = await project_service.project_state(project_id)
         holder = state.active_session_id
         if holder is not None:
             if not release_holder:
@@ -223,13 +242,13 @@ def project_router(deps: ProjectDeps) -> APIRouter:
                     status_code=409,
                     detail="the holding session has a turn running; cancel it first",
                 )
-            await service.release_project(holder)
+            await project_service.release_project(holder)
         try:
-            await service.delete_project(project_id)
+            await project_service.delete_project(project_id)
         except CommandRejectedError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        if service.attached_project_id == project_id:
-            await service.detach_project()
+        if project_service.attached_project_id == project_id:
+            await project_service.detach_project()
         if curriculum is not None:
             # The projection is cached per project and keyed on graph counts,
             # so a project deleted and a new one created under a recycled id
@@ -252,7 +271,7 @@ def project_router(deps: ProjectDeps) -> APIRouter:
         fold to answer a question about one.
         """
         await _require_project(project_id)
-        state = await service.project_state(project_id)
+        state = await project_service.project_state(project_id)
         return project_detail_view(
             project_id,
             state.name,
@@ -303,20 +322,22 @@ def project_router(deps: ProjectDeps) -> APIRouter:
         # the confirmation, and matches every other project-scoped route.
         await _require_project(project_id)
         if body is not None and body.take_over:
-            state = await service.project_state(project_id)
+            state = await project_service.project_state(project_id)
             if state.active_session_id is not None:
                 if turns is not None and turns.is_running(state.active_session_id):
                     raise HTTPException(
                         status_code=409,
                         detail="the holding session has a turn running; cancel it first",
                     )
-                await service.release_project(state.active_session_id)
+                await project_service.release_project(state.active_session_id)
         try:
-            session_id = await service.start_in_project(project_id, SessionPurpose.CHAT)
+            session_id = await project_service.start_in_project(
+                project_id, SessionPurpose.CHAT
+            )
         except CommandRejectedError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         try:
-            await service.attach_project(project_id)
+            await project_service.attach_project(project_id)
         except Exception as error:  # noqa: BLE001 -- report, do not fail the join
             return {
                 "id": str(session_id),
