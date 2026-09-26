@@ -825,6 +825,20 @@ def extraction_model() -> str:
     return _optional("extraction_model") or model_name()
 
 
+def decision_base_url() -> str | None:
+    """An Ollaya or TypeSafe-compatible decision model base URL.
+
+    None when no decision server is configured, meaning fast non-autoregressive
+    decisions fall back to default LLM or heuristic implementations.
+    """
+    return _optional("decision_base_url")
+
+
+def decision_model() -> str:
+    """Which decision model to run on the decision endpoint (e.g. laya, decider)."""
+    return _text("decision_model")
+
+
 def embedding_model() -> str:
     """Which model turns text into vectors.
 

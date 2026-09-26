@@ -59,6 +59,25 @@ SETTINGS: tuple[SettingSpec, ...] = (
         "Models",
     ),
     _spec(
+        "AGENT_DECISION_BASE_URL",
+        SettingType.STRING,
+        None,
+        "Decision base URL",
+        "An Ollaya or TypeSafe-compatible endpoint for fast System One decisions (e.g. http://localhost:11435).",
+        "Models",
+    ),
+    _spec(
+        "AGENT_DECISION_MODEL",
+        SettingType.STRING,
+        "laya",
+        "Decision model",
+        (
+            "The model used for fast classification, routing, and consolidation "
+            "(e.g. laya, decider, von)."
+        ),
+        "Models",
+    ),
+    _spec(
         "AGENT_EXTRACTION_MODEL",
         SettingType.STRING,
         None,
