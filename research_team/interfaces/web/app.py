@@ -64,6 +64,7 @@ from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.export import ExportDeps, export_router
 from research_team.interfaces.web.extraction import ExtractionActivity
 from research_team.interfaces.web.extraction_queue import ExtractionQueue
+from research_team.interfaces.web.grading import grading_router
 from research_team.interfaces.web.middleware import (
     INTERACTION_BODY_LIMIT_BYTES as INTERACTION_BODY_LIMIT_BYTES,
 )
@@ -554,6 +555,7 @@ def create_app(
     # failure CLAUDE.md's "silent defaults" note is about -- it makes "never
     # wired" and "no such feature" identical to a caller.
     app.include_router(settings_router(settings or SettingsDeps()))
+    app.include_router(grading_router)
 
     mount_static_routes(app, static_dir=STATIC_DIR)
 

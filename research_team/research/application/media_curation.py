@@ -31,6 +31,7 @@ job of adapting to a foreign system, which belongs in infrastructure, and
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -111,6 +112,7 @@ __all__ = [
     "Judgement",
     "MediaCurationService",
     "MediaCurationTextPort",
+    "MediaJudgePort",
     "MediaNeed",
     "MediaSearchPort",
     "Query",
@@ -151,6 +153,14 @@ class MediaSearchPort(Protocol):
     """
 
     async def search(self, query: str, categories: str) -> tuple[SearchResult, ...]: ...
+
+
+class MediaJudgePort(Protocol):
+    """Evaluates pooled candidate search results against a stated media need."""
+
+    async def judge_candidates(
+        self, need: MediaNeed, candidates: Sequence[SearchResult]
+    ) -> list[Judgement]: ...
 
 
 def _host_of(url: str) -> str:
@@ -244,11 +254,13 @@ class MediaCurationService:
         search: MediaSearchPort,
         proposals: AggregateRepository[MediaProposals],
         topics: TopicReadPort,
+        judge: MediaJudgePort | None = None,
     ) -> None:
         self._text = text
         self._search_port = search
         self._proposals = proposals
         self._topics = topics
+        self._judge = judge
 
     async def _generate(self, prompt: str) -> str:
         """`self._text.generate`, with a transport failure named rather than
@@ -359,11 +371,14 @@ class MediaCurationService:
             if not kept:
                 continue
 
-            judgements, judge_rejected = parse_judgements(
-                await self._generate(_judge_prompt(need, [r for r, _ in kept])),
-                need_id=need.need_id,
-            )
-            rejected += judge_rejected
+            if self._judge is not None:
+                judgements = await self._judge.judge_candidates(need, [r for r, _ in kept])
+            else:
+                judgements, judge_rejected = parse_judgements(
+                    await self._generate(_judge_prompt(need, [r for r, _ in kept])),
+                    need_id=need.need_id,
+                )
+                rejected += judge_rejected
 
             # The fifth route to zero, and the one that reproduces the
             # original report exactly: the judge was shown real candidates,

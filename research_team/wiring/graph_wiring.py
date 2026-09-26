@@ -192,12 +192,28 @@ def build_graph_opener(
         project_extraction_model = (
             extraction_model if model is not None else build_extraction_model(settings)
         )
+        decision_url = config.decision_base_url()
+        adjudicate_arg: Any = True
+        if decision_url:
+            from research_team.infrastructure.decision.ollaya_client import (
+                OllayaDecisionClient,
+            )
+            from research_team.infrastructure.knowledge.ollaya_adjudicator import (
+                OllayaAdjudicator,
+            )
+
+            decision_client = OllayaDecisionClient(
+                base_url=decision_url, default_model=config.decision_model()
+            )
+            adjudicate_arg = OllayaAdjudicator(decision_client, model=config.decision_model())
+
         knowledge = RedstringKnowledge(
             target_project_id,
             store=store,
             event_store=repository.store,
             snapshot_store=repository.snapshot_store,
             provider=LangChainLlmProvider(project_extraction_model, model=settings.model),
+            adjudicate=adjudicate_arg,
             corpus=build_corpus_repository(
                 repository.store,
                 repository.publisher,

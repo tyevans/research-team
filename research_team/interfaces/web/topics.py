@@ -15,6 +15,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+from research_team.infrastructure import config
 from research_team.interfaces.web.dispatch import DispatchQueue
 from research_team.interfaces.web.presenters import (
     seeding_view,
@@ -229,11 +230,26 @@ def topic_router(deps: TopicDeps) -> APIRouter:
             or deps.curation_search is None
         ):
             raise HTTPException(status_code=503, detail="media curation is not configured")
+
+        judge = None
+        decision_url = config.decision_base_url()
+        if decision_url:
+            from research_team.infrastructure.agent.ollaya_media_judge import OllayaMediaJudge
+            from research_team.infrastructure.decision.ollaya_client import (
+                OllayaDecisionClient,
+            )
+
+            client = OllayaDecisionClient(
+                base_url=decision_url, default_model=config.decision_model()
+            )
+            judge = OllayaMediaJudge(client, model=config.decision_model())
+
         return MediaCurationService(
             text=deps.curation_text,
             search=deps.curation_search,
             proposals=deps.media_proposal_repository,
             topics=_topic_reader(project_id),
+            judge=judge,
         )
 
     async def _change_topic(project_id: UUID, topic_id: UUID, command) -> dict[str, Any]:

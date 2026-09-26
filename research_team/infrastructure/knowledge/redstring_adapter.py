@@ -37,6 +37,7 @@ from redstring import (
     EmbeddingProvider,
     GraphStore,
     LlmProvider,
+    MergeAdjudicator,
     RedstringError,
     SlidingWindowChunker,
     SourceDocument,
@@ -152,7 +153,7 @@ class RedstringKnowledge:
         # application until this moved, and `auto` additionally spent a
         # classifier call per document to reach a fallback we now skip.
         domain: str = RESEARCH_CORPUS,
-        adjudicate: bool = True,
+        adjudicate: bool | MergeAdjudicator = True,
         embeddings: EmbeddingProvider | None = None,
         vector_store: VectorStore | None = None,
         card_vector_store: VectorStore | None = None,
@@ -259,7 +260,10 @@ class RedstringKnowledge:
         # below `HIGH_SIMILARITY` 0.92, so the adjudicator is the only thing
         # that can merge one. Embeddings did not reduce how much the model's
         # judgement is worth here -- they increased how often it is asked.
-        self._adjudicator = Adjudicator(provider) if adjudicate else None
+        if isinstance(adjudicate, MergeAdjudicator):
+            self._adjudicator: MergeAdjudicator | None = adjudicate
+        else:
+            self._adjudicator = Adjudicator(provider) if adjudicate else None
 
     @property
     def graph_store(self) -> GraphStore:
